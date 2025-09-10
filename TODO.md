@@ -1,7 +1,19 @@
 # Now (MVP path)
 
 - [ ] Physics core in src/physics/ lifted & cleaned (no RL deps)
+    - [ ] dynamic_models.py
 
+    - [ ] collision_models.py
+        - [ ] GJK iteration cap: reduce from 1e3 to ~32–64; avoid stalls on degeneracies while preserving convergence. (GJK should converge fast for 2D quads; temporal coherence helps.)
+        - [ ] Robust eps checks: replace exact zero checks with small epsilon (e.g., 1e-9 to 1e-12) around direction norms/simplex transitions.
+        - [ ] Temporal coherence (optional): seed each pair’s next-frame search direction with the previous separating axis to cut iterations.
+        - [ ] Broad phase (future, if N grows): add sweep-and-prune (or grid hashing) to prune O(N²) pairs before GJK; incremental sort leverages coherence.
+        - [ ] Edge/point touching policy: define whether grazing contact counts as collision and test it (edge–edge, point–edge).
+        - [ ] Penetration depth (later): if needed for penalties or response, add EPA or SAT fallback to retrieve depth/normal.
+        - [ ] Stress & margin tests: (a) tiny gap vs tiny overlap; (b) rotation sweep; (c) randomized convex quads; assert average iterations < threshold and no NaNs.
+
+    - [ ] laser_models.py
+    - [ ] base_classes.py
     - [ ] Simulator.reset(spawn_poses) → obs_dict
 
     - [ ]  Simulator.step(actions_env) → obs_dict
@@ -30,13 +42,13 @@
 
 - [ ] Tests
 
- - [ ] Physics tick determinism & forced crash case
+    - [ ] Physics tick determinism & forced crash case
 
- - [ ] Obs shape/finite checks for N=1..4
+    - [ ] Obs shape/finite checks for N=1..4
 
- - [ ] PZ API conformance (spaces stable; dict keys)
+    - [ ] PZ API conformance (spaces stable; dict keys)
 
- - [ ] Reward & termination semantics (per-agent term; time-limit trunc)
+    - [ ] Reward & termination semantics (per-agent term; time-limit trunc)
 
  - [ ] Example rollouts (examples/) + minimal README usage
 
