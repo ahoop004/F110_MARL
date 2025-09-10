@@ -4,6 +4,10 @@ import warnings
 import numpy as np
 from numba import njit
 
+from .dynamic_models import vehicle_dynamics_st, pid
+from .laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
+from .collision_models import get_vertices
+
 
 class Integrator(Enum):
     RK4 = 1
@@ -73,8 +77,9 @@ class RaceCar(object):
         self.steer_angle_vel = 0.0
 
         # steering delay buffer
-        self.steer_buffer = np.empty((0, ))
-        self.steer_buffer_size = 2
+        self.steer_buffer_size = cfg.get("steer_buffer_size", 2)
+        self._steer_buf = np.zeros(self.steer_buffer_size, dtype=np.float32)
+        self._sb_head = 0  # next write index
 
         # collision identifier
         self.in_collision = False
@@ -236,14 +241,10 @@ class RaceCar(object):
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
 
         # steering delay
-        steer = 0.
-        if self.steer_buffer.shape[0] < self.steer_buffer_size:
-            steer = 0.
-            self.steer_buffer = np.append(raw_steer, self.steer_buffer)
-        else:
-            steer = self.steer_buffer[-1]
-            self.steer_buffer = self.steer_buffer[:-1]
-            self.steer_buffer = np.append(raw_steer, self.steer_buffer)
+     
+        self._steer_buf[self._sb_head] = float(raw_steer)      # write newest
+        self._sb_head = (self._sb_head + 1) % self._steer_buf.size
+        steer = float(self._steer_buf[self._sb_head])  
 
 
         # steering angle velocity input to steering velocity acceleration input

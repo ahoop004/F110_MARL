@@ -1,3 +1,19 @@
+
+from enum import Enum
+import warnings
+
+import numpy as np
+from numba import njit
+
+from .vehicle import RaceCar
+from .collision_models import get_vertices, collision_multiple
+
+
+class Integrator(Enum):
+    RK4 = 1
+    Euler = 2
+
+
 class Simulator(object):
     """
     Simulator class, handles the interaction and update of all vehicles in the environment
