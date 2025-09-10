@@ -14,6 +14,8 @@
 
     - [ ] laser_models.py
     - [ ] base_classes.py
+        - [ ] vehicle.py
+        - [ ] simulation.py
     - [ ] Simulator.reset(spawn_poses) → obs_dict
 
     - [ ]  Simulator.step(actions_env) → obs_dict
