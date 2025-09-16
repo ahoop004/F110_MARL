@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "f110x"
+version = "0.1.0"
+description = "Multi-agent F1TENTH PettingZoo environment"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "pettingzoo",
+    "gymnasium",
+    "numpy",
+    "pyglet",
+    "pillow",
+    "pyyaml"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -5,8 +5,8 @@ import warnings
 import numpy as np
 from numba import njit
 
-from .vehicle import RaceCar
-from .collision_models import get_vertices, collision_multiple
+from f110x.physics.vehicle import RaceCar
+from f110x.physics.collision_models import get_vertices, collision_multiple
 
 
 class Integrator(Enum):

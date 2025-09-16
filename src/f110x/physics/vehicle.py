@@ -4,9 +4,9 @@ import warnings
 import numpy as np
 from numba import njit
 
-from .dynamic_models import vehicle_dynamics_st, pid
-from .laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
-from .collision_models import get_vertices
+from f110x.physics.dynamic_models import vehicle_dynamics_st, pid
+from f110x.physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
+from f110x.physics.collision_models import get_vertices
 
 
 class Integrator(Enum):
@@ -77,7 +77,7 @@ class RaceCar(object):
         self.steer_angle_vel = 0.0
 
         # steering delay buffer
-        self.steer_buffer_size = cfg.get("steer_buffer_size", 2)
+        self.steer_buffer_size = 2
         self._steer_buf = np.zeros(self.steer_buffer_size, dtype=np.float32)
         self._sb_head = 0  # next write index
 
