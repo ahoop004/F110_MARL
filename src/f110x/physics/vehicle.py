@@ -20,7 +20,7 @@ class RaceCar(object):
 
     Data Members:
         params (dict): vehicle parameters dictionary
-        is_ego (bool): ego identifier
+
         time_step (float): physics timestep
         num_beams (int): number of beams in laser
         fov (float): field of view of laser
@@ -38,13 +38,13 @@ class RaceCar(object):
     scan_angles = None
     side_distances = None
 
-    def __init__(self, params, seed, is_ego=False, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.Euler, lidar_dist=0.0):
+    def __init__(self, params, seed, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.Euler, lidar_dist=0.0):
         """
         Init function
 
         Args:
             params (dict): vehicle parameter dictionary, includes {'mu', 'C_Sf', 'C_Sr', 'lf', 'lr', 'h', 'm', 'I', 's_min', 's_max', 'sv_min', 'sv_max', 'v_switch', 'a_max': 9.51, 'v_min', 'v_max', 'length', 'width'}
-            is_ego (bool, default=False): ego identifier
+
             time_step (float, default=0.01): physics sim time step
             num_beams (int, default=1080): number of beams in the laser scan
             fov (float, default=4.7): field of view of the laser
@@ -57,7 +57,7 @@ class RaceCar(object):
         # initialization
         self.params = params
         self.seed = seed
-        self.is_ego = is_ego
+
         self.time_step = time_step
         self.num_beams = num_beams
         self.fov = fov
