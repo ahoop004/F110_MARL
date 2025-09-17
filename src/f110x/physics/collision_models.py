@@ -217,47 +217,51 @@ Utility functions for getting vertices by pose and shape
 
 @njit(cache=True)
 def get_trmtx(pose):
-    """
-    Get transformation matrix of vehicle frame -> global frame
-
-    Args:
-        pose (np.ndarray (3, )): current pose of the vehicle
-
-    return:
-        H (np.ndarray (4, 4)): transformation matrix
-    """
     x = pose[0]
     y = pose[1]
     th = pose[2]
+
     cos = np.cos(th)
     sin = np.sin(th)
-    H = np.array([[cos, -sin, 0., x], [sin, cos, 0., y], [0., 0., 1., 0.], [0., 0., 0., 1.]])
+
+    H = np.zeros((4, 4), dtype=np.float64)
+
+    # assign scalars instead of slices
+    H[0, 0] = cos
+    H[0, 1] = -sin
+    H[0, 3] = x
+
+    H[1, 0] = sin
+    H[1, 1] = cos
+    H[1, 3] = y
+
+    H[2, 2] = 1.0
+    H[3, 3] = 1.0
+
     return H
 
 @njit(cache=True)
 def get_vertices(pose, length, width):
-    """
-    Utility function to return vertices of the car body given pose and size
-
-    Args:
-        pose (np.ndarray, (3, )): current world coordinate pose of the vehicle
-        length (float): car length
-        width (float): car width
-
-    Returns:
-        vertices (np.ndarray, (4, 2)): corner vertices of the vehicle body
-    """
     H = get_trmtx(pose)
-    rl = H.dot(np.asarray([[-length/2],[width/2],[0.], [1.]])).flatten()
-    rr = H.dot(np.asarray([[-length/2],[-width/2],[0.], [1.]])).flatten()
-    fl = H.dot(np.asarray([[length/2],[width/2],[0.], [1.]])).flatten()
-    fr = H.dot(np.asarray([[length/2],[-width/2],[0.], [1.]])).flatten()
-    rl = rl/rl[3]
-    rr = rr/rr[3]
-    fl = fl/fl[3]
-    fr = fr/fr[3]
-    vertices = np.asarray([[rl[0], rl[1]], [rr[0], rr[1]], [fr[0], fr[1]], [fl[0], fl[1]]])
-    return vertices
+
+    hl = length / 2.0
+    hw = width / 2.0
+
+    # homogeneous corners
+    corners = np.zeros((4, 4), dtype=np.float64)
+    corners[0, 0] = -hl; corners[0, 1] =  hw; corners[0, 3] = 1.0
+    corners[1, 0] = -hl; corners[1, 1] = -hw; corners[1, 3] = 1.0
+    corners[2, 0] =  hl; corners[2, 1] = -hw; corners[2, 3] = 1.0
+    corners[3, 0] =  hl; corners[3, 1] =  hw; corners[3, 3] = 1.0
+
+    verts_h = corners @ H.T
+
+    verts = np.zeros((4, 2), dtype=np.float64)
+    for i in range(4):
+        verts[i, 0] = verts_h[i, 0]
+        verts[i, 1] = verts_h[i, 1]
+
+    return verts
 
 
 """

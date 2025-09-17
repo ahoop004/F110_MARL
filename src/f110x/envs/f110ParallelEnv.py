@@ -61,10 +61,13 @@ class F110ParallelEnv(ParallelEnv):
 
         self.map_dir = Path(merged.get("map_dir", "./maps"))
         self.map_name = merged.get("map", "levine")
+        self.map_yaml = merged.get("map_yaml", "levine")
         self.map_ext = merged.get("map_ext", ".png")
         
-        self.yaml_path = (self.map_dir / f"{self.map_name}.yaml").resolve()
-        self.map_base = self.yaml_path.with_suffix("")
+        self.map_path = (self.map_dir / f"{self.map_name}").resolve()
+        self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
+        # self.map_base = self.yaml_path.with_suffix("")
+        self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
         
 
 
@@ -118,18 +121,17 @@ class F110ParallelEnv(ParallelEnv):
                              self.n_agents,
                              self.seed,
                              time_step=self.timestep,
-                             integrator=self.integrator,
                              lidar_dist=self.lidar_dist)
         
-        self.sim.set_map(str(self.map_base), self.map_ext)
+        self.sim.set_map(str(self.yaml_path), self.map_ext)
         
-        with open(self.yaml_path, "r") as f:
+        with open(self.map_path, "r") as f:
             meta = yaml.safe_load(f)
         R = float(meta.get("resolution", 1.0)) 
         x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
         image_rel = meta.get("image")
         if image_rel:
-            img_path = (self.yaml_path.parent / image_rel).resolve()
+            img_path = (self.map_path.parent / image_rel).resolve()
         else:
             img_filename = merged.get("map_image", None)
             img_path = (self.map_dir / img_filename).resolve()
@@ -231,9 +233,17 @@ class F110ParallelEnv(ParallelEnv):
             self.rng = np.random.default_rng(seed)
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
+        poses = None
+    # Case 1: Explicit override via options
+        if options is not None:
+            if isinstance(options, dict) and "poses" in options:
+                poses = np.array(options["poses"], dtype=np.float32)
+        # Case 2: Default to config start_poses
+        if poses is None and hasattr(self, "start_poses") and len(self.start_poses) > 0:
+            poses = self.start_poses
 
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
-        poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
+        # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses)
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)

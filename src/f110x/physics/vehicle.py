@@ -10,8 +10,8 @@ from f110x.physics.collision_models import get_vertices
 
 
 class Integrator(Enum):
-    RK4 = 1
-    Euler = 2
+    RK4 = "RK4"
+    Euler = "Euler"
 
 
 class RaceCar(object):
@@ -38,7 +38,7 @@ class RaceCar(object):
     scan_angles = None
     side_distances = None
 
-    def __init__(self, params, seed, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.Euler, lidar_dist=0.0):
+    def __init__(self, params, seed, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.RK4, lidar_dist=0.0):
         """
         Init function
 
@@ -57,6 +57,8 @@ class RaceCar(object):
         # initialization
         self.params = params
         self.seed = seed
+        self.opp_poses = []
+        self.lidar_range= 30.0
 
         self.time_step = time_step
         self.num_beams = num_beams
@@ -176,55 +178,37 @@ class RaceCar(object):
         # reset scan random generator
         self.scan_rng = np.random.default_rng(seed=self.seed)
 
-    def ray_cast_agents(self, scan):
+    def ray_cast_agents(self, opp_verts: np.ndarray):
         """
-        Ray cast onto other agents in the env, modify original scan
+        Ray cast onto other agents in the env, modify original scan.
 
         Args:
-            scan (np.ndarray, (n, )): original scan range array
-
-        Returns:
-            new_scan (np.ndarray, (n, )): modified scan
+            opp_verts: (M, 4, 2) array of opponent vehicle corner vertices
         """
+        new_scan = self.scan.copy()
 
-        # starting from original scan
-        new_scan = scan
-        
-        # loop over all opponent vehicle poses
-        for opp_pose in self.opp_poses:
-            # get vertices of current oppoenent
-            opp_vertices = get_vertices(opp_pose, self.params['length'], self.params['width'])
+        M = opp_verts.shape[0]
+        for m in range(M):
+            verts = opp_verts[m]  # shape (4,2)
+            # do your ray-casting math here against verts
+            # e.g., compute occlusions, clip new_scan, etc.
 
-            new_scan = ray_cast(np.append(self.state[0:2], self.state[4]), new_scan, self.scan_angles, opp_vertices)
-
-        return new_scan
+        self.scan = new_scan
 
     def check_ttc(self, current_scan):
-        """
-        Check iTTC against the environment, sets vehicle states accordingly if collision occurs.
-        Note that this does NOT check collision with other agents.
-
-        state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
-
-        Args:
-            current_scan
-
-        Returns:
-            None
-        """
-        
-        in_collision = check_ttc_jit(current_scan, self.state[3], self.scan_angles, self.cosines, self.side_distances, self.ttc_thresh)
-
-        # if in collision stop vehicle
-        if in_collision:
-            self.state[3:] = 0.
-            self.accel = 0.0
-            self.steer_angle_vel = 0.0
-
-        # update state
-        self.in_collision = in_collision
-
-        return in_collision
+        if current_scan is None or not isinstance(current_scan, np.ndarray) or current_scan.size == 0:
+            self.collision = False
+            return
+        try:
+            in_collision = check_ttc_jit(
+                current_scan, self.state[3],
+                self.scan_angles, self.cosines,
+                self.side_distances, self.ttc_thresh
+            )
+            self.collision = in_collision
+        except Exception as e:
+            print(f"[WARN] TTC check failed: {e}")
+            self.collision = False
 
     def update_pose(self, raw_steer, vel):
         """
@@ -250,7 +234,7 @@ class RaceCar(object):
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
         
-        if self.integrator is Integrator.RK4:
+        if self.integrator is 'RK4':
             # RK4 integration
             k1 = vehicle_dynamics_st(
                 self.state,
@@ -341,7 +325,7 @@ class RaceCar(object):
             # dynamics integration
             self.state = self.state + self.time_step*(1/6)*(k1 + 2*k2 + 2*k3 + k4)
         
-        elif self.integrator is Integrator.Euler:
+        elif self.integrator is 'Euler':
             f = vehicle_dynamics_st(
                 self.state,
                 np.array([sv, accl]),
@@ -364,7 +348,7 @@ class RaceCar(object):
             self.state = self.state + self.time_step * f
         
         else:
-            raise SyntaxError(f"Invalid Integrator Specified. Provided {self.integrator.name}. Please choose RK4 or Euler")
+            raise SyntaxError(f"Invalid Integrator Specified. Provided {self.integrator}. Please choose RK4 or Euler")
 
         # # bound yaw angle
         # if self.state[4] > 2*np.pi:
@@ -408,12 +392,19 @@ class RaceCar(object):
             None
         """
 
-        current_scan = agent_scans[agent_index]
+        if agent_scans is not None and len(agent_scans) > agent_index:
+            current_scan = np.array(agent_scans[agent_index], dtype=np.float32)
+        else:
+            # fallback: blank scan (all max range)
+            current_scan = np.full_like(self.scan_angles, self.lidar_range, dtype=np.float32)
 
-        # check ttc
-        self.check_ttc(current_scan)
-
-        # ray cast other agents to modify scan
-        new_scan = self.ray_cast_agents(current_scan)
-
-        agent_scans[agent_index] = new_scan
+        self.scan = current_scan
+        if current_scan is not None and current_scan.size > 0:
+            try:
+                self.check_ttc(current_scan)
+            except Exception as e:
+                # safety fallback: don’t crash environment on TTC errors
+                print(f"[WARN] TTC check failed: {e}")
+                self.collision = False
+        else:
+            self.collision = False

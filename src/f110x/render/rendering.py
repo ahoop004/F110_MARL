@@ -36,9 +36,9 @@ class EnvRenderer(pyglet.window.Window):
     Pyglet-based renderer for a multi-agent racecar environment.
     Consumes per-agent render_obs dicts: {agent_id: {poses_x, poses_y, poses_theta, scans, lap_time?, lap_count?}}
     """
-    def __init__(self, width, height, *args, **kwargs):
+    def __init__(self, width, height, lidar_fov=4.7, max_range=30.0, *args, **kwargs):
         conf = Config(sample_buffers=1, samples=4, depth_size=16, double_buffer=True)
-        super().__init__(width, height, config=conf, resizable=True, vsync=False, *args, **kwargs)
+        super().__init__(width, height, config=conf, resizable=True, vsync=False,  *args, **kwargs)
 
         # GL init
         glClearColor(9/255, 32/255, 87/255, 1.0)
@@ -68,9 +68,9 @@ class EnvRenderer(pyglet.window.Window):
         self.agent_ids = []        # order used for camera follow
 
         # options
-        self.lidar_fov = float(kwargs.get('lidar_fov', 2 * np.pi))
-        self.max_range = float(kwargs.get('max_range', 30.0))
-        self.scale = 50.0  # meters->pixels
+        self.lidar_fov = lidar_fov
+        self.max_range = max_range
+        self.render_scale = 50.0  # meters->pixels
 
         # HUD
         self.fps_display = pyglet.window.FPSDisplay(self)
@@ -110,7 +110,7 @@ class EnvRenderer(pyglet.window.Window):
 
         mask = (img == 0.0)  # obstacle pixels are black
         pts = np.vstack((gx[mask], gy[mask], gz[mask])).T  # (N,3)
-        pts *= self.scale
+        pts *= self.render_scale
 
         N = pts.shape[0]
         positions = pts[:, :2].flatten().tolist()
@@ -220,7 +220,7 @@ class EnvRenderer(pyglet.window.Window):
             th = float(st["poses_theta"])
 
             # car vertices in pixels
-            verts_np = self.scale * get_vertices(np.array([x, y, th]), CAR_LENGTH, CAR_WIDTH)  # (4,2)
+            verts_np = self.render_scale * get_vertices(np.array([x, y, th]), CAR_LENGTH, CAR_WIDTH)  # (4,2)
             positions = verts_np.flatten().tolist()
 
             if aid not in self.cars_vlist:
@@ -239,8 +239,8 @@ class EnvRenderer(pyglet.window.Window):
             theta0 = th
             angles = np.linspace(-self.lidar_fov/2.0, self.lidar_fov/2.0, n) + theta0
 
-            xs = (x + scans * np.cos(angles)) * self.scale
-            ys = (y + scans * np.sin(angles)) * self.scale
+            xs = (x + scans * np.cos(angles)) * self.render_scale
+            ys = (y + scans * np.sin(angles)) * self.render_scale
 
             positions_hits = []
             colors_hits = []
@@ -264,7 +264,7 @@ class EnvRenderer(pyglet.window.Window):
             if "lap_time" in st:
                 txt += f" | t={float(st['lap_time']):.1f}s"
             lbl = pyglet.text.Label(
-                txt, x=xs[0] if n > 0 else x*self.scale, y=ys[0] + 25 if n > 0 else y*self.scale + 25,
+                txt, x=xs[0] if n > 0 else x*self.render_scale, y=ys[0] + 25 if n > 0 else y*self.render_scale + 25,
                 anchor_x='center', anchor_y='bottom',
                 color=(255, 255, 255, 255), batch=self.batch
             )
