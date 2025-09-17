@@ -74,6 +74,7 @@ class EnvRenderer(pyglet.window.Window):
 
         # HUD
         self.fps_display = pyglet.window.FPSDisplay(self)
+        # TODO: move HUD text (agent list, lap info) into a fixed top-left overlay instead of hardcoded offsets.
         self.score_label = pyglet.text.Label(
             'Agents: 0',
             font_size=18,
@@ -167,6 +168,7 @@ class EnvRenderer(pyglet.window.Window):
     def close(self):
         # explicit closer for env.close()
         try:
+            # TODO: replace with the correct pyglet window close call (e.g. `self.close()`).
             self.close_window()
         except Exception:
             pass
@@ -195,6 +197,7 @@ class EnvRenderer(pyglet.window.Window):
         render_obs: {agent_id: {"poses_x","poses_y","poses_theta","scans", optional "lap_time","lap_count"}}
         """
         # maintain stable order for camera follow
+        # TODO: maintain a deterministic ordering (e.g. sort or use env metadata) so overlays don't shuffle frame-to-frame.
         self.agent_ids = list(render_obs.keys())
 
         # clear per-step dynamic artifacts
@@ -215,6 +218,7 @@ class EnvRenderer(pyglet.window.Window):
 
         # ensure car vlist exists per agent; then update positions
         for aid, st in render_obs.items():
+            # TODO: drop stale vertex lists for agents no longer present to avoid drawing ghost cars.
             x = float(st["poses_x"])
             y = float(st["poses_y"])
             th = float(st["poses_theta"])
@@ -263,6 +267,7 @@ class EnvRenderer(pyglet.window.Window):
                 txt += f" | lap {int(st['lap_count'])}"
             if "lap_time" in st:
                 txt += f" | t={float(st['lap_time']):.1f}s"
+            # TODO: replace these per-agent floating labels with a consolidated top-left table showing lap/time per agent.
             lbl = pyglet.text.Label(
                 txt, x=xs[0] if n > 0 else x*self.render_scale, y=ys[0] + 25 if n > 0 else y*self.render_scale + 25,
                 anchor_x='center', anchor_y='bottom',
@@ -302,6 +307,7 @@ class EnvRenderer(pyglet.window.Window):
         waypoints = df[[0, 1]].values
         def callback(env_renderer: "EnvRenderer"):
             glPointSize(point_size)
+            # TODO: use `env_renderer.render_scale` (or expose a public scale) so this helper stops crashing.
             pts = (waypoints * env_renderer.scale).flatten().tolist()
             color = [0, 255, 0]
             if not hasattr(env_renderer, '_centerline_vlist'):
@@ -343,6 +349,7 @@ class EnvRenderer(pyglet.window.Window):
                     colors.extend([255, 255, 255]) # current
                 else:
                     colors.extend([255, 255, 0])   # pending
+            # TODO: use the renderer's actual scaling attribute instead of the missing `scale`.
             pos = (waypoints * env_renderer.scale).flatten().tolist()
             env_renderer._waypoints_vlist = env_renderer.shader.vertex_list(
                 num, pyglet.gl.GL_POINTS, batch=env_renderer.batch, group=env_renderer.shader_group,

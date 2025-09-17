@@ -125,27 +125,47 @@ class Simulator(object):
         self.collisions[:] = 0
         self.collision_idx[:] = -1
 
-        # --- 1) advance dynamics for all agents, collect raw scans + poses
         scans_list = []
+        # store prev states for revert if needed
+        prev_states = [agent.state.copy() for agent in self.agents]
+
+        # --- 1) advance dynamics, collect scans + detect wall/environment collision (iTTC)
         for i, agent in enumerate(self.agents):
-            # update pose (dynamics); many implementations return scan here
             current_scan = agent.update_pose(float(control_inputs[i, 0]), float(control_inputs[i, 1]))
+            # agent.update_pose internally should call agent.check_ttc(...) to set agent.in_collision
+
+            if getattr(agent, "in_collision", False):
+                # revert penetration
+                agent.state = prev_states[i]
+                # zero velocities
+                # assume state vector indices: 3 -> longitudinal vel, 5 -> angular vel
+                agent.state[3] = 0.0
+                agent.state[5] = 0.0
+                self.collisions[i] = 1  # mark environment collision
+
+            # ensure scan is freshest
+            agent.scan = current_scan
             scans_list.append(current_scan)
-            # state = [x, y, steer, v, yaw, yaw_rate, slip]
+
+            # update pose arrays
             self.agent_poses[i, 0] = agent.state[0]
             self.agent_poses[i, 1] = agent.state[1]
-            self.agent_poses[i, 2] = agent.state[4]
+            self.agent_poses[i, 2] = agent.state[4]  # theta
 
         # --- 2) agent-agent collisions (GJK)
-        
         verts = [get_vertices(self.agent_poses[i], self.params["length"], self.params["width"]) for i in range(N)]
         col_flags, hit_idx = collision_multiple(np.stack(verts, axis=0))
-        self.collisions[:] = col_flags.astype(np.int8, copy=False)
+        # Merge agent-agent collision flags with environment collision flags
+        col_flags = col_flags.astype(np.int8, copy=False)
+        for i in range(N):
+            if self.collisions[i] == 1 or col_flags[i] == 1:
+                self.collisions[i] = 1
+            # collision_idx logic: if agent-agent collision, set; if env collision, maybe set to some special id
         self.collision_idx[:] = hit_idx.astype(np.int32, copy=False)
 
-        # --- 3) opponent occlusions + environment collision from LiDAR/TTC
+        # --- 3) opponent occlusions via LiDAR footprints, etc.
         for i, agent in enumerate(self.agents):
-            # other agents' poses for any internal logic
+            # update opponents poses etc
             if hasattr(agent, "update_opp_poses"):
                 if i == 0:
                     opp_poses = self.agent_poses[1:, :]
@@ -155,34 +175,33 @@ class Simulator(object):
                     opp_poses = np.concatenate((self.agent_poses[:i, :], self.agent_poses[i+1:, :]), axis=0)
                 agent.update_opp_poses(opp_poses)
 
-            # occlude current scan using other agents' footprints if supported
             if hasattr(agent, "ray_cast_agents"):
                 opp_verts = np.stack([verts[j] for j in range(N) if j != i], axis=0)
                 agent.ray_cast_agents(opp_verts)
-                scans_list[i] = agent.scan  # refresh after occlusion pass
+                scans_list[i] = agent.scan  # refresh occluded scan
 
-            # OR in env/TTC collision set by the agent during scan computation
+            # Already accounted for environment collision via agent.in_collision
             if getattr(agent, "in_collision", False):
                 self.collisions[i] = 1
 
-        # --- 4) vectorize observation fields (fixed shapes for PZ/Gym)
-        scans         = np.stack(scans_list, axis=0).astype(np.float32, copy=False)           # (N, num_beams)
-        poses_x       = self.agent_poses[:, 0].astype(np.float32, copy=False)
-        poses_y       = self.agent_poses[:, 1].astype(np.float32, copy=False)
-        poses_theta   = self.agent_poses[:, 2].astype(np.float32, copy=False)
-        linear_vels_x = np.array([getattr(a, "state", [0,0,0,0,0,0,0])[3] for a in self.agents], dtype=np.float32)
-        linear_vels_y = np.zeros((N,), dtype=np.float32)  # fill if you track lateral speed
-        ang_vels_z    = np.array([getattr(a, "state", [0,0,0,0,0,0,0])[5] for a in self.agents], dtype=np.float32)
+        # --- 4) prepare observation dict
+        scans = np.stack(scans_list, axis=0).astype(np.float32, copy=False)
+        poses_x = self.agent_poses[:, 0].astype(np.float32, copy=False)
+        poses_y = self.agent_poses[:, 1].astype(np.float32, copy=False)
+        poses_theta = self.agent_poses[:, 2].astype(np.float32, copy=False)
+        linear_vels_x = np.array([a.state[3] for a in self.agents], dtype=np.float32)
+        linear_vels_y = np.zeros((N,), dtype=np.float32)  # fill if you have lateral speed
+        ang_vels_z = np.array([a.state[5] for a in self.agents], dtype=np.float32)
 
         obs_dict = {
-            "scans":         scans,
-            "poses_x":       poses_x,
-            "poses_y":       poses_y,
-            "poses_theta":   poses_theta,
+            "scans": scans,
+            "poses_x": poses_x,
+            "poses_y": poses_y,
+            "poses_theta": poses_theta,
             "linear_vels_x": linear_vels_x,
             "linear_vels_y": linear_vels_y,
-            "ang_vels_z":    ang_vels_z,
-            "collisions":    self.collisions.copy(),  # per-step 0/1
+            "ang_vels_z": ang_vels_z,
+            "collisions": self.collisions.copy(),  # per-step 0/1
         }
         return obs_dict
 

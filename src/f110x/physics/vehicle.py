@@ -190,14 +190,14 @@ class RaceCar(object):
         M = opp_verts.shape[0]
         for m in range(M):
             verts = opp_verts[m]  # shape (4,2)
-            # do your ray-casting math here against verts
-            # e.g., compute occlusions, clip new_scan, etc.
+            # TODO: implement occlusion handling so rays that intersect opponent hulls
+            # shorten their measured distances instead of passing through.
 
         self.scan = new_scan
 
     def check_ttc(self, current_scan):
         if current_scan is None or not isinstance(current_scan, np.ndarray) or current_scan.size == 0:
-            self.collision = False
+            self.in_collision = False
             return
         try:
             in_collision = check_ttc_jit(
@@ -205,10 +205,10 @@ class RaceCar(object):
                 self.scan_angles, self.cosines,
                 self.side_distances, self.ttc_thresh
             )
-            self.collision = in_collision
+            self.in_collision = bool(in_collision)
         except Exception as e:
             print(f"[WARN] TTC check failed: {e}")
-            self.collision = False
+            self.in_collision = False
 
     def update_pose(self, raw_steer, vel):
         """
@@ -234,7 +234,7 @@ class RaceCar(object):
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
         
-        if self.integrator is 'RK4':
+        if self.integrator == 'RK4':
             # RK4 integration
             k1 = vehicle_dynamics_st(
                 self.state,
@@ -325,7 +325,7 @@ class RaceCar(object):
             # dynamics integration
             self.state = self.state + self.time_step*(1/6)*(k1 + 2*k2 + 2*k3 + k4)
         
-        elif self.integrator is 'Euler':
+        elif self.integrator == 'Euler':
             f = vehicle_dynamics_st(
                 self.state,
                 np.array([sv, accl]),
@@ -363,8 +363,12 @@ class RaceCar(object):
         scan_pose = np.array([scan_x, scan_y, self.state[4]])
         current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng)
         # current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2],  self.state[4]), self.scan_rng)
+        self.check_ttc(current_scan)
 
-        return current_scan
+        self.scan = current_scan.astype(np.float32, copy=False)
+        return self.scan
+
+
 
     def update_opp_poses(self, opp_poses):
         """
@@ -394,9 +398,13 @@ class RaceCar(object):
 
         if agent_scans is not None and len(agent_scans) > agent_index:
             current_scan = np.array(agent_scans[agent_index], dtype=np.float32)
+            self.check_ttc(current_scan)
         else:
-            # fallback: blank scan (all max range)
-            current_scan = np.full_like(self.scan_angles, self.lidar_range, dtype=np.float32)
+    # compute a real scan at the current pose
+            scan_x = self.state[0] + self.lidar_dist * np.cos(self.state[4])
+            scan_y = self.state[1] + self.lidar_dist * np.sin(self.state[4])
+            scan_pose = np.array([scan_x, scan_y, self.state[4]], dtype=np.float32)
+            current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng).astype(np.float32)
 
         self.scan = current_scan
         if current_scan is not None and current_scan.size > 0:
@@ -405,6 +413,6 @@ class RaceCar(object):
             except Exception as e:
                 # safety fallback: don’t crash environment on TTC errors
                 print(f"[WARN] TTC check failed: {e}")
-                self.collision = False
+                self.in_collision = False
         else:
-            self.collision = False
+            self.in_collision = False

@@ -15,6 +15,7 @@ POLICIES = {
 }
 
 
+# TODO: swap hardcoded absolute paths for project-relative lookups so this script runs outside this repo root.
 with open("/home/aaron/F110_MARL/configs/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 with open("/home/aaron/F110_MARL/scenarios/test.yaml") as f:
@@ -39,6 +40,7 @@ def run_eval(env, policy_fn, episodes=5):
             for aid, r in rewards.items():
                 totals[aid] += r
             done = {aid: terms[aid] or truncs[aid] for aid in env.possible_agents}
+            env.render()
         results.append(totals)
     return results
 

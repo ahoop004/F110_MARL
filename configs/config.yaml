@@ -6,9 +6,10 @@ env:
   integrator: 'RK4'
 
   map_dir: "/home/aaron/F110_MARL/maps"
-  map_yaml: "levine.yaml"
-  map: 'levine.yaml'
+  map_yaml: "Shanghai_map.yaml"
+  map: 'Shanghai_map.yaml'
   map_ext: .png
+  render_mode: 'human'
 
 
 

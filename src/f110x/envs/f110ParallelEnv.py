@@ -71,6 +71,7 @@ class F110ParallelEnv(ParallelEnv):
         
 
 
+# TODO: hook this up to the `vehicle_params` block from config instead of silently falling back to defaults.
         self.params = merged.get("params",
                                  {'mu': 1.0489,
                                   'C_Sf': 4.718,
@@ -118,6 +119,7 @@ class F110ParallelEnv(ParallelEnv):
         self.start_xs = np.zeros((self.n_agents, ))
         self.start_ys = np.zeros((self.n_agents, ))
         self.start_thetas = np.zeros((self.n_agents, ))
+        # TODO: compute a single 2x2 rotation (or per-agent matrices) instead of using an n_agents×n_agents identity.
         self.start_rot = np.eye(self.n_agents, )
 
         # initiate stuff
@@ -219,6 +221,7 @@ class F110ParallelEnv(ParallelEnv):
         
         terminations = {}
         for i, agent in enumerate(self.agents):
+            # TODO: provide `self.target_laps` from scenario/config wiring so this comparison works.
             terminations[agent] = bool(self.collisions[i]) or self.lap_counts[i] >= self.target_laps
 
         return terminations
@@ -249,12 +252,18 @@ class F110ParallelEnv(ParallelEnv):
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses)
+        zero_actions = { aid: np.zeros_like(self.action_space(aid).sample()) 
+                         for aid in self.possible_agents }
+        
+        # TODO: avoid the extra physics step here and make use of the observation returned by `sim.reset`.
+        obs_joint = self.sim.step(self._zero_joint_actions())
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}
         for i, aid in enumerate(self.agents):
             self.render_obs[aid] = {
                 **obs[aid],  # lidar, poses, velocities, collisions
+                # TODO: re-index by agent id so drop-outs don't show another car's lap data.
                 "lap_time":  float(self.lap_times[i]),
                 "lap_count": int(self.lap_counts[i]),
             }
@@ -279,6 +288,7 @@ class F110ParallelEnv(ParallelEnv):
         for i, aid in enumerate(self.agents):
             self.render_obs[aid] = {
                 **obs[aid],  # lidar, poses, velocities, collisions
+                # TODO: re-index by agent id so drop-outs don't show another car's lap data.
                 "lap_time":  float(self.lap_times[i]),
                 "lap_count": int(self.lap_counts[i]),
             }
@@ -380,3 +390,25 @@ class F110ParallelEnv(ParallelEnv):
                     "collisions":    1,  # mark as crashed
                 }
         return out
+    
+    def _zero_joint_actions(self) -> np.ndarray:
+        """
+        Returns a joint action array of shape (n_agents, action_dim)
+        filled with zeros or neutral actions so that sim.step() produces
+        valid observations without causing movement or collisions.
+        """
+
+        # determine dims, using current agents list
+        n = len(self.possible_agents)
+        # assuming actions are 2-dimensional: [steer, throttle]
+        action_dim = 2
+
+        joint = np.zeros((n, action_dim), dtype=np.float32)
+
+        # If your action space has different structure or normalization, adapt here.
+        # For example, if throttle neutral is 0.5, or steer neutral is mid-value.
+        # E.g. if action[1] in [-1,1] means throttle, maybe use 0.
+        # If your action_space sample() method gives a neutral, you can do:
+        #   joint[i] = self.action_space(self.possible_agents[i]).sample() * 0
+        #
+        return joint
