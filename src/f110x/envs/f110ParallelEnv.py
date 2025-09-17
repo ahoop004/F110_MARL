@@ -38,6 +38,7 @@ class F110ParallelEnv(ParallelEnv):
     metadata = {"name": "F110ParallelEnv", "render_modes": ["human", "rgb_array"]}
 
     # rendering
+    # TODO: turn these class-level buffers into instance attributes so multiple envs don't share renderer state.
     renderer = None
     current_obs = None
     render_callbacks = []
@@ -49,6 +50,7 @@ class F110ParallelEnv(ParallelEnv):
         
         self.render_mode = merged.get("render_mode", "human")
         self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}     
+        # TODO: reset per-instance render callback storage instead of sharing the class list.
 
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
@@ -66,6 +68,7 @@ class F110ParallelEnv(ParallelEnv):
         
         self.map_path = (self.map_dir / f"{self.map_name}").resolve()
         self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
+        # TODO: normalize map identifiers so callers can pass bare stem names (e.g. "levine") without extensions.
         # self.map_base = self.yaml_path.with_suffix("")
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
         
@@ -104,6 +107,7 @@ class F110ParallelEnv(ParallelEnv):
             aid: merged.get("terminate_on_collision", True)
             for aid in self.possible_agents
         }
+        # TODO: allow per-agent overrides (e.g. from scenario.yaml) when building termination flags.
     
         # race info
         self.lap_times = np.zeros((self.n_agents, ))
@@ -120,7 +124,9 @@ class F110ParallelEnv(ParallelEnv):
         self.start_ys = np.zeros((self.n_agents, ))
         self.start_thetas = np.zeros((self.n_agents, ))
         # TODO: compute a single 2x2 rotation (or per-agent matrices) instead of using an n_agents×n_agents identity.
+        # TODO: populate start pose caches (start_xs/ys/thetas, start_rot) from `self.start_poses` instead of leaving zeros.
         self.start_rot = np.eye(self.n_agents, )
+        # TODO: expose `self.target_laps` based on config/scenario so lap counting logic can function.
 
         # initiate stuff
         self.sim = Simulator(self.params,
@@ -241,6 +247,8 @@ class F110ParallelEnv(ParallelEnv):
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
         poses = None
+        if self.renderer is not None:
+            self.renderer.reset_state()
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -267,7 +275,7 @@ class F110ParallelEnv(ParallelEnv):
                 "lap_time":  float(self.lap_times[i]),
                 "lap_count": int(self.lap_counts[i]),
             }
-        
+
         infos = {aid: {} for aid in self.agents}
         return obs, infos
 
@@ -278,6 +286,7 @@ class F110ParallelEnv(ParallelEnv):
         
         for i, aid in enumerate(self.agents):
             if aid in actions:
+                # TODO: map actions by index in `self.possible_agents` so car_2's controls don't end up in row 0 when others crash out.
                 joint[i] = np.asarray(actions[aid], dtype=np.float32)
                 
 
@@ -293,6 +302,7 @@ class F110ParallelEnv(ParallelEnv):
                 "lap_count": int(self.lap_counts[i]),
             }
 
+        # TODO: update `self.current_time` and lap counters every step (likely via `_check_done`) before computing rewards.
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep) for aid in self.agents}
 
@@ -304,6 +314,7 @@ class F110ParallelEnv(ParallelEnv):
                 terminations[aid] = collided
             else:
                 terminations[aid] = False
+        # TODO: incorporate `_check_done()` results so laps/timeouts can also terminate episodes.
         
         
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
@@ -337,7 +348,8 @@ class F110ParallelEnv(ParallelEnv):
             # use self.map_path (without extension) and self.map_ext
             self.renderer.update_map(str(self.map_path.with_suffix("")), self.map_ext)
 
-        self.renderer.update_obs(self.render_obs)
+        if self.render_obs:
+            self.renderer.update_obs(self.render_obs)
 
         for render_callback in self.render_callbacks:
             render_callback(self.renderer)
@@ -389,6 +401,7 @@ class F110ParallelEnv(ParallelEnv):
                     "ang_vels_z":    0.0,
                     "collisions":    1,  # mark as crashed
                 }
+        # TODO: attach lap_counts, lap_times, and other scoreboard data promised in `observation_space`.
         return out
     
     def _zero_joint_actions(self) -> np.ndarray:

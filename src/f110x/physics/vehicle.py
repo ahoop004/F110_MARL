@@ -175,6 +175,8 @@ class RaceCar(object):
         self.state[0:2] = pose[0:2]
         self.state[4] = pose[2]
         self.steer_buffer = np.empty((0, ))
+        self._steer_buf.fill(0.0)
+        self._sb_head = 0
         # reset scan random generator
         self.scan_rng = np.random.default_rng(seed=self.seed)
 
@@ -185,15 +187,22 @@ class RaceCar(object):
         Args:
             opp_verts: (M, 4, 2) array of opponent vehicle corner vertices
         """
-        new_scan = self.scan.copy()
+        if opp_verts is None or opp_verts.size == 0:
+            return
 
-        M = opp_verts.shape[0]
-        for m in range(M):
-            verts = opp_verts[m]  # shape (4,2)
-            # TODO: implement occlusion handling so rays that intersect opponent hulls
-            # shorten their measured distances instead of passing through.
+        scan_pose = np.array([
+            self.state[0] + self.lidar_dist * np.cos(self.state[4]),
+            self.state[1] + self.lidar_dist * np.sin(self.state[4]),
+            self.state[4]
+        ], dtype=np.float64)
 
-        self.scan = new_scan
+        # operate on a copy so original scan remains untouched if we exit early
+        new_scan = self.scan.astype(np.float64, copy=False).copy()
+
+        for verts in opp_verts:
+            new_scan = ray_cast(scan_pose, new_scan, RaceCar.scan_angles, np.asarray(verts, dtype=np.float64))
+
+        self.scan = new_scan.astype(np.float32, copy=False)
 
     def check_ttc(self, current_scan):
         if current_scan is None or not isinstance(current_scan, np.ndarray) or current_scan.size == 0:

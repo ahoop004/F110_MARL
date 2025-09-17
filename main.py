@@ -21,6 +21,7 @@ with open("/home/aaron/F110_MARL/configs/config.yaml", "r") as f:
 with open("/home/aaron/F110_MARL/scenarios/test.yaml") as f:
     scenario_cfg = yaml.safe_load(f)
 scenario = scenario_cfg["agents"]
+# TODO: map the scenario metadata (policies, lap goals, termination settings) onto the environment and policy selection.
 
 env = F110ParallelEnv(**cfg["env"])
 

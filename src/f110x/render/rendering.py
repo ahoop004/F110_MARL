@@ -61,27 +61,29 @@ class EnvRenderer(pyglet.window.Window):
         self.map_points = None
         self.map_vlist = None
 
-        # per-agent drawables
+        # per-agent drawables and cached state
         self.cars_vlist = {}       # aid -> vertex_list (GL_QUADS)
         self.scan_hits_vlist = {}  # aid -> vertex_list (GL_POINTS)
-        self.labels = []           # per-agent HUD labels
-        self.agent_ids = []        # order used for camera follow
+        self.agent_infos = {}      # aid -> last render_obs snapshot
+        self.agent_ids = []        # agents updated this frame (sorted)
+        self._camera_target = None
+        self._lidar_angle_cache = {}
 
         # options
         self.lidar_fov = lidar_fov
         self.max_range = max_range
         self.render_scale = 50.0  # meters->pixels
 
-        # HUD
+        # HUD overlays drawn in screen space
         self.fps_display = pyglet.window.FPSDisplay(self)
-        # TODO: move HUD text (agent list, lap info) into a fixed top-left overlay instead of hardcoded offsets.
-        self.score_label = pyglet.text.Label(
+        self.hud_label = pyglet.text.Label(
             'Agents: 0',
-            font_size=18,
-            x=0, y=-800,
-            anchor_x='center', anchor_y='center',
-            color=(255, 255, 255, 255),
-            batch=self.batch
+            font_size=16,
+            x=10,
+            y=height - 10,
+            anchor_x='left',
+            anchor_y='top',
+            color=(255, 255, 255, 255)
         )
 
     # ---------- Map ----------
@@ -128,6 +130,24 @@ class EnvRenderer(pyglet.window.Window):
         )
         self.map_points = pts
 
+    def reset_state(self):
+        for v in self.cars_vlist.values():
+            try:
+                v.delete()
+            except Exception:
+                pass
+        for v in self.scan_hits_vlist.values():
+            try:
+                v.delete()
+            except Exception:
+                pass
+        self.cars_vlist.clear()
+        self.scan_hits_vlist.clear()
+        self.agent_infos.clear()
+        self.agent_ids = []
+        self._camera_target = None
+        self.hud_label.text = 'Agents: 0'
+
     # ---------- Window / Camera ----------
 
     def on_resize(self, width, height):
@@ -139,6 +159,7 @@ class EnvRenderer(pyglet.window.Window):
         self.top = self.zoom_level * height / 2
         self.zoomed_width = self.zoom_level * width
         self.zoomed_height = self.zoom_level * height
+        self.hud_label.y = height - 10
 
     def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
         self.left -= dx * self.zoom_level
@@ -168,8 +189,8 @@ class EnvRenderer(pyglet.window.Window):
     def close(self):
         # explicit closer for env.close()
         try:
-            # TODO: replace with the correct pyglet window close call (e.g. `self.close()`).
-            self.close_window()
+            self.reset_state()
+            super().close()
         except Exception:
             pass
 
@@ -187,47 +208,56 @@ class EnvRenderer(pyglet.window.Window):
         glPointSize(4)
 
         self.batch.draw()
-        self.fps_display.draw()
         self.shader.stop()
+
+        self.fps_display.draw()
+        self.hud_label.draw()
 
     # ---------- Per-Agent Update ----------
 
     def update_obs(self, render_obs: dict):
         """
-        render_obs: {agent_id: {"poses_x","poses_y","poses_theta","scans", optional "lap_time","lap_count"}}
+        render_obs: {agent_id: {"scans","poses_x","poses_y","poses_theta", optional "lap_time","lap_count"}}
         """
-        # maintain stable order for camera follow
-        # TODO: maintain a deterministic ordering (e.g. sort or use env metadata) so overlays don't shuffle frame-to-frame.
-        self.agent_ids = list(render_obs.keys())
+        if render_obs is None:
+            return
 
-        # clear per-step dynamic artifacts
-        for v in self.scan_hits_vlist.values():
-            try:
-                v.delete()
-            except Exception:
-                pass
-        self.scan_hits_vlist.clear()
+        active_ids = sorted(render_obs.keys())
 
-        # remove labels from batch
-        for lbl in self.labels:
-            try:
-                lbl.delete()
-            except Exception:
-                pass
-        self.labels = []
+        for cached in self.agent_infos.values():
+            cached["__active__"] = False
 
-        # ensure car vlist exists per agent; then update positions
-        for aid, st in render_obs.items():
-            # TODO: drop stale vertex lists for agents no longer present to avoid drawing ghost cars.
-            x = float(st["poses_x"])
-            y = float(st["poses_y"])
-            th = float(st["poses_theta"])
+        for aid in active_ids:
+            state = render_obs[aid]
+            cached = self.agent_infos.get(aid, {})
+            for key, value in state.items():
+                if isinstance(value, np.ndarray):
+                    cached[key] = np.array(value, copy=True)
+                else:
+                    cached[key] = value
+            cached["__active__"] = True
+            self.agent_infos[aid] = cached
 
-            # car vertices in pixels
-            verts_np = self.render_scale * get_vertices(np.array([x, y, th]), CAR_LENGTH, CAR_WIDTH)  # (4,2)
-            positions = verts_np.flatten().tolist()
+        if active_ids:
+            self.agent_ids = active_ids
+            self._camera_target = active_ids[0]
+        elif not self.agent_ids and self.agent_infos:
+            self.agent_ids = sorted(self.agent_infos.keys())
+            self._camera_target = self.agent_ids[0]
 
-            if aid not in self.cars_vlist:
+        all_ids = sorted(self.agent_infos.keys())
+
+        for aid in all_ids:
+            st = self.agent_infos[aid]
+            x = float(st.get("poses_x", 0.0))
+            y = float(st.get("poses_y", 0.0))
+            th = float(st.get("poses_theta", 0.0))
+
+            verts_np = self.render_scale * get_vertices(np.array([x, y, th]), CAR_LENGTH, CAR_WIDTH)
+            positions = verts_np.astype(np.float32, copy=False).flatten().tolist()
+
+            car_vlist = self.cars_vlist.get(aid)
+            if car_vlist is None:
                 color = CAR_LEARNER if len(self.cars_vlist) == 0 else CAR_OTHER
                 self.cars_vlist[aid] = self.shader.vertex_list(
                     4, pyglet.gl.GL_QUADS, batch=self.batch, group=self.shader_group,
@@ -235,65 +265,92 @@ class EnvRenderer(pyglet.window.Window):
                     color=('B', color * 4)
                 )
             else:
-                self.cars_vlist[aid].position[:] = positions
+                car_vlist.position[:] = positions
 
-            # lidar endpoints as points
-            scans = np.asarray(st["scans"], dtype=np.float32)
+            scans = st.get("scans")
+            if scans is None:
+                continue
+
+            scans = np.asarray(scans, dtype=np.float32)
             n = scans.shape[0]
-            theta0 = th
-            angles = np.linspace(-self.lidar_fov/2.0, self.lidar_fov/2.0, n) + theta0
+            if n == 0:
+                continue
 
-            xs = (x + scans * np.cos(angles)) * self.render_scale
-            ys = (y + scans * np.sin(angles)) * self.render_scale
+            base_angles = self._lidar_angle_cache.get(n)
+            if base_angles is None:
+                base_angles = np.linspace(-self.lidar_fov / 2.0, self.lidar_fov / 2.0, n, dtype=np.float32)
+                self._lidar_angle_cache[n] = base_angles
 
-            positions_hits = []
-            colors_hits = []
-            for xi, yi, d in zip(xs, ys, scans):
-                positions_hits.extend([xi, yi])
-                if d < self.max_range * 0.99:
-                    colors_hits.extend(LIDAR_COLOR_HIT)
-                else:
-                    colors_hits.extend(LIDAR_COLOR_MAX)
+            beam_angles = base_angles + th
+            cos_vals = np.cos(beam_angles)
+            sin_vals = np.sin(beam_angles)
 
-            self.scan_hits_vlist[aid] = self.shader.vertex_list(
-                n, pyglet.gl.GL_POINTS, batch=self.batch, group=self.shader_group,
-                position=('f', positions_hits),
-                color=('B', colors_hits)
-            )
+            xs = (x + scans * cos_vals) * self.render_scale
+            ys = (y + scans * sin_vals) * self.render_scale
 
-            # per-agent HUD
-            txt = f"{aid}"
-            if "lap_count" in st:
-                txt += f" | lap {int(st['lap_count'])}"
-            if "lap_time" in st:
-                txt += f" | t={float(st['lap_time']):.1f}s"
-            # TODO: replace these per-agent floating labels with a consolidated top-left table showing lap/time per agent.
-            lbl = pyglet.text.Label(
-                txt, x=xs[0] if n > 0 else x*self.render_scale, y=ys[0] + 25 if n > 0 else y*self.render_scale + 25,
-                anchor_x='center', anchor_y='bottom',
-                color=(255, 255, 255, 255), batch=self.batch
-            )
-            self.labels.append(lbl)
+            positions_hits = np.empty(2 * n, dtype=np.float32)
+            positions_hits[0::2] = xs
+            positions_hits[1::2] = ys
 
-        # update HUD summary and camera
-        self.score_label.text = f'Agents: {len(self.agent_ids)}'
+            colors_hits = np.tile(LIDAR_COLOR_MAX, (n, 1)).astype(np.uint8)
+            hit_mask = scans < self.max_range * 0.99
+            colors_hits[hit_mask] = LIDAR_COLOR_HIT
+            colors_hits_flat = colors_hits.reshape(-1)
+
+            scan_vlist = self.scan_hits_vlist.get(aid)
+            if scan_vlist is None or len(scan_vlist.position) != positions_hits.size:
+                if scan_vlist is not None:
+                    try:
+                        scan_vlist.delete()
+                    except Exception:
+                        pass
+                self.scan_hits_vlist[aid] = self.shader.vertex_list(
+                    n, pyglet.gl.GL_POINTS, batch=self.batch, group=self.shader_group,
+                    position=('f', positions_hits.tolist()),
+                    color=('B', colors_hits_flat.tolist())
+                )
+            else:
+                scan_vlist.position[:] = positions_hits.tolist()
+                scan_vlist.color[:] = colors_hits_flat.tolist()
+
+        hud_lines = [f'Agents: {len(all_ids)}']
+        for aid in all_ids:
+            st = self.agent_infos[aid]
+            lap_val = st.get("lap_count")
+            lap_str = "lap ?"
+            if lap_val is not None:
+                try:
+                    lap_str = f"lap {int(lap_val)}"
+                except (ValueError, TypeError):
+                    pass
+
+            time_val = st.get("lap_time")
+            time_str = "t=?"
+            if time_val is not None:
+                try:
+                    time_str = f"t={float(time_val):.1f}s"
+                except (ValueError, TypeError):
+                    pass
+
+            status_suffix = "" if st.get("__active__", False) else " (inactive)"
+            hud_lines.append(f"{aid}: {lap_str} {time_str}{status_suffix}")
+
+        self.hud_label.text = "\n".join(hud_lines)
+
         self._camera_follow_first()
 
     # ---------- Helpers ----------
 
     def _camera_follow_first(self):
-        # follow the first agent deterministically if available
-        if not self.agent_ids:
+        target = self._camera_target
+        if target is None:
             return
-        aid0 = self.agent_ids[0]
-        v = self.cars_vlist.get(aid0, None)
+        v = self.cars_vlist.get(target, None)
         if v is None:
             return
         xs = v.position[::2]
         ys = v.position[1::2]
         top, bottom, left, right = max(ys), min(ys), min(xs), max(xs)
-        self.score_label.x = left
-        self.score_label.y = top - 700
         self.left   = left  - 800
         self.right  = right + 800
         self.top    = top   + 800
@@ -307,8 +364,7 @@ class EnvRenderer(pyglet.window.Window):
         waypoints = df[[0, 1]].values
         def callback(env_renderer: "EnvRenderer"):
             glPointSize(point_size)
-            # TODO: use `env_renderer.render_scale` (or expose a public scale) so this helper stops crashing.
-            pts = (waypoints * env_renderer.scale).flatten().tolist()
+            pts = (waypoints * env_renderer.render_scale).flatten().tolist()
             color = [0, 255, 0]
             if not hasattr(env_renderer, '_centerline_vlist'):
                 n = waypoints.shape[0]
@@ -349,8 +405,7 @@ class EnvRenderer(pyglet.window.Window):
                     colors.extend([255, 255, 255]) # current
                 else:
                     colors.extend([255, 255, 0])   # pending
-            # TODO: use the renderer's actual scaling attribute instead of the missing `scale`.
-            pos = (waypoints * env_renderer.scale).flatten().tolist()
+            pos = (waypoints * env_renderer.render_scale).flatten().tolist()
             env_renderer._waypoints_vlist = env_renderer.shader.vertex_list(
                 num, pyglet.gl.GL_POINTS, batch=env_renderer.batch, group=env_renderer.shader_group,
                 position=('f', pos), color=('B', colors)

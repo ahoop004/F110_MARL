@@ -142,6 +142,7 @@ class Simulator(object):
                 agent.state[3] = 0.0
                 agent.state[5] = 0.0
                 self.collisions[i] = 1  # mark environment collision
+                # TODO: re-run the scan for the reverted pose so lidar data stays consistent with the restored state.
 
             # ensure scan is freshest
             agent.scan = current_scan
@@ -161,6 +162,7 @@ class Simulator(object):
             if self.collisions[i] == 1 or col_flags[i] == 1:
                 self.collisions[i] = 1
             # collision_idx logic: if agent-agent collision, set; if env collision, maybe set to some special id
+            # TODO: distinguish environment collisions in `collision_idx` instead of leaving them at -1.
         self.collision_idx[:] = hit_idx.astype(np.int32, copy=False)
 
         # --- 3) opponent occlusions via LiDAR footprints, etc.
@@ -190,7 +192,7 @@ class Simulator(object):
         poses_y = self.agent_poses[:, 1].astype(np.float32, copy=False)
         poses_theta = self.agent_poses[:, 2].astype(np.float32, copy=False)
         linear_vels_x = np.array([a.state[3] for a in self.agents], dtype=np.float32)
-        linear_vels_y = np.zeros((N,), dtype=np.float32)  # fill if you have lateral speed
+        linear_vels_y = np.zeros((N,), dtype=np.float32)  # TODO: expose real lateral velocity instead of zeros.
         ang_vels_z = np.array([a.state[5] for a in self.agents], dtype=np.float32)
 
         obs_dict = {
@@ -273,4 +275,3 @@ class Simulator(object):
             "collisions":    self.collisions.copy(),
         }
         return obs_dict
-
