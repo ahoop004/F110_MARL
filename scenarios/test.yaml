@@ -1,0 +1,15 @@
+world:
+  name: levine
+agents:
+  - id: A
+    policy: dqn
+    task: {laps: 1, terminate_on_collision: false}
+  - id: B
+    policy: dqn
+    task: {laps: 1, terminate_on_collision: false}
+  - id: C
+    policy: random
+    task: {laps: 1, terminate_on_collision: false}
+  - id: D
+    policy: heuristic
+    task: {laps: 1, terminate_on_collision: false}

@@ -99,6 +99,10 @@ class F110ParallelEnv(ParallelEnv):
         self.poses_y = np.zeros((self.n_agents, ))
         self.poses_theta = np.zeros((self.n_agents, ))
         self.collisions = np.zeros((self.n_agents, ))
+        self.terminate_on_collision = {
+            aid: merged.get("terminate_on_collision", True)
+            for aid in self.possible_agents
+        }
     
         # race info
         self.lap_times = np.zeros((self.n_agents, ))
@@ -283,7 +287,15 @@ class F110ParallelEnv(ParallelEnv):
         rewards = {aid: float(self.timestep) for aid in self.agents}
 
         # terminations/truncations
-        terminations = {aid: bool(obs_joint["collisions"][i]) for i, aid in enumerate(self.possible_agents)}
+        terminations = {}
+        for i, aid in enumerate(self.possible_agents):
+            collided = bool(obs_joint["collisions"][i])
+            if self.terminate_on_collision.get(aid, True):
+                terminations[aid] = collided
+            else:
+                terminations[aid] = False
+        
+        
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
         truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
         infos = {aid: {} for aid in self.possible_agents}
@@ -342,15 +354,29 @@ class F110ParallelEnv(ParallelEnv):
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
         out: Dict[str, Dict[str, np.ndarray]] = {}
-        for i, aid in enumerate(self.agents):  # only live agents
-            out[aid] = {
-                "scans":         joint["scans"][i].astype(np.float32),
-                "poses_x":       np.float32(joint["poses_x"][i]),
-                "poses_y":       np.float32(joint["poses_y"][i]),
-                "poses_theta":   np.float32(joint["poses_theta"][i]),
-                "linear_vels_x": np.float32(joint["linear_vels_x"][i]),
-                "linear_vels_y": np.float32(joint["linear_vels_y"][i]),
-                "ang_vels_z":    np.float32(joint["ang_vels_z"][i]),
-                "collisions":    np.int32(joint["collisions"][i]),
-            }
+        for i, aid in enumerate(self.possible_agents):
+            if i < joint["scans"].shape[0]:
+                # normal agent data
+                out[aid] = {
+                    "scans":         joint["scans"][i].astype(np.float32),
+                    "poses_x":       np.float32(joint["poses_x"][i]),
+                    "poses_y":       np.float32(joint["poses_y"][i]),
+                    "poses_theta":   np.float32(joint["poses_theta"][i]),
+                    "linear_vels_x": np.float32(joint["linear_vels_x"][i]),
+                    "linear_vels_y": np.float32(joint["linear_vels_y"][i]),
+                    "ang_vels_z":    np.float32(joint["ang_vels_z"][i]),
+                    "collisions":    np.int32(joint["collisions"][i]),
+                }
+            else:
+                # fill dummy obs for agents not in sim output
+                out[aid] = {
+                    "scans":         np.zeros(1080, dtype=np.float32),
+                    "poses_x":       0.0,
+                    "poses_y":       0.0,
+                    "poses_theta":   0.0,
+                    "linear_vels_x": 0.0,
+                    "linear_vels_y": 0.0,
+                    "ang_vels_z":    0.0,
+                    "collisions":    1,  # mark as crashed
+                }
         return out
