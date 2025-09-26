@@ -59,38 +59,51 @@ class F110ParallelEnv(ParallelEnv):
         self.integrator = merged.get("integrator", Integrator.RK4)
 
         self.map_dir = Path(merged.get("map_dir", None))
-        self.map_name = merged.get("map", None)
-        self.map_yaml = merged.get("map_yaml", None)
+
+        def _normalize_map_id(identifier: Optional[str]) -> Optional[str]:
+            if identifier is None:
+                return None
+            identifier = str(identifier)
+            return identifier if Path(identifier).suffix else f"{identifier}.yaml"
+
+        raw_map_name = merged.get("map", None)
+        raw_map_yaml = merged.get("map_yaml", None)
         self.map_ext = merged.get("map_ext", ".png")
-        
+
+        self.map_name = _normalize_map_id(raw_map_name)
+        self.map_yaml = _normalize_map_id(raw_map_yaml)
+
+        if self.map_name is None and self.map_yaml is not None:
+            self.map_name = self.map_yaml
+        elif self.map_yaml is None and self.map_name is not None:
+            self.map_yaml = self.map_name
+
         self.map_path = (self.map_dir / f"{self.map_name}").resolve()
         self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
-        # TODO: normalize map identifiers so callers can pass bare stem names (e.g. "levine") without extensions.
-        # self.map_base = self.yaml_path.with_suffix("")
+        self.map_base = self.yaml_path.with_suffix("")
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
-        
-
-
-# TODO: hook this up to the `vehicle_params` block from config instead of silently falling back to defaults.
-        self.params = merged.get("params",
-                                 {'mu': 1.0489,
-                                  'C_Sf': 4.718,
-                                  'C_Sr': 5.4562,
-                                  'lf': 0.15875,
-                                  'lr': 0.17145,
-                                  'h': 0.074,
-                                  'm': 3.74,
-                                  'I': 0.04712,
-                                  's_min': -0.4189,
-                                  's_max': 0.4189,
-                                  'sv_min': -3.2,
-                                  'sv_max': 3.2,
-                                  'v_switch': 7.319,
-                                  'a_max': 9.51,
-                                  'v_min':-5.0,
-                                  'v_max': 20.0,
-                                  'width': 0.31,
-                                  'length': 0.58})
+        defaults = {'mu': 1.0489,
+                    'C_Sf': 4.718,
+                    'C_Sr': 5.4562,
+                    'lf': 0.15875,
+                    'lr': 0.17145,
+                    'h': 0.074,
+                    'm': 3.74,
+                    'I': 0.04712,
+                    's_min': -0.4189,
+                    's_max': 0.4189,
+                    'sv_min': -3.2,
+                    'sv_max': 3.2,
+                    'v_switch': 7.319,
+                    'a_max': 9.51,
+                    'v_min': -5.0,
+                    'v_max': 20.0,
+                    'width': 0.31,
+                    'length': 0.58}
+        vehicle_params = merged.get("vehicle_params")
+        if vehicle_params is None:
+            vehicle_params = merged.get("params")
+        self.params = defaults if vehicle_params is None else {**defaults, **vehicle_params}
         
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
         self.start_thresh: float = float(merged.get("start_thresh", 0.5))
@@ -100,11 +113,65 @@ class F110ParallelEnv(ParallelEnv):
         self.poses_y = np.zeros((self.n_agents, ))
         self.poses_theta = np.zeros((self.n_agents, ))
         self.collisions = np.zeros((self.n_agents, ))
+        default_terminate = bool(merged.get("terminate_on_collision", True))
+        flags = [default_terminate] * self.n_agents
+        agent_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
+
+        scenario_agents = merged.get("agents")
+        if isinstance(scenario_agents, list):
+            for idx, agent_cfg in enumerate(scenario_agents):
+                if idx >= self.n_agents or not isinstance(agent_cfg, dict):
+                    continue
+                for key in ("id", "name", "agent_id"):
+                    alias = agent_cfg.get(key)
+                    if isinstance(alias, str) and alias not in agent_index:
+                        agent_index[alias] = idx
+
+        raw_overrides = merged.get("terminate_on_collision_overrides")
+        if isinstance(raw_overrides, dict):
+            for key, value in raw_overrides.items():
+                if value is None:
+                    continue
+                flag = bool(value)
+                if isinstance(key, int):
+                    if 0 <= key < self.n_agents:
+                        flags[key] = flag
+                else:
+                    idx = agent_index.get(str(key))
+                    if idx is not None:
+                        flags[idx] = flag
+        elif isinstance(raw_overrides, (list, tuple, np.ndarray)):
+            for idx, value in enumerate(raw_overrides):
+                if idx >= self.n_agents or value is None:
+                    continue
+                flags[idx] = bool(value)
+
+        if isinstance(scenario_agents, list):
+            for idx, agent_cfg in enumerate(scenario_agents):
+                if not isinstance(agent_cfg, dict):
+                    continue
+                override = agent_cfg.get("terminate_on_collision")
+                task_cfg = agent_cfg.get("task")
+                if override is None and isinstance(task_cfg, dict):
+                    override = task_cfg.get("terminate_on_collision")
+                if override is None:
+                    continue
+                flag = bool(override)
+                alias_keys: List[str] = []
+                if idx < self.n_agents:
+                    alias_keys.append(self.possible_agents[idx])
+                for key in ("id", "name", "agent_id"):
+                    alias = agent_cfg.get(key)
+                    if isinstance(alias, str):
+                        alias_keys.append(alias)
+                for alias in alias_keys:
+                    mapped = agent_index.get(alias)
+                    if mapped is not None:
+                        flags[mapped] = flag
+
         self.terminate_on_collision = {
-            aid: merged.get("terminate_on_collision", True)
-            for aid in self.possible_agents
+            aid: flags[idx] for idx, aid in enumerate(self.possible_agents)
         }
-        # TODO: allow per-agent overrides (e.g. from scenario.yaml) when building termination flags.
     
         # race info
         self.lap_times = np.zeros((self.n_agents, ))

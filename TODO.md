@@ -4,9 +4,9 @@ Ordered by source location (top of file downward).
 
 ## src/f110x/envs/f110ParallelEnv.py
 
-1. L40-57 — Make renderer buffers (`renderer`, `current_obs`, `render_callbacks`) per-instance.
-2. L58-66 — Reset render callback storage per environment instance.
-3. L71 — Normalize map identifiers so callers can pass bare stems (e.g. `"levine"`).
+<!-- 1. L40-57 — Make renderer buffers (`renderer`, `current_obs`, `render_callbacks`) per-instance. -->
+<!-- 2. L58-66 — Reset render callback storage per environment instance.
+3. L71 — Normalize map identifiers so callers can pass bare stems (e.g. `"levine"`). -->
 4. L79-101 — Wire vehicle parameters to `vehicle_params` config instead of default dict.
 5. L109 — Allow per-agent termination overrides from scenario metadata.
 6. L125-133 — Precompute proper start rotation matrices instead of identity, populate cached start poses from `start_poses`.
