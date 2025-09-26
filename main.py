@@ -55,6 +55,7 @@ env_cfg["map_image_size"] = image_size
 # TODO: map the scenario metadata (policies, lap goals, termination settings) onto the environment and policy selection.
 
 env = F110ParallelEnv(**cfg["env"])
+# TODO: wire this script into MARLlib training entrypoints (env creator, experiment config, baseline runners).
 
 def run_eval(env, policy_fn, episodes=5):
     results = []

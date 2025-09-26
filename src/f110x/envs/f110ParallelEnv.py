@@ -342,6 +342,7 @@ class F110ParallelEnv(ParallelEnv):
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
         }
+        # TODO: expose MARLlib env registration helpers (env_info, policy mapping) so trainers can auto-configure agents.
         
         
     def __del__(self):
@@ -450,6 +451,7 @@ class F110ParallelEnv(ParallelEnv):
 
         obs_joint = self.sim.step(joint)
         obs = self._split_obs(obs_joint)
+        # TODO: emit a centralized state tensor alongside per-agent obs for MARLlib centralized training pipelines.
         self._update_state(obs_joint)
         self.render_obs = {}
         agent_index = self._agent_id_to_index
