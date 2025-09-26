@@ -461,7 +461,8 @@ class F110ParallelEnv(ParallelEnv):
                 "lap_count": int(self.lap_counts[idx]),
             }
 
-        # TODO: update `self.current_time` and lap counters every step (likely via `_check_done`) before computing rewards.
+        self.current_time += self.timestep
+        self._check_done()
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep) for aid in self.agents}
 
