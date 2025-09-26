@@ -231,9 +231,12 @@ class F110ParallelEnv(ParallelEnv):
         start_angles = np.zeros(self.n_agents, dtype=np.float32)
         if self.start_thetas.size == self.n_agents:
             start_angles[:] = np.asarray(self.start_thetas, dtype=np.float32)
-        if self.start_poses.ndim == 2 and self.start_poses.shape[1] >= 3:
-            count = min(self.n_agents, self.start_poses.shape[0])
-            start_angles[:count] = self.start_poses[:count, 2]
+        start_pose_array = None
+        if self.start_poses.size > 0:
+            start_pose_array = np.atleast_2d(self.start_poses)
+            if start_pose_array.shape[1] >= 3:
+                count = min(self.n_agents, start_pose_array.shape[0])
+                start_angles[:count] = start_pose_array[:count, 2]
 
         if start_angles.size == 0:
             self.start_rot = np.eye(2, dtype=np.float32)
@@ -255,8 +258,18 @@ class F110ParallelEnv(ParallelEnv):
             rot[:, 1, 0] = sin_vals
             rot[:, 1, 1] = cos_vals
             self.start_rot = rot
-        # TODO: populate start pose caches (start_xs/ys/thetas, start_rot) from `self.start_poses` instead of leaving zeros.
-        # TODO: expose `self.target_laps` based on config/scenario so lap counting logic can function.
+        if start_pose_array is not None:
+            count = min(self.n_agents, start_pose_array.shape[0])
+            if count:
+                cols = start_pose_array.shape[1]
+                if cols >= 1:
+                    self.start_xs[:count] = start_pose_array[:count, 0]
+                if cols >= 2:
+                    self.start_ys[:count] = start_pose_array[:count, 1]
+                if cols >= 3:
+                    self.start_thetas[:count] = start_pose_array[:count, 2]
+                else:
+                    self.start_thetas[:count] = start_angles[:count]
 
         # initiate stuff
         self.sim = Simulator(self.params,
@@ -410,11 +423,6 @@ class F110ParallelEnv(ParallelEnv):
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses)
-        zero_actions = { aid: np.zeros_like(self.action_space(aid).sample()) 
-                         for aid in self.possible_agents }
-        
-        # TODO: avoid the extra physics step here and make use of the observation returned by `sim.reset`.
-        obs_joint = self.sim.step(self._zero_joint_actions())
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}

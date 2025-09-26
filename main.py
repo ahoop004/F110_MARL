@@ -4,13 +4,15 @@ import yaml
 import numpy as np
 from PIL import Image
 from f110x.envs import F110ParallelEnv
+from policies.random_policy import random_policy
+from policies.simple_heuristic import simple_heuristic
 
-def random_policy(action_space, obs):
-    return action_space.sample()
+# def random_policy(action_space, obs):
+#     return action_space.sample()
 
-def simple_heuristic(action_space,obs):
-    # Example: small forward velocity, no steer
-    return np.array([0.0, 1.0], dtype=np.float32)
+# def simple_heuristic(action_space,obs):
+#     # Example: small forward velocity, no steer
+#     return np.array([0.0, 1.0], dtype=np.float32)
 
 POLICIES = {
     "random": random_policy,
