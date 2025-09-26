@@ -172,6 +172,47 @@ class F110ParallelEnv(ParallelEnv):
         self.terminate_on_collision = {
             aid: flags[idx] for idx, aid in enumerate(self.possible_agents)
         }
+
+        raw_target_laps = merged.get("target_laps")
+        if raw_target_laps is None:
+            raw_target_laps = merged.get("laps")
+        target_laps_val: Optional[int] = None
+        if raw_target_laps is not None:
+            try:
+                parsed = int(raw_target_laps)
+            except (TypeError, ValueError):
+                parsed = 0
+            if parsed > 0:
+                target_laps_val = parsed
+
+        if target_laps_val is None and isinstance(scenario_agents, list):
+            max_agent_laps = 0
+            for agent_cfg in scenario_agents:
+                if not isinstance(agent_cfg, dict):
+                    continue
+                candidate = agent_cfg.get("target_laps")
+                if candidate is None:
+                    candidate = agent_cfg.get("laps")
+                if candidate is None:
+                    task_cfg = agent_cfg.get("task")
+                    if isinstance(task_cfg, dict):
+                        candidate = task_cfg.get("target_laps")
+                        if candidate is None:
+                            candidate = task_cfg.get("laps")
+                if candidate is None:
+                    continue
+                try:
+                    laps_val = int(candidate)
+                except (TypeError, ValueError):
+                    continue
+                if laps_val > max_agent_laps:
+                    max_agent_laps = laps_val
+            if max_agent_laps > 0:
+                target_laps_val = max_agent_laps
+
+        if target_laps_val is None or target_laps_val <= 0:
+            target_laps_val = 1
+        self.target_laps: int = int(target_laps_val)
     
         # race info
         self.lap_times = np.zeros((self.n_agents, ))
@@ -187,9 +228,34 @@ class F110ParallelEnv(ParallelEnv):
         self.start_xs = np.zeros((self.n_agents, ))
         self.start_ys = np.zeros((self.n_agents, ))
         self.start_thetas = np.zeros((self.n_agents, ))
-        # TODO: compute a single 2x2 rotation (or per-agent matrices) instead of using an n_agents×n_agents identity.
+        start_angles = np.zeros(self.n_agents, dtype=np.float32)
+        if self.start_thetas.size == self.n_agents:
+            start_angles[:] = np.asarray(self.start_thetas, dtype=np.float32)
+        if self.start_poses.ndim == 2 and self.start_poses.shape[1] >= 3:
+            count = min(self.n_agents, self.start_poses.shape[0])
+            start_angles[:count] = self.start_poses[:count, 2]
+
+        if start_angles.size == 0:
+            self.start_rot = np.eye(2, dtype=np.float32)
+        elif np.allclose(start_angles, start_angles[0]):
+            angle = float(start_angles[0])
+            cos_a = float(np.cos(angle))
+            sin_a = float(np.sin(angle))
+            self.start_rot = np.array(
+                [[cos_a, -sin_a],
+                 [sin_a,  cos_a]],
+                dtype=np.float32,
+            )
+        else:
+            cos_vals = np.cos(start_angles).astype(np.float32)
+            sin_vals = np.sin(start_angles).astype(np.float32)
+            rot = np.empty((self.n_agents, 2, 2), dtype=np.float32)
+            rot[:, 0, 0] = cos_vals
+            rot[:, 0, 1] = -sin_vals
+            rot[:, 1, 0] = sin_vals
+            rot[:, 1, 1] = cos_vals
+            self.start_rot = rot
         # TODO: populate start pose caches (start_xs/ys/thetas, start_rot) from `self.start_poses` instead of leaving zeros.
-        self.start_rot = np.eye(self.n_agents, )
         # TODO: expose `self.target_laps` based on config/scenario so lap counting logic can function.
 
         # initiate stuff
@@ -281,7 +347,13 @@ class F110ParallelEnv(ParallelEnv):
         
         poses_x = np.array(self.poses_x) - self.start_xs
         poses_y = np.array(self.poses_y) - self.start_ys
-        delta_pt = np.dot(self.start_rot, np.stack((poses_x, poses_y), axis=0))
+        offsets = np.stack((poses_x, poses_y), axis=-1).astype(np.float32, copy=False)
+        rotation = self.start_rot
+        if rotation.ndim == 2:
+            delta_pt = rotation @ offsets.T
+        else:
+            rotated = np.einsum("aij,aj->ai", rotation, offsets)
+            delta_pt = rotated.T
         temp_y = delta_pt[1, :]
         temp_y = delta_pt[1,:]
         idx1 = temp_y > left_t
@@ -304,9 +376,9 @@ class F110ParallelEnv(ParallelEnv):
                 self.lap_times[i] = self.current_time
         
         terminations = {}
+        target_laps = self.target_laps
         for i, agent in enumerate(self.agents):
-            # TODO: provide `self.target_laps` from scenario/config wiring so this comparison works.
-            terminations[agent] = bool(self.collisions[i]) or self.lap_counts[i] >= self.target_laps
+            terminations[agent] = bool(self.collisions[i]) or self.lap_counts[i] >= target_laps
 
         return terminations
 

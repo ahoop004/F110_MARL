@@ -7,9 +7,9 @@ Ordered by source location (top of file downward).
 <!-- 1. L40-57 — Make renderer buffers (`renderer`, `current_obs`, `render_callbacks`) per-instance. -->
 <!-- 2. L58-66 — Reset render callback storage per environment instance.
 3. L71 — Normalize map identifiers so callers can pass bare stems (e.g. `"levine"`). -->
-4. L79-101 — Wire vehicle parameters to `vehicle_params` config instead of default dict.
+<!-- 4. L79-101 — Wire vehicle parameters to `vehicle_params` config instead of default dict.
 5. L109 — Allow per-agent termination overrides from scenario metadata.
-6. L125-133 — Precompute proper start rotation matrices instead of identity, populate cached start poses from `start_poses`.
+6. L125-133 — Precompute proper start rotation matrices instead of identity, populate cached start poses from `start_poses`. -->
 7. L134 — Expose `self.target_laps` via config/scenario wiring for lap counting.
 8. L243 — Supply `self.target_laps` when computing terminations.
 9. L279 — Remove redundant physics step during reset; use observation returned by `sim.reset`.
