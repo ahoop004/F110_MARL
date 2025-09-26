@@ -462,21 +462,26 @@ class F110ParallelEnv(ParallelEnv):
             }
 
         self.current_time += self.timestep
-        self._check_done()
+        done_flags = self._check_done()
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep) for aid in self.agents}
 
         # terminations/truncations
         terminations = {}
-        for i, aid in enumerate(self.possible_agents):
-            collided = bool(obs_joint["collisions"][i])
-            if self.terminate_on_collision.get(aid, True):
-                terminations[aid] = collided
-            else:
-                terminations[aid] = False
-        # TODO: incorporate `_check_done()` results so laps/timeouts can also terminate episodes.
-        
-        
+        collisions = obs_joint["collisions"]
+        target_laps = self.target_laps
+        terminate_on_collision = self.terminate_on_collision
+        agent_index = self._agent_id_to_index
+        for aid in self.possible_agents:
+            idx = agent_index[aid]
+            collided = bool(collisions[idx])
+            laps_done = self.lap_counts[idx] >= target_laps
+            extra_done = done_flags.get(aid, False)
+            collision_done = collided and terminate_on_collision.get(aid, True)
+            non_collision_done = laps_done or (extra_done and not collided)
+            terminations[aid] = collision_done or non_collision_done
+
+
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
         truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
         infos = {aid: {} for aid in self.possible_agents}
