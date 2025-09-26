@@ -53,6 +53,7 @@ class F110ParallelEnv(ParallelEnv):
         self.max_steps: int = int(merged.get("max_steps", 5000))
         self.n_agents: int = int(merged.get("n_agents", 2))
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
+        self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
         self.agents = self.possible_agents.copy()
    
         self.timestep: float = float(merged.get("timestep", 0.01))
@@ -426,38 +427,38 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}
-        for i, aid in enumerate(self.agents):
+        agent_index = self._agent_id_to_index
+        for aid in self.agents:
+            idx = agent_index[aid]
             self.render_obs[aid] = {
                 **obs[aid],  # lidar, poses, velocities, collisions
-                # TODO: re-index by agent id so drop-outs don't show another car's lap data.
-                "lap_time":  float(self.lap_times[i]),
-                "lap_count": int(self.lap_counts[i]),
+                "lap_time":  float(self.lap_times[idx]),
+                "lap_count": int(self.lap_counts[idx]),
             }
 
         infos = {aid: {} for aid in self.agents}
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
-       
+
         joint = np.zeros((self.n_agents, 2), dtype=np.float32)
-       
-        
-        for i, aid in enumerate(self.agents):
+        agent_index = self._agent_id_to_index
+        for aid in self.agents:
             if aid in actions:
-                # TODO: map actions by index in `self.possible_agents` so car_2's controls don't end up in row 0 when others crash out.
-                joint[i] = np.asarray(actions[aid], dtype=np.float32)
+                joint[agent_index[aid]] = np.asarray(actions[aid], dtype=np.float32)
                 
 
         obs_joint = self.sim.step(joint)
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}
-        for i, aid in enumerate(self.agents):
+        agent_index = self._agent_id_to_index
+        for aid in self.agents:
+            idx = agent_index[aid]
             self.render_obs[aid] = {
                 **obs[aid],  # lidar, poses, velocities, collisions
-                # TODO: re-index by agent id so drop-outs don't show another car's lap data.
-                "lap_time":  float(self.lap_times[i]),
-                "lap_count": int(self.lap_counts[i]),
+                "lap_time":  float(self.lap_times[idx]),
+                "lap_count": int(self.lap_counts[idx]),
             }
 
         # TODO: update `self.current_time` and lap counters every step (likely via `_check_done`) before computing rewards.
