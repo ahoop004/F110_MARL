@@ -1,5 +1,5 @@
 # src/f110x/__init__.py
-from f110x import envs, physics, render, utils, wrappers
+from f110x import envs, physics, render, utils, wrappers, tasks
 
 from gymnasium.envs.registration import register, registry
 

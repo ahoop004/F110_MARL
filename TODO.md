@@ -4,7 +4,7 @@ Ordered by source location (top of file downward).
 
 ## src/f110x/envs/f110ParallelEnv.py
 
-1. L345 — Expose MARLlib env registration helpers (env_info, policy mapping) so trainers can auto-configure agents.
+<!-- 1. L345 — Expose MARLlib env registration helpers (env_info, policy mapping) so trainers can auto-configure agents. -->
 2. L454 — Emit a centralized state tensor alongside per-agent obs for MARLlib centralized training pipelines.
 3. L602 — Attach lap_counts, lap_times, and other scoreboard data promised in `observation_space`.
 

@@ -4,8 +4,8 @@ import yaml
 import numpy as np
 from PIL import Image
 from f110x.envs import F110ParallelEnv
-from policies.random_policy import random_policy
-from policies.simple_heuristic import simple_heuristic
+from f110x.tasks.random_policy import random_policy
+from f110x.tasks.simple_heuristic import simple_heuristic
 
 # def random_policy(action_space, obs):
 #     return action_space.sample()
@@ -23,7 +23,7 @@ POLICIES = {
 
 with open("configs/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
-with open("scenarios/test.yaml") as f:
+with open("scenarios/single_attacker.yaml") as f:
     scenario_cfg = yaml.safe_load(f)
 scenario = scenario_cfg["agents"]
 env_cfg = cfg["env"]

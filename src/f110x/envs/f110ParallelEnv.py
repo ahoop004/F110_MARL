@@ -52,6 +52,16 @@ class F110ParallelEnv(ParallelEnv):
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
         self.n_agents: int = int(merged.get("n_agents", 2))
+        self._central_state_keys = (
+            "poses_x",
+            "poses_y",
+            "poses_theta",
+            "linear_vels_x",
+            "linear_vels_y",
+            "ang_vels_z",
+            "collisions",
+        )
+        self._central_state_dim = self.n_agents * len(self._central_state_keys)
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
         self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
         self.agents = self.possible_agents.copy()
@@ -334,6 +344,7 @@ class F110ParallelEnv(ParallelEnv):
             "collisions":    spaces.Discrete(2),
             "lap_times":     spaces.Box(0.0, 1e5, shape=(), dtype=np.float32),
             "lap_counts":    spaces.Box(0, 10, shape=(), dtype=np.float32),
+            "state":         spaces.Box(-np.inf, np.inf, shape=(self._central_state_dim,), dtype=np.float32),
         })
         
         self.observation_spaces = {
@@ -426,6 +437,7 @@ class F110ParallelEnv(ParallelEnv):
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses)
         obs = self._split_obs(obs_joint)
+        self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}
         agent_index = self._agent_id_to_index
@@ -451,7 +463,7 @@ class F110ParallelEnv(ParallelEnv):
 
         obs_joint = self.sim.step(joint)
         obs = self._split_obs(obs_joint)
-        # TODO: emit a centralized state tensor alongside per-agent obs for MARLlib centralized training pipelines.
+        self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
         self.render_obs = {}
         agent_index = self._agent_id_to_index
@@ -572,6 +584,33 @@ class F110ParallelEnv(ParallelEnv):
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
+
+    def _central_state_tensor(self, joint: Dict[str, np.ndarray]) -> np.ndarray:
+        n = self.n_agents
+        central = np.zeros((self._central_state_dim,), dtype=np.float32)
+        if n == 0:
+            return central
+
+        span = n
+        offset = 0
+        for key in self._central_state_keys:
+            arr = joint.get(key)
+            if arr is None:
+                offset += span
+                continue
+            view = np.asarray(arr, dtype=np.float32).reshape(-1)
+            if view.size >= span:
+                central[offset:offset + span] = view[:span]
+            else:
+                central[offset:offset + view.size] = view
+            offset += span
+        return central
+
+    def _attach_central_state(self, obs: Dict[str, Dict[str, np.ndarray]], joint: Dict[str, np.ndarray]) -> None:
+        central_state = self._central_state_tensor(joint)
+        for aid in self.possible_agents:
+            if aid in obs:
+                obs[aid]["state"] = central_state
 
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
