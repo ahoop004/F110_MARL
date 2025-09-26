@@ -1,75 +1,45 @@
-# Now (MVP path)
+# TODO Backlog
 
-- [ ] Physics core in src/physics/ lifted & cleaned (no RL deps)
-    - [ ] dynamic_models.py
+Ordered by source location (top of file downward).
 
-    - [ ] collision_models.py
-        - [ ] GJK iteration cap: reduce from 1e3 to ~32–64; avoid stalls on degeneracies while preserving convergence. (GJK should converge fast for 2D quads; temporal coherence helps.)
-        - [ ] Robust eps checks: replace exact zero checks with small epsilon (e.g., 1e-9 to 1e-12) around direction norms/simplex transitions.
-        - [ ] Temporal coherence (optional): seed each pair’s next-frame search direction with the previous separating axis to cut iterations.
-        - [ ] Broad phase (future, if N grows): add sweep-and-prune (or grid hashing) to prune O(N²) pairs before GJK; incremental sort leverages coherence.
-        - [ ] Edge/point touching policy: define whether grazing contact counts as collision and test it (edge–edge, point–edge).
-        - [ ] Penetration depth (later): if needed for penalties or response, add EPA or SAT fallback to retrieve depth/normal.
-        - [ ] Stress & margin tests: (a) tiny gap vs tiny overlap; (b) rotation sweep; (c) randomized convex quads; assert average iterations < threshold and no NaNs.
+## src/f110x/envs/f110ParallelEnv.py
 
-    - [ ] laser_models.py
-    - [ ] base_classes.py
-        - [ ] vehicle.py
-        - [ ] simulation.py
-    - [ ] Simulator.reset(spawn_poses) → obs_dict
+1. L40-57 — Make renderer buffers (`renderer`, `current_obs`, `render_callbacks`) per-instance.
+2. L58-66 — Reset render callback storage per environment instance.
+3. L71 — Normalize map identifiers so callers can pass bare stems (e.g. `"levine"`).
+4. L79-101 — Wire vehicle parameters to `vehicle_params` config instead of default dict.
+5. L109 — Allow per-agent termination overrides from scenario metadata.
+6. L125-133 — Precompute proper start rotation matrices instead of identity, populate cached start poses from `start_poses`.
+7. L134 — Expose `self.target_laps` via config/scenario wiring for lap counting.
+8. L243 — Supply `self.target_laps` when computing terminations.
+9. L279 — Remove redundant physics step during reset; use observation returned by `sim.reset`.
+10. L287 & L313 — Re-index render/state bookkeeping by agent id so surviving agents keep consistent data.
+11. L302 — Map actions by agent id to avoid misalignment after crashes.
+12. L319 — Advance `self.current_time`, lap counters, and `_check_done()` each step before rewards.
+13. L331 — Merge `_check_done()` outputs into termination logic.
+14. L452 — Attach promised lap timing/count data in infos/observations.
 
-    - [ ]  Simulator.step(actions_env) → obs_dict
+## src/f110x/physics/simulaton.py
 
- - [ ] Collision flags per-step (not cumulative)
+15. L145 — Re-run LiDAR after penetration rollback so scans match reverted pose.
+16. L165 — Encode environment collisions distinctly in `collision_idx`.
+17. L195 — Expose real lateral velocity instead of zero placeholder.
 
- - [ ] ObservationBuilder in src/wrappers/ (fixed shape; LiDAR↓sample, ego, relatives)
+## src/f110x/physics/laser_models.py
 
- - [ ] ActionWrapper in src/wrappers/ (Box[-1,1]^2  <--> (steer, vel) bounds from configs/config.yaml)
+18. L394 — Decide on image preprocessing policy (flip, grayscale expectations) and document/enforce it.
+19. L395 — Validate map image specification and raise helpful errors on mismatch.
 
- - [ ] Roles & scripted policies in src/wrappers/ or src/utils/ (target, benign, idle, gap_follow)
+## main.py
 
- - [ ] PettingZoo ParallelEnv in src/envs/f110_MARL_env.py
+20. Map scenario metadata (policies, lap goals, termination settings) onto environment/policy selection.
 
- - [ ] reset() → (obs, infos) per agent
+## configs/config.yaml
 
- - [ ] step(actions) → (obs, rewards, terminations, truncations, infos)
+21. Provide explicit `map_image` path once asset layout is fixed to enable cache priming.
 
- - [ ] Rewards module (role-aware; big bonus if any target crashes; safety shaping)
+## Stable-Baselines Integration (new work)
 
-# Next (dev UX & quality)
+22. Build SB3-compatible wrappers for observation, reward, and action shaping.
+23. Create policy directory with controllers such as `gap_follow` and `waypoint_follow`.
 
- - [ ] Renderer (optional) in src/render/ with overlays; import-guarded
-
- - [ ] Config loader/validator; single configs/config.yaml (maps, lidar, action bounds, roles)
-
-- [ ] Tests
-
-    - [ ] Physics tick determinism & forced crash case
-
-    - [ ] Obs shape/finite checks for N=1..4
-
-    - [ ] PZ API conformance (spaces stable; dict keys)
-
-    - [ ] Reward & termination semantics (per-agent term; time-limit trunc)
-
- - [ ] Example rollouts (examples/) + minimal README usage
-
-# Later (polish & tooling)
-
- - [ ] Optional Gym single-agent shim for SB3
-
- - [ ] CI (lint + unit tests)
-
- - [ ] Benchmarks (steps/sec with/without rendering)
-
- - [ ] Docs: architecture diagram, interfaces, config reference
-
- - [ ] Issue templates (bug/feature/chore) & PR template
-
-# Admin links (fill in)
-
-Project board: <add GitHub Projects view>
-
-Labels: type:feat, type:fix, type:chore, area:physics, area:env, prio:p0/p1/p2
-
-Milestones: v0.1 MVP, v0.2 Perf, v0.3 Docs

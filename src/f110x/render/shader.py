@@ -11,11 +11,13 @@ in vec3 color;
 out vec3 frag_color;
 
 uniform mat4 projection;
+uniform float point_size;
 
 void main()
 {
     frag_color = color;
     gl_Position = projection * vec4(position, 0.0, 1.0);
+    gl_PointSize = point_size;
 }
 """
 

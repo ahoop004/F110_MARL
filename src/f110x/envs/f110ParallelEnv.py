@@ -38,11 +38,6 @@ class F110ParallelEnv(ParallelEnv):
     metadata = {"name": "F110ParallelEnv", "render_modes": ["human", "rgb_array"]}
 
     # rendering
-    # TODO: turn these class-level buffers into instance attributes so multiple envs don't share renderer state.
-    renderer = None
-    current_obs = None
-    render_callbacks = []
-
     def __init__(self, **kwargs):
       
         env_config = kwargs.get("env", {})
@@ -50,7 +45,9 @@ class F110ParallelEnv(ParallelEnv):
         
         self.render_mode = merged.get("render_mode", "human")
         self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}     
-        # TODO: reset per-instance render callback storage instead of sharing the class list.
+        self.renderer: Optional[EnvRenderer] = None
+        self.current_obs = None
+        self.render_callbacks: List[Any] = []
 
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
@@ -61,9 +58,9 @@ class F110ParallelEnv(ParallelEnv):
         self.timestep: float = float(merged.get("timestep", 0.01))
         self.integrator = merged.get("integrator", Integrator.RK4)
 
-        self.map_dir = Path(merged.get("map_dir", "./maps"))
-        self.map_name = merged.get("map", "levine")
-        self.map_yaml = merged.get("map_yaml", "levine")
+        self.map_dir = Path(merged.get("map_dir", None))
+        self.map_name = merged.get("map", None)
+        self.map_yaml = merged.get("map_yaml", None)
         self.map_ext = merged.get("map_ext", ".png")
         
         self.map_path = (self.map_dir / f"{self.map_name}").resolve()
@@ -137,19 +134,33 @@ class F110ParallelEnv(ParallelEnv):
         
         self.sim.set_map(str(self.yaml_path), self.map_ext)
         
-        with open(self.map_path, "r") as f:
-            meta = yaml.safe_load(f)
-        R = float(meta.get("resolution", 1.0)) 
-        x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
+        meta = merged.get("map_meta")
+        if meta is None:
+            with open(self.map_path, "r") as f:
+                meta = yaml.safe_load(f)
+
+        preloaded_image_path = merged.get("map_image_path")
         image_rel = meta.get("image")
-        if image_rel:
+        if preloaded_image_path is not None:
+            img_path = Path(preloaded_image_path).resolve()
+        elif image_rel:
             img_path = (self.map_path.parent / image_rel).resolve()
         else:
             img_filename = merged.get("map_image", None)
             img_path = (self.map_dir / img_filename).resolve()
 
-        img = Image.open(img_path)
-        width, height = img.size
+        image_size = merged.get("map_image_size")
+        if image_size is not None:
+            width, height = map(int, image_size)
+        else:
+            with Image.open(img_path) as img:
+                width, height = img.size
+
+        self.map_meta = meta
+        self.map_image_path = img_path
+
+        R = float(meta.get("resolution", 1.0))
+        x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
         x_min = x0
         x_max = x0 + width * R
         y_min = y0
@@ -328,8 +339,36 @@ class F110ParallelEnv(ParallelEnv):
         return obs, rewards, terminations, truncations, infos
 
     def update_map(self, map_path, map_ext):
+        path = Path(map_path).resolve()
 
-        self.sim.set_map(map_path, map_ext)
+        self.map_dir = path.parent
+        self.map_ext = map_ext
+        self.map_name = path.name
+        self.map_yaml = path.name
+        self.map_path = path
+        self.yaml_path = path
+
+        with open(path, "r") as f:
+            meta = yaml.safe_load(f)
+
+        image_rel = meta.get("image")
+        if image_rel:
+            img_path = (path.parent / image_rel).resolve()
+        else:
+            img_path = path.with_suffix(map_ext)
+
+        self.map_meta = meta
+        self.map_image_path = img_path
+
+        self.sim.set_map(str(path), map_ext)
+
+        if self.renderer is not None:
+            self.renderer.update_map(
+                str(path.with_suffix("")),
+                map_ext,
+                map_meta=self.map_meta,
+                map_image_path=self.map_image_path,
+            )
 
     def update_params(self, params, index=-1):
 
@@ -346,7 +385,12 @@ class F110ParallelEnv(ParallelEnv):
                                         lidar_fov=4.7,
                                         max_range=30.0)
             # use self.map_path (without extension) and self.map_ext
-            self.renderer.update_map(str(self.map_path.with_suffix("")), self.map_ext)
+            self.renderer.update_map(
+                str(self.map_path.with_suffix("")),
+                self.map_ext,
+                map_meta=self.map_meta,
+                map_image_path=self.map_image_path,
+            )
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)

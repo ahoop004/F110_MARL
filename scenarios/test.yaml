@@ -1,15 +1,10 @@
 world:
-  name: levine
+  name: line_map
 agents:
   - id: A
-    policy: dqn
-    task: {laps: 1, terminate_on_collision: false}
+    policy: crash_target
+    task: {laps: 1, target_id: B, terminate_on_collision: false}
   - id: B
-    policy: dqn
+    policy: gap_follow
     task: {laps: 1, terminate_on_collision: false}
-  - id: C
-    policy: random
-    task: {laps: 1, terminate_on_collision: false}
-  - id: D
-    policy: heuristic
-    task: {laps: 1, terminate_on_collision: false}
+  

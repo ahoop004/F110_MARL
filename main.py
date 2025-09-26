@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import yaml
 import numpy as np
+from PIL import Image
 from f110x.envs import F110ParallelEnv
 
 def random_policy(action_space, obs):
@@ -15,12 +18,38 @@ POLICIES = {
 }
 
 
-# TODO: swap hardcoded absolute paths for project-relative lookups so this script runs outside this repo root.
-with open("/home/aaron/F110_MARL/configs/config.yaml", "r") as f:
+
+with open("configs/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
-with open("/home/aaron/F110_MARL/scenarios/test.yaml") as f:
+with open("scenarios/test.yaml") as f:
     scenario_cfg = yaml.safe_load(f)
 scenario = scenario_cfg["agents"]
+env_cfg = cfg["env"]
+map_dir = Path(env_cfg.get("map_dir", ""))
+map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
+if map_yaml_name is None:
+    raise ValueError("config.env must define map_yaml or map")
+
+map_yaml_path = (map_dir / map_yaml_name).expanduser().resolve()
+with open(map_yaml_path, "r") as map_file:
+    map_meta = yaml.safe_load(map_file)
+
+image_rel = map_meta.get("image")
+fallback_image = env_cfg.get("map_image")
+if image_rel:
+    image_path = (map_yaml_path.parent / image_rel).resolve()
+elif fallback_image:
+    image_path = (map_dir / fallback_image).expanduser().resolve()
+else:
+    map_ext = env_cfg.get("map_ext", ".png")
+    image_path = map_yaml_path.with_suffix(map_ext)
+
+with Image.open(image_path) as map_img:
+    image_size = map_img.size
+
+env_cfg["map_meta"] = map_meta
+env_cfg["map_image_path"] = str(image_path)
+env_cfg["map_image_size"] = image_size
 # TODO: map the scenario metadata (policies, lap goals, termination settings) onto the environment and policy selection.
 
 env = F110ParallelEnv(**cfg["env"])
