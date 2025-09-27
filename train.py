@@ -286,10 +286,10 @@ def _parse_args() -> ExperimentSpec:
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--max-steps", type=int, default=10_000)
     parser.add_argument("--algo", type=str, choices=("ppo", "scripted"), default=None)
-    parser.add_argument("--updates", type=int, default=None)
-    parser.add_argument("--rollout-steps", type=int, default=None)
+    parser.add_argument("--updates", type=int, default=10)
+    parser.add_argument("--rollout-steps", type=int, default=1000)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     return ExperimentSpec(
         args.config.expanduser(),
