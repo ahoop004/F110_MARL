@@ -3,7 +3,7 @@ import numpy as np
 class RewardWrapper:
     def __init__(self,
                  mode="basic",
-                 collision_penalty=-150.0,   # much harsher ego crash penalty
+                 collision_penalty=-350.0,   # much harsher ego crash penalty
                  alive_bonus=0.01,
                  progress_scale=0.1,         # de-emphasize raw forward motion
                  spin_penalty=0.55,
@@ -39,9 +39,11 @@ class RewardWrapper:
         self.prev_thetas.clear()
         self.prev_target_dists.clear()
 
-    def __call__(self, obs, agent_id, reward, done, info):
+    def __call__(self, obs, agent_id, reward, done, info, *, all_obs=None):
         ego_obs = obs[agent_id]
         x, y, theta = ego_obs["pose"]
+
+        # target_collision = ego_obs[]"target_collision"]
 
         # --- displacement ---
         prev = self.prev_positions.get(agent_id, (x, y))
@@ -76,7 +78,7 @@ class RewardWrapper:
         # --- survival penalties ---
         if ego_obs["collision"]:
     # already penalized, don't give pursuit reward
-            shaped += 0.0
+            shaped += self.collision_penalty
         
 
         if dist < 0.05 and dtheta > self.spin_thresh:
@@ -98,7 +100,14 @@ class RewardWrapper:
                 self.prev_target_dists[agent_id] = target_dist
 
             # --- target-near-wall bonus ---
-            tgt_obs = obs.get("car_1")  # assumes ego=car_0, target=car_1
+            tgt_obs = None
+            if all_obs and len(all_obs) > 1:
+                for other_id, other_obs in all_obs.items():
+                    if other_id != agent_id:
+                        tgt_obs = other_obs
+                        break
+            if tgt_obs is None:
+                tgt_obs = obs.get("car_1")
             if tgt_obs and "scans" in tgt_obs:
                 tgt_min_scan = float(np.min(tgt_obs["scans"]))
                 if tgt_min_scan < self.safe_dist:

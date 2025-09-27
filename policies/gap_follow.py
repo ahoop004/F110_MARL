@@ -82,7 +82,14 @@ class FollowTheGapPolicy:
 
         # 4. Index → steering
         offset = (best - center_idx) / center_idx   # -1..+1
-        steering = offset * self.steering_gain * self.max_steer
+        min_scan = float(np.min(scan))
+        panic_factor = 1.0
+        if min_scan < 2.0:        # within 2m
+            panic_factor = 2.0    # double steering gain
+        if min_scan < 1.0:        # within 1m
+            panic_factor = 3.0    # triple steering gain
+
+        steering = offset * self.steering_gain * panic_factor * self.max_steer
         steering = np.clip(steering, -self.max_steer, self.max_steer)
 
         # 5. Speed schedule from forward clearance

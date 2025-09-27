@@ -4,7 +4,7 @@ env:
   max_steps: 5000
   timestep: 0.01
   integrator: 'RK4'
-  render_interval: 10
+  render_interval: 1
   update: 1
 
   map_dir: "maps"
@@ -43,6 +43,10 @@ env:
   start_poses:
     - [0.0, 0.0, 0.0]
     - [2.0, 0.5, 0.0]
+  start_pose_jitter:
+    pos: 0.35        # meters of uniform positional jitter per axis
+    heading: 0.2     # radians of uniform heading jitter
+    min_distance: 0.7 # minimum separation between agents after jitter
 
 mode: "mixed"
 ppo_agent_idx: 0   # choose which agent runs PPO

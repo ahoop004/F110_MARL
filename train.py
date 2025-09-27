@@ -48,6 +48,55 @@ env_cfg["map_image_size"] = image_size
 # Environment
 env = F110ParallelEnv(**env_cfg)
 
+base_start_poses = None
+start_pose_jitter_cfg = env_cfg.get("start_pose_jitter", {})
+jitter_pos = float(start_pose_jitter_cfg.get("pos", 0.0))
+jitter_heading = float(start_pose_jitter_cfg.get("heading", 0.0))
+min_sep = float(start_pose_jitter_cfg.get("min_distance", 0.0))
+jitter_max_attempts = max(1, int(start_pose_jitter_cfg.get("max_attempts", 5)))
+if env_cfg.get("start_poses"):
+    base_start_poses = np.asarray(env_cfg["start_poses"], dtype=np.float32)
+    if base_start_poses.ndim == 1:
+        base_start_poses = np.expand_dims(base_start_poses, axis=0)
+
+
+def sample_start_poses():
+    if base_start_poses is None or base_start_poses.size == 0:
+        return None
+
+    for _ in range(jitter_max_attempts):
+        jittered = base_start_poses.copy()
+        if jitter_pos > 0.0:
+            noise = np.random.uniform(-jitter_pos, jitter_pos, size=jittered[:, :2].shape).astype(np.float32)
+            jittered[:, :2] = base_start_poses[:, :2] + noise
+        if jitter_heading > 0.0:
+            theta_noise = np.random.uniform(-jitter_heading, jitter_heading, size=(jittered.shape[0],)).astype(np.float32)
+            jittered[:, 2] = base_start_poses[:, 2] + theta_noise
+        if jitter_heading > 0.0:
+            jittered[:, 2] = np.mod(jittered[:, 2] + np.pi, 2 * np.pi) - np.pi
+
+        if min_sep <= 0.0 or jittered.shape[0] <= 1:
+            return jittered
+
+        diffs = jittered[:, None, :2] - jittered[None, :, :2]
+        dists = np.linalg.norm(diffs, axis=-1)
+        np.fill_diagonal(dists, np.inf)
+        if np.all(dists >= min_sep):
+            return jittered
+
+    return base_start_poses.copy()
+
+
+def reset_env_with_jitter(environment):
+    for _ in range(jitter_max_attempts):
+        jittered = sample_start_poses()
+        options = {"poses": jittered} if jittered is not None else None
+        obs, infos = environment.reset(options=options)
+        collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
+        if not any(collisions):
+            return obs, infos
+    return environment.reset()
+
 # -------------------------------------------------------------------
 # Initialize wrappers & policies
 # -------------------------------------------------------------------
@@ -149,7 +198,7 @@ def run_mixed(env, episodes=5):
     best_return = float("-inf")
 
     for ep in range(episodes):
-        obs, infos = env.reset()
+        obs, infos = reset_env_with_jitter(env)
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
         reward_wrapper = get_curriculum_reward(ep)
@@ -190,7 +239,8 @@ def run_mixed(env, episodes=5):
                         aid,
                         rewards.get(aid, 0.0),
                         done=terms.get(aid, False) or truncs.get(aid, False),
-                        info=infos.get(aid, {})
+                        info=infos.get(aid, {}),
+                        all_obs=next_obs,
                     )
                 totals[aid] = totals.get(aid, 0.0) + shaped
                 shaped_rewards[aid] = shaped
