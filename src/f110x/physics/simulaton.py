@@ -215,19 +215,12 @@ class Simulator(object):
 
         # --- 4) prepare observation dict
         scans = np.stack(scans_list, axis=0).astype(np.float32, copy=False)
-        scans = np.nan_to_num(scans, nan=0.0, posinf=0.0, neginf=0.0)
         poses_x = self.agent_poses[:, 0].astype(np.float32, copy=False)
         poses_y = self.agent_poses[:, 1].astype(np.float32, copy=False)
         poses_theta = self.agent_poses[:, 2].astype(np.float32, copy=False)
         linear_vels_x = np.array([a.state[3] for a in self.agents], dtype=np.float32)
         linear_vels_y = np.array([a.state[3] * np.sin(a.state[6]) for a in self.agents], dtype=np.float32)
         ang_vels_z = np.array([a.state[5] for a in self.agents], dtype=np.float32)
-
-        # numerical safety – replace NaN/Inf before exposing to agents
-        linear_vels_x = np.nan_to_num(linear_vels_x, nan=0.0, posinf=0.0, neginf=0.0)
-        linear_vels_y = np.nan_to_num(linear_vels_y, nan=0.0, posinf=0.0, neginf=0.0)
-        ang_vels_z = np.nan_to_num(ang_vels_z, nan=0.0, posinf=0.0, neginf=0.0)
-        np.clip(ang_vels_z, -200.0, 200.0, out=ang_vels_z)
 
         obs_dict = {
             "scans": scans,

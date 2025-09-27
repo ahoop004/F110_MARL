@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
 import torch
@@ -132,6 +132,8 @@ class PPOTrainer:
         env,
         config: PPOConfig | None = None,
         *,
+        trainable_agents: Iterable[str],
+        scripted_policies: Dict[str, Any] | None = None,
         render: bool = False,
         render_every: int = 1,
     ) -> None:
@@ -144,11 +146,30 @@ class PPOTrainer:
             np.random.seed(int(config.seed))
 
         self.env = env
-        representative_agent = env.possible_agents[0]
+        self._scripted_policies: Dict[str, Any] = dict(scripted_policies or {})
+        self._rl_agents: Tuple[str, ...] = tuple(trainable_agents)
+        if not self._rl_agents:
+            raise ValueError("PPOTrainer requires at least one trainable agent")
+        self._rl_set = set(self._rl_agents)
+
+        representative_agent = self._rl_agents[0]
         obs_space = env.observation_space(representative_agent)
         action_space = env.action_space(representative_agent)
         if not isinstance(action_space, Box):
             raise TypeError("PPOTrainer expects Box action spaces")
+
+        self._obs_spaces = {aid: env.observation_space(aid) for aid in self._rl_agents}
+        self._action_spaces = {}
+        self._action_bounds: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        for aid in self._rl_agents:
+            space = env.action_space(aid)
+            if not isinstance(space, Box):
+                raise TypeError("PPOTrainer expects Box action spaces for RL agents")
+            self._action_spaces[aid] = space
+            self._action_bounds[aid] = (
+                np.asarray(space.low, dtype=np.float32),
+                np.asarray(space.high, dtype=np.float32),
+            )
 
         device_str = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
         if isinstance(device_str, str) and device_str.lower().startswith("cuda") and not torch.cuda.is_available():
@@ -172,27 +193,27 @@ class PPOTrainer:
             eps=config.adam_eps,
         )
 
-        self._flat_obs_space = obs_space
-        self._flatten_obs = lambda observation: space_utils.flatten(
-            self._flat_obs_space, observation
-        ).astype(np.float32, copy=False)
-
-        self._action_low = action_space.low
-        self._action_high = action_space.high
-
         self._need_reset = True
         self._render = bool(render)
         self._render_every = max(1, int(render_every))
         self._step_counter = 0
+
+    def _reset_scripted(self) -> None:
+        for policy in self._scripted_policies.values():
+            reset_fn = getattr(policy, "reset", None)
+            if callable(reset_fn):
+                reset_fn()
 
     def collect_rollout(self) -> Tuple[RolloutBuffer, Dict[str, List[float]]]:
         buffer = RolloutBuffer()
         episode_returns: Dict[str, List[float]] = defaultdict(list)
 
         if self._need_reset:
+            self._reset_scripted()
             obs, _ = self.env.reset(seed=self.config.seed)
             self._need_reset = False
         else:
+            self._reset_scripted()
             obs, _ = self.env.reset()
 
         while len(buffer) < self.config.rollout_steps:
@@ -206,19 +227,27 @@ class PPOTrainer:
                     agent_obs = obs.get(aid)
                     if agent_obs is None:
                         continue
-                    obs_vec = self._flatten_obs(agent_obs)
-                    obs_tensor = torch.as_tensor(obs_vec, device=self.device)
-                    with torch.no_grad():
-                        clipped, log_prob, value, raw_action = self.policy.act(obs_tensor)
+                    if aid in self._rl_set:
+                        obs_vec = space_utils.flatten(self._obs_spaces[aid], agent_obs).astype(np.float32, copy=False)
+                        obs_tensor = torch.as_tensor(obs_vec, device=self.device)
+                        with torch.no_grad():
+                            clipped, log_prob, value, raw_action = self.policy.act(obs_tensor)
 
-                    cached[aid] = {
-                        "obs": obs_vec,
-                        "log_prob": log_prob.item(),
-                        "value": value.item(),
-                        "action": raw_action.detach().cpu().numpy(),
-                    }
-                    action_np = clipped.detach().cpu().numpy()
-                    actions[aid] = np.clip(action_np, self._action_low, self._action_high)
+                        cached[aid] = {
+                            "obs": obs_vec,
+                            "log_prob": log_prob.item(),
+                            "value": value.item(),
+                            "action": raw_action.detach().cpu().numpy(),
+                        }
+                        action_np = clipped.detach().cpu().numpy()
+                        low, high = self._action_bounds[aid]
+                        actions[aid] = np.clip(action_np, low, high)
+                    else:
+                        policy = self._scripted_policies.get(aid)
+                        if policy is not None:
+                            actions[aid] = policy.compute_action(agent_obs, self.env.action_space(aid))
+                        else:
+                            actions[aid] = self.env.action_space(aid).sample()
 
                 next_obs, rewards, terminations, truncations, _ = self.env.step(actions)
                 self._step_counter += 1
@@ -252,6 +281,7 @@ class PPOTrainer:
             if len(buffer) >= self.config.rollout_steps:
                 break
 
+            self._reset_scripted()
             obs, _ = self.env.reset()
 
         return buffer, episode_returns

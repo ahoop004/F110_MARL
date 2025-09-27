@@ -951,9 +951,9 @@ class F110ParallelEnv(ParallelEnv):
 
             if "lidar" in sensors:
                 if has_entry:
-                    lidar_reading = self._select_lidar(np.asarray(scans[i], dtype=np.float32))
+                    lidar_reading = np.asarray(scans[i], dtype=np.float32)
                 else:
-                    lidar_reading = np.zeros((self._lidar_beam_count,), dtype=np.float32)
+                    lidar_reading = np.zeros((scans.shape[1] if isinstance(scans, np.ndarray) and scans.ndim == 2 else self._lidar_beam_count,), dtype=np.float32)
                 agent_obs["lidar"] = lidar_reading
                 agent_obs["scans"] = lidar_reading
 

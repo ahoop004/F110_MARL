@@ -206,21 +206,21 @@ def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v)
     if current_speed > 0.:
         if vel_diff > 0:
             # accelerate
-            kp = 5.0 * max_a / max_v
+            kp = 7.5 * max_a / max_v
             accl = kp * vel_diff
         else:
             # braking
-            kp = 5.0 * max_a / (-min_v)
+            kp = 6.0 * max_a / (-min_v)
             accl = kp * vel_diff
     # currently backwards
     else:
         if vel_diff > 0:
             # braking
-            kp = 1.5 * max_a / max_v
+            kp = 2.5 * max_a / max_v
             accl = kp * vel_diff
         else:
             # accelerating
-            kp = 1.5 * max_a / (-min_v)
+            kp = 2.5 * max_a / (-min_v)
             accl = kp * vel_diff
 
     return accl, sv
