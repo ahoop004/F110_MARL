@@ -26,7 +26,11 @@ class ObsWrapper:
             scan = scan / self.max_scan
 
         # Ego features
+        # After getting pose and target
         pose = np.array(ego_obs["pose"], dtype=np.float32)  # [x, y, theta]
+        pose[:2] /= self.max_scan   # normalize x,y roughly to LiDAR scale
+        pose[2] = np.sin(pose[2])   # replace angle with sin(theta) or sin/cos encoding
+
         ego = np.concatenate([pose, [float(ego_obs["collision"])]], dtype=np.float32)
 
         # Target features (if available in obs)

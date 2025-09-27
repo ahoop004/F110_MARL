@@ -10,8 +10,8 @@ class RewardWrapper:
                  spin_thresh=np.pi/6,
                  pursuit_scale=0.1,
                  herd_bonus=10.0,
-                 reverse_penalty=1.0,
-                 speed_scale=0.05):
+                 reverse_penalty=0.2,
+                 speed_scale=0.1):
         """
         mode: "basic", "pursuit", "adversarial"
 

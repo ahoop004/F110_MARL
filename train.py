@@ -17,6 +17,8 @@ with open("configs/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
 env_cfg = cfg["env"]
+render_interval = env_cfg.get("render_interval", 0) 
+update_after = env_cfg.get('update',1)
 
 # Map setup
 map_dir = Path(env_cfg.get("map_dir", ""))
@@ -110,7 +112,7 @@ if checkpoint_path.exists():
         print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
     except Exception as exc:  # pragma: no cover - defensive load guard
         print(f"[WARN] Failed to load PPO checkpoint at {checkpoint_path}: {exc}")
-
+best_path = checkpoint_dir / "ppo_best.pt"
 print(f"[INFO] PPO agent: {PPO_AGENT}, Gap-follow agent: {GAP_AGENT}")
 print(f"[INFO] Obs dim: {obs_dim}, Act dim: {act_dim}")
 
@@ -147,6 +149,7 @@ def run_mixed(env, episodes=5):
         reward_wrapper = get_curriculum_reward(ep)
         episode_steps = 0
         collision_history = []
+        best_return = float("-inf")
 
         while True:
             actions = {}
@@ -222,17 +225,38 @@ def run_mixed(env, episodes=5):
             if collision_happened or all(done.values()):
                 break
 
-            env.render()
+            if render_interval and (ep % render_interval == 0):
+                env.render()
 
         results.append(totals)
-        ppo_agent.update()
+         # as before
+        if (ep + 1) % update_after == 0:
+            ppo_agent.update()
+        ppo_return = totals[PPO_AGENT]
+        if ep + 1 > 10 and ppo_return > best_return:
+            best_return = ppo_return
+            ppo_agent.save(str(best_path))
+            print(f"[INFO] New best model saved at episode {ep+1} with return {ppo_return:.2f}")
+
 
         collision_report = ",".join(sorted(set(collision_history))) if collision_history else "none"
-        print(
-            f"[EP {ep + 1:03d}/{episodes}] mode={reward_wrapper.mode} steps={episode_steps} "
-            f"collision={collision_report} return_ppo={totals.get(PPO_AGENT, 0.0):.2f} "
-            f"return_gap={totals.get(GAP_AGENT, 0.0):.2f}"
-        )
+        # Determine end cause
+        end_cause = []
+        if collision_history:
+            end_cause.append("collision")
+        for aid in done:
+            if terms.get(aid, False):
+                end_cause.append(f"term:{aid}")
+            if truncs.get(aid, False):
+                end_cause.append(f"trunc:{aid}")
+        if not end_cause:
+            end_cause.append("unknown")
+        cause_str = ",".join(end_cause)
+
+        print(f"[EP {ep+1:03d}/{episodes}] mode={reward_wrapper.mode} "
+            f"steps={episode_steps} cause={cause_str} "
+            f"return_ppo={totals[PPO_AGENT]:.2f} return_gap={totals[GAP_AGENT]:.2f}")
+
 
     return results
 
