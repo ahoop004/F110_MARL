@@ -33,6 +33,15 @@ from pyglet import image as pyg_img
 WINDOW_W = 1000
 WINDOW_H = 800
 
+DEFAULT_AGENT_SENSORS = (
+    "lidar",
+    "pose",
+    "velocity",
+    "angular_velocity",
+    "lap",
+    "collision",
+)
+
 class F110ParallelEnv(ParallelEnv):
 
     metadata = {"name": "F110ParallelEnv", "render_modes": ["human", "rgb_array"]}
@@ -116,6 +125,15 @@ class F110ParallelEnv(ParallelEnv):
             vehicle_params = merged.get("params")
         self.params = defaults if vehicle_params is None else {**defaults, **vehicle_params}
         
+        self.lidar_beams = int(merged.get("lidar_beams", 360))
+        if self.lidar_beams <= 0:
+            self.lidar_beams = 1080
+        self.lidar_range = float(merged.get("lidar_range", 30.0))
+        self._lidar_beam_count = max(int(self.lidar_beams), 1)
+        self._lidar_indices: Optional[np.ndarray] = None
+
+        self._raw_scenario_agents = merged.get("agents")
+
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
         self.start_thresh: float = float(merged.get("start_thresh", 0.5))
         
@@ -124,15 +142,27 @@ class F110ParallelEnv(ParallelEnv):
         self.poses_y = np.zeros((self.n_agents, ))
         self.poses_theta = np.zeros((self.n_agents, ))
         self.collisions = np.zeros((self.n_agents, ))
+        self.linear_vels_x_prev = np.zeros((self.n_agents,), dtype=np.float32)
+        self.linear_vels_x_curr = np.zeros((self.n_agents,), dtype=np.float32)
+        self.linear_vels_y_prev = np.zeros((self.n_agents,), dtype=np.float32)
+        self.linear_vels_y_curr = np.zeros((self.n_agents,), dtype=np.float32)
+        self.angular_vels_prev = np.zeros((self.n_agents,), dtype=np.float32)
+        self.angular_vels_curr = np.zeros((self.n_agents,), dtype=np.float32)
+        self._velocity_initialized = False
+
+        self._agent_configs: List[Optional[Dict[str, Any]]] = [None] * self.n_agents
+        self._agent_sensor_spec: Dict[str, Tuple[str, ...]] = {}
+        self._agent_target_index: Dict[str, Optional[int]] = {}
         default_terminate = bool(merged.get("terminate_on_collision", True))
         flags = [default_terminate] * self.n_agents
         agent_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
 
-        scenario_agents = merged.get("agents")
+        scenario_agents = self._raw_scenario_agents
         if isinstance(scenario_agents, list):
             for idx, agent_cfg in enumerate(scenario_agents):
                 if idx >= self.n_agents or not isinstance(agent_cfg, dict):
                     continue
+                self._agent_configs[idx] = agent_cfg
                 for key in ("id", "name", "agent_id"):
                     alias = agent_cfg.get(key)
                     if isinstance(alias, str) and alias not in agent_index:
@@ -184,6 +214,8 @@ class F110ParallelEnv(ParallelEnv):
             aid: flags[idx] for idx, aid in enumerate(self.possible_agents)
         }
 
+        self._initialize_agent_sensors(agent_index)
+
         raw_target_laps = merged.get("target_laps")
         if raw_target_laps is None:
             raw_target_laps = merged.get("laps")
@@ -224,7 +256,7 @@ class F110ParallelEnv(ParallelEnv):
         if target_laps_val is None or target_laps_val <= 0:
             target_laps_val = 1
         self.target_laps: int = int(target_laps_val)
-    
+
         # race info
         self.lap_times = np.zeros((self.n_agents, ))
         self.lap_counts = np.zeros((self.n_agents, ))
@@ -323,37 +355,59 @@ class F110ParallelEnv(ParallelEnv):
         y_min = y0
         y_max = y0 + height * R
 
+        self._build_observation_spaces(x_min, x_max, y_min, y_max)
+
         # stateful observations for rendering
         self.render_obs = None
-        
+
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
             high=np.array([self.params["s_max"], self.params["v_max"]], dtype=np.float32),
             dtype=np.float32,
         )
- 
-        
-        self._single_observation_space = spaces.Dict({
-            "scans":         spaces.Box(0.0, 30.0, shape=(1080,), dtype=np.float32),
-            "poses_x":       spaces.Box(x_min, x_max, shape=(), dtype=np.float32),
-            "poses_y":       spaces.Box(y_min, y_max, shape=(), dtype=np.float32),
-            "poses_theta":   spaces.Box(-np.pi, np.pi, shape=(), dtype=np.float32),
-            "linear_vels_x": spaces.Box(self.params["v_min"], self.params["v_max"], shape=(), dtype=np.float32),
-            "linear_vels_y": spaces.Box(self.params["v_min"], self.params["v_max"], shape=(), dtype=np.float32),
-            "ang_vels_z":    spaces.Box(0.0, 10.0, shape=(), dtype=np.float32),
-            "collisions":    spaces.Discrete(2),
-            "lap_times":     spaces.Box(0.0, 1e5, shape=(), dtype=np.float32),
-            "lap_counts":    spaces.Box(0, 10, shape=(), dtype=np.float32),
-            "state":         spaces.Box(-np.inf, np.inf, shape=(self._central_state_dim,), dtype=np.float32),
-        })
-        
-        self.observation_spaces = {
-            aid: self._single_observation_space for aid in self.possible_agents
-        }
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
         }
-        # TODO: expose MARLlib env registration helpers (env_info, policy mapping) so trainers can auto-configure agents.
+        default_policy_id = str(merged.get("default_policy_id", "default_policy"))
+        agent_policy_map: Dict[str, str] = {}
+        policy_order: List[str] = []
+
+        def _record_policy(aid: str, policy_id: Optional[str]) -> None:
+            policy_key = str(policy_id) if isinstance(policy_id, str) and policy_id else default_policy_id
+            agent_policy_map[aid] = policy_key
+            if policy_key not in policy_order:
+                policy_order.append(policy_key)
+
+        if isinstance(scenario_agents, list):
+            for idx, agent_cfg in enumerate(scenario_agents):
+                if idx >= self.n_agents or not isinstance(agent_cfg, dict):
+                    continue
+                policy_key: Optional[str] = None
+                for key in ("policy_id", "policy", "policy_name"):
+                    value = agent_cfg.get(key)
+                    if isinstance(value, str) and value:
+                        policy_key = value
+                        break
+                if policy_key is None:
+                    task_cfg = agent_cfg.get("task")
+                    if isinstance(task_cfg, dict):
+                        for key in ("policy_id", "policy", "policy_name"):
+                            value = task_cfg.get(key)
+                            if isinstance(value, str) and value:
+                                policy_key = value
+                                break
+                _record_policy(self.possible_agents[idx], policy_key)
+
+        for aid in self.possible_agents:
+            if aid not in agent_policy_map:
+                _record_policy(aid, None)
+
+        if not policy_order:
+            policy_order.append(default_policy_id)
+
+        self._default_policy_id = default_policy_id
+        self._agent_policy_mapping = agent_policy_map
+        self._policy_ids = tuple(policy_order)
         
         
     def __del__(self):
@@ -365,6 +419,27 @@ class F110ParallelEnv(ParallelEnv):
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
+
+    def env_info(self) -> Dict[str, Any]:
+        return {
+            "possible_agents": tuple(self.possible_agents),
+            "num_agents": self.n_agents,
+            "observation_space": self._single_observation_space,
+            "action_space": self._single_action_space,
+            "observation_spaces": dict(self.observation_spaces),
+            "action_spaces": dict(self.action_spaces),
+            "state_space": self._state_space,
+            "policies": self._policy_ids,
+            "default_policy": self._default_policy_id,
+            "policy_mapping": self.policy_mapping(),
+            "policy_mapping_fn": self.policy_mapping_fn,
+        }
+
+    def policy_mapping(self) -> Dict[str, str]:
+        return dict(self._agent_policy_mapping)
+
+    def policy_mapping_fn(self, agent_id: str, *_, **__) -> str:
+        return self._agent_policy_mapping.get(agent_id, self._default_policy_id)
 
     def _check_done(self):
 
@@ -410,10 +485,30 @@ class F110ParallelEnv(ParallelEnv):
 
     def _update_state(self, obs_dict):
 
-        self.poses_x = obs_dict['poses_x']
-        self.poses_y = obs_dict['poses_y']
-        self.poses_theta = obs_dict['poses_theta']
-        self.collisions = obs_dict['collisions']
+        poses_x = np.asarray(obs_dict['poses_x'], dtype=np.float32)
+        poses_y = np.asarray(obs_dict['poses_y'], dtype=np.float32)
+        poses_theta = np.asarray(obs_dict['poses_theta'], dtype=np.float32)
+        collisions = np.asarray(obs_dict['collisions'], dtype=np.float32)
+
+        zeros_n = np.zeros((self.n_agents,), dtype=np.float32)
+        linear_vels_x = np.asarray(obs_dict.get('linear_vels_x', zeros_n), dtype=np.float32)
+        linear_vels_y = np.asarray(obs_dict.get('linear_vels_y', zeros_n), dtype=np.float32)
+        ang_vels_z = np.asarray(obs_dict.get('ang_vels_z', zeros_n), dtype=np.float32)
+
+        self.poses_x = poses_x
+        self.poses_y = poses_y
+        self.poses_theta = poses_theta
+        self.collisions = collisions
+
+        self.linear_vels_x_prev = self.linear_vels_x_curr.copy()
+        self.linear_vels_y_prev = self.linear_vels_y_curr.copy()
+        self.angular_vels_prev = self.angular_vels_curr.copy()
+
+        self.linear_vels_x_curr = linear_vels_x
+        self.linear_vels_y_curr = linear_vels_y
+        self.angular_vels_curr = ang_vels_z
+
+        self._velocity_initialized = True
 
    
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
@@ -422,6 +517,19 @@ class F110ParallelEnv(ParallelEnv):
             self.rng = np.random.default_rng(seed)
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
+        self.current_time = 0.0
+        self.lap_counts.fill(0.0)
+        self.lap_times.fill(0.0)
+        self.toggle_list.fill(0.0)
+        self.near_start = True
+        self.near_starts.fill(True)
+        self.linear_vels_x_prev.fill(0.0)
+        self.linear_vels_x_curr.fill(0.0)
+        self.linear_vels_y_prev.fill(0.0)
+        self.linear_vels_y_curr.fill(0.0)
+        self.angular_vels_prev.fill(0.0)
+        self.angular_vels_curr.fill(0.0)
+        self._velocity_initialized = False
         poses = None
         if self.renderer is not None:
             self.renderer.reset_state()
@@ -442,12 +550,25 @@ class F110ParallelEnv(ParallelEnv):
         self.render_obs = {}
         agent_index = self._agent_id_to_index
         for aid in self.agents:
+
             idx = agent_index[aid]
-            self.render_obs[aid] = {
-                **obs[aid],  # lidar, poses, velocities, collisions
+            render_entry = {
+                "poses_x": float(self.poses_x[idx]),
+                "poses_y": float(self.poses_y[idx]),
+                "poses_theta": float(self.poses_theta[idx]),
+                "pose": np.array([
+                    float(self.poses_x[idx]),
+                    float(self.poses_y[idx]),
+                    float(self.poses_theta[idx])
+                ], dtype=np.float32),
                 "lap_time":  float(self.lap_times[idx]),
                 "lap_count": int(self.lap_counts[idx]),
+                "collision": bool(self.collisions[idx])
             }
+            if "lidar" in obs[aid]:
+                render_entry["lidar"] = obs[aid]["lidar"]
+                render_entry["scans"] = obs[aid]["lidar"]
+            self.render_obs[aid] = render_entry
 
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -469,11 +590,23 @@ class F110ParallelEnv(ParallelEnv):
         agent_index = self._agent_id_to_index
         for aid in self.agents:
             idx = agent_index[aid]
-            self.render_obs[aid] = {
-                **obs[aid],  # lidar, poses, velocities, collisions
+            render_entry = {
+                "poses_x": float(self.poses_x[idx]),
+                "poses_y": float(self.poses_y[idx]),
+                "poses_theta": float(self.poses_theta[idx]),
+                "pose": np.array([
+                    float(self.poses_x[idx]),
+                    float(self.poses_y[idx]),
+                    float(self.poses_theta[idx])
+                ], dtype=np.float32),
                 "lap_time":  float(self.lap_times[idx]),
                 "lap_count": int(self.lap_counts[idx]),
+                "collision": bool(self.collisions[idx])
             }
+            if "lidar" in obs[aid]:
+                render_entry["lidar"] = obs[aid]["lidar"]
+                render_entry["scans"] = obs[aid]["lidar"]
+            self.render_obs[aid] = render_entry
 
         self.current_time += self.timestep
         done_flags = self._check_done()
@@ -585,6 +718,164 @@ class F110ParallelEnv(ParallelEnv):
             self.renderer.close()
             self.renderer = None
 
+    def _initialize_agent_sensors(self, agent_index: Dict[str, int]) -> None:
+        alias_map = {
+            "laps": "lap",
+            "lap_count": "lap",
+            "lap_counts": "lap",
+            "lap_times": "lap",
+            "crash": "collision",
+            "crashes": "collision",
+            "collisions": "collision",
+            "poses": "pose",
+            "position": "pose",
+            "positions": "pose",
+            "vel": "velocity",
+            "velocities": "velocity",
+            "speed": "velocity",
+            "angular_vel": "angular_velocity",
+            "omega": "angular_velocity",
+        }
+
+        if not self._agent_sensor_spec:
+            self._agent_sensor_spec = {}
+        sensors_default = tuple(DEFAULT_AGENT_SENSORS)
+
+        for idx, aid in enumerate(self.possible_agents):
+            cfg = self._agent_configs[idx] if idx < len(self._agent_configs) else None
+            sensors = list(sensors_default)
+            target_idx: Optional[int] = None
+
+            if isinstance(cfg, dict):
+                raw_sensors: Optional[Any] = None
+                vehicle_cfg = cfg.get("vehicle")
+                if isinstance(vehicle_cfg, dict):
+                    raw_sensors = vehicle_cfg.get("sensors")
+                if raw_sensors is None:
+                    raw_sensors = cfg.get("sensors")
+
+                values: Optional[List[str]] = None
+                if isinstance(raw_sensors, (list, tuple)):
+                    values = [str(entry) for entry in raw_sensors if isinstance(entry, (str, bytes))]
+                elif isinstance(raw_sensors, (str, bytes)):
+                    values = [str(raw_sensors)]
+
+                if values is not None:
+                    sensors = []
+                    for item in values:
+                        key = item.strip().lower()
+                        key = alias_map.get(key, key)
+                        if key:
+                            sensors.append(key)
+                    if not sensors:
+                        sensors = list(sensors_default)
+
+                target_id = cfg.get("target_id") or cfg.get("target")
+                task_cfg = cfg.get("task")
+                if isinstance(task_cfg, dict):
+                    target_id = task_cfg.get("target_id", target_id)
+                    params = task_cfg.get("params")
+                    if isinstance(params, dict):
+                        target_id = params.get("target_id", target_id)
+                if isinstance(target_id, (str, bytes)):
+                    target_idx = agent_index.get(str(target_id))
+
+            deduped = tuple(dict.fromkeys(sensors))
+            self._agent_sensor_spec[aid] = deduped
+            self._agent_target_index[aid] = target_idx
+
+    def _build_observation_spaces(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
+        pose_low = np.array([x_min, y_min, -np.pi], dtype=np.float32)
+        pose_high = np.array([x_max, y_max, np.pi], dtype=np.float32)
+        self._pose_low = pose_low
+        self._pose_high = pose_high
+
+        v_min = float(self.params.get("v_min", -5.0))
+        v_max = float(self.params.get("v_max", 20.0))
+        vel_low = np.array([v_min, v_min], dtype=np.float32)
+        vel_high = np.array([v_max, v_max], dtype=np.float32)
+
+        accel_cap = float(self.params.get("a_max", 10.0))
+        accel_low = np.array([-accel_cap, -accel_cap], dtype=np.float32)
+        accel_high = np.array([accel_cap, accel_cap], dtype=np.float32)
+
+        ang_cap = float(self.params.get("ang_vel_max", 10.0))
+
+        lap_cap = float(getattr(self, "target_laps", 1))
+        lap_low = np.array([0.0, 0.0], dtype=np.float32)
+        lap_high = np.array([lap_cap, 1e5], dtype=np.float32)
+
+        obs_spaces: Dict[str, gym.Space] = {}
+        for aid in self.possible_agents:
+            sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
+            components: Dict[str, gym.Space] = {}
+
+            if "lidar" in sensors:
+                components["lidar"] = spaces.Box(
+                    low=0.0,
+                    high=self.lidar_range,
+                    shape=(self._lidar_beam_count,),
+                    dtype=np.float32,
+                )
+            if "pose" in sensors:
+                components["pose"] = spaces.Box(pose_low, pose_high, dtype=np.float32)
+            if "velocity" in sensors:
+                components["velocity"] = spaces.Box(vel_low, vel_high, dtype=np.float32)
+            if "acceleration" in sensors:
+                components["acceleration"] = spaces.Box(accel_low, accel_high, dtype=np.float32)
+            if "angular_velocity" in sensors:
+                components["angular_velocity"] = spaces.Box(
+                    low=-ang_cap,
+                    high=ang_cap,
+                    shape=(),
+                    dtype=np.float32,
+                )
+            if "target_pose" in sensors:
+                components["target_pose"] = spaces.Box(pose_low, pose_high, dtype=np.float32)
+            if "lap" in sensors:
+                components["lap"] = spaces.Box(lap_low, lap_high, dtype=np.float32)
+            if "collision" in sensors:
+                components["collision"] = spaces.Box(0.0, 1.0, shape=(), dtype=np.float32)
+
+            components["state"] = spaces.Box(
+                -np.inf,
+                np.inf,
+                shape=(self._central_state_dim,),
+                dtype=np.float32,
+            )
+
+            obs_spaces[aid] = spaces.Dict(components)
+
+        if obs_spaces:
+            self._single_observation_space = next(iter(obs_spaces.values()))
+        else:
+            self._single_observation_space = spaces.Dict({
+                "state": spaces.Box(
+                    -np.inf,
+                    np.inf,
+                    shape=(self._central_state_dim,),
+                    dtype=np.float32,
+                )
+            })
+        self.observation_spaces = obs_spaces
+        self._state_space = self._single_observation_space["state"]
+
+    def _select_lidar(self, scan: np.ndarray) -> np.ndarray:
+        target = self._lidar_beam_count
+        if target <= 0 or scan.size == 0:
+            return scan.astype(np.float32, copy=False)
+        if scan.size == target:
+            return scan.astype(np.float32, copy=False)
+        if scan.size < target:
+            padded = np.zeros((target,), dtype=np.float32)
+            view = scan.astype(np.float32, copy=False)
+            padded[: view.size] = view
+            return padded
+        if self._lidar_indices is None or getattr(self, "_lidar_source_size", None) != scan.size:
+            self._lidar_source_size = scan.size
+            self._lidar_indices = np.linspace(0, scan.size - 1, target, dtype=np.int32)
+        return scan[self._lidar_indices].astype(np.float32, copy=False)
+
     def _central_state_tensor(self, joint: Dict[str, np.ndarray]) -> np.ndarray:
         n = self.n_agents
         central = np.zeros((self._central_state_dim,), dtype=np.float32)
@@ -615,32 +906,93 @@ class F110ParallelEnv(ParallelEnv):
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
         out: Dict[str, Dict[str, np.ndarray]] = {}
+
+        scans = joint.get("scans")
+        poses_x = joint.get("poses_x")
+        poses_y = joint.get("poses_y")
+        poses_theta = joint.get("poses_theta")
+        linear_vels_x = joint.get("linear_vels_x")
+        linear_vels_y = joint.get("linear_vels_y")
+        ang_vels_z = joint.get("ang_vels_z")
+        collisions = joint.get("collisions")
+
+        lap_counts = getattr(self, "lap_counts", np.zeros((self.n_agents,), dtype=np.float32))
+        lap_times = getattr(self, "lap_times", np.zeros((self.n_agents,), dtype=np.float32))
+
+        timestep = max(self.timestep, 1e-6)
+
         for i, aid in enumerate(self.possible_agents):
-            if i < joint["scans"].shape[0]:
-                # normal agent data
-                out[aid] = {
-                    "scans":         joint["scans"][i].astype(np.float32),
-                    "poses_x":       np.float32(joint["poses_x"][i]),
-                    "poses_y":       np.float32(joint["poses_y"][i]),
-                    "poses_theta":   np.float32(joint["poses_theta"][i]),
-                    "linear_vels_x": np.float32(joint["linear_vels_x"][i]),
-                    "linear_vels_y": np.float32(joint["linear_vels_y"][i]),
-                    "ang_vels_z":    np.float32(joint["ang_vels_z"][i]),
-                    "collisions":    np.int32(joint["collisions"][i]),
-                }
-            else:
-                # fill dummy obs for agents not in sim output
-                out[aid] = {
-                    "scans":         np.zeros(1080, dtype=np.float32),
-                    "poses_x":       0.0,
-                    "poses_y":       0.0,
-                    "poses_theta":   0.0,
-                    "linear_vels_x": 0.0,
-                    "linear_vels_y": 0.0,
-                    "ang_vels_z":    0.0,
-                    "collisions":    1,  # mark as crashed
-                }
-        # TODO: attach lap_counts, lap_times, and other scoreboard data promised in `observation_space`.
+            sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
+            agent_obs: Dict[str, np.ndarray] = {}
+
+            has_entry = isinstance(scans, np.ndarray) and i < scans.shape[0]
+
+            if "lidar" in sensors:
+                if has_entry:
+                    lidar_reading = self._select_lidar(np.asarray(scans[i], dtype=np.float32))
+                else:
+                    lidar_reading = np.zeros((self._lidar_beam_count,), dtype=np.float32)
+                agent_obs["lidar"] = lidar_reading
+                agent_obs["scans"] = lidar_reading
+
+            if "pose" in sensors:
+                if isinstance(poses_x, np.ndarray) and i < poses_x.shape[0]:
+                    agent_obs["pose"] = np.array([
+                        np.float32(poses_x[i]),
+                        np.float32(poses_y[i]),
+                        np.float32(poses_theta[i]),
+                    ], dtype=np.float32)
+                else:
+                    agent_obs["pose"] = np.zeros(3, dtype=np.float32)
+
+            curr_vx = float(linear_vels_x[i]) if isinstance(linear_vels_x, np.ndarray) and i < linear_vels_x.shape[0] else 0.0
+            curr_vy = float(linear_vels_y[i]) if isinstance(linear_vels_y, np.ndarray) and i < linear_vels_y.shape[0] else 0.0
+
+            if "velocity" in sensors:
+                agent_obs["velocity"] = np.array([curr_vx, curr_vy], dtype=np.float32)
+
+            if "acceleration" in sensors:
+                if self._velocity_initialized and i < self.linear_vels_x_curr.shape[0]:
+                    prev_vx = float(self.linear_vels_x_curr[i])
+                    prev_vy = float(self.linear_vels_y_curr[i])
+                    ax = (curr_vx - prev_vx) / timestep
+                    ay = (curr_vy - prev_vy) / timestep
+                else:
+                    ax = 0.0
+                    ay = 0.0
+                agent_obs["acceleration"] = np.array([ax, ay], dtype=np.float32)
+
+            if "angular_velocity" in sensors:
+                if isinstance(ang_vels_z, np.ndarray) and i < ang_vels_z.shape[0]:
+                    agent_obs["angular_velocity"] = np.float32(ang_vels_z[i])
+                else:
+                    agent_obs["angular_velocity"] = np.float32(0.0)
+
+            if "target_pose" in sensors:
+                target_idx = self._agent_target_index.get(aid)
+                if target_idx is not None and isinstance(poses_x, np.ndarray) and target_idx < poses_x.shape[0]:
+                    agent_obs["target_pose"] = np.array([
+                        np.float32(poses_x[target_idx]),
+                        np.float32(poses_y[target_idx]),
+                        np.float32(poses_theta[target_idx]),
+                    ], dtype=np.float32)
+                else:
+                    agent_obs["target_pose"] = np.zeros(3, dtype=np.float32)
+
+            if "lap" in sensors:
+                lap_count_val = float(lap_counts[i]) if i < len(lap_counts) else 0.0
+                lap_time_val = float(lap_times[i]) if i < len(lap_times) else 0.0
+                agent_obs["lap"] = np.array([lap_count_val, lap_time_val], dtype=np.float32)
+
+            if "collision" in sensors:
+                if isinstance(collisions, np.ndarray) and i < collisions.shape[0]:
+                    col_val = float(collisions[i])
+                else:
+                    col_val = float(self.collisions[i]) if i < self.collisions.shape[0] else 0.0
+                agent_obs["collision"] = np.float32(col_val)
+
+            out[aid] = agent_obs
+
         return out
     
     def _zero_joint_actions(self) -> np.ndarray:
