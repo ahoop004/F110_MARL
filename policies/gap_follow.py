@@ -4,7 +4,7 @@ class FollowTheGapPolicy:
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
                  window_size=5,
-                 bubble_radius=15,
+                 bubble_radius=25,
                  max_steer=0.35,
                  min_speed=1.5,
                  max_speed=4.0,
@@ -44,7 +44,7 @@ class FollowTheGapPolicy:
     def find_max_gap(self, proc):
         """Find the largest contiguous nonzero gap."""
         gaps, start = [], None
-        for i, v in enumerate(proc > 0.5):
+        for i, v in enumerate(proc > 2.5):
             if v and start is None:
                 start = i
             elif not v and start is not None:

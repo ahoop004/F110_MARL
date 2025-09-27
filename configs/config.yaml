@@ -73,3 +73,25 @@ run:
       task:
         task_name: gap_follow
         params: { }
+mode: "mixed"
+ppo_agent_idx: 0   # choose which agent runs PPO
+ppo:
+  actor_lr: 0.003
+  critic_lr: 0.001
+  gamma: 0.99
+  lam: 0.95
+  clip_eps: 0.2
+  update_epochs: 10
+  minibatch_size: 64
+  train_episodes: 50
+  eval_episodes: 5
+  save_dir: checkpoints/
+
+reward:
+  mode: "pursuit"   # "basic", "pursuit", or "herding"
+  collision_penalty: -5.0
+  alive_bonus: 0.1
+  progress_scale: 1.0
+  spin_penalty: 0.5
+  spin_thresh: 0.52   # radians ~30°
+  herd_bonus: 10.0

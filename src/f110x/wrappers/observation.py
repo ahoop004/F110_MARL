@@ -1,125 +1,43 @@
-from __future__ import annotations
-
-from typing import Any, Dict, Iterable, Tuple
-
 import numpy as np
-from gymnasium import spaces
-from gymnasium.spaces import utils as space_utils
 
-from .base import BaseParallelWrapper
+class ObsWrapper:
+    def __init__(self, max_scan=30.0, normalize=True):
+        self.max_scan = max_scan
+        self.normalize = normalize
 
+    def __call__(self, obs, ego_id, target_id=None):
+        """
+        obs: per-agent obs dict from F110ParallelEnv (obs[aid] = {...})
+        ego_id: agent id string (e.g. "car_0")
+        target_id: optional agent id. If None and only 2 agents, auto-pick the other.
+        """
+        if target_id is None:
+            agent_ids = list(obs.keys())
+            if len(agent_ids) != 2:
+                raise ValueError("Auto target selection only works for 2 agents")
+            target_id = [a for a in agent_ids if a != ego_id][0]
 
-class ObservationSanitizerWrapper(BaseParallelWrapper):
-    """Down-sample lidar and strip NaNs/Infs from observations."""
+        ego_obs = obs[ego_id]
+        tgt_obs = obs[target_id]
 
-    def __init__(
-        self,
-        env,
-        *,
-        lidar_keys: Iterable[str] = ("lidar", "scans"),
-        target_beams: int | None = None,
-        max_range: float | None = None,
-        dtype: np.dtype = np.float32,
-    ) -> None:
-        super().__init__(env)
-        self._lidar_keys = tuple(lidar_keys)
-        self._target_beams = int(target_beams) if target_beams and target_beams > 0 else None
-        self._max_range = float(max_range) if max_range is not None else None
-        self._dtype = dtype
-        self._downsample_cache: Dict[Tuple[int, int], np.ndarray] = {}
+        # LiDAR
+        scan = np.array(ego_obs["scans"], dtype=np.float32)
+        if self.normalize:
+            scan = scan / self.max_scan
 
-    def reset(self, *args: Any, **kwargs: Any):
-        obs, info = super().reset(*args, **kwargs)
-        return self._sanitize_all(obs), info
+        # Ego features
+        pose = np.array(ego_obs["pose"], dtype=np.float32)  # [x, y, theta]
+        ego = np.concatenate([pose, [float(ego_obs["collision"])]], dtype=np.float32)
 
-    def step(self, actions: Dict[str, Any]):
-        obs, rewards, dones, truncs, infos = super().step(actions)
-        obs = self._sanitize_all(obs)
-        return obs, rewards, dones, truncs, infos
+        # Target features (if available in obs)
+        if "target_pose" in ego_obs and "target_collision" in ego_obs:
+            target = np.concatenate([
+                np.array(ego_obs["target_pose"], dtype=np.float32),
+                [float(ego_obs["target_collision"])]
+            ], dtype=np.float32)
+        else:
+            # fallback: build from target agent's own obs
+            tgt_pose = np.array(tgt_obs["pose"], dtype=np.float32)
+            target = np.concatenate([tgt_pose, [float(tgt_obs["collision"])]], dtype=np.float32)
 
-    # ---------------------------------------------------------------------
-    def _sanitize_all(self, obs: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        sanitized: Dict[str, Dict[str, Any]] = {}
-        for aid, agent_obs in obs.items():
-            sanitized[aid] = self._sanitize_agent(agent_obs)
-        return sanitized
-
-    def _sanitize_agent(self, agent_obs: Dict[str, Any]) -> Dict[str, Any]:
-        clean: Dict[str, Any] = {}
-        for key, value in agent_obs.items():
-            if key in self._lidar_keys:
-                clean[key] = self._sanitize_lidar(value)
-            elif isinstance(value, np.ndarray):
-                clean[key] = self._sanitize_array(value)
-            elif np.isscalar(value):
-                clean[key] = self._sanitize_scalar(value)
-            else:
-                clean[key] = value
-        return clean
-
-    def _sanitize_lidar(self, value: Any) -> np.ndarray:
-        arr = np.asarray(value, dtype=self._dtype).reshape(-1)
-        arr = np.nan_to_num(arr, nan=0.0, posinf=self._max_range or 0.0, neginf=0.0)
-        if self._max_range is not None:
-            arr = np.clip(arr, 0.0, self._max_range)
-        if self._target_beams is not None and arr.size != self._target_beams:
-            arr = self._match_beam_count(arr, self._target_beams)
-        return arr.astype(self._dtype, copy=False)
-
-    def _sanitize_array(self, value: np.ndarray) -> np.ndarray:
-        arr = np.asarray(value, dtype=self._dtype)
-        return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-
-    def _sanitize_scalar(self, value: Any) -> np.float32:
-        return np.float32(value if np.isfinite(value) else 0.0)
-
-    def _match_beam_count(self, arr: np.ndarray, target: int) -> np.ndarray:
-        if arr.size == target:
-            return arr
-        if arr.size < target:
-            padded = np.zeros((target,), dtype=arr.dtype)
-            padded[: arr.size] = arr
-            return padded
-        key = (arr.size, target)
-        indices = self._downsample_cache.get(key)
-        if indices is None:
-            indices = np.linspace(0, arr.size - 1, target, dtype=np.int32)
-            self._downsample_cache[key] = indices
-        return arr[indices]
-
-
-class FlattenObservationWrapper(BaseParallelWrapper):
-    """Flatten nested dict observations into 1-D vectors."""
-
-    def __init__(self, env, dtype=np.float32) -> None:
-        super().__init__(env)
-        self._dtype = dtype
-        self._flat_cache: Dict[str, spaces.Box] = {}
-
-    def reset(self, *args: Any, **kwargs: Any):
-        obs, info = super().reset(*args, **kwargs)
-        return self._flatten_all(obs), info
-
-    def step(self, actions: Dict[str, Any]):
-        obs, rewards, dones, truncs, infos = super().step(actions)
-        obs = self._flatten_all(obs)
-        return obs, rewards, dones, truncs, infos
-
-    def observation_space(self, agent: str):
-        base = self.env.observation_space(agent)
-        flattened = space_utils.flatten_space(base)
-        if not isinstance(flattened, spaces.Box):
-            raise TypeError("Flattened observation space must be a Box")
-        low = np.asarray(flattened.low, dtype=self._dtype)
-        high = np.asarray(flattened.high, dtype=self._dtype)
-        flat_space = spaces.Box(low=low, high=high, dtype=self._dtype)
-        self._flat_cache[agent] = flat_space
-        return flat_space
-
-    def _flatten_all(self, obs: Dict[str, Any]) -> Dict[str, np.ndarray]:
-        flattened: Dict[str, np.ndarray] = {}
-        for aid, value in obs.items():
-            base_space = self.env.observation_space(aid)
-            flat = space_utils.flatten(base_space, value).astype(self._dtype, copy=False)
-            flattened[aid] = flat
-        return flattened
+        return np.concatenate([scan, ego, target])
