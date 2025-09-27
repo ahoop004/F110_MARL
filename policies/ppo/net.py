@@ -17,7 +17,8 @@ class Actor(nn.Module):
     def forward(self, x):
         x = self.body(x)
         mu = self.mu_head(x)
-        std = torch.exp(self.log_std)
+        log_std = torch.clamp(self.log_std, -5.0, 2.0)
+        std = torch.exp(log_std)
         return mu, std
 
 

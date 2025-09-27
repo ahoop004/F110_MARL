@@ -24,6 +24,23 @@ class PPOAgent:
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        action_low = cfg.get("action_low")
+        action_high = cfg.get("action_high")
+        if action_low is None or action_high is None:
+            action_low = [-1.0] * self.act_dim
+            action_high = [1.0] * self.act_dim
+        self.action_low_np = np.asarray(action_low, dtype=np.float32)
+        self.action_high_np = np.asarray(action_high, dtype=np.float32)
+        self.action_low_t = torch.as_tensor(self.action_low_np, dtype=torch.float32, device=self.device)
+        self.action_high_t = torch.as_tensor(self.action_high_np, dtype=torch.float32, device=self.device)
+        self.action_scale_t = self.action_high_t - self.action_low_t
+        self.action_scale_t = torch.where(
+            torch.abs(self.action_scale_t) < 1e-6,
+            torch.ones_like(self.action_scale_t),
+            self.action_scale_t,
+        )
+        self.squash_eps = 1e-6
+
         # Networks
         self.actor = Actor(self.obs_dim, self.act_dim).to(self.device)
         self.critic = Critic(self.obs_dim).to(self.device)
@@ -40,27 +57,51 @@ class PPOAgent:
         self.obs_buf, self.act_buf = [], []
         self.rew_buf, self.done_buf = [], []
         self.logp_buf, self.val_buf = [], []
+        self.raw_act_buf = []
 
     # ------------------- Acting -------------------
 
+    def _scale_action(self, squashed):
+        return self.action_low_t + 0.5 * (squashed + 1.0) * self.action_scale_t
+
     def act(self, obs, aid=None):
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        obs_np = np.asarray(obs, dtype=np.float32)
+        if not np.isfinite(obs_np).all():
+            obs_np = np.nan_to_num(obs_np, copy=False)
+        obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         mu, std = self.actor(obs_t)
         dist = Normal(mu, std)
-        act = dist.sample()
-        logp = dist.log_prob(act).sum()
+        raw_action = dist.rsample()
+        squashed = torch.tanh(raw_action)
+        scaled = self._scale_action(squashed)
+
+        logp = dist.log_prob(raw_action).sum(dim=-1)
+        logp -= torch.log(1 - squashed.pow(2) + self.squash_eps).sum(dim=-1)
         val = self.critic(obs_t).squeeze(-1)
 
-        self.obs_buf.append(obs)
-        self.act_buf.append(act.cpu().numpy())
+        self.obs_buf.append(obs_np)
+        self.act_buf.append(scaled.detach().cpu().numpy())
         self.logp_buf.append(float(logp.item()))
         self.val_buf.append(float(val.item()))
+        self.raw_act_buf.append(raw_action.detach().cpu().numpy())
 
-        return act.cpu().numpy()
+        return scaled.detach().cpu().numpy()
 
     def store(self, obs, act, rew, done):
         self.rew_buf.append(float(rew))
         self.done_buf.append(bool(done))
+
+    def record_final_value(self, obs):
+        obs_np = np.asarray(obs, dtype=np.float32)
+        if not np.isfinite(obs_np).all():
+            obs_np = np.nan_to_num(obs_np, copy=False)
+        self.obs_buf.append(obs_np)
+        self.act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
+        self.raw_act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
+        self.logp_buf.append(0.0)
+        obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
+        val = self.critic(obs_t).squeeze(-1)
+        self.val_buf.append(float(val.item()))
 
     # ------------------- GAE -------------------
 
@@ -82,6 +123,7 @@ class PPOAgent:
             self.obs_buf.pop()
             self.act_buf.pop()
             self.logp_buf.pop()
+            self.raw_act_buf.pop()
         elif len(self.val_buf) == T:
             bootstrap_v = 0.0
         else:
@@ -120,14 +162,15 @@ class PPOAgent:
         # Convert buffers -> tensors
         obs = torch.as_tensor(np.asarray(self.obs_buf), dtype=torch.float32, device=self.device)
         acts = torch.as_tensor(np.asarray(self.act_buf), dtype=torch.float32, device=self.device)
+        raw_actions = torch.as_tensor(np.asarray(self.raw_act_buf), dtype=torch.float32, device=self.device)
         logp_old = torch.as_tensor(np.asarray(self.logp_buf), dtype=torch.float32, device=self.device)
         adv  = torch.as_tensor(self.adv_buf, dtype=torch.float32, device=self.device)
         rets = torch.as_tensor(self.ret_buf, dtype=torch.float32, device=self.device)
 
         # Hard alignment check
         N = len(self.obs_buf)
-        assert N == len(self.act_buf) == len(self.logp_buf) == len(self.adv_buf) == len(self.ret_buf), \
-            f"Buffer length mismatch: obs {len(self.obs_buf)}, acts {len(self.act_buf)}, logp {len(self.logp_buf)}, adv {len(self.adv_buf)}, ret {len(self.ret_buf)}"
+        assert N == len(self.act_buf) == len(self.raw_act_buf) == len(self.logp_buf) == len(self.adv_buf) == len(self.ret_buf), \
+            f"Buffer length mismatch: obs {len(self.obs_buf)}, acts {len(self.act_buf)}, raw {len(self.raw_act_buf)}, logp {len(self.logp_buf)}, adv {len(self.adv_buf)}, ret {len(self.ret_buf)}"
 
         idx = np.arange(N)
         for _ in range(self.update_epochs):
@@ -138,13 +181,19 @@ class PPOAgent:
 
                 ob_b   = obs[mb_idx]
                 act_b  = acts[mb_idx]
+                raw_b  = raw_actions[mb_idx]
+                squashed_b = torch.tanh(raw_b)
                 adv_b  = adv[mb_idx]
                 ret_b  = rets[mb_idx]
                 logp_b = logp_old[mb_idx]
 
                 mu, std = self.actor(ob_b)
+                if not torch.isfinite(mu).all() or not torch.isfinite(std).all():
+                    print("[WARN] Non-finite parameters encountered in PPO update; skipping minibatch")
+                    continue
                 dist = Normal(mu, std)
-                logp = dist.log_prob(act_b).sum(dim=-1)
+                logp = dist.log_prob(raw_b).sum(dim=-1)
+                logp -= torch.log(1 - squashed_b.pow(2) + self.squash_eps).sum(dim=-1)
                 ratio = torch.exp(logp - logp_b)
 
                 surr1 = ratio * adv_b

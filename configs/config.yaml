@@ -5,7 +5,7 @@ env:
   timestep: 0.01
   integrator: 'RK4'
   render_interval: 10
-  update: 10
+  update: 1
 
   map_dir: "maps"
   map_yaml: "Shanghai_map.yaml"
@@ -36,7 +36,7 @@ env:
     v_switch: 7.319
     a_max: 9.51
     v_min: -5.0
-    v_max: 20.0
+    v_max: 10.0
     width: 0.31
     length: 0.58
   
@@ -47,7 +47,7 @@ env:
 mode: "mixed"
 ppo_agent_idx: 0   # choose which agent runs PPO
 ppo:
-  actor_lr: 0.003
+  actor_lr: 0.0005
   critic_lr: 0.001
   gamma: 0.99
   lam: 0.95
@@ -58,6 +58,7 @@ ppo:
   train_episodes: 5000
   eval_episodes: 5
   save_dir: checkpoints/
+  rolling_avg_window: 10
 
 reward:
   # mode: "pursuit"   # "basic", "pursuit", or "herding"

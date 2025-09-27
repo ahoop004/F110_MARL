@@ -4,11 +4,11 @@ class FollowTheGapPolicy:
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
                  window_size=5,
-                 bubble_radius=25,
-                 max_steer=0.35,
-                 min_speed=1.5,
-                 max_speed=4.0,
-                 steering_gain=1.5,
+                 bubble_radius=10,
+                 max_steer=0.4,
+                 min_speed=2.5,
+                 max_speed=6.0,
+                 steering_gain=1.0,
                  fov=np.deg2rad(270),
                  normalized=False):
         self.max_distance = max_distance

@@ -89,11 +89,14 @@ GAP_AGENT = agent_ids[gap_agent_idx]
 
 # Build PPO agent config
 obs_dim = len(obs_wrapper(obs, PPO_AGENT, GAP_AGENT))
-act_dim = env.action_space(PPO_AGENT).shape[0]
+action_space = env.action_space(PPO_AGENT)
+act_dim = action_space.shape[0]
 
 ppo_cfg = cfg["ppo"].copy()
 ppo_cfg["obs_dim"] = obs_dim
 ppo_cfg["act_dim"] = act_dim
+ppo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
+ppo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
 checkpoint_dir = Path(ppo_cfg.get("save_dir", "checkpoints")).expanduser()
 checkpoint_name = ppo_cfg.get("checkpoint_name", "ppo_best.pt")
@@ -110,7 +113,7 @@ if checkpoint_path.exists():
         print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
     except Exception as exc:  # pragma: no cover - defensive load guard
         print(f"[WARN] Failed to load PPO checkpoint at {checkpoint_path}: {exc}")
-best_path = checkpoint_dir / "ppo_best.pt"
+best_path = default_checkpoint
 print(f"[INFO] PPO agent: {PPO_AGENT}, Gap-follow agent: {GAP_AGENT}")
 print(f"[INFO] Obs dim: {obs_dim}, Act dim: {act_dim}")
 
@@ -141,6 +144,10 @@ def get_curriculum_reward(episode_idx: int) -> RewardWrapper:
 
 def run_mixed(env, episodes=5):
     results = []
+    window = max(1, int(cfg["ppo"].get("rolling_avg_window", 10)))
+    recent_returns = deque(maxlen=window)
+    best_return = float("-inf")
+
     for ep in range(episodes):
         obs, infos = env.reset()
         done = {aid: False for aid in env.possible_agents}
@@ -148,9 +155,9 @@ def run_mixed(env, episodes=5):
         reward_wrapper = get_curriculum_reward(ep)
         episode_steps = 0
         collision_history = []
-        best_return = float("-inf")
-        window = 10
-        recent_returns = deque(maxlen=window)
+
+        terms = {}
+        truncs = {}
 
         while True:
             actions = {}
@@ -197,22 +204,30 @@ def run_mixed(env, episodes=5):
                 collision_history.extend(collision_agents)
 
             if ppo_action is not None:
-                if PPO_AGENT in next_obs and (
-                    GAP_AGENT in next_obs or len(next_obs) == 1
-                ):
-                    next_wrapped = obs_wrapper(next_obs, PPO_AGENT, GAP_AGENT)
-                else:
+                terminated = terms.get(PPO_AGENT, False) or collision_happened
+                truncated = truncs.get(PPO_AGENT, False)
+
+                next_obs_for_wrap = next_obs
+                if PPO_AGENT not in next_obs_for_wrap:
+                    terminal_obs = infos.get(PPO_AGENT, {}).get("terminal_observation")
+                    if terminal_obs is not None:
+                        next_obs_for_wrap = dict(next_obs_for_wrap)
+                        next_obs_for_wrap[PPO_AGENT] = terminal_obs
+                    else:
+                        next_obs_for_wrap = obs
+                try:
+                    next_wrapped = obs_wrapper(next_obs_for_wrap, PPO_AGENT, GAP_AGENT)
+                except Exception:
                     next_wrapped = ppo_obs
-                ppo_done_flag = (
-                    terms.get(PPO_AGENT, False)
-                    or truncs.get(PPO_AGENT, False)
-                    or collision_happened
-                )
+
+                if truncated and not terminated:
+                    ppo_agent.record_final_value(next_wrapped)
+
                 ppo_agent.store(
                     next_wrapped,
                     ppo_action,
                     shaped_rewards.get(PPO_AGENT, rewards.get(PPO_AGENT, 0.0)),
-                    ppo_done_flag,
+                    terminated,
                 )
 
             for aid in done.keys():
@@ -230,20 +245,22 @@ def run_mixed(env, episodes=5):
                 env.render()
 
         results.append(totals)
-         # as before
-        if (ep + 1) % update_after == 0:
+
+        if ppo_agent.rew_buf and ((ep + 1) % update_after == 0):
             ppo_agent.update()
-        ppo_return = totals[PPO_AGENT]
+
+        ppo_return = totals.get(PPO_AGENT, 0.0)
         recent_returns.append(ppo_return)
-        if len(recent_returns) == window:
-            avg_return = sum(recent_returns) / window
-            if ep + 1 > 10 and avg_return > best_return:
+        if len(recent_returns) == recent_returns.maxlen:
+            avg_return = sum(recent_returns) / len(recent_returns)
+            if avg_return > best_return:
                 best_return = avg_return
                 ppo_agent.save(str(best_path))
-                print(f"[INFO] New best model saved at episode {ep+1} "
-                    f"(avg_return={avg_return:.2f})")
+                print(
+                    f"[INFO] New best model saved at episode {ep + 1} "
+                    f"(avg_return={avg_return:.2f})"
+                )
 
-       
         end_cause = []
         if collision_history:
             end_cause.append("collision")
@@ -260,9 +277,12 @@ def run_mixed(env, episodes=5):
         print(
             f"[EP {ep+1:03d}/{episodes}] mode={reward_wrapper.mode} "
             f"steps={episode_steps} cause={cause_str} "
-            f"return_ppo={totals[PPO_AGENT]:.2f} return_gap={totals[GAP_AGENT]:.2f}"
+            f"return_ppo={totals.get(PPO_AGENT, 0.0):.2f} "
+            f"return_gap={totals.get(GAP_AGENT, 0.0):.2f}"
         )
 
+    if ppo_agent.rew_buf:
+        ppo_agent.update()
 
     return results
 
