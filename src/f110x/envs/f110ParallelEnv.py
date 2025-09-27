@@ -238,6 +238,14 @@ class F110ParallelEnv(ParallelEnv):
                 else:
                     self.start_thetas[:count] = start_angles[:count]
 
+        self.start_heading = np.zeros((self.n_agents, 2), dtype=np.float32)
+        if self.n_agents:
+            self.start_heading[:, 0] = np.cos(self.start_thetas).astype(np.float32)
+            self.start_heading[:, 1] = np.sin(self.start_thetas).astype(np.float32)
+        # TODO: Surface lap_forward_vel_epsilon via config schema and document in YAML example.
+        self.lap_forward_vel_epsilon = float(merged.get("lap_forward_vel_epsilon", 0.1))
+        self._left_start_forward = np.zeros((self.n_agents,), dtype=bool)
+
         # initiate stuff
         self.sim = Simulator(
             self.params,
@@ -342,15 +350,41 @@ class F110ParallelEnv(ParallelEnv):
 
         dist2 = delta_pt[0, :]**2 + temp_y**2
         closes = dist2 <= 0.1
+        forward_eps = self.lap_forward_vel_epsilon
+
+        # TODO: Refactor this state machine into a helper for readability/testing.
         for i, agent in enumerate(self.possible_agents):
-            if closes[i] and not self.near_starts[i]:
-                self.near_starts[i] = True
-                self.toggle_list[i] += 1
-            elif not closes[i] and self.near_starts[i]:
-                self.near_starts[i] = False
-                self.toggle_list[i] += 1
+            forward_vel = (
+                float(self.linear_vels_x_curr[i]) * float(self.start_heading[i, 0])
+                + float(self.linear_vels_y_curr[i]) * float(self.start_heading[i, 1])
+            )
+            forward_ok = forward_vel > forward_eps
+
+            if closes[i]:
+                if not self.near_starts[i]:
+                    self.near_starts[i] = True
+                    if self._left_start_forward[i] and forward_ok:
+                        self.toggle_list[i] += 1
+                        self._left_start_forward[i] = False
+                    elif not forward_ok:
+                        self._left_start_forward[i] = False
+                else:
+                    if forward_ok:
+                        self._left_start_forward[i] = True
+            else:
+                if self.near_starts[i]:
+                    self.near_starts[i] = False
+                    forward_exit = forward_ok
+                    self._left_start_forward[i] = forward_exit
+                    if forward_exit:
+                        self.toggle_list[i] += 1
+                else:
+                    if forward_ok:
+                        self._left_start_forward[i] = True
+
+            prev_laps = self.lap_counts[i]
             self.lap_counts[i] = self.toggle_list[i] // 2
-            if self.toggle_list[i] < 4:
+            if self.lap_counts[i] > prev_laps:
                 self.lap_times[i] = self.current_time
         
         terminations = {}
@@ -400,6 +434,7 @@ class F110ParallelEnv(ParallelEnv):
         self.toggle_list.fill(0.0)
         self.near_start = True
         self.near_starts.fill(True)
+        self._left_start_forward.fill(False)
         self.linear_vels_x_prev.fill(0.0)
         self.linear_vels_x_curr.fill(0.0)
         self.linear_vels_y_prev.fill(0.0)

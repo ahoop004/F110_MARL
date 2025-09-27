@@ -3,15 +3,15 @@ import numpy as np
 class RewardWrapper:
     def __init__(self,
                  mode="basic",
-                 collision_penalty=-5.0,
-                 alive_bonus=0.1,
-                 progress_scale=1.0,
-                 spin_penalty=0.5,
+                 collision_penalty=-15.0,
+                 alive_bonus=0.01,
+                 progress_scale=1.5,
+                 spin_penalty=0.55,
                  spin_thresh=np.pi/6,
-                 pursuit_scale=0.1,
-                 herd_bonus=10.0,
-                 reverse_penalty=0.2,
-                 speed_scale=0.1):
+                 pursuit_scale=0.25,
+                 herd_bonus=15.0,
+                 reverse_penalty=0.25,
+                 speed_scale=0.15):
         """
         mode: "basic", "pursuit", "adversarial"
 
@@ -39,6 +39,7 @@ class RewardWrapper:
         self.prev_target_dists.clear()
 
     def __call__(self, obs, agent_id, reward, done, info):
+        # TODO: Break out mode-specific shaping into helper methods for easier tuning/testing.
         ego_obs = obs[agent_id]
         x, y, theta = ego_obs["pose"]
 
