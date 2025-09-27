@@ -9,9 +9,14 @@ class RewardWrapper:
                  spin_penalty=0.5,
                  spin_thresh=np.pi/6,
                  pursuit_scale=0.1,
-                 herd_bonus=10.0):
+                 herd_bonus=10.0,
+                 reverse_penalty=1.0,
+                 speed_scale=0.05):
         """
         mode: "basic", "pursuit", "adversarial"
+
+        reverse_penalty: negative reward for moving backwards
+        speed_scale: reward per unit forward velocity
         """
         self.mode = mode
         self.collision_penalty = collision_penalty
@@ -21,6 +26,8 @@ class RewardWrapper:
         self.spin_thresh = spin_thresh
         self.pursuit_scale = pursuit_scale
         self.herd_bonus = herd_bonus
+        self.reverse_penalty = reverse_penalty
+        self.speed_scale = speed_scale
 
         self.prev_positions = {}
         self.prev_thetas = {}
@@ -35,7 +42,7 @@ class RewardWrapper:
         ego_obs = obs[agent_id]
         x, y, theta = ego_obs["pose"]
 
-        # --- progress ---
+        # --- displacement ---
         prev = self.prev_positions.get(agent_id, (x, y))
         dx, dy = x - prev[0], y - prev[1]
         dist = np.sqrt(dx * dx + dy * dy)
@@ -47,7 +54,24 @@ class RewardWrapper:
         self.prev_positions[agent_id] = (x, y)
         self.prev_thetas[agent_id] = theta
 
-        shaped = reward + self.alive_bonus + self.progress_scale * dist
+        shaped = reward + self.alive_bonus
+
+        # --- forward progress ---
+        heading = np.array([np.cos(theta), np.sin(theta)])
+        disp = np.array([dx, dy])
+        forward_proj = np.dot(heading, disp)  # signed distance along heading
+
+        if forward_proj > 0:
+            shaped += self.progress_scale * forward_proj
+        else:
+            shaped -= self.reverse_penalty * abs(forward_proj)
+
+        # --- forward speed bonus ---
+        if "velocity" in ego_obs:
+            vx, vy = ego_obs["velocity"]
+            forward_speed = np.dot(heading, np.array([vx, vy]))
+            if forward_speed > 0:
+                shaped += self.speed_scale * forward_speed
 
         # --- penalties ---
         if ego_obs["collision"]:
