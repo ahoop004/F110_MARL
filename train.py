@@ -82,12 +82,22 @@ print(f"[INFO] Obs dim: {obs_dim}, Act dim: {act_dim}")
 # -------------------------------------------------------------------
 # Training loop
 # -------------------------------------------------------------------
+def get_curriculum_reward(ep):
+    if ep < 1000:
+        mode = "basic"
+    elif ep < 2000:
+        mode = "pursuit"
+    else:
+        mode = "adversarial"
+    return RewardWrapper(mode=mode)
+
 def run_mixed(env, episodes=5):
     results = []
     for ep in range(episodes):
         obs, infos = env.reset()
         done = {aid: False for aid in env.agents}
         totals = {aid: 0.0 for aid in env.agents}
+        reward_wrapper = get_curriculum_reward(ep)
         reward_wrapper.reset()
 
         while not all(done.values()):
