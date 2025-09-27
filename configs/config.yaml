@@ -14,7 +14,7 @@ env:
 
 
 
-  lidar_beams: 108
+  lidar_beams: 1080
   lidar_range: 30.0
   lidar_dist: 0.0
   start_thresh: 0.5

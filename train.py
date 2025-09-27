@@ -6,11 +6,14 @@ from PIL import Image
 from f110x.envs import F110ParallelEnv
 from policies.random_policy import random_policy
 from policies.simple_heuristic import simple_heuristic
+from policies.gap_follow import FollowTheGapPolicy
 
+gap = FollowTheGapPolicy()
 
 POLICIES = {
-    "random": random_policy,
-    "heuristic": simple_heuristic,
+    # "random": random_policy,
+    # "heuristic": simple_heuristic,
+    'gap_follow': gap.get_action
 }
 
 
