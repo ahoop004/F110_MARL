@@ -137,14 +137,12 @@ class F110ParallelEnv(ParallelEnv):
             vehicle_params = merged.get("params")
         self.params = defaults if vehicle_params is None else {**defaults, **vehicle_params}
         
-        self.lidar_beams = int(merged.get("lidar_beams", 360))
+        self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
             self.lidar_beams = 1080
         self.lidar_range = float(merged.get("lidar_range", 30.0))
         self._lidar_beam_count = max(int(self.lidar_beams), 1)
         self._lidar_indices: Optional[np.ndarray] = None
-
-        self._raw_scenario_agents = merged.get("agents")
 
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
         self.start_thresh: float = float(merged.get("start_thresh", 0.5))
@@ -162,112 +160,26 @@ class F110ParallelEnv(ParallelEnv):
         self.angular_vels_curr = np.zeros((self.n_agents,), dtype=np.float32)
         self._velocity_initialized = False
 
-        self._agent_configs: List[Optional[Dict[str, Any]]] = [None] * self.n_agents
-        self._agent_sensor_spec: Dict[str, Tuple[str, ...]] = {}
-        self._agent_target_index: Dict[str, Optional[int]] = {}
         default_terminate = bool(merged.get("terminate_on_collision", True))
-        flags = [default_terminate] * self.n_agents
-        agent_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
-
-        scenario_agents = self._raw_scenario_agents
-        if isinstance(scenario_agents, list):
-            for idx, agent_cfg in enumerate(scenario_agents):
-                if idx >= self.n_agents or not isinstance(agent_cfg, dict):
-                    continue
-                self._agent_configs[idx] = agent_cfg
-                for key in ("id", "name", "agent_id"):
-                    alias = agent_cfg.get(key)
-                    if isinstance(alias, str) and alias not in agent_index:
-                        agent_index[alias] = idx
-
-        raw_overrides = merged.get("terminate_on_collision_overrides")
-        if isinstance(raw_overrides, dict):
-            for key, value in raw_overrides.items():
-                if value is None:
-                    continue
-                flag = bool(value)
-                if isinstance(key, int):
-                    if 0 <= key < self.n_agents:
-                        flags[key] = flag
-                else:
-                    idx = agent_index.get(str(key))
-                    if idx is not None:
-                        flags[idx] = flag
-        elif isinstance(raw_overrides, (list, tuple, np.ndarray)):
-            for idx, value in enumerate(raw_overrides):
-                if idx >= self.n_agents or value is None:
-                    continue
-                flags[idx] = bool(value)
-
-        if isinstance(scenario_agents, list):
-            for idx, agent_cfg in enumerate(scenario_agents):
-                if not isinstance(agent_cfg, dict):
-                    continue
-                override = agent_cfg.get("terminate_on_collision")
-                task_cfg = agent_cfg.get("task")
-                if override is None and isinstance(task_cfg, dict):
-                    override = task_cfg.get("terminate_on_collision")
-                if override is None:
-                    continue
-                flag = bool(override)
-                alias_keys: List[str] = []
-                if idx < self.n_agents:
-                    alias_keys.append(self.possible_agents[idx])
-                for key in ("id", "name", "agent_id"):
-                    alias = agent_cfg.get(key)
-                    if isinstance(alias, str):
-                        alias_keys.append(alias)
-                for alias in alias_keys:
-                    mapped = agent_index.get(alias)
-                    if mapped is not None:
-                        flags[mapped] = flag
-
         self.terminate_on_collision = {
-            aid: flags[idx] for idx, aid in enumerate(self.possible_agents)
+            aid: default_terminate for aid in self.possible_agents
         }
 
-        self._initialize_agent_sensors(agent_index)
+        self._agent_sensor_spec: Dict[str, Tuple[str, ...]] = {
+            aid: DEFAULT_AGENT_SENSORS for aid in self.possible_agents
+        }
+        self._agent_target_index: Dict[str, Optional[int]] = {
+            aid: None for aid in self.possible_agents
+        }
 
-        raw_target_laps = merged.get("target_laps")
-        if raw_target_laps is None:
-            raw_target_laps = merged.get("laps")
-        target_laps_val: Optional[int] = None
-        if raw_target_laps is not None:
-            try:
-                parsed = int(raw_target_laps)
-            except (TypeError, ValueError):
-                parsed = 0
-            if parsed > 0:
-                target_laps_val = parsed
-
-        if target_laps_val is None and isinstance(scenario_agents, list):
-            max_agent_laps = 0
-            for agent_cfg in scenario_agents:
-                if not isinstance(agent_cfg, dict):
-                    continue
-                candidate = agent_cfg.get("target_laps")
-                if candidate is None:
-                    candidate = agent_cfg.get("laps")
-                if candidate is None:
-                    task_cfg = agent_cfg.get("task")
-                    if isinstance(task_cfg, dict):
-                        candidate = task_cfg.get("target_laps")
-                        if candidate is None:
-                            candidate = task_cfg.get("laps")
-                if candidate is None:
-                    continue
-                try:
-                    laps_val = int(candidate)
-                except (TypeError, ValueError):
-                    continue
-                if laps_val > max_agent_laps:
-                    max_agent_laps = laps_val
-            if max_agent_laps > 0:
-                target_laps_val = max_agent_laps
-
-        if target_laps_val is None or target_laps_val <= 0:
-            target_laps_val = 1
-        self.target_laps: int = int(target_laps_val)
+        raw_target_laps = merged.get("target_laps") or merged.get("laps")
+        try:
+            laps_val = int(raw_target_laps) if raw_target_laps is not None else 1
+        except (TypeError, ValueError):
+            laps_val = 1
+        if laps_val <= 0:
+            laps_val = 1
+        self.target_laps: int = int(laps_val)
 
         # race info
         self.lap_times = np.zeros((self.n_agents, ))
@@ -384,47 +296,6 @@ class F110ParallelEnv(ParallelEnv):
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
         }
-        default_policy_id = str(merged.get("default_policy_id", "default_policy"))
-        agent_policy_map: Dict[str, str] = {}
-        policy_order: List[str] = []
-
-        def _record_policy(aid: str, policy_id: Optional[str]) -> None:
-            policy_key = str(policy_id) if isinstance(policy_id, str) and policy_id else default_policy_id
-            agent_policy_map[aid] = policy_key
-            if policy_key not in policy_order:
-                policy_order.append(policy_key)
-
-        if isinstance(scenario_agents, list):
-            for idx, agent_cfg in enumerate(scenario_agents):
-                if idx >= self.n_agents or not isinstance(agent_cfg, dict):
-                    continue
-                policy_key: Optional[str] = None
-                for key in ("policy_id", "policy", "policy_name"):
-                    value = agent_cfg.get(key)
-                    if isinstance(value, str) and value:
-                        policy_key = value
-                        break
-                if policy_key is None:
-                    task_cfg = agent_cfg.get("task")
-                    if isinstance(task_cfg, dict):
-                        for key in ("policy_id", "policy", "policy_name"):
-                            value = task_cfg.get(key)
-                            if isinstance(value, str) and value:
-                                policy_key = value
-                                break
-                _record_policy(self.possible_agents[idx], policy_key)
-
-        for aid in self.possible_agents:
-            if aid not in agent_policy_map:
-                _record_policy(aid, None)
-
-        if not policy_order:
-            policy_order.append(default_policy_id)
-
-        self._default_policy_id = default_policy_id
-        self._agent_policy_mapping = agent_policy_map
-        self._policy_ids = tuple(policy_order)
-        
         
     def __del__(self):
 
@@ -445,17 +316,7 @@ class F110ParallelEnv(ParallelEnv):
             "observation_spaces": dict(self.observation_spaces),
             "action_spaces": dict(self.action_spaces),
             "state_space": self._state_space,
-            "policies": self._policy_ids,
-            "default_policy": self._default_policy_id,
-            "policy_mapping": self.policy_mapping(),
-            "policy_mapping_fn": self.policy_mapping_fn,
         }
-
-    def policy_mapping(self) -> Dict[str, str]:
-        return dict(self._agent_policy_mapping)
-
-    def policy_mapping_fn(self, agent_id: str, *_, **__) -> str:
-        return self._agent_policy_mapping.get(agent_id, self._default_policy_id)
 
     def _check_done(self):
 
@@ -581,9 +442,9 @@ class F110ParallelEnv(ParallelEnv):
                 "lap_count": int(self.lap_counts[idx]),
                 "collision": bool(self.collisions[idx])
             }
-            if "lidar" in obs[aid]:
-                render_entry["lidar"] = obs[aid]["lidar"]
-                render_entry["scans"] = obs[aid]["lidar"]
+            scan_entry = obs[aid].get("scans")
+            if scan_entry is not None:
+                render_entry["scans"] = scan_entry
             self.render_obs[aid] = render_entry
 
         infos = {aid: {} for aid in self.agents}
@@ -619,9 +480,9 @@ class F110ParallelEnv(ParallelEnv):
                 "lap_count": int(self.lap_counts[idx]),
                 "collision": bool(self.collisions[idx])
             }
-            if "lidar" in obs[aid]:
-                render_entry["lidar"] = obs[aid]["lidar"]
-                render_entry["scans"] = obs[aid]["lidar"]
+            scan_entry = obs[aid].get("scans")
+            if scan_entry is not None:
+                render_entry["scans"] = scan_entry
             self.render_obs[aid] = render_entry
 
         self.current_time += self.timestep
@@ -733,75 +594,6 @@ class F110ParallelEnv(ParallelEnv):
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
-
-    def _initialize_agent_sensors(self, agent_index: Dict[str, int]) -> None:
-        alias_map = {
-            "laps": "lap",
-            "lap_count": "lap",
-            "lap_counts": "lap",
-            "lap_times": "lap",
-            "crash": "collision",
-            "crashes": "collision",
-            "collisions": "collision",
-            "target_collisions": "target_collision",
-            "target_crash": "target_collision",
-            "target_crashes": "target_collision",
-            "poses": "pose",
-            "position": "pose",
-            "positions": "pose",
-            "vel": "velocity",
-            "velocities": "velocity",
-            "speed": "velocity",
-            "angular_vel": "angular_velocity",
-            "omega": "angular_velocity",
-        }
-
-        if not self._agent_sensor_spec:
-            self._agent_sensor_spec = {}
-        sensors_default = tuple(DEFAULT_AGENT_SENSORS)
-
-        for idx, aid in enumerate(self.possible_agents):
-            cfg = self._agent_configs[idx] if idx < len(self._agent_configs) else None
-            sensors = list(sensors_default)
-            target_idx: Optional[int] = None
-
-            if isinstance(cfg, dict):
-                raw_sensors: Optional[Any] = None
-                vehicle_cfg = cfg.get("vehicle")
-                if isinstance(vehicle_cfg, dict):
-                    raw_sensors = vehicle_cfg.get("sensors")
-                if raw_sensors is None:
-                    raw_sensors = cfg.get("sensors")
-
-                values: Optional[List[str]] = None
-                if isinstance(raw_sensors, (list, tuple)):
-                    values = [str(entry) for entry in raw_sensors if isinstance(entry, (str, bytes))]
-                elif isinstance(raw_sensors, (str, bytes)):
-                    values = [str(raw_sensors)]
-
-                if values is not None:
-                    sensors = []
-                    for item in values:
-                        key = item.strip().lower()
-                        key = alias_map.get(key, key)
-                        if key:
-                            sensors.append(key)
-                    if not sensors:
-                        sensors = list(sensors_default)
-
-                target_id = cfg.get("target_id") or cfg.get("target")
-                task_cfg = cfg.get("task")
-                if isinstance(task_cfg, dict):
-                    target_id = task_cfg.get("target_id", target_id)
-                    params = task_cfg.get("params")
-                    if isinstance(params, dict):
-                        target_id = params.get("target_id", target_id)
-                if isinstance(target_id, (str, bytes)):
-                    target_idx = agent_index.get(str(target_id))
-
-            deduped = tuple(dict.fromkeys(sensors))
-            self._agent_sensor_spec[aid] = deduped
-            self._agent_target_index[aid] = target_idx
 
     def _build_observation_spaces(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
         pose_low = np.array([x_min, y_min, -np.pi], dtype=np.float32)

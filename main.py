@@ -4,8 +4,8 @@ import yaml
 import numpy as np
 from PIL import Image
 from f110x.envs import F110ParallelEnv
-from f110x.tasks.random_policy import random_policy
-from f110x.tasks.simple_heuristic import simple_heuristic
+from policies.random_policy import random_policy
+from policies.simple_heuristic import simple_heuristic
 
 # def random_policy(action_space, obs):
 #     return action_space.sample()
@@ -23,9 +23,9 @@ POLICIES = {
 
 with open("configs/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
-with open("scenarios/single_attacker.yaml") as f:
-    scenario_cfg = yaml.safe_load(f)
-scenario = scenario_cfg["agents"]
+# with open("scenarios/single_attacker.yaml") as f:
+#     scenario_cfg = yaml.safe_load(f)
+scenario = cfg["agents"]
 env_cfg = cfg["env"]
 map_dir = Path(env_cfg.get("map_dir", ""))
 map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
@@ -52,10 +52,8 @@ with Image.open(image_path) as map_img:
 env_cfg["map_meta"] = map_meta
 env_cfg["map_image_path"] = str(image_path)
 env_cfg["map_image_size"] = image_size
-# TODO: map the scenario metadata (policies, lap goals, termination settings) onto the environment and policy selection.
 
 env = F110ParallelEnv(**cfg["env"])
-# TODO: wire this script into MARLlib training entrypoints (env creator, experiment config, baseline runners).
 
 def run_eval(env, policy_fn, episodes=5):
     results = []

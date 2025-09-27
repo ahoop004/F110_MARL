@@ -42,19 +42,19 @@ env:
     - [0.0, 0.0, 0.0]
     - [3.0, 0.5, 0.0]
 
-  agents:
-    - id: car_0
-      vehicle:
-        sensors: [ lidar, pose, collision ]
-      task:
-        task_name: gap_follow
-        params: { }
-    - id: car_1
-      vehicle:
-        sensors: [ lidar, pose, collision ]
-      task:
-        task_name: gap_follow
-        params: { }
+agents:
+  - id: car_0
+    vehicle:
+      sensors: [ lidar, pose, collision ]
+    task:
+      task_name: gap_follow
+      params: { }
+  - id: car_1
+    vehicle:
+      sensors: [ lidar, pose, collision ]
+    task:
+      task_name: gap_follow
+      params: { }
 
 run:
   episodes: 10
