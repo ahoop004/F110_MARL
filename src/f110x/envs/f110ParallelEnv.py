@@ -76,7 +76,19 @@ class F110ParallelEnv(ParallelEnv):
         self.agents = self.possible_agents.copy()
    
         self.timestep: float = float(merged.get("timestep", 0.01))
-        self.integrator = merged.get("integrator", Integrator.RK4)
+        integrator_cfg = merged.get("integrator", Integrator.RK4)
+        if isinstance(integrator_cfg, Integrator):
+            integrator_name = integrator_cfg.value
+        else:
+            integrator_name = str(integrator_cfg)
+        integrator_name = integrator_name.strip()
+        if integrator_name.lower() == "rk4":
+            integrator_name = "RK4"
+        elif integrator_name.lower() == "euler":
+            integrator_name = "Euler"
+        else:
+            integrator_name = "RK4"
+        self.integrator = integrator_name
 
         self.map_dir = Path(merged.get("map_dir", None))
 
@@ -315,11 +327,15 @@ class F110ParallelEnv(ParallelEnv):
                     self.start_thetas[:count] = start_angles[:count]
 
         # initiate stuff
-        self.sim = Simulator(self.params,
-                             self.n_agents,
-                             self.seed,
-                             time_step=self.timestep,
-                             lidar_dist=self.lidar_dist)
+        self.sim = Simulator(
+            self.params,
+            self.n_agents,
+            self.seed,
+            time_step=self.timestep,
+            integrator=self.integrator,
+            lidar_dist=self.lidar_dist,
+            num_beams=self._lidar_beam_count,
+        )
         
         self.sim.set_map(str(self.yaml_path), self.map_ext)
         
@@ -727,6 +743,9 @@ class F110ParallelEnv(ParallelEnv):
             "crash": "collision",
             "crashes": "collision",
             "collisions": "collision",
+            "target_collisions": "target_collision",
+            "target_crash": "target_collision",
+            "target_crashes": "target_collision",
             "poses": "pose",
             "position": "pose",
             "positions": "pose",
@@ -832,6 +851,8 @@ class F110ParallelEnv(ParallelEnv):
                 )
             if "target_pose" in sensors:
                 components["target_pose"] = spaces.Box(pose_low, pose_high, dtype=np.float32)
+            if "target_collision" in sensors:
+                components["target_collision"] = spaces.Box(0.0, 1.0, shape=(), dtype=np.float32)
             if "lap" in sensors:
                 components["lap"] = spaces.Box(lap_low, lap_high, dtype=np.float32)
             if "collision" in sensors:
@@ -924,6 +945,7 @@ class F110ParallelEnv(ParallelEnv):
         for i, aid in enumerate(self.possible_agents):
             sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
             agent_obs: Dict[str, np.ndarray] = {}
+            target_idx = self._agent_target_index.get(aid)
 
             has_entry = isinstance(scans, np.ndarray) and i < scans.shape[0]
 
@@ -969,7 +991,6 @@ class F110ParallelEnv(ParallelEnv):
                     agent_obs["angular_velocity"] = np.float32(0.0)
 
             if "target_pose" in sensors:
-                target_idx = self._agent_target_index.get(aid)
                 if target_idx is not None and isinstance(poses_x, np.ndarray) and target_idx < poses_x.shape[0]:
                     agent_obs["target_pose"] = np.array([
                         np.float32(poses_x[target_idx]),
@@ -978,6 +999,13 @@ class F110ParallelEnv(ParallelEnv):
                     ], dtype=np.float32)
                 else:
                     agent_obs["target_pose"] = np.zeros(3, dtype=np.float32)
+
+            if "target_collision" in sensors:
+                if target_idx is not None and isinstance(collisions, np.ndarray) and target_idx < collisions.shape[0]:
+                    target_col_val = float(collisions[target_idx])
+                else:
+                    target_col_val = 0.0
+                agent_obs["target_collision"] = np.float32(target_col_val)
 
             if "lap" in sensors:
                 lap_count_val = float(lap_counts[i]) if i < len(lap_counts) else 0.0

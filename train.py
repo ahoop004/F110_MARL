@@ -33,6 +33,8 @@ class ExperimentSpec:
     rollout_steps: Optional[int] = None
     device: Optional[str] = None
     seed: Optional[int] = None
+    render: bool = False
+    render_every: int = 1
 
 
 def _load_yaml(path: Path) -> dict:
@@ -150,6 +152,7 @@ def _rollout(
         for policy in policies.values():
             policy.reset()
         obs, _ = env.reset()
+        env.render()
 
         totals = defaultdict(float)
         for step in range(max_steps):
@@ -234,7 +237,7 @@ def _print_training_summary(history, start_index: int = 1) -> None:
         )
 
 
-# TODO: plug in actual learner & logging backends (e.g., RLlib, MARLlib, WandB) once ready.
+
 def run_training(spec: ExperimentSpec) -> None:
     env, raw_cfg = _build_env(spec.config_path)
     try:
@@ -268,7 +271,12 @@ def run_training(spec: ExperimentSpec) -> None:
         updates = _resolve_update_count(spec, training_cfg)
         print(f"PPO config: rollout_steps={ppo_config.rollout_steps}, updates={updates}")
 
-        trainer = PPOTrainer(env, ppo_config)
+        trainer = PPOTrainer(
+            env,
+            ppo_config,
+            render=spec.render,
+            render_every=spec.render_every,
+        )
         history = trainer.train(updates)
         print("PPO training summary:")
         _print_training_summary(history)
@@ -288,8 +296,15 @@ def _parse_args() -> ExperimentSpec:
     parser.add_argument("--algo", type=str, choices=("ppo", "scripted"), default=None)
     parser.add_argument("--updates", type=int, default=10)
     parser.add_argument("--rollout-steps", type=int, default=1000)
-    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--device", type=str, default='cpu')
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--render", action="store_true", help="Render environment frames during PPO rollouts")
+    parser.add_argument(
+        "--render-every",
+        type=int,
+        default=1,
+        help="Render every N environment steps when --render is set (default: 1)",
+    )
     args = parser.parse_args()
     return ExperimentSpec(
         args.config.expanduser(),
@@ -301,6 +316,8 @@ def _parse_args() -> ExperimentSpec:
         rollout_steps=args.rollout_steps,
         device=args.device,
         seed=args.seed,
+        render=args.render,
+        render_every=max(1, args.render_every),
     )
 
 

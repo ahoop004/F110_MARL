@@ -127,7 +127,14 @@ def _compute_gae(
 class PPOTrainer:
     """Collects rollouts and optimises the PPO objective."""
 
-    def __init__(self, env, config: PPOConfig | None = None) -> None:
+    def __init__(
+        self,
+        env,
+        config: PPOConfig | None = None,
+        *,
+        render: bool = False,
+        render_every: int = 1,
+    ) -> None:
         if config is None:
             config = PPOConfig()
         self.config = config
@@ -143,8 +150,15 @@ class PPOTrainer:
         if not isinstance(action_space, Box):
             raise TypeError("PPOTrainer expects Box action spaces")
 
-        device = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = torch.device(device)
+        device_str = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if isinstance(device_str, str) and device_str.lower().startswith("cuda") and not torch.cuda.is_available():
+            print("[WARN] CUDA requested but no GPU detected; falling back to CPU.")
+            device_str = "cpu"
+        try:
+            self.device = torch.device(device_str)
+        except (TypeError, RuntimeError) as exc:
+            print(f"[WARN] Unable to use device '{device_str}': {exc}. Falling back to CPU.")
+            self.device = torch.device("cpu")
 
         self.policy = PPOActorCritic(
             obs_space=obs_space,
@@ -167,6 +181,9 @@ class PPOTrainer:
         self._action_high = action_space.high
 
         self._need_reset = True
+        self._render = bool(render)
+        self._render_every = max(1, int(render_every))
+        self._step_counter = 0
 
     def collect_rollout(self) -> Tuple[RolloutBuffer, Dict[str, List[float]]]:
         buffer = RolloutBuffer()
@@ -204,6 +221,12 @@ class PPOTrainer:
                     actions[aid] = np.clip(action_np, self._action_low, self._action_high)
 
                 next_obs, rewards, terminations, truncations, _ = self.env.step(actions)
+                self._step_counter += 1
+                if self._render and (self._step_counter % self._render_every == 0):
+                    try:
+                        self.env.render()
+                    except Exception as exc:
+                        print(f"[WARN] Render call failed: {exc}")
 
                 for aid, data in cached.items():
                     reward = float(rewards.get(aid, 0.0))

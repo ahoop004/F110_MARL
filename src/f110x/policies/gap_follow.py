@@ -18,10 +18,16 @@ class GapFollowPolicy:
         fov = config.pop("field_of_view", np.deg2rad(270.0))
         self._field_of_view = float(fov)
         self._steering_gain = float(config.pop("steering_gain", 1.0))
+        self._steer_smoothing = float(np.clip(config.pop("steer_smoothing", 0.85), 0.0, 1.0))
+        self._speed_smoothing = float(np.clip(config.pop("speed_smoothing", 0.9), 0.0, 1.0))
+        self._brake_clearance = float(config.pop("brake_clearance", 2.0))
+        self._collision_brake = float(np.clip(config.pop("collision_brake", 0.5), 0.0, 1.0))
+        self._min_clearance_speed = float(config.pop("min_clearance_speed", 0.5))
         self._extra_config: Dict[str, Any] = dict(config)
+        self._last_action = np.zeros(2, dtype=np.float32)
 
     def reset(self) -> None:
-        pass
+        self._last_action.fill(0.0)
 
     def compute_action(self, observation: Dict[str, Any], action_space) -> np.ndarray:
         scan_source = observation.get("lidar")
@@ -38,14 +44,16 @@ class GapFollowPolicy:
             kernel = np.ones(self._smooth_window, dtype=np.float32) / float(self._smooth_window)
             ranges = np.convolve(ranges, kernel, mode="same")
 
-        if ranges.size:
-            closest_idx = int(np.argmin(ranges))
-            left = max(closest_idx - self._bubble_radius, 0)
-            right = min(closest_idx + self._bubble_radius + 1, ranges.size)
-            ranges[left:right] = 0.0
+        processed = ranges.copy()
 
-        free_mask = ranges > self._safety_radius
-        best_idx = int(np.argmax(ranges)) if ranges.size else 0
+        if processed.size:
+            closest_idx = int(np.argmin(processed))
+            left = max(closest_idx - self._bubble_radius, 0)
+            right = min(closest_idx + self._bubble_radius + 1, processed.size)
+            processed[left:right] = 0.0
+
+        free_mask = processed > self._safety_radius
+        best_idx = int(np.argmax(processed)) if processed.size else 0
         best_len = 0
         best_range = 0.0
         run_start: Optional[int] = None
@@ -56,7 +64,7 @@ class GapFollowPolicy:
             elif not is_free and run_start is not None:
                 length = idx - run_start
                 if length > 0:
-                    segment = ranges[run_start:idx]
+                    segment = processed[run_start:idx]
                     segment_idx = int(np.argmax(segment)) if segment.size else 0
                     segment_best = float(segment[segment_idx]) if segment.size else 0.0
                     if length > best_len or (length == best_len and segment_best > best_range):
@@ -68,7 +76,7 @@ class GapFollowPolicy:
         if run_start is not None:
             length = free_mask.size - run_start
             if length > 0:
-                segment = ranges[run_start:]
+                segment = processed[run_start:]
                 if segment.size:
                     segment_idx = int(np.argmax(segment))
                     segment_best = float(segment[segment_idx])
@@ -79,7 +87,22 @@ class GapFollowPolicy:
         steer = self._compute_steering(angle, action_space)
         speed = self._compute_speed(angle, action_space)
 
-        return np.array([steer, speed], dtype=np.float32)
+        min_clearance = float(np.min(ranges)) if ranges.size else self._max_range
+        if min_clearance < self._brake_clearance:
+            scale = np.clip(min_clearance / max(self._brake_clearance, 1e-3), 0.0, 1.0)
+            target_min = max(self._min_clearance_speed, self._min_speed * 0.5)
+            speed = target_min + (speed - target_min) * scale
+
+        collision_flag = float(observation.get("collision", 0.0))
+        if collision_flag > 0.5:
+            speed = max(self._min_clearance_speed, speed * (1.0 - self._collision_brake))
+
+        steer = self._apply_smoothing(steer, index=0)
+        speed = self._apply_smoothing(speed, index=1)
+
+        action = np.array([steer, speed], dtype=np.float32)
+        self._last_action = action
+        return action
 
     def _index_to_angle(self, index: int, scan_size: int) -> float:
         if scan_size <= 1:
@@ -106,6 +129,14 @@ class GapFollowPolicy:
             speed_high = float(action_space.high[1])
             speed = float(np.clip(speed, speed_low, speed_high))
         return speed
+
+    def _apply_smoothing(self, value: float, index: int) -> float:
+        last = float(self._last_action[index])
+        if index == 0:
+            alpha = self._steer_smoothing
+        else:
+            alpha = self._speed_smoothing
+        return float(alpha * value + (1.0 - alpha) * last)
 
     def _sample_fallback(self, action_space) -> np.ndarray:
         if hasattr(action_space, "sample"):

@@ -61,7 +61,7 @@ class RaceCar(object):
         self.lidar_range= 30.0
 
         self.time_step = time_step
-        self.num_beams = num_beams
+        self.num_beams = int(num_beams)
         self.fov = fov
         self.integrator = integrator
         self.lidar_dist = lidar_dist
@@ -89,22 +89,28 @@ class RaceCar(object):
         # collision threshold for iTTC to environment
         self.ttc_thresh = 0.005
 
+        regenerate_scan = (
+            RaceCar.scan_simulator is None
+            or getattr(RaceCar, "_scan_beam_count", None) != self.num_beams
+            or getattr(RaceCar, "_scan_fov", None) != fov
+        )
+
         # initialize scan sim
-        if RaceCar.scan_simulator is None:
+        if regenerate_scan:
             self.scan_rng = np.random.default_rng(seed=self.seed)
-            RaceCar.scan_simulator = ScanSimulator2D(num_beams, fov)
+            RaceCar.scan_simulator = ScanSimulator2D(self.num_beams, fov)
 
             scan_ang_incr = RaceCar.scan_simulator.get_increment()
 
             # angles of each scan beam, distance from lidar to edge of car at each beam, and precomputed cosines of each angle
-            RaceCar.cosines = np.zeros((num_beams, ))
-            RaceCar.scan_angles = np.zeros((num_beams, ))
-            RaceCar.side_distances = np.zeros((num_beams, ))
+            RaceCar.cosines = np.zeros((self.num_beams, ))
+            RaceCar.scan_angles = np.zeros((self.num_beams, ))
+            RaceCar.side_distances = np.zeros((self.num_beams, ))
 
             dist_sides = params['width']/2.
             dist_fr = (params['lf']+params['lr'])/2.
 
-            for i in range(num_beams):
+            for i in range(self.num_beams):
                 angle = -fov/2. + i*scan_ang_incr
                 RaceCar.scan_angles[i] = angle
                 RaceCar.cosines[i] = np.cos(angle)
@@ -131,6 +137,11 @@ class RaceCar(object):
                         to_side = dist_sides / np.cos(-angle - np.pi/2)
                         to_fr = dist_fr / np.sin(-angle - np.pi/2)
                         RaceCar.side_distances[i] = min(to_side, to_fr)
+
+            RaceCar._scan_beam_count = self.num_beams
+            RaceCar._scan_fov = fov
+        else:
+            self.scan_rng = np.random.default_rng(seed=self.seed)
 
     def update_params(self, params):
         """
@@ -243,6 +254,8 @@ class RaceCar(object):
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
         
+        prev_state = self.state.copy()
+
         if self.integrator == 'RK4':
             # RK4 integration
             k1 = vehicle_dynamics_st(
@@ -355,7 +368,7 @@ class RaceCar(object):
                 self.params['v_min'],
                 self.params['v_max'])
             self.state = self.state + self.time_step * f
-        
+
         else:
             raise SyntaxError(f"Invalid Integrator Specified. Provided {self.integrator}. Please choose RK4 or Euler")
 
@@ -364,7 +377,28 @@ class RaceCar(object):
         #     self.state[4] = self.state[4] - 2*np.pi
         # elif self.state[4] < 0:
         #     self.state[4] = self.state[4] + 2*np.pi
-        self.state[4] = (self.state[4] + np.pi) % (2 * np.pi) - np.pi
+        if not np.all(np.isfinite(self.state)):
+            # numerical blow-up; revert to previous stable state
+            self.state = prev_state
+        else:
+            # clamp state components to physically reasonable ranges
+            steer_min = self.params.get('s_min', -0.5)
+            steer_max = self.params.get('s_max', 0.5)
+            v_min = self.params.get('v_min', -5.0)
+            v_max = self.params.get('v_max', 20.0)
+            yaw_rate_cap = 100.0
+            slip_cap = np.pi / 2.0
+
+            self.state[2] = float(np.clip(self.state[2], steer_min, steer_max))
+            self.state[3] = float(np.clip(self.state[3], v_min, v_max))
+            self.state[5] = float(np.clip(self.state[5], -yaw_rate_cap, yaw_rate_cap))
+            self.state[6] = float(np.clip(self.state[6], -slip_cap, slip_cap))
+
+            # keep orientation bounded for downstream trig
+            self.state[4] = (self.state[4] + np.pi) % (2 * np.pi) - np.pi
+
+            # ensure any remaining NaN/inf entries are neutralised
+            self.state = np.nan_to_num(self.state, nan=0.0, posinf=0.0, neginf=0.0)
 
         # update scan
         scan_x = self.state[0] + self.lidar_dist*np.cos(self.state[4])

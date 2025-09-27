@@ -191,7 +191,12 @@ def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v)
     # steering
     steer_diff = steer - current_steer
     if np.fabs(steer_diff) > 1e-4:
-        sv = (steer_diff / np.fabs(steer_diff)) * max_sv
+        # scale steering velocity instead of pegging at the hard limit each step
+        sv = steer_diff * 2.0
+        if sv > max_sv:
+            sv = max_sv
+        elif sv < -max_sv:
+            sv = -max_sv
     else:
         sv = 0.0
 
@@ -199,23 +204,23 @@ def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v)
     vel_diff = speed - current_speed
     # currently forward
     if current_speed > 0.:
-        if (vel_diff > 0):
+        if vel_diff > 0:
             # accelerate
-            kp = 10.0 * max_a / max_v
+            kp = 5.0 * max_a / max_v
             accl = kp * vel_diff
         else:
             # braking
-            kp = 10.0 * max_a / (-min_v)
+            kp = 5.0 * max_a / (-min_v)
             accl = kp * vel_diff
     # currently backwards
     else:
-        if (vel_diff > 0):
+        if vel_diff > 0:
             # braking
-            kp = 2.0 * max_a / max_v
+            kp = 1.5 * max_a / max_v
             accl = kp * vel_diff
         else:
             # accelerating
-            kp = 2.0 * max_a / (-min_v)
+            kp = 1.5 * max_a / (-min_v)
             accl = kp * vel_diff
 
     return accl, sv
