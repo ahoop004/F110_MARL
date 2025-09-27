@@ -10,6 +10,9 @@ from f110x.physics import collision_models
 from f110x.physics.collision_models import get_vertices, collision_multiple
 
 
+ENV_COLLISION_IDX = -2
+
+
 class Integrator(Enum):
     RK4 = "RK4"
     Euler = "Euler"
@@ -126,6 +129,7 @@ class Simulator(object):
         self.collision_idx[:] = -1
 
         scans_list = []
+        env_collision_mask = np.zeros((N,), dtype=np.bool_)
         # store prev states for revert if needed
         prev_states = [agent.state.copy() for agent in self.agents]
 
@@ -142,6 +146,7 @@ class Simulator(object):
                 agent.state[3] = 0.0
                 agent.state[5] = 0.0
                 self.collisions[i] = 1  # mark environment collision
+                env_collision_mask[i] = True
                 # TODO: re-run the scan for the reverted pose so lidar data stays consistent with the restored state.
 
             # ensure scan is freshest
@@ -157,13 +162,8 @@ class Simulator(object):
         verts = [get_vertices(self.agent_poses[i], self.params["length"], self.params["width"]) for i in range(N)]
         col_flags, hit_idx = collision_multiple(np.stack(verts, axis=0))
         # Merge agent-agent collision flags with environment collision flags
-        col_flags = col_flags.astype(np.int8, copy=False)
-        for i in range(N):
-            if self.collisions[i] == 1 or col_flags[i] == 1:
-                self.collisions[i] = 1
-            # collision_idx logic: if agent-agent collision, set; if env collision, maybe set to some special id
-            # TODO: distinguish environment collisions in `collision_idx` instead of leaving them at -1.
-        self.collision_idx[:] = hit_idx.astype(np.int32, copy=False)
+        np.maximum(self.collisions, col_flags, out=self.collisions)
+        self.collision_idx[:] = hit_idx
 
         # --- 3) opponent occlusions via LiDAR footprints, etc.
         for i, agent in enumerate(self.agents):
@@ -185,6 +185,12 @@ class Simulator(object):
             # Already accounted for environment collision via agent.in_collision
             if getattr(agent, "in_collision", False):
                 self.collisions[i] = 1
+                env_collision_mask[i] = True
+
+        if env_collision_mask.any():
+            env_only = env_collision_mask & (self.collision_idx == -1)
+            if np.any(env_only):
+                self.collision_idx[env_only] = ENV_COLLISION_IDX
 
         # --- 4) prepare observation dict
         scans = np.stack(scans_list, axis=0).astype(np.float32, copy=False)
@@ -192,7 +198,7 @@ class Simulator(object):
         poses_y = self.agent_poses[:, 1].astype(np.float32, copy=False)
         poses_theta = self.agent_poses[:, 2].astype(np.float32, copy=False)
         linear_vels_x = np.array([a.state[3] for a in self.agents], dtype=np.float32)
-        linear_vels_y = np.zeros((N,), dtype=np.float32)  # TODO: expose real lateral velocity instead of zeros.
+        linear_vels_y = np.array([a.state[3] * np.sin(a.state[6]) for a in self.agents], dtype=np.float32)
         ang_vels_z = np.array([a.state[5] for a in self.agents], dtype=np.float32)
 
         obs_dict = {

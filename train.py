@@ -10,7 +10,7 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Tuple, Optional
 
 import numpy as np
 import yaml
@@ -18,6 +18,8 @@ import yaml
 from f110x.envs import F110ParallelEnv
 from f110x.policies import GapFollowPolicy
 from f110x.tasks.gap_follow import GapFollowTask
+from f110x.tasks.attacker import HerdingAttackTask
+from algos.ppo.ppo import PPOConfig, PPOTrainer
 
 
 @dataclass
@@ -26,6 +28,11 @@ class ExperimentSpec:
     scenario_path: Path
     episodes: int
     max_steps: int
+    algo: Optional[str] = None
+    updates: Optional[int] = None
+    rollout_steps: Optional[int] = None
+    device: Optional[str] = None
+    seed: Optional[int] = None
 
 
 def _load_yaml(path: Path) -> dict:
@@ -88,11 +95,13 @@ def _default_policy(action_space, *_):
 
 _TASK_REGISTRY = {
     "gap_follow": GapFollowTask,
+    "attack_target": HerdingAttackTask,
 }
 
 _POLICY_REGISTRY = {
     "gap_follow": GapFollowPolicy,
 }
+
 
 
 def _build_agent_components(
@@ -113,6 +122,8 @@ def _build_agent_components(
         if task_cls is not None:
             task_instance = task_cls(**params)
             tasks[aid] = task_instance
+            if isinstance(task_instance, HerdingAttackTask):
+                params.setdefault("target_id", task_instance.target_id())
         else:
             task_instance = None
 
@@ -139,6 +150,7 @@ def _rollout(
         for policy in policies.values():
             policy.reset()
         obs, _ = env.reset()
+
         totals = defaultdict(float)
         for step in range(max_steps):
             actions = {}
@@ -149,6 +161,7 @@ def _rollout(
                 else:
                     actions[aid] = _default_policy(env.action_space(aid), obs[aid])
             obs, rewards, terms, truncs, _ = env.step(actions)
+            env.render()
             for aid, reward in rewards.items():
                 totals[aid] += reward
             if all(terms.get(aid, False) or truncs.get(aid, False) for aid in env.possible_agents):
@@ -169,25 +182,101 @@ def _summarize(rewards: Dict[str, Iterable[float]]) -> Dict[str, Tuple[float, fl
     return summary
 
 
+def _build_ppo_config(spec: ExperimentSpec, training_cfg: Optional[dict]) -> PPOConfig:
+    training_cfg = training_cfg or {}
+    ppo_cfg = training_cfg.get("ppo", {}) or {}
+
+    cfg_kwargs = {}
+    for name in PPOConfig.__dataclass_fields__:
+        value = ppo_cfg.get(name)
+        if value is not None:
+            cfg_kwargs[name] = value
+
+    if spec.rollout_steps is not None:
+        cfg_kwargs["rollout_steps"] = spec.rollout_steps
+    elif "rollout_steps" not in cfg_kwargs:
+        rollout_steps = training_cfg.get("rollout_steps")
+        if rollout_steps is not None:
+            cfg_kwargs["rollout_steps"] = rollout_steps
+
+    if spec.device is not None:
+        cfg_kwargs["device"] = spec.device
+    if spec.seed is not None:
+        cfg_kwargs["seed"] = spec.seed
+
+    return PPOConfig(**cfg_kwargs)
+
+
+def _resolve_update_count(spec: ExperimentSpec, training_cfg: Optional[dict]) -> int:
+    training_cfg = training_cfg or {}
+    updates = spec.updates
+    if updates is None:
+        updates = training_cfg.get("updates")
+    if updates is None:
+        updates = spec.episodes
+    updates = int(updates)
+    if updates <= 0:
+        raise ValueError("Number of PPO updates must be positive")
+    return updates
+
+
+def _print_training_summary(history, start_index: int = 1) -> None:
+    for idx, record in enumerate(history, start=start_index):
+        metrics = record.get("metrics", {})
+        returns = record.get("returns", {})
+        ret_summary = ", ".join(
+            f"{aid}:{float(val):.2f}" for aid, val in sorted(returns.items())
+        ) or "n/a"
+        print(
+            f"  Update {idx:03d}: policy_loss={metrics.get('policy_loss', 0.0):.4f}, "
+            f"value_loss={metrics.get('value_loss', 0.0):.4f}, entropy={metrics.get('entropy', 0.0):.4f}, "
+            f"returns={ret_summary}"
+        )
+
+
 # TODO: plug in actual learner & logging backends (e.g., RLlib, MARLlib, WandB) once ready.
 def run_training(spec: ExperimentSpec) -> None:
     env, raw_cfg = _build_env(spec.config_path)
-    scenario = _load_scenario(spec.scenario_path)
-    tasks, policies = _build_agent_components(scenario)
+    try:
+        scenario = _load_scenario(spec.scenario_path)
+        tasks, policies = _build_agent_components(scenario)
 
-    print("Loaded config:", spec.config_path)
-    print("Loaded scenario agents:", [agent["id"] for agent in scenario.get("agents", [])])
-    if policies:
-        print("Scripted policies:", {aid: policy.__class__.__name__ for aid, policy in policies.items()})
-    if tasks:
-        print("Tasks:", {aid: task.__class__.__name__ for aid, task in tasks.items()})
+        print("Loaded config:", spec.config_path)
+        print("Loaded scenario agents:", [agent["id"] for agent in scenario.get("agents", [])])
+        if tasks:
+            print("Tasks:", {aid: task.__class__.__name__ for aid, task in tasks.items()})
 
-    rewards = _rollout(env, policies, episodes=spec.episodes, max_steps=spec.max_steps)
-    stats = _summarize(rewards)
+        training_cfg = raw_cfg.get("training", {}) or {}
+        algo_choice = (spec.algo or training_cfg.get("algo") or "ppo").lower()
+        print(f"Selected algorithm: {algo_choice}")
 
-    print("Episode reward stats (mean, std):")
-    for aid, (mean_val, std_val) in stats.items():
-        print(f"  {aid}: mean={mean_val:.2f}, std={std_val:.2f}")
+        if algo_choice == "scripted":
+            if policies:
+                print("Scripted policies:", {aid: policy.__class__.__name__ for aid, policy in policies.items()})
+            rewards = _rollout(env, policies, episodes=spec.episodes, max_steps=spec.max_steps)
+            stats = _summarize(rewards)
+
+            print("Episode reward stats (mean, std):")
+            for aid, (mean_val, std_val) in stats.items():
+                print(f"  {aid}: mean={mean_val:.2f}, std={std_val:.2f}")
+            return
+
+        if algo_choice != "ppo":
+            raise ValueError(f"Unsupported algorithm '{algo_choice}' requested")
+
+        ppo_config = _build_ppo_config(spec, training_cfg)
+        updates = _resolve_update_count(spec, training_cfg)
+        print(f"PPO config: rollout_steps={ppo_config.rollout_steps}, updates={updates}")
+
+        trainer = PPOTrainer(env, ppo_config)
+        history = trainer.train(updates)
+        print("PPO training summary:")
+        _print_training_summary(history)
+
+    finally:
+        close_fn = getattr(env, "close", None)
+        if callable(close_fn):
+            close_fn()
 
 
 def _parse_args() -> ExperimentSpec:
@@ -196,8 +285,23 @@ def _parse_args() -> ExperimentSpec:
     parser.add_argument("--scenario", type=Path, default=Path("scenarios/single_attacker.yaml"))
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--max-steps", type=int, default=10_000)
+    parser.add_argument("--algo", type=str, choices=("ppo", "scripted"), default=None)
+    parser.add_argument("--updates", type=int, default=None)
+    parser.add_argument("--rollout-steps", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
-    return ExperimentSpec(args.config.expanduser(), args.scenario.expanduser(), args.episodes, args.max_steps)
+    return ExperimentSpec(
+        args.config.expanduser(),
+        args.scenario.expanduser(),
+        args.episodes,
+        args.max_steps,
+        algo=args.algo,
+        updates=args.updates,
+        rollout_steps=args.rollout_steps,
+        device=args.device,
+        seed=args.seed,
+    )
 
 
 def main() -> None:
