@@ -1,15 +1,34 @@
-# TODO 
+# TODO
 
-
-- [x] Refactor config handling (Hydra/gin/etc.) so algorithm/env/reward variants are declarative.
-- [ ] Extract env/agent factory utilities so train/eval share a common build API.
+- [x] Refactor config handling using ExperimentConfig dataclasses.
+- [ ] Extract env/agent factory utilities so train/eval share a common build API (see ticket).
+  - [x] Update map_loader.py to centralize map metadata augmentation.
+  - [x] Flesh out start_pose.py with parsing/adjust/reset helpers.
+    - [ ] Validate spawn poses against map (inside drivable area).
+    - [ ] Add utilities to sample along track centerline/distance.
+  - [ ] Add builders module returning env + agents + wrappers.
+  - [ ] Refactor train.py to consume the new builders.
+  - [ ] Refactor eval.py (and main.py) to consume the new builders.
+  - [ ] Smoke-test train/eval after refactor.
 - [ ] Wrap PPO logic in a generic Trainer interface; plan for plugging in other agents (SAC, TD3).
+  - [ ] Define a Trainer interface (init, act, update) shared across algos.
+  - [ ] Adapt PPOAgent into the trainer abstraction.
+  - [ ] Provide hooks for future SAC/TD3 implementations.
 - [ ] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).
+  - [ ] Capture metrics (episode length, collisions, lap counts).
+  - [ ] Log deterministic eval results to wandb/console.
+  - [ ] Optionally save evaluation rollouts for playback.
 - [ ] Integrate structured logging (wandb/TensorBoard) for both training updates and eval runs.
-- [ ]  Add unit smoke tests for reset_environment and start pose adjustments to catch regressions.
+  - [ ] Add wandb/TensorBoard hooks for training updates.
+  - [ ] Log PPO losses (policy/value/entropy) each update.
+  - [ ] Emit eval metrics to wandb/TensorBoard.
+- [ ] Add unit smoke tests for reset_environment and start pose adjustments.
+  - [ ] Write pytest covering start pose reset behavior (randomized options).
+  - [ ] Test map loader fallback paths (missing image/ext).
+- [ ] Build map_features utility for derived artefacts (centerline, walls, friction).
+  - [ ] Generate centerline/waypoint data from MapData.
+  - [ ] Extract wall/out-of-bounds masks supporting varied color schemes.
+  - [ ] Define friction/track property map generation hooks.
 - [ ] Prepare sweeps.yaml variants per algorithm once factories are in place.
-- [ ] [Ticket] Extract shared env/agent factory module (centralize map setup, start poses, policy creation).
-  - [ ] Identify map-loading logic duplication in train.py/eval.py.
-  - [ ] Design factory interface returning env, PPO agent, heuristic policy, wrappers.
-  - [ ] Refactor train/eval/main to use factories without global state.
-  - [ ] Add regression smoke tests for factory path.
+  - [ ] Define sweeps for PPO (lr, ent_coef, clip).
+            - [ ] Add SAC/TD3 sweeps once trainers exist.

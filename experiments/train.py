@@ -4,92 +4,31 @@ import yaml
 import numpy as np
 from f110x.utils.config_models import ExperimentConfig
 from PIL import Image
-from f110x.envs import F110ParallelEnv
-from policies.gap_follow import FollowTheGapPolicy
-from policies.ppo.ppo import PPOAgent
-from f110x.wrappers.observation import ObsWrapper
 from f110x.wrappers.reward import RewardWrapper
+from f110x.utils.builders import build_env, build_agents
+from f110x.utils.start_pose import adjust_start_poses
 
 from collections import deque
 
 cfg = ExperimentConfig.load(Path("configs/config.yaml"))
 
-env_cfg = cfg.env.to_kwargs()
-render_interval = env_cfg.get("render_interval", 0) 
-update_after = env_cfg.get('update',1)
-
-# Map setup
-map_dir = Path(env_cfg.get("map_dir", ""))
-map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
-if map_yaml_name is None:
-    raise ValueError("config.env must define map_yaml or map")
-
-map_yaml_path = (map_dir / map_yaml_name).expanduser().resolve()
-with open(map_yaml_path, "r") as map_file:
-    map_meta = yaml.safe_load(map_file)
-
-image_rel = map_meta.get("image")
-fallback_image = env_cfg.get("map_image")
-if image_rel:
-    image_path = (map_yaml_path.parent / image_rel).resolve()
-elif fallback_image:
-    image_path = (map_dir / fallback_image).expanduser().resolve()
-else:
-    map_ext = env_cfg.get("map_ext", ".png")
-    image_path = map_yaml_path.with_suffix(map_ext)
-
-with Image.open(image_path) as map_img:
-    image_size = map_img.size
-
-env_cfg["map_meta"] = map_meta
-env_cfg["map_image_path"] = str(image_path)
-env_cfg["map_image_size"] = image_size
-
-# Environment
-env = F110ParallelEnv(**env_cfg)
+env, env_cfg, start_pose_options = build_env(cfg)
+render_interval = env_cfg.get("render_interval", 0)
+update_after = env_cfg.get('update', 1)
 
 start_pose_back_gap = float(env_cfg.get("start_pose_back_gap", 0.0))
 start_pose_min_spacing = float(env_cfg.get("start_pose_min_spacing", 0.0))
-start_pose_options = env_cfg.get("start_pose_options")
-if start_pose_options:
-    processed = []
-    for option in start_pose_options:
-        arr = np.asarray(option, dtype=np.float32)
-        if arr.ndim == 1:
-            arr = np.expand_dims(arr, axis=0)
-        processed.append(arr)
-    start_pose_options = processed
 
+def reset_environment(environment):
+    return reset_with_start_poses(environment, start_pose_options, start_pose_back_gap, start_pose_min_spacing)
 
+# -------------------------------------------------------------------
+# Initialize wrappers & policies
+# -------------------------------------------------------------------
+reward_cfg = cfg.reward.to_dict()
+ppo_agent, gap_policy, PPO_AGENT, GAP_AGENT, obs_wrapper = build_agents(env, cfg)
 
-
-
-def _adjust_start_poses(poses):
-    if poses.shape[0] < 2:
-        return poses
-
-    adjusted = poses.copy()
-    leader = adjusted[0]
-    heading = np.array([np.cos(leader[2]), np.sin(leader[2])], dtype=np.float32)
-
-    if start_pose_back_gap > 0.0:
-        for idx in range(1, adjusted.shape[0]):
-            rel = adjusted[idx, :2] - leader[:2]
-            proj = float(np.dot(rel, heading))
-            if proj < 0 and abs(proj) < start_pose_back_gap:
-                delta = start_pose_back_gap + proj
-                adjusted[idx, :2] -= heading * delta
-
-    if start_pose_min_spacing > 0.0:
-        for idx in range(1, adjusted.shape[0]):
-            rel = adjusted[idx, :2] - leader[:2]
-            dist = float(np.linalg.norm(rel))
-            if dist < start_pose_min_spacing and dist > 1e-6:
-                direction = heading if np.dot(rel, heading) >= 0 else -heading
-                adjusted[idx, :2] += direction * (start_pose_min_spacing - dist)
-
-    return adjusted
-
+raw_curriculum = cfg.get("reward_curriculum", [])
 def reset_environment(environment):
     if not start_pose_options:
         return environment.reset()
