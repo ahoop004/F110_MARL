@@ -6,6 +6,9 @@ env:
   integrator: 'RK4'
   render_interval: 0
   update: 1
+  vehicle_params:
+    v_min: -2.0
+    v_max: 8.0
 
   map_dir: "maps"
   map_yaml: "Shanghai_map.yaml"
@@ -58,10 +61,11 @@ dqn:
   epsilon_decay_rate: 0.982
   hidden_dims: [256, 256]
   action_set:
-    - [-0.4, 0.5]
-    - [0.0, 0.5]
-    - [0.4, 0.5]
-    - [0.0, 1.0]
+    - [-0.35, 1.5]
+    - [-0.15, 2.6]
+    - [0.0, 3.2]
+    - [0.15, 2.6]
+    - [0.35, 1.5]
     - [0.0, 0.0]
   train_episodes: 500
   eval_episodes: 5

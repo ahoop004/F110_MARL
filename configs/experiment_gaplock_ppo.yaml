@@ -6,6 +6,9 @@ env:
   integrator: 'RK4'
   render_interval: 0
   update: 1
+  vehicle_params:
+    v_min: -2.0
+    v_max: 8.0
 
   map_dir: "maps"
   map_yaml: "Shanghai_map.yaml"
