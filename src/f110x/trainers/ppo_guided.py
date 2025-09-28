@@ -33,8 +33,10 @@ class PPOTrainer(Trainer):
         )
 
     def update(self) -> Optional[Dict[str, Any]]:
-        self._agent.update()
-        return None
+        stats = self._agent.update()
+        if not stats:
+            return None
+        return {f"{self.agent_id}/{key}": value for key, value in stats.items()}
 
     def save(self, path: str) -> None:
         self._agent.save(path)

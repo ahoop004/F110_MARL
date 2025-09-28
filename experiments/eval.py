@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pickle
 
 from f110x.envs import F110ParallelEnv
 from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
@@ -16,6 +17,24 @@ from f110x.wrappers.reward import RewardWrapper
 
 
 DEFAULT_CONFIG_PATH = Path("configs/config.yaml")
+
+
+def _to_serializable(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
+
+
+def _serialize_obs(obs_dict: Dict[str, Any]) -> Dict[str, Any]:
+    serial: Dict[str, Any] = {}
+    for key, value in obs_dict.items():
+        if isinstance(value, dict):
+            serial[key] = {sub_k: _to_serializable(sub_v) for sub_k, sub_v in value.items()}
+        else:
+            serial[key] = _to_serializable(value)
+    return serial
 
 
 @dataclass
@@ -30,6 +49,8 @@ class EvaluationContext:
     start_pose_back_gap: float
     start_pose_min_spacing: float
     checkpoint_path: Optional[Path]
+    save_rollouts: bool = False
+    rollout_dir: Optional[Path] = None
 
     @property
     def ppo_agent(self):
@@ -86,6 +107,11 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
 
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
+    save_rollouts = bool(cfg.main.get("save_eval_rollouts", False))
+    rollout_dir: Optional[Path] = None
+    if save_rollouts:
+        rollout_dir = Path(cfg.main.get("eval_rollout_dir", "eval_rollouts")).expanduser()
+        rollout_dir.mkdir(parents=True, exist_ok=True)
 
     return EvaluationContext(
         cfg=cfg,
@@ -98,6 +124,8 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
         checkpoint_path=checkpoint_path,
+        save_rollouts=save_rollouts,
+        rollout_dir=rollout_dir,
     )
 
 
@@ -159,11 +187,21 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
         truncs: Dict[str, bool] = {}
         collision_history: List[str] = []
         live_render = render_enabled
+        collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
+        rollout_trace: Optional[List[Dict[str, Any]]] = [] if ctx.save_rollouts and ctx.rollout_dir else None
 
         while True:
             actions = _collect_actions(ctx, obs, done)
             if not actions:
                 break
+
+            step_record: Optional[Dict[str, Any]] = None
+            if rollout_trace is not None:
+                step_record = {
+                    "step": steps,
+                    "obs": {aid: _serialize_obs(obs_data) for aid, obs_data in obs.items()},
+                    "actions": {aid: _to_serializable(action) for aid, action in actions.items()},
+                }
 
             next_obs, rewards, terms, truncs, infos = env.step(actions)
             steps += 1
@@ -186,6 +224,8 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
             ]
             if collision_agents:
                 collision_history.extend(collision_agents)
+                for aid in collision_agents:
+                    collision_counts[aid] = collision_counts.get(aid, 0) + 1
 
             obs = next_obs
             done = {
@@ -194,6 +234,13 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
                 or (aid in collision_history)
                 for aid in done
             }
+
+            if step_record is not None:
+                step_record["rewards"] = {aid: float(rewards.get(aid, 0.0)) for aid in totals}
+                step_record["next_obs"] = {aid: _serialize_obs(next_obs_data) for aid, next_obs_data in next_obs.items()}
+                step_record["done"] = {aid: done.get(aid, False) for aid in done}
+                step_record["collisions"] = list(collision_agents)
+                rollout_trace.append(step_record)
 
             if live_render:
                 try:
@@ -204,6 +251,15 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
 
             if all(done.values()):
                 break
+
+        lap_counts: Dict[str, float] = {}
+        if hasattr(env, "lap_counts") and hasattr(env, "_agent_id_to_index"):
+            for aid in env.possible_agents:
+                idx = getattr(env, "_agent_id_to_index", {}).get(aid)
+                if idx is not None and idx < len(getattr(env, "lap_counts", [])):
+                    lap_counts[aid] = float(env.lap_counts[idx])
+
+        collision_total = sum(collision_counts.values())
 
         cause_bits: List[str] = []
         if collision_history:
@@ -218,7 +274,7 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
         cause_str = ",".join(cause_bits)
 
         print(
-            f"[EVAL {ep + 1:03d}/{episodes}] steps={steps} cause={cause_str} "
+            f"[EVAL {ep + 1:03d}/{episodes}] steps={steps} cause={cause_str} collisions={collision_total} "
             f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
         )
 
@@ -227,9 +283,21 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
             "steps": steps,
             "cause": cause_str,
             "returns": dict(totals),
+            "collision_total": collision_total,
         }
         for aid, value in totals.items():
             record[f"return_{aid}"] = value
+        for aid, count in collision_counts.items():
+            record[f"collision_count_{aid}"] = count
+        for aid, count in lap_counts.items():
+            record[f"lap_count_{aid}"] = count
+
+        if rollout_trace is not None and ctx.rollout_dir is not None:
+            rollout_path = ctx.rollout_dir / f"episode_{ep + 1:03d}.pkl"
+            with rollout_path.open("wb") as handle:
+                pickle.dump({"trajectory": rollout_trace, "metrics": record}, handle)
+            record["rollout_path"] = str(rollout_path)
+
         results.append(record)
 
     return results

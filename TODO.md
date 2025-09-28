@@ -24,14 +24,14 @@
   - [ ] Implement DQNTrainer using shared protocol.
   - [ ] Register TD3/DQN builders and expose config knobs.
   - [ ] Update docs/examples to highlight `AgentTeam` + trainer usage.
-- [ ] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).
-  - [ ] Capture metrics (episode length, collisions, lap counts).
-  - [ ] Log deterministic eval results to wandb/console.
-  - [ ] Optionally save evaluation rollouts for playback.
-- [ ] Integrate structured logging (wandb/TensorBoard) for both training updates and eval runs.
-  - [ ] Add wandb/TensorBoard hooks for training updates.
-  - [ ] Log PPO losses (policy/value/entropy) each update.
-  - [ ] Emit eval metrics to wandb/TensorBoard.
+- [x] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).
+  - [x] Capture metrics (episode length, collisions, lap counts).
+  - [x] Log deterministic eval results to wandb/console.
+  - [x] Optionally save evaluation rollouts for playback.
+- [x] Integrate structured logging (wandb/TensorBoard) for both training updates and eval runs.
+  - [x] Add wandb/TensorBoard hooks for training updates.
+  - [x] Log PPO losses (policy/value/entropy) each update.
+  - [x] Emit eval metrics to wandb/TensorBoard.
 - [ ] Update CLI/docs for new `--render`, `--episodes`, and trainer workflow.
 - [ ] Build map_features utility for derived artefacts (centerline, walls, friction).
   - [ ] Generate centerline/waypoint data from MapData.

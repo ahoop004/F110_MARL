@@ -164,9 +164,12 @@ class PPOAgent:
     # ------------------- Update -------------------
 
     def update(self):
-        """Clipped PPO update with safe minibatching and strict length checks."""
+        """Clipped PPO update with safe minibatching and strict length checks.
+
+        Returns a dict of training statistics when an update occurs, otherwise ``None``.
+        """
         if len(self.rew_buf) == 0:
-            return
+            return None
 
         self.finish_path()
 
@@ -184,6 +187,10 @@ class PPOAgent:
             f"Buffer length mismatch: obs {len(self.obs_buf)}, acts {len(self.act_buf)}, raw {len(self.raw_act_buf)}, logp {len(self.logp_buf)}, adv {len(self.adv_buf)}, ret {len(self.ret_buf)}"
 
         idx = np.arange(N)
+        policy_losses = []
+        value_losses = []
+        entropies = []
+        approx_kls = []
         for _ in range(self.update_epochs):
             np.random.shuffle(idx)
             for start in range(0, N, self.minibatch_size):
@@ -217,6 +224,13 @@ class PPOAgent:
                 entropy = dist.entropy().sum(dim=-1).mean()
                 loss = policy_loss + value_loss + self.ent_coef * entropy
 
+                with torch.no_grad():
+                    policy_losses.append(float(policy_loss.detach().cpu().item()))
+                    value_losses.append(float(value_loss.detach().cpu().item()))
+                    entropies.append(float(entropy.detach().cpu().item()))
+                    approx_kl = (logp_b - logp).mean()
+                    approx_kls.append(float(approx_kl.detach().cpu().item()))
+
                 self.actor_opt.zero_grad(set_to_none=True)
                 self.critic_opt.zero_grad(set_to_none=True)
                 loss.backward()
@@ -228,6 +242,19 @@ class PPOAgent:
 
         # fresh rollout next time
         self.reset_buffer()
+
+        if not policy_losses:
+            return None
+
+        def _mean_safe(values):
+            return float(np.mean(values)) if values else 0.0
+
+        return {
+            "policy_loss": _mean_safe(policy_losses),
+            "value_loss": _mean_safe(value_losses),
+            "entropy": _mean_safe(entropies),
+            "approx_kl": _mean_safe(approx_kls),
+        }
 
     # ------------------- I/O -------------------
 

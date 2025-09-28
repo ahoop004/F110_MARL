@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -214,7 +214,13 @@ def _prepare_next_observation(
     return obs
 
 
-def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
+def run_training(
+    ctx: TrainingContext,
+    episodes: int,
+    *,
+    update_callback: Optional[Callable[[Dict[str, float]], None]] = None,
+    update_start: int = 0,
+) -> List[Dict[str, float]]:
     env = ctx.env
     ppo_agent = ctx.ppo_agent
     ppo_id = ctx.ppo_agent_id
@@ -223,6 +229,8 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
     recent_window = max(1, int(ctx.ppo_bundle.metadata.get("config", {}).get("rolling_avg_window", 10)))
     recent_returns: deque[float] = deque(maxlen=recent_window)
     best_return = float("-inf")
+    update_count = update_start
+    trainers = dict(ctx.trainer_map)
 
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
@@ -241,8 +249,6 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
         collision_history: List[str] = []
         terms: Dict[str, bool] = {}
         truncs: Dict[str, bool] = {}
-
-        trainers_dict = dict(ctx.trainer_map)
 
         while True:
             actions, processed_obs = _compute_actions(ctx, obs, done)
@@ -274,7 +280,7 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
             if collision_agents:
                 collision_history.extend(collision_agents)
 
-            for trainer_id, trainer in trainers_dict.items():
+            for trainer_id, trainer in trainers.items():
                 if trainer_id not in processed_obs:
                     continue
 
@@ -321,8 +327,15 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
         results.append(totals)
 
         if (ep + 1) % ctx.update_after == 0:
-            for trainer in trainers_dict.values():
-                trainer.update()
+            for trainer_id, trainer in trainers.items():
+                stats = trainer.update()
+                if update_callback and stats:
+                    update_count += 1
+                    payload: Dict[str, float] = {"train/update": update_count}
+                    for key, value in stats.items():
+                        if isinstance(value, (int, float)):
+                            payload[f"train/{key}"] = float(value)
+                    update_callback(payload)
 
         ppo_return = totals.get(ppo_id, 0.0)
         recent_returns.append(ppo_return)
@@ -354,8 +367,15 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
             f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
         )
 
-    for trainer in ctx.trainer_map.values():
-        trainer.update()
+    for trainer_id, trainer in trainers.items():
+        stats = trainer.update()
+        if update_callback and stats:
+            update_count += 1
+            payload: Dict[str, float] = {"train/update": update_count}
+            for key, value in stats.items():
+                if isinstance(value, (int, float)):
+                    payload[f"train/{key}"] = float(value)
+            update_callback(payload)
 
     return results
 
