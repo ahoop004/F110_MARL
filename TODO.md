@@ -5,8 +5,13 @@
   - [x] Update map_loader.py to centralize map metadata augmentation.
   - [x] Flesh out start_pose.py with parsing/adjust/reset helpers.
     - [x] Validate spawn poses against map (inside drivable area).
-    - [ ] Add utilities to sample along track centerline/distance.
   - [ ] Add builders module returning env + agents + wrappers.
+    - [ ] Define factory function to load cfg, map, env, start poses.
+    - [ ] Ensure function returns env, map_data, start_pose options for callers.
+    - [ ] Introduce agent spec registry supporting PPO, TD3, DQN, heuristic policies.
+    - [ ] Support composing mixed teams (≤4 agents) driven by config roles.
+    - [ ] Provide wrapper factory configurable per agent algorithm.
+    - [ ] Document expected return types / usage.
   - [ ] Refactor train.py to consume the new builders.
   - [ ] Refactor eval.py (and main.py) to consume the new builders.
   - [ ] Smoke-test train/eval after refactor.

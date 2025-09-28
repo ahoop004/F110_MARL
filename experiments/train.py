@@ -1,30 +1,39 @@
 from pathlib import Path
 
-import yaml
 import numpy as np
 from f110x.utils.config_models import ExperimentConfig
-from PIL import Image
 from f110x.wrappers.reward import RewardWrapper
 from f110x.utils.builders import build_env, build_agents
-from f110x.utils.start_pose import adjust_start_poses
+from f110x.utils.start_pose import reset_with_start_poses
 
 from collections import deque
 
 cfg = ExperimentConfig.load(Path("configs/config.yaml"))
 
-env, env_cfg, start_pose_options = build_env(cfg)
-render_interval = env_cfg.get("render_interval", 0)
-update_after = env_cfg.get('update', 1)
+env, map_data, start_pose_options = build_env(cfg)
+render_interval = cfg.env.get("render_interval", 0)
+update_after = cfg.env.get("update", 1)
 
-start_pose_back_gap = float(env_cfg.get("start_pose_back_gap", 0.0))
-start_pose_min_spacing = float(env_cfg.get("start_pose_min_spacing", 0.0))
+start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0))
+start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0))
+
 
 def reset_environment(environment):
-    return reset_with_start_poses(environment, start_pose_options, start_pose_back_gap, start_pose_min_spacing)
+    return reset_with_start_poses(
+        environment,
+        start_pose_options,
+        back_gap=start_pose_back_gap,
+        min_spacing=start_pose_min_spacing,
+        map_data=map_data,
+    )
 
 # -------------------------------------------------------------------
 # Initialize wrappers & policies
 # -------------------------------------------------------------------
+reward_cfg = cfg.reward.to_dict()
+ppo_agent, gap_policy, PPO_AGENT, GAP_AGENT, obs_wrapper = build_agents(env, cfg)
+
+raw_curriculum = cfg.get("reward_curriculum", [])
 reward_cfg = cfg.reward.to_dict()
 ppo_agent, gap_policy, PPO_AGENT, GAP_AGENT, obs_wrapper = build_agents(env, cfg)
 
