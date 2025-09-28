@@ -198,6 +198,8 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
         collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
         rollout_trace: Optional[List[Dict[str, Any]]] = [] if ctx.save_rollouts and ctx.rollout_dir else None
         collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
+        speed_sums: Dict[str, float] = {aid: 0.0 for aid in env.possible_agents}
+        speed_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
 
         while True:
             actions = _collect_actions(ctx, obs, done)
@@ -245,6 +247,15 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
                 or (aid in collision_history)
                 for aid in done
             }
+
+            for aid in env.possible_agents:
+                velocity = next_obs.get(aid, {}).get("velocity")
+                if velocity is None:
+                    continue
+                speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
+                if not np.isnan(speed):
+                    speed_sums[aid] = speed_sums.get(aid, 0.0) + speed
+                    speed_counts[aid] = speed_counts.get(aid, 0) + 1
 
             if step_record is not None:
                 step_record["rewards"] = {aid: float(rewards.get(aid, 0.0)) for aid in totals}
@@ -311,6 +322,19 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
         for aid, step_val in collision_step.items():
             if step_val is not None:
                 record[f"collision_step_{aid}"] = step_val
+        for aid in env.possible_agents:
+            count = speed_counts.get(aid, 0)
+            if count:
+                record[f"avg_speed_{aid}"] = float(speed_sums.get(aid, 0.0) / count)
+            else:
+                record[f"avg_speed_{aid}"] = 0.0
+
+        if attacker_id in speed_counts:
+            count = speed_counts.get(attacker_id, 0)
+            record["avg_speed_attacker"] = float(speed_sums.get(attacker_id, 0.0) / count) if count else 0.0
+        if defender_id and defender_id in speed_counts:
+            count = speed_counts.get(defender_id, 0)
+            record["avg_speed_defender"] = float(speed_sums.get(defender_id, 0.0) / count) if count else 0.0
 
         if defender_id:
             record["defender_crashed"] = defender_crashed

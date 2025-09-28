@@ -267,6 +267,8 @@ def run_training(
         truncs: Dict[str, bool] = {}
         collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
         collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
+        speed_sums: Dict[str, float] = {aid: 0.0 for aid in env.possible_agents}
+        speed_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
 
         while True:
             actions, processed_obs = _compute_actions(ctx, obs, done)
@@ -336,6 +338,15 @@ def run_training(
 
             obs = next_obs
 
+            for aid in env.possible_agents:
+                velocity = next_obs.get(aid, {}).get("velocity")
+                if velocity is None:
+                    continue
+                speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
+                if not np.isnan(speed):
+                    speed_sums[aid] = speed_sums.get(aid, 0.0) + speed
+                    speed_counts[aid] = speed_counts.get(aid, 0) + 1
+
             if collision_history or all(done.values()):
                 break
 
@@ -386,6 +397,23 @@ def run_training(
         for aid, step_val in collision_step.items():
             if step_val is not None:
                 episode_record[f"collision_step_{aid}"] = step_val
+        for aid in env.possible_agents:
+            count = speed_counts.get(aid, 0)
+            if count:
+                episode_record[f"avg_speed_{aid}"] = float(speed_sums.get(aid, 0.0) / count)
+            else:
+                episode_record[f"avg_speed_{aid}"] = 0.0
+
+        if attacker_id in speed_counts:
+            count = speed_counts.get(attacker_id, 0)
+            episode_record["avg_speed_attacker"] = (
+                float(speed_sums.get(attacker_id, 0.0) / count) if count else 0.0
+            )
+        if defender_id and defender_id in speed_counts:
+            count = speed_counts.get(defender_id, 0)
+            episode_record["avg_speed_defender"] = (
+                float(speed_sums.get(defender_id, 0.0) / count) if count else 0.0
+            )
 
         results.append(episode_record)
 

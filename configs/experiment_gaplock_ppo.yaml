@@ -58,8 +58,8 @@ ppo:
   ent_coef: 0.01
   clip_eps: 0.2
   update_epochs: 10
-  minibatch_size: 64
-  train_episodes: 500
+  minibatch_size: 128
+  train_episodes: 5000
   eval_episodes: 5
   save_dir: checkpoints/
   checkpoint_name: ppo_gaplock.pt

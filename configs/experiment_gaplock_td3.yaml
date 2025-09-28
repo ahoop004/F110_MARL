@@ -63,7 +63,7 @@ td3:
   warmup_steps: 1000
   exploration_noise: 0.15
   hidden_dims: [256, 256]
-  train_episodes: 500
+  train_episodes: 5000
   eval_episodes: 5
   save_dir: checkpoints/
   checkpoint_name: td3_gaplock.pt

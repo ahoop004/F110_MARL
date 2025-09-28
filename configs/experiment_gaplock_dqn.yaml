@@ -53,12 +53,12 @@ reward:
 dqn:
   lr: 0.0005
   gamma: 0.99
-  batch_size: 64
+  batch_size: 128
   buffer_size: 50000
-  target_update_interval: 500
+  target_update_interval: 50
   epsilon_start: 1
   epsilon_end: 0.1
-  epsilon_decay_rate: 0.982
+  epsilon_decay_rate: 0.9995
   hidden_dims: [256, 256]
   action_set:
     - [-0.35, 1.5]
@@ -67,7 +67,7 @@ dqn:
     - [0.15, 2.6]
     - [0.35, 1.5]
     - [0.0, 0.0]
-  train_episodes: 500
+  train_episodes: 5000
   eval_episodes: 5
   save_dir: checkpoints/
   checkpoint_name: dqn_gaplock.pt
@@ -85,5 +85,5 @@ main:
   save_eval_rollouts: true
   eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/dqn_gaplock.pt
-  train_episodes: 500
+  train_episodes: 5000
   eval_episodes: 5
