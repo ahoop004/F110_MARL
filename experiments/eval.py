@@ -148,21 +148,17 @@ def _collect_actions(
             continue
 
         controller = bundle.controller
-        if bundle.trainer is not None and bundle.algo.lower() != "ppo":
+        if bundle.trainer is not None:
             processed = ctx.team.observation(aid, obs)
-            actions[aid] = bundle.trainer.select_action(processed, deterministic=True)
-            continue
-        if bundle.algo.lower() == "ppo":
-            processed = ctx.team.observation(aid, obs)
-            if hasattr(controller, "act_deterministic"):
-                actions[aid] = controller.act_deterministic(processed, aid)
-            else:
-                actions[aid] = controller.act(processed, aid)
+            action_raw = bundle.trainer.select_action(processed, deterministic=True)
+            actions[aid] = ctx.team.action(aid, action_raw)
         elif hasattr(controller, "get_action"):
-            actions[aid] = controller.get_action(ctx.env.action_space(aid), obs[aid])
+            action = controller.get_action(ctx.env.action_space(aid), obs[aid])
+            actions[aid] = ctx.team.action(aid, action)
         elif hasattr(controller, "act"):
             processed = ctx.team.observation(aid, obs)
-            actions[aid] = controller.act(processed, aid)
+            action = controller.act(processed, aid)
+            actions[aid] = ctx.team.action(aid, action)
         else:
             raise TypeError(f"Controller for agent '{aid}' does not expose an act/get_action method")
     return actions

@@ -190,15 +190,18 @@ def _compute_actions(
         controller = bundle.controller
         if bundle.trainer is not None:
             obs_vector = ctx.team.observation(aid, obs)
-            action = bundle.trainer.select_action(obs_vector, deterministic=False)
+            action_raw = bundle.trainer.select_action(obs_vector, deterministic=False)
+            action = ctx.team.action(aid, action_raw)
             actions[aid] = action
             processed_obs[aid] = np.asarray(obs_vector, dtype=np.float32)
         elif hasattr(controller, "get_action"):
             action_space = ctx.env.action_space(aid)
-            actions[aid] = controller.get_action(action_space, obs[aid])
+            action = controller.get_action(action_space, obs[aid])
+            actions[aid] = ctx.team.action(aid, action)
         elif hasattr(controller, "act"):
             processed = ctx.team.observation(aid, obs)
-            actions[aid] = controller.act(processed, aid)
+            action = controller.act(processed, aid)
+            actions[aid] = ctx.team.action(aid, action)
         else:
             raise TypeError(f"Controller for agent '{aid}' does not expose an act/get_action method")
 

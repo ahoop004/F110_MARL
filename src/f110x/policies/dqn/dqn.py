@@ -50,7 +50,7 @@ class DQNAgent:
         fraction = min(1.0, self.step_count / self.epsilon_decay)
         return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1 - fraction)
 
-    def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
+    def act(self, obs: np.ndarray, deterministic: bool = False) -> int:
         eps = 0.0 if deterministic else self.epsilon()
         if not deterministic and np.random.rand() < eps:
             idx = np.random.randint(self.n_actions)
@@ -59,12 +59,12 @@ class DQNAgent:
                 obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
                 q_values = self.q_net(obs_t)
                 idx = int(torch.argmax(q_values, dim=-1).item())
-        return self.action_set[idx].copy()
+        return idx
 
     def store_transition(
         self,
         obs: np.ndarray,
-        action: np.ndarray,
+        action: Iterable[float],
         reward: float,
         next_obs: np.ndarray,
         done: bool,
@@ -72,10 +72,16 @@ class DQNAgent:
     ) -> None:
         if info is None:
             info = {}
-        action_idx = self._action_to_index(action)
+        # allow action passed as index or vector
+        if np.isscalar(action):
+            action_idx = int(action)
+            action_vec = self.action_set[action_idx]
+        else:
+            action_vec = np.asarray(action, dtype=np.float32)
+            action_idx = self._action_to_index(action_vec)
         info = dict(info)
         info["action_index"] = action_idx
-        self.buffer.add(obs, action, reward, next_obs, done, info)
+        self.buffer.add(obs, action_vec, reward, next_obs, done, info)
         self.step_count += 1
 
     # -------------------- Learning --------------------

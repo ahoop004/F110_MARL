@@ -17,6 +17,11 @@ from f110x.utils.config_models import (
 from f110x.utils.map_loader import MapData, MapLoader
 from f110x.utils.start_pose import parse_start_pose_options
 from f110x.wrappers.observation import ObsWrapper
+from f110x.wrappers.action import (
+    ContinuousActionWrapper,
+    DiscreteActionWrapper,
+    DeltaDiscreteActionWrapper,
+)
 from f110x.policies.gap_follow import FollowTheGapPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.random_policy import random_policy
@@ -294,6 +299,7 @@ class AgentBundle:
     trainable: bool
     metadata: Dict[str, Any] = field(default_factory=dict)
     trainer: Optional[Trainer] = None
+    action_wrapper: Optional[Any] = None
 
     @property
     def agent_id(self) -> str:
@@ -396,6 +402,7 @@ def _build_algo_ppo(
 
     controller = PPOAgent(ppo_cfg)
     trainer = PPOTrainer(agent_id, controller)
+    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
     return AgentBundle(
         assignment=assignment,
         algo="ppo",
@@ -404,6 +411,7 @@ def _build_algo_ppo(
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": ppo_cfg},
         trainer=trainer,
+        action_wrapper=action_wrapper,
     )
 
 
@@ -440,6 +448,7 @@ def _build_algo_td3(
 
     controller = TD3Agent(td3_cfg)
     trainer = TD3Trainer(agent_id, controller)
+    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
     return AgentBundle(
         assignment=assignment,
         algo="td3",
@@ -448,6 +457,7 @@ def _build_algo_td3(
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": td3_cfg},
         trainer=trainer,
+        action_wrapper=action_wrapper,
     )
 
 
@@ -486,6 +496,7 @@ def _build_algo_dqn(
 
     controller = DQNAgent(dqn_cfg)
     trainer = DQNTrainer(agent_id, controller)
+    action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])
     return AgentBundle(
         assignment=assignment,
         algo="dqn",
@@ -494,6 +505,7 @@ def _build_algo_dqn(
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": dqn_cfg},
         trainer=trainer,
+        action_wrapper=action_wrapper,
     )
 
 
@@ -662,6 +674,13 @@ class AgentTeam:
         for adapter in bundle.wrappers:
             result = adapter(raw_obs, agent_id, self.roster, result)
         return result
+
+    def action(self, agent_id: str, action: Any) -> Any:
+        bundle = self.by_id[agent_id]
+        wrapper = bundle.action_wrapper
+        if wrapper is None:
+            return action
+        return wrapper(action)
 
     @property
     def trainable_agents(self) -> List[str]:

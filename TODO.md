@@ -4,7 +4,7 @@
 - [ ] Adversarial gap-busting experiment (RL vs Follow-the-Gap).
   - [x] Finalize scenario configs (train/eval) with roster: RL agent + follow-gap opponent.
   - [ ] Define adversarial reward shaping (reward causing opponent collision, penalize self-collision).
-  - [ ] Implement algorithm-specific action wrappers (continuous normalizer, discrete templating).
+  - [x] Implement algorithm-specific action wrappers (continuous normalizer, discrete templating).
   - [ ] Extend evaluation metrics (opponent collision flag, time-to-crash, survival time).
   - [ ] Run baseline sweeps for PPO/TD3/DQN using the scenario; log to wandb.
 - [ ] Trainer registry polish.
