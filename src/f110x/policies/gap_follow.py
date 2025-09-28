@@ -7,7 +7,7 @@ class FollowTheGapPolicy:
                  bubble_radius=4,
                  max_steer=0.35,
                  min_speed=2.0,
-                 max_speed=6.0,
+                 max_speed=20.0,
                  steering_gain=0.8,
                  fov=np.deg2rad(270),
                  normalized=False,
@@ -113,7 +113,7 @@ class FollowTheGapPolicy:
         # 3. Speed schedule (more conservative)
         free_ahead = scan[center_idx]
         if min_scan < 2.0:
-            speed = max(self.min_speed * 0.5, 0.8)
+            speed = max(self.min_speed, 0.8)
         elif free_ahead > 8.0:
             speed = self.max_speed
         elif free_ahead > 4.0:
