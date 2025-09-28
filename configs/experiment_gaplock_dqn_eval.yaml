@@ -78,3 +78,4 @@ main:
   save_eval_rollouts: true
   eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/dqn_gaplock.pt
+  eval_episodes: 5

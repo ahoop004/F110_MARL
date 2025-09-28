@@ -70,9 +70,9 @@ def _load_checkpoint(bundle: AgentBundle, checkpoint_path: Optional[Path]) -> No
         return
     if checkpoint_path.exists():
         bundle.controller.load(str(checkpoint_path))
-        print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
+        print(f"[INFO] Loaded checkpoint from {checkpoint_path}")
     else:
-        raise FileNotFoundError(f"No PPO checkpoint found at {checkpoint_path}")
+        print(f"[WARN] No checkpoint found at {checkpoint_path}; starting from scratch")
 
 
 def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext:
@@ -172,6 +172,8 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
     render_enabled = force_render or ctx.cfg.env.get("render_mode", "") == "human"
 
     results: List[Dict[str, Any]] = []
+    attacker_id = ctx.team.roles.get("attacker", ctx.ppo_bundle.agent_id)
+    defender_id = ctx.team.roles.get("defender")
 
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
@@ -195,6 +197,7 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
         live_render = render_enabled
         collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
         rollout_trace: Optional[List[Dict[str, Any]]] = [] if ctx.save_rollouts and ctx.rollout_dir else None
+        collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
 
         while True:
             actions = _collect_actions(ctx, obs, done)
@@ -232,6 +235,8 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
                 collision_history.extend(collision_agents)
                 for aid in collision_agents:
                     collision_counts[aid] = collision_counts.get(aid, 0) + 1
+                    if collision_step[aid] is None:
+                        collision_step[aid] = steps
 
             obs = next_obs
             done = {

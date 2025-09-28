@@ -98,3 +98,4 @@ main:
   save_eval_rollouts: false
   eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/td3_gaplock.pt
+  train_episodes: 500

@@ -102,6 +102,10 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):
 def _log_eval_results(run, results, tb_writer=None):
     if run is None and tb_writer is None:
         return
+
+    success_count = 0
+    defender_survival_total = 0.0
+    defender_survival_count = 0
     for res in results:
         payload = {"eval/episode": res["episode"]}
         for key, value in res.items():
@@ -117,18 +121,39 @@ def _log_eval_results(run, results, tb_writer=None):
                 if isinstance(value, (int, float)):
                     tb_writer.add_scalar(key, value, step)
 
+        defender_crashed = res.get("defender_crashed", False)
+        attacker_crashed = res.get("attacker_crashed", False)
+        if defender_crashed and not attacker_crashed:
+            success_count += 1
+        survival = res.get("defender_survival_steps")
+        if survival is not None:
+            defender_survival_total += float(survival)
+            defender_survival_count += 1
+
+    if not results:
+        return
+
+    summary = {"eval/success_rate": success_count / len(results)}
+    if defender_survival_count:
+        summary["eval/avg_defender_survival_steps"] = defender_survival_total / defender_survival_count
+
+    if run is not None:
+        run.log(summary)
+    if tb_writer is not None:
+        step = len(results)
+        for key, value in summary.items():
+            if isinstance(value, (int, float)):
+                tb_writer.add_scalar(key, value, step)
+
 
 def main():
-    cfg_path = Path("configs/config.yaml")
+    cfg_env = os.environ.get("F110_CONFIG")
+    cfg_path = Path(cfg_env) if cfg_env else Path("configs/config.yaml")
     with cfg_path.open() as f:
         cfg = yaml.safe_load(f)
 
     main_cfg = cfg.get("main", {})
     mode = main_cfg.get("mode", "train").lower()
-    checkpoint_dir = Path(cfg["ppo"].get("save_dir", "checkpoints"))
-    checkpoint_name = cfg["ppo"].get("checkpoint_name", "ppo_best.pt")
-    checkpoint_path = checkpoint_dir / checkpoint_name
-
     wandb_run = _wandb_init(cfg, mode)
 
     tb_writer = None
@@ -160,7 +185,8 @@ def main():
         if _RENDER_FLAG:
             train_ctx.render_interval = 1
             train_ctx.env.render_mode = "human"
-        episodes = _EP_OVERRIDE or cfg["ppo"].get("train_episodes", 10)
+        bundle_cfg = train_ctx.ppo_bundle.metadata.get("config", {})
+        episodes = _EP_OVERRIDE or bundle_cfg.get("train_episodes") or cfg.get("main", {}).get("train_episodes", 10)
         results = train_module.run_training(
             train_ctx,
             episodes=episodes,
@@ -171,11 +197,12 @@ def main():
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
 
     elif mode == "eval":
-        episodes = _EVAL_EP_OVERRIDE or cfg["ppo"].get("eval_episodes", 5)
         # Rebuild evaluation context so explicit checkpoint overrides take effect
         eval_ctx = eval_module.create_evaluation_context(cfg_path)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
+        bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
+        episodes = _EVAL_EP_OVERRIDE or bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
         results = eval_module.evaluate(eval_ctx, episodes=episodes, force_render=_RENDER_FLAG)
         _log_eval_results(wandb_run, results, tb_writer=tb_writer)
 
@@ -184,7 +211,8 @@ def main():
         if _RENDER_FLAG:
             train_ctx.render_interval = 1
             train_ctx.env.render_mode = "human"
-        train_episodes = _EP_OVERRIDE or cfg["ppo"].get("train_episodes", 10)
+        bundle_cfg = train_ctx.ppo_bundle.metadata.get("config", {})
+        train_episodes = _EP_OVERRIDE or bundle_cfg.get("train_episodes") or cfg.get("main", {}).get("train_episodes", 10)
         results = train_module.run_training(
             train_ctx,
             episodes=train_episodes,
@@ -197,7 +225,8 @@ def main():
         eval_ctx = eval_module.create_evaluation_context(cfg_path)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
-        eval_episodes = _EVAL_EP_OVERRIDE or cfg["ppo"].get("eval_episodes", 5)
+        eval_bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
+        eval_episodes = _EVAL_EP_OVERRIDE or eval_bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
         results = eval_module.evaluate(eval_ctx, episodes=eval_episodes, force_render=_RENDER_FLAG)
         _log_eval_results(wandb_run, results, tb_writer=tb_writer)
 
