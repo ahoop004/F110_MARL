@@ -1,0 +1,76 @@
+env:
+  seed: 42
+  n_agents: 2
+  max_steps: 1500
+  timestep: 0.01
+  integrator: 'RK4'
+  render_interval: 1
+  update: 1
+
+  map_dir: "maps"
+  map_yaml: "line_map.yaml"
+  map: 'line_map.yaml'
+  map_ext: .png
+  render_mode: 'human'
+
+  start_poses:
+    - [0.0, 0.0, 0.0]
+    - [5.0, 1.0, 0.0]
+
+agents:
+  roster:
+    - algo: td3
+      slot: 0
+      role: attacker
+      config_ref: td3
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            target_role: defender
+    - algo: follow_gap
+      slot: 1
+      role: defender
+
+reward:
+  alive_bonus: 0.05
+  forward_scale: 0.12
+  reverse_penalty: 2.0
+  lateral_penalty: 0.1
+  target_distance_scale: 0.25
+  target_wall_bonus: 1.0
+  self_wall_penalty: 0.2
+  herd_bonus: 200.0
+  ego_collision_penalty: -80.0
+  opponent_collision_bonus: 150.0
+  spin_penalty: 2.0
+  spin_thresh: 0.4
+
+td3:
+  actor_lr: 0.0005
+  critic_lr: 0.0008
+  gamma: 0.99
+  tau: 0.005
+  policy_noise: 0.3
+  noise_clip: 0.5
+  policy_delay: 2
+  batch_size: 128
+  buffer_size: 50000
+  warmup_steps: 1000
+  exploration_noise: 0.15
+  hidden_dims: [256, 256]
+  train_episodes: 2
+  eval_episodes: 1
+  save_dir: checkpoints/
+  checkpoint_name: td3_line.pt
+
+main:
+  mode: train_eval
+  wandb:
+    enabled: false
+  tensorboard_dir: null
+  save_eval_rollouts: false
+  checkpoint: checkpoints/td3_line.pt
+  train_episodes: 2
+  eval_episodes: 1
