@@ -96,7 +96,14 @@ reward:
   target_distance_scale: 0.1
   target_wall_bonus: 0.5
   self_wall_penalty: 0.3
-  herd_bonus: 250.0
+  herd_bonus: 100.0
   ego_collision_penalty: -40.0
-  spin_penalty: 1.0
+  spin_penalty: 2.0
   spin_thresh: 0.52   # radians ~30°
+main:
+  mode: train
+  wandb:
+    enabled: false
+    project: f110-ppo
+    entity: null
+  checkpoint: checkpoints/ppo_best.pt
