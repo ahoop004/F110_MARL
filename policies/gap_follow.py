@@ -3,8 +3,8 @@ import numpy as np
 class FollowTheGapPolicy:
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
-                 window_size=5,
-                 bubble_radius=10,
+                 window_size=2,
+                 bubble_radius=5,
                  max_steer=0.4,
                  min_speed=2.0,
                  max_speed=6.0,
@@ -83,9 +83,9 @@ class FollowTheGapPolicy:
 
         # Dynamic panic scaling
         panic_factor = 1.0
-        if min_scan < 2.0:
+        if min_scan < 4.0:
             panic_factor = 2.0
-        if min_scan < 1.0:
+        if min_scan < 2.0:
             panic_factor = 3.0
 
         steering *= panic_factor

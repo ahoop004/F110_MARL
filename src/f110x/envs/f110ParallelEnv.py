@@ -422,6 +422,33 @@ class F110ParallelEnv(ParallelEnv):
         self._velocity_initialized = True
 
    
+    def _update_start_from_poses(self, poses: np.ndarray):
+        count = min(self.n_agents, poses.shape[0])
+        if count == 0:
+            return
+
+        self.start_xs[:count] = poses[:count, 0]
+        self.start_ys[:count] = poses[:count, 1]
+        self.start_thetas[:count] = poses[:count, 2]
+
+        angles = poses[:count, 2]
+        if count == 1 or np.allclose(angles, angles[0]):
+            angle = float(angles[0])
+            cos_a = float(np.cos(angle))
+            sin_a = float(np.sin(angle))
+            self.start_rot = np.array(
+                [[cos_a, -sin_a], [sin_a, cos_a]], dtype=np.float32
+            )
+        else:
+            cos_vals = np.cos(angles).astype(np.float32)
+            sin_vals = np.sin(angles).astype(np.float32)
+            rot = np.empty((self.n_agents, 2, 2), dtype=np.float32)
+            rot[:, 0, 0] = cos_vals
+            rot[:, 0, 1] = -sin_vals
+            rot[:, 1, 0] = sin_vals
+            rot[:, 1, 1] = cos_vals
+            self.start_rot = rot
+
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
         if seed is not None: 
             self.seed = seed
@@ -449,6 +476,9 @@ class F110ParallelEnv(ParallelEnv):
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
                 poses = np.array(options["poses"], dtype=np.float32)
+                if poses.ndim == 1:
+                    poses = np.expand_dims(poses, axis=0)
+                self._update_start_from_poses(poses)
         # Case 2: Default to config start_poses
         if poses is None and hasattr(self, "start_poses") and len(self.start_poses) > 0:
             poses = self.start_poses

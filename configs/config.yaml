@@ -4,7 +4,7 @@ env:
   max_steps: 5000
   timestep: 0.01
   integrator: 'RK4'
-  render_interval: 1
+  render_interval: 100
   update: 1
 
   map_dir: "maps"
@@ -45,19 +45,31 @@ env:
     - [2.5, 0.5, 0.0]
   start_pose_options:
     -
-      - [0.0, 0.0, 0.0]
+      - [0.0, 0.1, 0.0]
+      - [2.0, -0.1, 0.0]
+    -
+      - [0.0, -0.5, 0.0]
+      - [2.5, 0.5, 0.0]
+    -
+      - [0.0, 0.5, 0.0]
+      - [3.0, 0.2, 0.0]
+    -
+      - [0.1, 0.5, 0.0]
+      - [3.5, 0.0, 0.0]
+    -
+      - [3.0, 0.0, 0.0]
       - [2.0, 0.5, 0.0]
     -
       - [0.0, -0.5, 0.0]
-      - [2.5, 0.8, 0.0]
+      - [2.5, 0.5, 0.0]
     -
-      - [2.0, 0.0, 0.0]
+      - [0.0, 0.5, 0.0]
+      - [3.0, -0.2, 0.0]
+    -
       - [0.0, -0.5, 0.0]
-    -
-      - [2.0, -0.5, 0.0]
-      - [0.5, 0.8, 0.0]
-  start_pose_back_gap: 2.0
-  start_pose_min_spacing: 2.0
+      - [3.5, 0.5, 0.0]
+  start_pose_back_gap: 3.0
+  start_pose_min_spacing: 3.0
 
 mode: "mixed"
 ppo_agent_idx: 0   # choose which agent runs PPO
