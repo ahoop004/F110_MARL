@@ -14,13 +14,6 @@ parameters:
     distribution: uniform
     min: 0.00001
     max: 0.001
-  dqn.epsilon_decay:
-    distribution: uniform
-    min: 5000
-    max: 20000
-  dqn.target_update_interval:
-    values: [200, 500, 1000]
-  dqn.batch_size:
-    values: [64, 128]
+
   main.wandb.tags:
     value: [gaplock, dqn]
