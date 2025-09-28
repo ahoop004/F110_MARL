@@ -1,0 +1,11 @@
+pettingzoo
+gymnasium
+numpy
+pyglet
+Pillow
+PyYAML
+torch
+numba
+pandas
+wandb
+pytest
