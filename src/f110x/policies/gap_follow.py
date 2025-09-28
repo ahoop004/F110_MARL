@@ -4,14 +4,14 @@ class FollowTheGapPolicy:
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
                  window_size=2,
-                 bubble_radius=8,     # safer than 5
-                 max_steer=0.4,
+                 bubble_radius=4,
+                 max_steer=0.35,
                  min_speed=2.0,
-                 max_speed=6.0,
-                 steering_gain=1.0,
+                 max_speed=4.0,
+                 steering_gain=0.8,
                  fov=np.deg2rad(270),
                  normalized=False,
-                 steer_smooth=0.7):   # smoothing factor
+                 steer_smooth=0.25):   # reduced smoothing keeps bias longer
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -89,24 +89,21 @@ class FollowTheGapPolicy:
         # Gentler panic scaling
         panic_factor = 1.0
         if min_scan < 4.0:
-            panic_factor = 1.5
+            panic_factor = 1.15
         if min_scan < 2.0:
-            panic_factor = 2.0
+            panic_factor = 1.35
 
         steering *= panic_factor
 
         # Kick away from closest side
         if left_min < right_min:
-            steering += 0.3 * self.max_steer
+            steering += 0.15 * self.max_steer
         elif right_min < left_min:
-            steering -= 0.3 * self.max_steer
+            steering -= 0.15 * self.max_steer
 
         # Override when extremely close: pure evasive
         if min_scan < 1.0:
-            if left_min < right_min:
-                steering = +self.max_steer
-            else:
-                steering = -self.max_steer
+            steering = np.clip(steering, -0.75 * self.max_steer, 0.75 * self.max_steer)
 
         # Clip and smooth steering
         steering = np.clip(steering, -self.max_steer, self.max_steer)
@@ -116,11 +113,11 @@ class FollowTheGapPolicy:
         # 3. Speed schedule (more conservative)
         free_ahead = scan[center_idx]
         if min_scan < 2.0:
-            speed = max(self.min_speed * 0.5, 1.0)
+            speed = max(self.min_speed * 0.5, 0.8)
         elif free_ahead > 8.0:
             speed = self.max_speed
         elif free_ahead > 4.0:
-            speed = 0.8 * self.max_speed
+            speed = 0.7 * self.max_speed
         else:
             speed = self.min_speed
 
