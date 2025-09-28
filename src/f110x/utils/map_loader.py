@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, Tuple
 
+import numpy as np
 import yaml
 from PIL import Image
 
@@ -15,6 +16,7 @@ class MapData:
     image_path: Path
     image_size: Tuple[int, int]
     yaml_path: Path
+    track_mask: np.ndarray | None
 
 
 class MapLoader:
@@ -26,10 +28,6 @@ class MapLoader:
     def _resolve_path(self, path: Path) -> Path:
         return path if path.is_absolute() else (self.base_dir / path).resolve()
 
-    def _load_metadata(self, map_yaml_path: Path) -> Dict[str, Any]:
-        with map_yaml_path.open("r") as yaml_file:
-            return yaml.safe_load(yaml_file)
-
     def load(self, env_cfg: Dict[str, Any]) -> MapData:
         map_dir = self._resolve_path(Path(env_cfg.get("map_dir", "")))
         map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
@@ -40,7 +38,9 @@ class MapLoader:
         if not map_yaml_path.exists():
             raise FileNotFoundError(f"Map YAML not found: {map_yaml_path}")
 
-        metadata = self._load_metadata(map_yaml_path)
+        with map_yaml_path.open("r") as yaml_file:
+            metadata = yaml.safe_load(yaml_file)
+
         image_rel = metadata.get("image")
         fallback_image = env_cfg.get("map_image")
         if image_rel:
@@ -54,10 +54,25 @@ class MapLoader:
         if not image_path.exists():
             raise FileNotFoundError(f"Map image not found: {image_path}")
 
-        with Image.open(image_path) as img:
-            image_size = img.size
+        image = Image.open(image_path).convert("L")
+        gray = np.asarray(image, dtype=np.uint8)
+        image_size = image.size
 
-        return MapData(metadata=metadata, image_path=image_path, image_size=image_size, yaml_path=map_yaml_path)
+        threshold = env_cfg.get("track_threshold")
+        if threshold is None:
+            threshold = 200 if gray.mean() > 127 else 127
+        invert = bool(env_cfg.get("track_inverted", False))
+        track_mask = gray >= threshold
+        if invert:
+            track_mask = ~track_mask
+
+        return MapData(
+            metadata=metadata,
+            image_path=image_path,
+            image_size=image_size,
+            yaml_path=map_yaml_path,
+            track_mask=track_mask,
+        )
 
     def augment_config(self, env_cfg: Dict[str, Any]) -> Dict[str, Any]:
         data = self.load(env_cfg)

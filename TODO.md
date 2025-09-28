@@ -4,7 +4,7 @@
 - [ ] Extract env/agent factory utilities so train/eval share a common build API (see ticket).
   - [x] Update map_loader.py to centralize map metadata augmentation.
   - [x] Flesh out start_pose.py with parsing/adjust/reset helpers.
-    - [ ] Validate spawn poses against map (inside drivable area).
+    - [x] Validate spawn poses against map (inside drivable area).
     - [ ] Add utilities to sample along track centerline/distance.
   - [ ] Add builders module returning env + agents + wrappers.
   - [ ] Refactor train.py to consume the new builders.

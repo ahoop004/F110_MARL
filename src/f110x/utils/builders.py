@@ -5,7 +5,7 @@ from typing import Tuple, Optional, List
 import numpy as np
 
 from f110x.utils.config_models import ExperimentConfig
-from f110x.utils.map_loader import MapLoader
+from f110x.utils.map_loader import MapLoader, MapData
 from f110x.utils.start_pose import parse_start_pose_options
 from f110x.envs import F110ParallelEnv
 from policies.gap_follow import FollowTheGapPolicy
@@ -13,12 +13,18 @@ from policies.ppo.ppo import PPOAgent
 from f110x.wrappers.observation import ObsWrapper
 
 
-def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, dict, Optional[List[np.ndarray]]]:
+def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional[List[np.ndarray]]]:
     loader = MapLoader()
-    env_cfg = loader.augment_config(cfg.env.to_kwargs())
+    env_cfg_dict = cfg.env.to_kwargs()
+    map_data = loader.load(env_cfg_dict)
+    env_cfg = dict(env_cfg_dict)
+    env_cfg["map_meta"] = map_data.metadata
+    env_cfg["map_image_path"] = str(map_data.image_path)
+    env_cfg["map_image_size"] = map_data.image_size
+    env_cfg["map_yaml_path"] = str(map_data.yaml_path)
     env = F110ParallelEnv(**env_cfg)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
-    return env, env_cfg, start_pose_options
+    return env, map_data, start_pose_options
 
 
 def build_agents(env: F110ParallelEnv, cfg: ExperimentConfig):
