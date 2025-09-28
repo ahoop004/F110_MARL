@@ -1,14 +1,64 @@
 #!/usr/bin/env python3
 import os
-os.environ.setdefault('PYGLET_HEADLESS', 'true')
+import sys
+from typing import Optional
+
+_RENDER_FLAG = False
+_EP_OVERRIDE: Optional[int] = None
+_EVAL_EP_OVERRIDE: Optional[int] = None
+
+argv = list(sys.argv)
+i = 0
+while i < len(argv):
+    arg = argv[i]
+    if arg == "--render":
+        _RENDER_FLAG = True
+        argv.pop(i)
+        continue
+    if arg.startswith("--episodes"):
+        if arg == "--episodes" and i + 1 < len(argv):
+            _EP_OVERRIDE = int(argv[i + 1])
+            argv.pop(i + 1)
+            argv.pop(i)
+            continue
+        else:
+            _, value = arg.split("=", 1)
+            _EP_OVERRIDE = int(value)
+            argv.pop(i)
+            continue
+    if arg.startswith("--eval-episodes"):
+        if arg == "--eval-episodes" and i + 1 < len(argv):
+            _EVAL_EP_OVERRIDE = int(argv[i + 1])
+            argv.pop(i + 1)
+            argv.pop(i)
+            continue
+        else:
+            _, value = arg.split("=", 1)
+            _EVAL_EP_OVERRIDE = int(value)
+            argv.pop(i)
+            continue
+    i += 1
+
+sys.argv = argv
+
+if not _RENDER_FLAG:
+    env_flag = os.environ.get("F110_RENDER", "").lower()
+    _RENDER_FLAG = env_flag in {"1", "true", "yes", "on"}
+
+if _RENDER_FLAG:
+    os.environ["PYGLET_HEADLESS"] = "false"
+else:
+    os.environ.setdefault("PYGLET_HEADLESS", "true")
+
 import yaml
 from pathlib import Path
-import sys
-sys.path.append(str(Path(__file__).resolve().parent / 'src'))
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(_ROOT / 'src'))
 
 import pyglet
-pyglet.options['headless'] = True
-pyglet.options['shadow_window'] = False
+pyglet.options['headless'] = not _RENDER_FLAG
+pyglet.options['shadow_window'] = _RENDER_FLAG
 pyglet.options['vsync'] = False
 
 try:
@@ -31,16 +81,13 @@ def _wandb_init(cfg, mode):
     return wandb.init(project=project, entity=entity, config=cfg, reinit=True, tags=[mode])
 
 
-def _log_train_results(run, results, ppo_id, gap_id):
+def _log_train_results(run, results, ppo_id=None, gap_id=None):
     if run is None:
         return
     for idx, totals in enumerate(results, 1):
-        payload = {
-            "train/episode": idx,
-            f"train/return_{ppo_id}": totals.get(ppo_id, 0.0),
-        }
-        if gap_id is not None:
-            payload[f"train/return_{gap_id}"] = totals.get(gap_id, 0.0)
+        payload = {"train/episode": idx}
+        for aid, value in totals.items():
+            payload[f"train/return_{aid}"] = value
         run.log(payload)
 
 
@@ -69,27 +116,41 @@ def main():
     wandb_run = _wandb_init(cfg, mode)
 
     if mode == "train":
-        episodes = cfg["ppo"].get("train_episodes", 10)
-        results = train_module.run_training(train_module.CTX, episodes=episodes)
-        _log_train_results(wandb_run, results, train_module.PPO_AGENT, train_module.GAP_AGENT)
-        train_module.CTX.ppo_agent.save(str(checkpoint_path))
+        train_ctx = train_module.create_training_context(cfg_path)
+        if _RENDER_FLAG:
+            train_ctx.render_interval = 1
+            train_ctx.env.render_mode = "human"
+        episodes = _EP_OVERRIDE or cfg["ppo"].get("train_episodes", 10)
+        results = train_module.run_training(train_ctx, episodes=episodes)
+        gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
+        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
+        train_ctx.ppo_agent.save(str(train_ctx.best_path))
 
     elif mode == "eval":
-        episodes = cfg["ppo"].get("eval_episodes", 5)
+        episodes = _EVAL_EP_OVERRIDE or cfg["ppo"].get("eval_episodes", 5)
         # Rebuild evaluation context so explicit checkpoint overrides take effect
         eval_ctx = eval_module.create_evaluation_context(cfg_path)
-        results = eval_module.evaluate(eval_ctx, episodes=episodes)
+        if _RENDER_FLAG:
+            eval_ctx.env.render_mode = "human"
+        results = eval_module.evaluate(eval_ctx, episodes=episodes, force_render=_RENDER_FLAG)
         _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
-        train_episodes = cfg["ppo"].get("train_episodes", 10)
-        results = train_module.run_training(train_module.CTX, episodes=train_episodes)
-        _log_train_results(wandb_run, results, train_module.PPO_AGENT, train_module.GAP_AGENT)
-        train_module.CTX.ppo_agent.save(str(checkpoint_path))
+        train_ctx = train_module.create_training_context(cfg_path)
+        if _RENDER_FLAG:
+            train_ctx.render_interval = 1
+            train_ctx.env.render_mode = "human"
+        train_episodes = _EP_OVERRIDE or cfg["ppo"].get("train_episodes", 10)
+        results = train_module.run_training(train_ctx, episodes=train_episodes)
+        gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
+        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
+        train_ctx.ppo_agent.save(str(train_ctx.best_path))
 
         eval_ctx = eval_module.create_evaluation_context(cfg_path)
-        eval_episodes = cfg["ppo"].get("eval_episodes", 5)
-        results = eval_module.evaluate(eval_ctx, episodes=eval_episodes)
+        if _RENDER_FLAG:
+            eval_ctx.env.render_mode = "human"
+        eval_episodes = _EVAL_EP_OVERRIDE or cfg["ppo"].get("eval_episodes", 5)
+        results = eval_module.evaluate(eval_ctx, episodes=eval_episodes, force_render=_RENDER_FLAG)
         _log_eval_results(wandb_run, results)
 
     else:

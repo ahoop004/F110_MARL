@@ -14,6 +14,7 @@ from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.start_pose import reset_with_start_poses
 from f110x.wrappers.reward import RewardWrapper
+from f110x.trainers.base import Transition, Trainer
 
 
 DEFAULT_CONFIG_PATH = Path("configs/config.yaml")
@@ -27,6 +28,8 @@ class TrainingContext:
     start_pose_options: Optional[List[np.ndarray]]
     team: AgentTeam
     ppo_bundle: AgentBundle
+    ppo_trainer: Trainer
+    trainer_map: Dict[str, Trainer]
     reward_cfg: Dict[str, Any]
     curriculum_schedule: List[Tuple[Optional[int], str]]
     render_interval: int
@@ -47,7 +50,6 @@ class TrainingContext:
     @property
     def opponent_ids(self) -> List[str]:
         return [bundle.agent_id for bundle in self.team.agents if bundle is not self.ppo_bundle]
-
 
 def _build_curriculum_schedule(raw_curriculum: Iterable[Dict[str, Any]]) -> List[Tuple[Optional[int], str]]:
     schedule: List[Tuple[Optional[int], str]] = []
@@ -89,12 +91,21 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     env, map_data, start_pose_options = build_env(cfg)
     team = build_agents(env, cfg)
 
+    trainer_map: Dict[str, Trainer] = {
+        bundle.agent_id: bundle.trainer
+        for bundle in team.agents
+        if bundle.trainer is not None
+    }
+
     ppo_bundles = [bundle for bundle in team.agents if bundle.algo.lower() == "ppo"]
     if not ppo_bundles:
         raise RuntimeError("Training expects at least one PPO agent in the roster")
     if len(ppo_bundles) > 1:
         raise RuntimeError("Training currently supports a single PPO learner")
     ppo_bundle = ppo_bundles[0]
+    ppo_trainer = ppo_bundle.trainer
+    if ppo_trainer is None:
+        raise RuntimeError("PPO bundle is missing trainer adapter; check builder configuration")
 
     reward_cfg = cfg.reward.to_dict()
     raw_curriculum = cfg.get("reward_curriculum", [])
@@ -130,6 +141,8 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
         start_pose_options=start_pose_options,
         team=team,
         ppo_bundle=ppo_bundle,
+        ppo_trainer=ppo_trainer,
+        trainer_map=trainer_map,
         reward_cfg=reward_cfg,
         curriculum_schedule=curriculum_schedule,
         render_interval=render_interval,
@@ -154,9 +167,9 @@ def _compute_actions(
     ctx: TrainingContext,
     obs: Dict[str, Any],
     done: Dict[str, bool],
-) -> Tuple[Dict[str, Any], Optional[np.ndarray]]:
+) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
     actions: Dict[str, Any] = {}
-    ppo_obs_vector: Optional[np.ndarray] = None
+    processed_obs: Dict[str, np.ndarray] = {}
 
     for bundle in ctx.team.agents:
         aid = bundle.agent_id
@@ -166,10 +179,11 @@ def _compute_actions(
             continue
 
         controller = bundle.controller
-        if bundle.algo.lower() == "ppo":
-            ppo_obs_vector = ctx.team.observation(aid, obs)
-            action = controller.act(ppo_obs_vector, aid)
+        if bundle.trainer is not None:
+            obs_vector = ctx.team.observation(aid, obs)
+            action = bundle.trainer.select_action(obs_vector, deterministic=False)
             actions[aid] = action
+            processed_obs[aid] = np.asarray(obs_vector, dtype=np.float32)
         elif hasattr(controller, "get_action"):
             action_space = ctx.env.action_space(aid)
             actions[aid] = controller.get_action(action_space, obs[aid])
@@ -179,15 +193,15 @@ def _compute_actions(
         else:
             raise TypeError(f"Controller for agent '{aid}' does not expose an act/get_action method")
 
-    return actions, ppo_obs_vector
+    return actions, processed_obs
 
 
 def _prepare_next_observation(
     ctx: TrainingContext,
+    agent_id: str,
     obs: Dict[str, Any],
     infos: Dict[str, Any],
 ) -> Dict[str, Any]:
-    agent_id = ctx.ppo_agent_id
     if agent_id in obs:
         return obs
 
@@ -228,8 +242,10 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
         terms: Dict[str, bool] = {}
         truncs: Dict[str, bool] = {}
 
+        trainers_dict = dict(ctx.trainer_map)
+
         while True:
-            actions, ppo_obs_vector = _compute_actions(ctx, obs, done)
+            actions, processed_obs = _compute_actions(ctx, obs, done)
             if not actions:
                 break
 
@@ -258,21 +274,33 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
             if collision_agents:
                 collision_history.extend(collision_agents)
 
-            if ppo_obs_vector is not None:
-                terminated = terms.get(ppo_id, False) or bool(collision_agents)
-                truncated = truncs.get(ppo_id, False)
+            for trainer_id, trainer in trainers_dict.items():
+                if trainer_id not in processed_obs:
+                    continue
 
-                patched_next = _prepare_next_observation(ctx, next_obs, infos)
+                terminated = terms.get(trainer_id, False) or (trainer_id in collision_agents)
+                truncated = truncs.get(trainer_id, False)
+
+                patched_next = _prepare_next_observation(ctx, trainer_id, next_obs, infos)
                 try:
-                    next_wrapped = ctx.team.observation(ppo_id, patched_next)
+                    next_wrapped = ctx.team.observation(trainer_id, patched_next)
                 except Exception:
-                    next_wrapped = ppo_obs_vector
+                    next_wrapped = processed_obs[trainer_id]
 
-                if truncated and not terminated:
-                    ppo_agent.record_final_value(next_wrapped)
-
-                shaped = shaped_rewards.get(ppo_id, rewards.get(ppo_id, 0.0))
-                ppo_agent.store(next_wrapped, actions.get(ppo_id), shaped, terminated)
+                shaped = shaped_rewards.get(trainer_id, rewards.get(trainer_id, 0.0))
+                transition = Transition(
+                    agent_id=trainer_id,
+                    obs=processed_obs[trainer_id],
+                    action=actions.get(trainer_id),
+                    reward=shaped,
+                    next_obs=next_wrapped,
+                    terminated=terminated,
+                    truncated=truncated,
+                    info=infos.get(trainer_id),
+                    raw_obs=obs,
+                    raw_next_obs=next_obs,
+                )
+                trainer.observe(transition)
 
             for aid in done:
                 done_flag = terms.get(aid, False) or truncs.get(aid, False) or (aid in collision_history)
@@ -292,8 +320,9 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
 
         results.append(totals)
 
-        if ppo_agent.rew_buf and ((ep + 1) % ctx.update_after == 0):
-            ppo_agent.update()
+        if (ep + 1) % ctx.update_after == 0:
+            for trainer in trainers_dict.values():
+                trainer.update()
 
         ppo_return = totals.get(ppo_id, 0.0)
         recent_returns.append(ppo_return)
@@ -325,8 +354,8 @@ def run_training(ctx: TrainingContext, episodes: int) -> List[Dict[str, float]]:
             f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
         )
 
-    if ppo_agent.rew_buf:
-        ppo_agent.update()
+    for trainer in ctx.trainer_map.values():
+        trainer.update()
 
     return results
 
@@ -337,6 +366,7 @@ cfg = CTX.cfg
 env = CTX.env
 team = CTX.team
 ppo_agent = CTX.ppo_agent
+ppo_trainer = CTX.ppo_trainer
 PPO_AGENT = CTX.ppo_agent_id
 _opponents = CTX.opponent_ids
 GAP_AGENT = _opponents[0] if _opponents else None

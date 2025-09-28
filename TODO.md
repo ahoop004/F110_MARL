@@ -14,11 +14,12 @@
     - [x] Document expected return types / usage.
   - [x] Refactor train.py to consume the new builders.
   - [x] Refactor eval.py (and main.py) to consume the new builders.
-  - [ ] Smoke-test train/eval after refactor.
+  - [x] Smoke-test train/eval after refactor.
 - [ ] Wrap PPO logic in a generic Trainer interface; plan for plugging in other agents (SAC, TD3).
-  - [ ] Define a Trainer interface (init, act, update) shared across algos.
-  - [ ] Adapt PPOAgent into the trainer abstraction.
-  - [ ] Provide hooks for future SAC/TD3 implementations.
+  - [x] Define transition-centric Trainer protocol (select_action, observe, update, save/load).
+  - [x] Introduce reusable Transition dataclass (obs, action, reward, next_obs, done, info).
+  - [x] Wrap PPOAgent in a TrainerAdapter consuming transitions.
+  - [x] Expose registry hook so TD3/DQN trainers can register without loop changes.
 - [ ] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).
   - [ ] Capture metrics (episode length, collisions, lap counts).
   - [ ] Log deterministic eval results to wandb/console.
@@ -27,9 +28,6 @@
   - [ ] Add wandb/TensorBoard hooks for training updates.
   - [ ] Log PPO losses (policy/value/entropy) each update.
   - [ ] Emit eval metrics to wandb/TensorBoard.
-- [ ] Add unit smoke tests for reset_environment and start pose adjustments.
-  - [ ] Write pytest covering start pose reset behavior (randomized options).
-  - [ ] Test map loader fallback paths (missing image/ext).
 - [ ] Build map_features utility for derived artefacts (centerline, walls, friction).
   - [ ] Generate centerline/waypoint data from MapData.
   - [ ] Extract wall/out-of-bounds masks supporting varied color schemes.

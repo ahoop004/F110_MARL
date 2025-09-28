@@ -131,10 +131,12 @@ def _collect_actions(
     return actions
 
 
-def evaluate(ctx: EvaluationContext, episodes: int = 20) -> List[Dict[str, Any]]:
+def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = False) -> List[Dict[str, Any]]:
     env = ctx.env
     ppo_id = ctx.ppo_agent_id
-    render_enabled = ctx.cfg.env.get("render_mode", "") == "human"
+    if force_render:
+        ctx.env.render_mode = "human"
+    render_enabled = force_render or ctx.cfg.env.get("render_mode", "") == "human"
 
     results: List[Dict[str, Any]] = []
 

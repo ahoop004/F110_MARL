@@ -21,6 +21,8 @@ from f110x.policies.gap_follow import FollowTheGapPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.random_policy import random_policy
 from f110x.policies.simple_heuristic import simple_heuristic
+from f110x.trainers.base import Trainer
+from f110x.trainers.ppo_guided import PPOTrainer
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +289,7 @@ class AgentBundle:
     wrappers: List[ObservationAdapter]
     trainable: bool
     metadata: Dict[str, Any] = field(default_factory=dict)
+    trainer: Optional[Trainer] = None
 
     @property
     def agent_id(self) -> str:
@@ -388,6 +391,7 @@ def _build_algo_ppo(
     ppo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
     controller = PPOAgent(ppo_cfg)
+    trainer = PPOTrainer(agent_id, controller)
     return AgentBundle(
         assignment=assignment,
         algo="ppo",
@@ -395,6 +399,7 @@ def _build_algo_ppo(
         wrappers=wrappers,
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": ppo_cfg},
+        trainer=trainer,
     )
 
 
@@ -509,6 +514,11 @@ class AgentTeam:
             bundle.role: bundle.agent_id for bundle in self.agents if bundle.role
         }
         self._legacy_tuple: Optional[Tuple[Any, Any, str, str, ObsWrapper]] = self._compute_legacy_tuple()
+        self.trainers: Dict[str, Trainer] = {
+            bundle.agent_id: bundle.trainer
+            for bundle in self.agents
+            if bundle.trainer is not None
+        }
 
     # Legacy unpacking ------------------------------------------------------
     def _compute_legacy_tuple(self) -> Optional[Tuple[Any, Any, str, str, ObsWrapper]]:
