@@ -103,7 +103,12 @@ reward:
 main:
   mode: train
   wandb:
-    enabled: false
-    project: f110-ppo
-    entity: null
+    enabled: true
+    project: marl-f110
+    entity: null   # optional: set your wandb team/user
+    tags:
+      - dev
+  tensorboard_dir: runs/
+  save_eval_rollouts: false
+  eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/ppo_best.pt
