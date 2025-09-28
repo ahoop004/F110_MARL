@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import tempfile
 from typing import Dict, Optional
 
 _RENDER_FLAG = False
@@ -68,6 +69,17 @@ except ImportError:  # optional dependency
 
 import train as train_module
 import eval as eval_module
+
+
+def _deep_update(base: Dict, updates: Dict) -> Dict:
+    for key, value in updates.items():
+        if key.startswith("_") or key in {"wandb_version"}:
+            continue
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+    return base
 
 def _wandb_init(cfg, mode):
     wandb_cfg = cfg.get("main", {}).get("wandb", {})
@@ -155,6 +167,15 @@ def main():
     main_cfg = cfg.get("main", {})
     mode = main_cfg.get("mode", "train").lower()
     wandb_run = _wandb_init(cfg, mode)
+    tmp_cfg_path: Optional[Path] = None
+    if wandb_run is not None:
+        overrides = wandb_run.config.as_dict()
+        _deep_update(cfg, overrides)
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w")
+        with tmp_file:
+            yaml.safe_dump(cfg, tmp_file)
+        tmp_cfg_path = Path(tmp_file.name)
+        cfg_path = tmp_cfg_path
 
     tb_writer = None
     tb_dir = main_cfg.get("tensorboard_dir")
@@ -239,6 +260,9 @@ def main():
 
     if wandb_run is not None:
         wandb_run.finish()
+
+    if tmp_cfg_path is not None and tmp_cfg_path.exists():
+        tmp_cfg_path.unlink()
 
 
 if __name__ == "__main__":

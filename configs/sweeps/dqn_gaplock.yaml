@@ -1,18 +1,21 @@
-program: python
+program: experiments/main.py
+command:
+  - python3
+  - ${program}
+project: F110_MARL
+entity: aaronrls
 name: gaplock-dqn
 method: random
 metric:
   name: eval/defender_crash_success
   goal: maximize
 parameters:
-  config_path:
-    value: configs/experiment_gaplock_dqn_train.yaml
-  algo:
-    value: dqn
   dqn.lr:
-    min: 1e-5
-    max: 1e-3
+    distribution: log_uniform
+    min: -6
+    max: -3
   dqn.epsilon_decay:
+    distribution: uniform
     min: 5000
     max: 20000
   dqn.target_update_interval:

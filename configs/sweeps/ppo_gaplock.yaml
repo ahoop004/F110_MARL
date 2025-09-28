@@ -1,20 +1,23 @@
-program: python
+program: experiments/main.py
+command:
+  - python3
+  - ${program}
+project: F110_MARL
+entity: aaronrls
 name: gaplock-ppo
 method: bayes
 metric:
   name: eval/defender_crash_success
   goal: maximize
 parameters:
-  config_path:
-    value: configs/experiment_gaplock_td3_train.yaml
-  algo:
-    value: ppo
   ppo.actor_lr:
-    min: 1e-5
-    max: 1e-3
+    distribution: log_uniform
+    min: -6
+    max: -3
   ppo.clip_eps:
     values: [0.1, 0.2, 0.3]
   ppo.ent_coef:
+    distribution: uniform
     min: 0.0
     max: 0.02
   ppo.update_epochs:

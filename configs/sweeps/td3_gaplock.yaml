@@ -1,24 +1,29 @@
-program: python
+program: experiments/main.py
+command:
+  - python3
+  - ${program}
+project: F110_MARL
+entity: aaronrls
 name: gaplock-td3
 method: bayes
 metric:
   name: eval/defender_crash_success
   goal: maximize
 parameters:
-  config_path:
-    value: configs/experiment_gaplock_td3_train.yaml
-  algo:
-    value: td3
   td3.actor_lr:
-    min: 5e-5
-    max: 5e-4
+    distribution: uniform
+    min: 0.00005
+    max: 0.0005
   td3.critic_lr:
-    min: 5e-5
-    max: 1e-3
+    distribution: uniform
+    min: 0.00005
+    max: 0.001
   td3.policy_noise:
+    distribution: uniform
     min: 0.1
     max: 0.5
   td3.tau:
+    distribution: uniform
     min: 0.002
     max: 0.01
   main.wandb.tags:
