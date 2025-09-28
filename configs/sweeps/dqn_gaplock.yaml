@@ -11,9 +11,9 @@ metric:
   goal: maximize
 parameters:
   dqn.lr:
-    distribution: log_uniform
-    min: -6
-    max: -3
+    distribution: uniform
+    min: 0.00001
+    max: 0.001
   dqn.epsilon_decay:
     distribution: uniform
     min: 5000
