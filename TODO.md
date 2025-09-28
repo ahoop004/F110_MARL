@@ -1,7 +1,7 @@
 # TODO Backlog
 
 
-- [ ] Refactor config handling (Hydra/gin/etc.) so algorithm/env/reward variants are declarative.
+- [x] Refactor config handling (Hydra/gin/etc.) so algorithm/env/reward variants are declarative.
 - [ ] Extract env/agent factory utilities so train/eval share a common build API.
 - [ ] Wrap PPO logic in a generic Trainer interface; plan for plugging in other agents (SAC, TD3).
 - [ ] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).

@@ -13,10 +13,11 @@ from f110x.wrappers.reward import RewardWrapper
 # -------------------------------------------------------------------
 # Config and environment setup (shared with train.py)
 # -------------------------------------------------------------------
-with open("configs/config.yaml", "r") as f:
-    cfg = yaml.safe_load(f)
+from config_models import ExperimentConfig
 
-env_cfg = cfg["env"]
+cfg = ExperimentConfig.load(Path("configs/config.yaml"))
+
+env_cfg = cfg.env.to_kwargs()
 map_dir = Path(env_cfg.get("map_dir", ""))
 map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
 if map_yaml_name is None:
@@ -103,13 +104,13 @@ def reset_environment(environment: F110ParallelEnv):
 
 # Wrappers and policies
 obs_wrapper = ObsWrapper(max_scan=30.0, normalize=True)
-reward_cfg = cfg.get("reward", {})
+reward_cfg = cfg.reward.to_dict()
 gap_policy = FollowTheGapPolicy()
 
 # Agent IDs
 obs, infos = reset_environment(env)
 agent_ids = env.agents
-ppo_agent_idx = cfg.get("ppo_agent_idx", 0)
+ppo_agent_idx = cfg.ppo_agent_idx
 gap_agent_idx = 1 - ppo_agent_idx
 PPO_AGENT = agent_ids[ppo_agent_idx]
 GAP_AGENT = agent_ids[gap_agent_idx]

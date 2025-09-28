@@ -2,6 +2,7 @@ from pathlib import Path
 
 import yaml
 import numpy as np
+from config_models import ExperimentConfig
 from PIL import Image
 from f110x.envs import F110ParallelEnv
 from policies.gap_follow import FollowTheGapPolicy
@@ -11,10 +12,9 @@ from f110x.wrappers.reward import RewardWrapper
 
 from collections import deque
 
-with open("configs/config.yaml", "r") as f:
-    cfg = yaml.safe_load(f)
+cfg = ExperimentConfig.load(Path("configs/config.yaml"))
 
-env_cfg = cfg["env"]
+env_cfg = cfg.env.to_kwargs()
 render_interval = env_cfg.get("render_interval", 0) 
 update_after = env_cfg.get('update',1)
 
@@ -109,7 +109,7 @@ def reset_environment(environment):
 # Initialize wrappers & policies
 # -------------------------------------------------------------------
 obs_wrapper = ObsWrapper(max_scan=30.0, normalize=True)
-reward_cfg = cfg.get("reward", {})
+reward_cfg = cfg.reward.to_dict()
 
 raw_curriculum = cfg.get("reward_curriculum", [])
 curriculum_schedule = []
@@ -138,7 +138,7 @@ gap_policy = FollowTheGapPolicy()
 obs, infos = env.reset()
 agent_ids = env.agents  # e.g. ["A", "B"]
 
-ppo_agent_idx = cfg.get("ppo_agent_idx", 0)
+ppo_agent_idx = cfg.ppo_agent_idx
 gap_agent_idx = 1 - ppo_agent_idx
 
 PPO_AGENT = agent_ids[ppo_agent_idx]
@@ -149,7 +149,7 @@ obs_dim = len(obs_wrapper(obs, PPO_AGENT, GAP_AGENT))
 action_space = env.action_space(PPO_AGENT)
 act_dim = action_space.shape[0]
 
-ppo_cfg = cfg["ppo"].copy()
+ppo_cfg = cfg.ppo.to_dict()
 ppo_cfg["obs_dim"] = obs_dim
 ppo_cfg["act_dim"] = act_dim
 ppo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
@@ -201,7 +201,7 @@ def get_curriculum_reward(episode_idx: int) -> RewardWrapper:
 
 def run_mixed(env, episodes=5):
     results = []
-    window = max(1, int(cfg["ppo"].get("rolling_avg_window", 10)))
+    window = max(1, int(cfg.ppo.get("rolling_avg_window", 10)))
     recent_returns = deque(maxlen=window)
     best_return = float("-inf")
 
@@ -348,7 +348,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
     # Run
     # -------------------------------------------------------------------
-    episodes = cfg["ppo"].get("train_episodes", 10)
+    episodes = cfg.ppo.get("train_episodes", 10)
     scores = run_mixed(env, episodes=episodes)
     print("Mixed PPO/Gap-Follow scores:", scores)
     ppo_agent.save(str(default_checkpoint))
