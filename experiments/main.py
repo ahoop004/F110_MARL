@@ -2,7 +2,7 @@
 import os
 import sys
 import tempfile
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
@@ -96,10 +96,61 @@ def _wandb_init(cfg, mode):
 def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):
     if run is None and tb_writer is None:
         return
-    for idx, totals in enumerate(results, 1):
-        payload = {"train/episode": idx}
-        for aid, value in totals.items():
-            payload[f"train/return_{aid}"] = value
+
+    for idx, record in enumerate(results, 1):
+        if isinstance(record, dict):
+            episode = int(record.get("episode", idx))
+            payload: Dict[str, Any] = {"train/episode": episode}
+
+            returns = record.get("returns")
+            if isinstance(returns, dict):
+                for aid, value in returns.items():
+                    payload[f"train/return_{aid}"] = float(value)
+            else:
+                try:
+                    for aid, value in record.items():
+                        if isinstance(value, (int, float)):
+                            payload[f"train/return_{aid}"] = float(value)
+                except AttributeError:
+                    pass
+
+            if ppo_id and f"train/return_{ppo_id}" in payload:
+                payload["train/return_attacker"] = payload[f"train/return_{ppo_id}"]
+            if gap_id and f"train/return_{gap_id}" in payload:
+                payload["train/return_defender"] = payload[f"train/return_{gap_id}"]
+
+            scalar_keys = {
+                "steps",
+                "collisions_total",
+                "defender_survival_steps",
+            }
+            for key in scalar_keys:
+                value = record.get(key)
+                if value is not None:
+                    payload[f"train/{key}"] = float(value)
+
+            bool_keys = {"success", "defender_crashed", "attacker_crashed"}
+            for key in bool_keys:
+                if key in record and record[key] is not None:
+                    payload[f"train/{key}"] = int(bool(record[key]))
+
+            for key, value in record.items():
+                if key.startswith("collision_count_") or key.startswith("collision_step_"):
+                    if value is not None:
+                        payload[f"train/{key}"] = float(value)
+
+            if record.get("reward_mode"):
+                payload["train/reward_mode"] = record["reward_mode"]
+            if record.get("cause"):
+                payload["train/cause"] = record["cause"]
+        else:
+            payload = {"train/episode": idx}
+            try:
+                for aid, value in record.items():
+                    payload[f"train/return_{aid}"] = value
+            except AttributeError:
+                pass
+
         if run is not None:
             run.log(payload)
         if tb_writer is not None:

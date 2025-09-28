@@ -232,17 +232,20 @@ def run_training(
     *,
     update_callback: Optional[Callable[[Dict[str, float]], None]] = None,
     update_start: int = 0,
-) -> List[Dict[str, float]]:
+) -> List[Dict[str, Any]]:
     env = ctx.env
     ppo_agent = ctx.ppo_agent
     ppo_id = ctx.ppo_agent_id
 
-    results: List[Dict[str, float]] = []
+    results: List[Dict[str, Any]] = []
     recent_window = max(1, int(ctx.ppo_bundle.metadata.get("config", {}).get("rolling_avg_window", 10)))
     recent_returns: deque[float] = deque(maxlen=recent_window)
     best_return = float("-inf")
     update_count = update_start
     trainers = dict(ctx.trainer_map)
+    roles = getattr(ctx.team, "roles", {})
+    attacker_id = roles.get("attacker", ppo_id)
+    defender_id = roles.get("defender")
 
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
@@ -262,6 +265,8 @@ def run_training(
         collision_history: List[str] = []
         terms: Dict[str, bool] = {}
         truncs: Dict[str, bool] = {}
+        collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
+        collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
 
         while True:
             actions, processed_obs = _compute_actions(ctx, obs, done)
@@ -292,6 +297,10 @@ def run_training(
             ]
             if collision_agents:
                 collision_history.extend(collision_agents)
+                for aid in collision_agents:
+                    collision_counts[aid] = collision_counts.get(aid, 0) + 1
+                    if collision_step.get(aid) is None:
+                        collision_step[aid] = steps
 
             for trainer_id, trainer in trainers.items():
                 if trainer_id not in processed_obs:
@@ -337,7 +346,35 @@ def run_training(
                     print(f"[WARN] Rendering disabled due to: {exc}")
                     ctx.render_interval = 0
 
-        results.append(totals)
+        returns = {aid: float(value) for aid, value in totals.items()}
+
+        defender_crashed = bool(defender_id and collision_step.get(defender_id) is not None)
+        attacker_crashed = bool(attacker_id and collision_step.get(attacker_id) is not None)
+        success = bool(defender_crashed and not attacker_crashed)
+        defender_survival_steps: Optional[int] = None
+        if defender_id:
+            defender_survival_steps = collision_step.get(defender_id) if defender_crashed else steps
+
+        episode_record: Dict[str, Any] = {
+            "episode": ep + 1,
+            "steps": steps,
+            "cause": cause_str,
+            "reward_mode": reward_wrapper.mode,
+            "returns": returns,
+            "success": success,
+            "defender_crashed": defender_crashed,
+            "attacker_crashed": attacker_crashed,
+            "defender_survival_steps": defender_survival_steps,
+            "collisions_total": int(sum(collision_counts.values())),
+        }
+
+        for aid, count in collision_counts.items():
+            episode_record[f"collision_count_{aid}"] = count
+        for aid, step_val in collision_step.items():
+            if step_val is not None:
+                episode_record[f"collision_step_{aid}"] = step_val
+
+        results.append(episode_record)
 
         if (ep + 1) % ctx.update_after == 0:
             for trainer_id, trainer in trainers.items():
@@ -350,7 +387,7 @@ def run_training(
                             payload[f"train/{key}"] = float(value)
                     update_callback(payload)
 
-        ppo_return = totals.get(ppo_id, 0.0)
+        ppo_return = returns.get(ppo_id, 0.0)
         recent_returns.append(ppo_return)
         if len(recent_returns) == recent_returns.maxlen:
             avg_return = float(sum(recent_returns) / len(recent_returns))
@@ -374,10 +411,11 @@ def run_training(
             end_cause.append("unknown")
         cause_str = ",".join(end_cause)
 
+        success_token = "success" if success else "no-success"
         print(
             f"[EP {ep + 1:03d}/{episodes}] mode={reward_wrapper.mode} "
-            f"steps={steps} cause={cause_str} "
-            f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
+            f"steps={steps} cause={cause_str} {success_token} "
+            f"return_{ppo_id}={returns.get(ppo_id, 0.0):.2f}"
         )
 
     for trainer_id, trainer in trainers.items():
