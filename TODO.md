@@ -1,11 +1,11 @@
 # TODO
 
 - [x] Refactor config handling using ExperimentConfig dataclasses.
-- [ ] Extract env/agent factory utilities so train/eval share a common build API (see ticket).
+- [x] Extract env/agent factory utilities so train/eval share a common build API (see ticket).
   - [x] Update map_loader.py to centralize map metadata augmentation.
   - [x] Flesh out start_pose.py with parsing/adjust/reset helpers.
     - [x] Validate spawn poses against map (inside drivable area).
-  - [ ] Add builders module returning env + agents + wrappers.
+  - [x] Add builders module returning env + agents + wrappers.
     - [x] Define factory function to load cfg, map, env, start poses.
     - [x] Ensure function returns env, map_data, start_pose options for callers.
     - [x] Introduce agent spec registry supporting PPO, TD3, DQN, heuristic policies.
@@ -15,11 +15,15 @@
   - [x] Refactor train.py to consume the new builders.
   - [x] Refactor eval.py (and main.py) to consume the new builders.
   - [x] Smoke-test train/eval after refactor.
-- [ ] Wrap PPO logic in a generic Trainer interface; plan for plugging in other agents (SAC, TD3).
+- [x] Wrap PPO logic in a generic Trainer interface; plan for plugging in other agents (SAC, TD3).
   - [x] Define transition-centric Trainer protocol (select_action, observe, update, save/load).
   - [x] Introduce reusable Transition dataclass (obs, action, reward, next_obs, done, info).
   - [x] Wrap PPOAgent in a TrainerAdapter consuming transitions.
   - [x] Expose registry hook so TD3/DQN trainers can register without loop changes.
+  - [ ] Implement TD3Trainer using shared protocol.
+  - [ ] Implement DQNTrainer using shared protocol.
+  - [ ] Register TD3/DQN builders and expose config knobs.
+  - [ ] Update docs/examples to highlight `AgentTeam` + trainer usage.
 - [ ] Standardize evaluation wrapper with deterministic actions and richer metrics (collision counts, lap stats).
   - [ ] Capture metrics (episode length, collisions, lap counts).
   - [ ] Log deterministic eval results to wandb/console.
@@ -28,6 +32,7 @@
   - [ ] Add wandb/TensorBoard hooks for training updates.
   - [ ] Log PPO losses (policy/value/entropy) each update.
   - [ ] Emit eval metrics to wandb/TensorBoard.
+- [ ] Update CLI/docs for new `--render`, `--episodes`, and trainer workflow.
 - [ ] Build map_features utility for derived artefacts (centerline, walls, friction).
   - [ ] Generate centerline/waypoint data from MapData.
   - [ ] Extract wall/out-of-bounds masks supporting varied color schemes.
