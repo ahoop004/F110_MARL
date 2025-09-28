@@ -1,172 +1,165 @@
+"""Evaluation entrypoint using the shared env/agent builders."""
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
-import yaml
+from typing import Any, Dict, List, Optional
+
 import numpy as np
-from PIL import Image
-from collections import deque
 
 from f110x.envs import F110ParallelEnv
-from policies.gap_follow import FollowTheGapPolicy
-from policies.ppo.ppo import PPOAgent
-from f110x.wrappers.observation import ObsWrapper
+from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
+from f110x.utils.config_models import ExperimentConfig
+from f110x.utils.map_loader import MapData
+from f110x.utils.start_pose import reset_with_start_poses
 from f110x.wrappers.reward import RewardWrapper
 
-# -------------------------------------------------------------------
-# Config and environment setup (shared with train.py)
-# -------------------------------------------------------------------
-from f110x.utils.config_models import ExperimentConfig
 
-cfg = ExperimentConfig.load(Path("configs/config.yaml"))
-
-env_cfg = cfg.env.to_kwargs()
-map_dir = Path(env_cfg.get("map_dir", ""))
-map_yaml_name = env_cfg.get("map_yaml") or env_cfg.get("map")
-if map_yaml_name is None:
-    raise ValueError("config.env must define map_yaml or map")
-
-map_yaml_path = (map_dir / map_yaml_name).expanduser().resolve()
-with open(map_yaml_path, "r") as map_file:
-    map_meta = yaml.safe_load(map_file)
-
-image_rel = map_meta.get("image")
-fallback_image = env_cfg.get("map_image")
-if image_rel:
-    image_path = (map_yaml_path.parent / image_rel).resolve()
-elif fallback_image:
-    image_path = (map_dir / fallback_image).expanduser().resolve()
-else:
-    map_ext = env_cfg.get("map_ext", ".png")
-    image_path = map_yaml_path.with_suffix(map_ext)
-
-with Image.open(image_path) as map_img:
-    image_size = map_img.size
-
-env_cfg["map_meta"] = map_meta
-env_cfg["map_image_path"] = str(image_path)
-env_cfg["map_image_size"] = image_size
-
-env = F110ParallelEnv(**env_cfg)
-render_enabled = env_cfg.get("render_mode", "") == "human"
-
-start_pose_back_gap = float(env_cfg.get("start_pose_back_gap", 0.0))
-start_pose_min_spacing = float(env_cfg.get("start_pose_min_spacing", 0.0))
-start_pose_options = env_cfg.get("start_pose_options")
-if start_pose_options:
-    processed = []
-    for option in start_pose_options:
-        arr = np.asarray(option, dtype=np.float32)
-        if arr.ndim == 1:
-            arr = np.expand_dims(arr, axis=0)
-        processed.append(arr)
-    start_pose_options = processed
+DEFAULT_CONFIG_PATH = Path("configs/config.yaml")
 
 
-def _adjust_start_poses(poses: np.ndarray) -> np.ndarray:
-    if poses.shape[0] < 2:
-        return poses
+@dataclass
+class EvaluationContext:
+    cfg: ExperimentConfig
+    env: F110ParallelEnv
+    map_data: MapData
+    start_pose_options: Optional[List[np.ndarray]]
+    team: AgentTeam
+    ppo_bundle: AgentBundle
+    reward_cfg: Dict[str, Any]
+    start_pose_back_gap: float
+    start_pose_min_spacing: float
+    checkpoint_path: Optional[Path]
 
-    adjusted = poses.copy()
-    leader = adjusted[0]
-    heading = np.array([np.cos(leader[2]), np.sin(leader[2])], dtype=np.float32)
+    @property
+    def ppo_agent(self):
+        return self.ppo_bundle.controller
 
-    if start_pose_back_gap > 0.0:
-        for idx in range(1, adjusted.shape[0]):
-            rel = adjusted[idx, :2] - leader[:2]
-            proj = float(np.dot(rel, heading))
-            if proj < 0 and abs(proj) < start_pose_back_gap:
-                delta = start_pose_back_gap + proj
-                adjusted[idx, :2] -= heading * delta
+    @property
+    def ppo_agent_id(self) -> str:
+        return self.ppo_bundle.agent_id
 
-    if start_pose_min_spacing > 0.0:
-        for idx in range(1, adjusted.shape[0]):
-            rel = adjusted[idx, :2] - leader[:2]
-            dist = float(np.linalg.norm(rel))
-            if dist < start_pose_min_spacing and dist > 1e-6:
-                direction = heading if np.dot(rel, heading) >= 0 else -heading
-                adjusted[idx, :2] += direction * (start_pose_min_spacing - dist)
-
-    return adjusted
+    @property
+    def opponent_ids(self) -> List[str]:
+        return [bundle.agent_id for bundle in self.team.agents if bundle is not self.ppo_bundle]
 
 
-def reset_environment(environment: F110ParallelEnv):
-    if not start_pose_options:
-        return environment.reset()
+def _load_checkpoint(bundle: AgentBundle, checkpoint_path: Optional[Path]) -> None:
+    if checkpoint_path is None:
+        return
+    if checkpoint_path.exists():
+        bundle.controller.load(str(checkpoint_path))
+        print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
+    else:
+        raise FileNotFoundError(f"No PPO checkpoint found at {checkpoint_path}")
 
-    indices = np.random.permutation(len(start_pose_options))
-    for idx in indices:
-        poses = np.array(start_pose_options[idx], copy=True)
-        poses = _adjust_start_poses(poses)
-        obs, infos = environment.reset(options={"poses": poses})
-        collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
-        if not any(collisions):
-            return obs, infos
 
-    return environment.reset()
+def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext:
+    cfg_file = cfg_path or DEFAULT_CONFIG_PATH
+    cfg = ExperimentConfig.load(cfg_file)
 
-# Wrappers and policies
-obs_wrapper = ObsWrapper(max_scan=30.0, normalize=True)
-reward_cfg = cfg.reward.to_dict()
-gap_policy = FollowTheGapPolicy()
+    env, map_data, start_pose_options = build_env(cfg)
+    team = build_agents(env, cfg)
 
-# Agent IDs
-obs, infos = reset_environment(env)
-agent_ids = env.agents
-ppo_agent_idx = cfg.ppo_agent_idx
-gap_agent_idx = 1 - ppo_agent_idx
-PPO_AGENT = agent_ids[ppo_agent_idx]
-GAP_AGENT = agent_ids[gap_agent_idx]
+    ppo_bundles = [bundle for bundle in team.agents if bundle.algo.lower() == "ppo"]
+    if not ppo_bundles:
+        raise RuntimeError("Evaluation expects a PPO agent in the roster")
+    if len(ppo_bundles) > 1:
+        raise RuntimeError("Evaluation currently supports a single PPO learner")
+    ppo_bundle = ppo_bundles[0]
 
-# PPO setup
-obs_dim = len(obs_wrapper(obs, PPO_AGENT, GAP_AGENT))
-action_space = env.action_space(PPO_AGENT)
-act_dim = action_space.shape[0]
-ppo_cfg = cfg["ppo"].copy()
-ppo_cfg["obs_dim"] = obs_dim
-ppo_cfg["act_dim"] = act_dim
-ppo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
-ppo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
+    reward_cfg = cfg.reward.to_dict()
 
-checkpoint_dir = Path(ppo_cfg.get("save_dir", "checkpoints")).expanduser()
-checkpoint_name = ppo_cfg.get("checkpoint_name", "ppo_best.pt")
-checkpoint_path = checkpoint_dir / checkpoint_name
-ppo_agent = PPOAgent(ppo_cfg)
+    ppo_cfg = ppo_bundle.metadata.get("config", cfg.ppo.to_dict())
+    checkpoint_dir = Path(ppo_cfg.get("save_dir", "checkpoints")).expanduser()
+    checkpoint_name = ppo_cfg.get("checkpoint_name", "ppo_best.pt")
+    default_checkpoint = checkpoint_dir / checkpoint_name
+    explicit_checkpoint = cfg.main.checkpoint
+    checkpoint_path = None
 
-if checkpoint_path.exists():
-    ppo_agent.load(str(checkpoint_path))
-    print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
-else:
-    raise FileNotFoundError(f"No PPO checkpoint found at {checkpoint_path}")
+    if explicit_checkpoint:
+        checkpoint_path = Path(explicit_checkpoint).expanduser()
+    elif default_checkpoint.exists():
+        checkpoint_path = default_checkpoint
 
-print(f"[INFO] PPO agent: {PPO_AGENT}, Gap agent: {GAP_AGENT}")
-print(f"[INFO] Obs dim: {obs_dim}, Act dim: {act_dim}")
+    _load_checkpoint(ppo_bundle, checkpoint_path)
 
-# -------------------------------------------------------------------
-# Evaluation loop
-# -------------------------------------------------------------------
-def evaluate(env, episodes=20):
-    results = []
-    render_live = render_enabled
+    start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
+    start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
+
+    return EvaluationContext(
+        cfg=cfg,
+        env=env,
+        map_data=map_data,
+        start_pose_options=start_pose_options,
+        team=team,
+        ppo_bundle=ppo_bundle,
+        reward_cfg=reward_cfg,
+        start_pose_back_gap=start_pose_back_gap,
+        start_pose_min_spacing=start_pose_min_spacing,
+        checkpoint_path=checkpoint_path,
+    )
+
+
+def _collect_actions(
+    ctx: EvaluationContext,
+    obs: Dict[str, Any],
+    done: Dict[str, bool],
+) -> Dict[str, Any]:
+    actions: Dict[str, Any] = {}
+    for bundle in ctx.team.agents:
+        aid = bundle.agent_id
+        if done.get(aid, False):
+            continue
+        if aid not in obs:
+            continue
+
+        controller = bundle.controller
+        if bundle.algo.lower() == "ppo":
+            processed = ctx.team.observation(aid, obs)
+            if hasattr(controller, "act_deterministic"):
+                actions[aid] = controller.act_deterministic(processed, aid)
+            else:
+                actions[aid] = controller.act(processed, aid)
+        elif hasattr(controller, "get_action"):
+            actions[aid] = controller.get_action(ctx.env.action_space(aid), obs[aid])
+        elif hasattr(controller, "act"):
+            processed = ctx.team.observation(aid, obs)
+            actions[aid] = controller.act(processed, aid)
+        else:
+            raise TypeError(f"Controller for agent '{aid}' does not expose an act/get_action method")
+    return actions
+
+
+def evaluate(ctx: EvaluationContext, episodes: int = 20) -> List[Dict[str, Any]]:
+    env = ctx.env
+    ppo_id = ctx.ppo_agent_id
+    render_enabled = ctx.cfg.env.get("render_mode", "") == "human"
+
+    results: List[Dict[str, Any]] = []
+
     for ep in range(episodes):
-        obs, infos = reset_environment(env)
+        obs, infos = reset_with_start_poses(
+            env,
+            ctx.start_pose_options,
+            back_gap=ctx.start_pose_back_gap,
+            min_spacing=ctx.start_pose_min_spacing,
+            map_data=ctx.map_data,
+        )
+
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
-        reward_wrapper = RewardWrapper(**reward_cfg)
+        reward_wrapper = RewardWrapper(**ctx.reward_cfg)
         reward_wrapper.reset()
 
         steps = 0
-        collision_history = []
-        terms, truncs = {}, {}
+        terms: Dict[str, bool] = {}
+        truncs: Dict[str, bool] = {}
+        collision_history: List[str] = []
+        live_render = render_enabled
 
         while True:
-            actions = {}
-            if PPO_AGENT in obs and not done.get(PPO_AGENT, False):
-                ppo_obs = obs_wrapper(obs, PPO_AGENT, GAP_AGENT)
-                actions[PPO_AGENT] = ppo_agent.act_deterministic(ppo_obs, PPO_AGENT)
-
-            if GAP_AGENT in obs and not done.get(GAP_AGENT, False):
-                actions[GAP_AGENT] = gap_policy.get_action(
-                    env.action_space(GAP_AGENT), obs[GAP_AGENT]
-                )
-
+            actions = _collect_actions(ctx, obs, done)
             if not actions:
                 break
 
@@ -174,9 +167,9 @@ def evaluate(env, episodes=20):
             steps += 1
 
             for aid in totals:
-                shaped = rewards.get(aid, 0.0)
+                reward = rewards.get(aid, 0.0)
                 if next_obs.get(aid) is not None:
-                    shaped = reward_wrapper(
+                    reward = reward_wrapper(
                         next_obs,
                         aid,
                         rewards.get(aid, 0.0),
@@ -184,51 +177,76 @@ def evaluate(env, episodes=20):
                         info=infos.get(aid, {}),
                         all_obs=next_obs,
                     )
-                totals[aid] += shaped
+                totals[aid] += reward
 
             collision_agents = [
-                aid for aid in totals if bool(next_obs.get(aid, {}).get("collision", 0))
+                aid for aid in next_obs.keys() if bool(next_obs.get(aid, {}).get("collision", False))
             ]
             if collision_agents:
                 collision_history.extend(collision_agents)
 
             obs = next_obs
             done = {
-                aid: terms.get(aid, False) or truncs.get(aid, False) or (aid in collision_agents)
+                aid: terms.get(aid, False)
+                or truncs.get(aid, False)
+                or (aid in collision_history)
                 for aid in done
             }
-            if render_live:
+
+            if live_render:
                 try:
                     env.render()
                 except Exception as exc:
                     print(f"[WARN] Disabling render during eval: {exc}")
-                    render_live = False
+                    live_render = False
+
             if all(done.values()):
                 break
 
-        end_cause = []
+        cause_bits: List[str] = []
         if collision_history:
-            end_cause.append("collision")
+            cause_bits.append("collision")
         for aid in done:
             if terms.get(aid, False):
-                end_cause.append(f"term:{aid}")
+                cause_bits.append(f"term:{aid}")
             if truncs.get(aid, False):
-                end_cause.append(f"trunc:{aid}")
-        if not end_cause:
-            end_cause.append("unknown")
+                cause_bits.append(f"trunc:{aid}")
+        if not cause_bits:
+            cause_bits.append("unknown")
+        cause_str = ",".join(cause_bits)
 
-        cause_str = ",".join(end_cause)
         print(
-            f"[EVAL {ep+1:03d}/{episodes}] steps={steps} cause={cause_str} "
-            f"return_ppo={totals[PPO_AGENT]:.2f} return_gap={totals[GAP_AGENT]:.2f}"
+            f"[EVAL {ep + 1:03d}/{episodes}] steps={steps} cause={cause_str} "
+            f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
         )
-        results.append(dict(episode=ep+1, steps=steps, cause=cause_str,
-                            return_ppo=totals[PPO_AGENT], return_gap=totals[GAP_AGENT]))
+
+        record = {
+            "episode": ep + 1,
+            "steps": steps,
+            "cause": cause_str,
+            "returns": dict(totals),
+        }
+        for aid, value in totals.items():
+            record[f"return_{aid}"] = value
+        results.append(record)
+
     return results
 
+
+# Instantiate default context for legacy imports
+CTX = create_evaluation_context()
+cfg = CTX.cfg
+env = CTX.env
+team = CTX.team
+ppo_agent = CTX.ppo_agent
+PPO_AGENT = CTX.ppo_agent_id
+_opponents = CTX.opponent_ids
+GAP_AGENT = _opponents[0] if _opponents else None
+
+
 if __name__ == "__main__":
-    episodes = cfg["ppo"].get("eval_episodes", 20)
-    eval_results = evaluate(env, episodes=episodes)
+    episodes = int(CTX.ppo_bundle.metadata.get("config", {}).get("eval_episodes", 20))
+    eval_results = evaluate(CTX, episodes=episodes)
     print("Evaluation finished. Results:")
-    for r in eval_results:
-        print(r)
+    for record in eval_results:
+        print(record)

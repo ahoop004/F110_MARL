@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal
 
-from policies.ppo.net import Actor, Critic
+from f110x.policies.ppo.net import Actor, Critic
 
 
 class PPOAgent:

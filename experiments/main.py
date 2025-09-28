@@ -16,8 +16,8 @@ try:
 except ImportError:  # optional dependency
     wandb = None
 
-import experiments.train as train_module
-import experiments.eval as eval_module
+import train as train_module
+import eval as eval_module
 
 def _wandb_init(cfg, mode):
     wandb_cfg = cfg.get("main", {}).get("wandb", {})
@@ -35,22 +35,24 @@ def _log_train_results(run, results, ppo_id, gap_id):
     if run is None:
         return
     for idx, totals in enumerate(results, 1):
-        run.log({
+        payload = {
             "train/episode": idx,
-            "train/return_ppo": totals.get(ppo_id, 0.0),
-            "train/return_gap": totals.get(gap_id, 0.0),
-        })
+            f"train/return_{ppo_id}": totals.get(ppo_id, 0.0),
+        }
+        if gap_id is not None:
+            payload[f"train/return_{gap_id}"] = totals.get(gap_id, 0.0)
+        run.log(payload)
 
 
 def _log_eval_results(run, results):
     if run is None:
         return
     for res in results:
-        run.log({
-            "eval/episode": res["episode"],
-            "eval/return_ppo": res["return_ppo"],
-            "eval/return_gap": res["return_gap"],
-        })
+        payload = {"eval/episode": res["episode"]}
+        for key, value in res.items():
+            if key.startswith("return_"):
+                payload[f"eval/{key}"] = value
+        run.log(payload)
 
 
 def main():
@@ -67,40 +69,27 @@ def main():
     wandb_run = _wandb_init(cfg, mode)
 
     if mode == "train":
-        results = train_module.run_mixed(
-            train_module.env,
-            episodes=cfg["ppo"].get("train_episodes", 10),
-        )
+        episodes = cfg["ppo"].get("train_episodes", 10)
+        results = train_module.run_training(train_module.CTX, episodes=episodes)
         _log_train_results(wandb_run, results, train_module.PPO_AGENT, train_module.GAP_AGENT)
-        train_module.ppo_agent.save(str(checkpoint_path))
+        train_module.CTX.ppo_agent.save(str(checkpoint_path))
 
     elif mode == "eval":
-        if checkpoint_path.exists():
-            eval_module.ppo_agent.load(str(checkpoint_path))
-        else:
-            explicit_ckpt = main_cfg.get("checkpoint")
-            if explicit_ckpt:
-                eval_module.ppo_agent.load(str(explicit_ckpt))
-        results = eval_module.evaluate(
-            eval_module.env,
-            episodes=cfg["ppo"].get("eval_episodes", 5),
-        )
+        episodes = cfg["ppo"].get("eval_episodes", 5)
+        # Rebuild evaluation context so explicit checkpoint overrides take effect
+        eval_ctx = eval_module.create_evaluation_context(cfg_path)
+        results = eval_module.evaluate(eval_ctx, episodes=episodes)
         _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
-        results = train_module.run_mixed(
-            train_module.env,
-            episodes=cfg["ppo"].get("train_episodes", 10),
-        )
+        train_episodes = cfg["ppo"].get("train_episodes", 10)
+        results = train_module.run_training(train_module.CTX, episodes=train_episodes)
         _log_train_results(wandb_run, results, train_module.PPO_AGENT, train_module.GAP_AGENT)
-        train_module.ppo_agent.save(str(checkpoint_path))
+        train_module.CTX.ppo_agent.save(str(checkpoint_path))
 
-        if checkpoint_path.exists():
-            eval_module.ppo_agent.load(str(checkpoint_path))
-        results = eval_module.evaluate(
-            eval_module.env,
-            episodes=cfg["ppo"].get("eval_episodes", 5),
-        )
+        eval_ctx = eval_module.create_evaluation_context(cfg_path)
+        eval_episodes = cfg["ppo"].get("eval_episodes", 5)
+        results = eval_module.evaluate(eval_ctx, episodes=eval_episodes)
         _log_eval_results(wandb_run, results)
 
     else:
