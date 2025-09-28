@@ -346,6 +346,18 @@ def run_training(
                     print(f"[WARN] Rendering disabled due to: {exc}")
                     ctx.render_interval = 0
 
+        end_cause: List[str] = []
+        if collision_history:
+            end_cause.append("collision")
+        for aid in done:
+            if terms.get(aid, False):
+                end_cause.append(f"term:{aid}")
+            if truncs.get(aid, False):
+                end_cause.append(f"trunc:{aid}")
+        if not end_cause:
+            end_cause.append("unknown")
+        cause_str = ",".join(end_cause)
+
         returns = {aid: float(value) for aid, value in totals.items()}
 
         defender_crashed = bool(defender_id and collision_step.get(defender_id) is not None)
@@ -398,18 +410,6 @@ def run_training(
                     f"[INFO] New best model saved at episode {ep + 1} "
                     f"(avg_return={avg_return:.2f})"
                 )
-
-        end_cause = []
-        if collision_history:
-            end_cause.append("collision")
-        for aid in done:
-            if terms.get(aid, False):
-                end_cause.append(f"term:{aid}")
-            if truncs.get(aid, False):
-                end_cause.append(f"trunc:{aid}")
-        if not end_cause:
-            end_cause.append("unknown")
-        cause_str = ",".join(end_cause)
 
         success_token = "success" if success else "no-success"
         print(

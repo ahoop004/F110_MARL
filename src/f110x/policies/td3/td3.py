@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
+from f110x.utils.torch_io import safe_load
 
 
 class TD3Agent:
@@ -163,7 +164,7 @@ class TD3Agent:
         )
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = safe_load(path, map_location=self.device)
         self.actor.load_state_dict(ckpt["actor"])
         self.actor_target.load_state_dict(ckpt.get("actor_target", ckpt["actor"]))
         self.critic1.load_state_dict(ckpt["critic1"])

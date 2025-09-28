@@ -6,6 +6,7 @@ import torch.optim as optim
 from torch.distributions import Normal
 
 from f110x.policies.ppo.net import Actor, Critic
+from f110x.utils.torch_io import safe_load
 
 
 class PPOAgent:
@@ -271,7 +272,7 @@ class PPOAgent:
         )
 
     def load(self, path):
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = safe_load(path, map_location=self.device)
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         self.actor_opt.load_state_dict(ckpt["actor_opt"])

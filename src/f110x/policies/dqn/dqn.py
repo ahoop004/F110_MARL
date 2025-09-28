@@ -9,6 +9,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from f110x.policies.buffers import ReplayBuffer
+from f110x.utils.torch_io import safe_load
 from f110x.policies.dqn.net import QNetwork
 
 
@@ -138,7 +139,7 @@ class DQNAgent:
         )
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = safe_load(path, map_location=self.device)
         self.q_net.load_state_dict(ckpt["q_net"])
         self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
         self.optimizer.load_state_dict(ckpt["optimizer"])
