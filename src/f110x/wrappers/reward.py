@@ -13,6 +13,7 @@ class RewardWrapper:
         self_wall_penalty=0.3,
         herd_bonus=250.0,
         ego_collision_penalty=-40.0,
+        opponent_collision_bonus=250.0,
         spin_thresh=np.pi / 6,
         spin_penalty=1.0,
     ):
@@ -28,15 +29,18 @@ class RewardWrapper:
         self.self_wall_penalty = self_wall_penalty
         self.herd_bonus = herd_bonus
         self.ego_collision_penalty = ego_collision_penalty
+        self.opponent_collision_bonus = opponent_collision_bonus
         self.spin_thresh = spin_thresh
         self.spin_penalty = spin_penalty
 
         self.prev_positions = {}
         self.prev_target_dist = {}
+        self.opponent_crash_reward_given = set()
 
     def reset(self):
         self.prev_positions.clear()
         self.prev_target_dist.clear()
+        self.opponent_crash_reward_given.clear()
 
     def _select_target_obs(self, agent_id, all_obs):
         if not all_obs:
@@ -103,9 +107,12 @@ class RewardWrapper:
             ego_crashed = ego_obs.get("collision", False)
             target_crashed = target_obs.get("collision", False)
             if ego_crashed and target_crashed:
-                shaped = 1.5*self.ego_collision_penalty
+                shaped = 0.5 * self.ego_collision_penalty
             elif target_crashed and not ego_crashed:
-                shaped += self.herd_bonus
+                key = (agent_id, target_obs.get("agent_id", "target"))
+                if key not in self.opponent_crash_reward_given:
+                    shaped += self.herd_bonus + self.opponent_collision_bonus
+                    self.opponent_crash_reward_given.add(key)
 
         if done and ego_obs.get("collision", False):
             shaped += self.ego_collision_penalty

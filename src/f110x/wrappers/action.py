@@ -18,7 +18,7 @@ class ContinuousActionWrapper:
         if np.any(self.range <= 0):
             raise ValueError("action range must be positive")
 
-    def __call__(self, action: Iterable[float]) -> np.ndarray:
+    def transform(self, _agent_id: str, action: Iterable[float]) -> np.ndarray:
         action = np.asarray(action, dtype=np.float32)
         return np.clip(action, -1.0, 1.0) * (self.range / 2.0) + (self.low + self.high) / 2.0
 
@@ -36,7 +36,7 @@ class DiscreteActionWrapper:
     def actions(self) -> List[np.ndarray]:
         return [action.copy() for action in self._actions]
 
-    def __call__(self, action: Any) -> np.ndarray:
+    def transform(self, _agent_id: str, action: Any) -> np.ndarray:
         if np.isscalar(action):
             return self.index_to_action(int(action))
         action_arr = np.asarray(action, dtype=np.float32)
@@ -79,7 +79,11 @@ class DeltaDiscreteActionWrapper:
             initial_action = np.zeros_like(self.low)
         self._state[agent_id] = np.asarray(initial_action, dtype=np.float32)
 
-    def __call__(self, agent_id: str, index: int) -> np.ndarray:
+    def transform(self, agent_id: str, action: Any) -> np.ndarray:
+        if np.isscalar(action):
+            index = int(action)
+        else:
+            index = int(np.asarray(action).item())
         if agent_id not in self._state:
             self.reset(agent_id)
         baseline = self._state[agent_id]

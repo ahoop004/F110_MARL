@@ -3,10 +3,17 @@
 ## High Priority
 - [ ] Adversarial gap-busting experiment (RL vs Follow-the-Gap).
   - [x] Finalize scenario configs (train/eval) with roster: RL agent + follow-gap opponent.
-  - [ ] Define adversarial reward shaping (reward causing opponent collision, penalize self-collision).
+  - [ ] Define adversarial reward shaping (drive opponent into wall, keep ego safe).
+    - [x] Add explicit opponent-crash bonus / survival penalty to `RewardWrapper`.
+    - [ ] Tune wall-distance and forward-progress terms for attacker.
+    - [ ] Verify reward signals via short scripted rollouts (logging metrics).
   - [x] Implement algorithm-specific action wrappers (continuous normalizer, discrete templating).
-  - [ ] Extend evaluation metrics (opponent collision flag, time-to-crash, survival time).
+  - [x] Extend evaluation metrics (opponent collision flag, time-to-crash, survival time).
+    - [x] Log per-episode attacker/defender crash steps and survival horizon.
+    - [ ] Surface success-rate summaries in wandb/TensorBoard.
   - [ ] Run baseline sweeps for PPO/TD3/DQN using the scenario; log to wandb.
+    - [ ] Prepare sweep configs (hyper grids) for each algorithm.
+    - [ ] Automate scenario reset + logging tags in CLI.
 - [ ] Trainer registry polish.
   - [ ] Update docs/examples to highlight `AgentTeam` + trainer usage (PPO/TD3/DQN).
   - [ ] Write Trainer registry README snippet explaining config wiring.

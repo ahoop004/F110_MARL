@@ -1,0 +1,23 @@
+program: python
+name: gaplock-ppo
+method: bayes
+metric:
+  name: eval/defender_crash_success
+  goal: maximize
+parameters:
+  config_path:
+    value: configs/experiment_gaplock_td3_train.yaml
+  algo:
+    value: ppo
+  ppo.actor_lr:
+    min: 1e-5
+    max: 1e-3
+  ppo.clip_eps:
+    values: [0.1, 0.2, 0.3]
+  ppo.ent_coef:
+    min: 0.0
+    max: 0.02
+  ppo.update_epochs:
+    values: [5, 10, 15]
+  main.wandb.tags:
+    value: [gaplock, ppo]

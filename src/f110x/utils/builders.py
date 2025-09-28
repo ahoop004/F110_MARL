@@ -492,11 +492,19 @@ def _build_algo_dqn(
             f"DQN agent '{agent_id}' requires an 'action_set' list in config or spec params"
         )
 
+    action_mode = str(dqn_cfg.get("action_mode", "absolute")).lower()
     dqn_cfg["obs_dim"] = int(obs_vector.size)
 
     controller = DQNAgent(dqn_cfg)
     trainer = DQNTrainer(agent_id, controller)
-    action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])
+    if action_mode == "delta":
+        action_wrapper = DeltaDiscreteActionWrapper(
+            dqn_cfg.get("action_deltas", dqn_cfg["action_set"]),
+            action_space.low,
+            action_space.high,
+        )
+    else:
+        action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])
     return AgentBundle(
         assignment=assignment,
         algo="dqn",
@@ -680,11 +688,20 @@ class AgentTeam:
         wrapper = bundle.action_wrapper
         if wrapper is None:
             return action
-        return wrapper(action)
+        return wrapper.transform(agent_id, action)
 
     @property
     def trainable_agents(self) -> List[str]:
         return [bundle.agent_id for bundle in self.agents if bundle.trainable]
+
+    def reset_actions(self) -> None:
+        for bundle in self.agents:
+            wrapper = bundle.action_wrapper
+            if wrapper is None:
+                continue
+            reset_fn = getattr(wrapper, "reset", None)
+            if callable(reset_fn):
+                reset_fn(bundle.agent_id)
 
 
 # ---------------------------------------------------------------------------

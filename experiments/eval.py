@@ -181,6 +181,7 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
             min_spacing=ctx.start_pose_min_spacing,
             map_data=ctx.map_data,
         )
+        ctx.team.reset_actions()
 
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
@@ -278,8 +279,14 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
             cause_bits.append("unknown")
         cause_str = ",".join(cause_bits)
 
+        defender_crashed = bool(defender_id and collision_step.get(defender_id) is not None)
+        attacker_crashed = bool(collision_step.get(attacker_id))
+        defender_crash_step = collision_step.get(defender_id)
+        attacker_crash_step = collision_step.get(attacker_id)
+
         print(
             f"[EVAL {ep + 1:03d}/{episodes}] steps={steps} cause={cause_str} collisions={collision_total} "
+            f"defender_crash={defender_crashed} attacker_crash={attacker_crashed} "
             f"return_{ppo_id}={totals.get(ppo_id, 0.0):.2f}"
         )
 
@@ -296,6 +303,20 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
             record[f"collision_count_{aid}"] = count
         for aid, count in lap_counts.items():
             record[f"lap_count_{aid}"] = count
+        for aid, step_val in collision_step.items():
+            if step_val is not None:
+                record[f"collision_step_{aid}"] = step_val
+
+        if defender_id:
+            record["defender_crashed"] = defender_crashed
+            if defender_crash_step is not None:
+                record["defender_crash_step"] = defender_crash_step
+                record["defender_survival_steps"] = defender_crash_step
+            else:
+                record["defender_survival_steps"] = steps
+        record["attacker_crashed"] = attacker_crashed
+        if attacker_crash_step is not None:
+            record["attacker_crash_step"] = attacker_crash_step
 
         if rollout_trace is not None and ctx.rollout_dir is not None:
             rollout_path = ctx.rollout_dir / f"episode_{ep + 1:03d}.pkl"

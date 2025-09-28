@@ -252,6 +252,7 @@ def run_training(
             min_spacing=ctx.start_pose_min_spacing,
             map_data=ctx.map_data,
         )
+        ctx.team.reset_actions()
 
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
