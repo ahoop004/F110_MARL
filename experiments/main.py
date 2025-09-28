@@ -211,7 +211,8 @@ def _log_eval_results(run, results, tb_writer=None):
 
 def main():
     cfg_env = os.environ.get("F110_CONFIG")
-    cfg_path = Path(cfg_env) if cfg_env else Path("configs/config.yaml")
+    default_cfg = Path("configs/experiment_gaplock_dqn.yaml")
+    cfg_path = Path(cfg_env) if cfg_env else default_cfg
     with cfg_path.open() as f:
         cfg = yaml.safe_load(f)
 

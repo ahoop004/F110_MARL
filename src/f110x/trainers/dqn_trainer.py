@@ -19,12 +19,13 @@ class DQNTrainer(Trainer):
         return self._agent.act(obs_np, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
+        done = transition.terminated or transition.truncated
         self._agent.store_transition(
             transition.obs,
             transition.action,
             transition.reward,
             transition.next_obs,
-            transition.terminated,
+            done,
             transition.info,
         )
 

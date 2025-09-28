@@ -39,6 +39,12 @@ class DQNAgent:
         self.epsilon_start = float(cfg.get("epsilon_start", 0.9))
         self.epsilon_end = float(cfg.get("epsilon_end", 0.05))
         self.epsilon_decay = max(1, int(cfg.get("epsilon_decay", 20000)))
+        self.epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
+        if self.epsilon_decay_rate:
+            if not 0.0 < self.epsilon_decay_rate < 1.0:
+                raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
+        self.episode_count = 0
+        self._epsilon_value = self._initial_epsilon()
 
         buffer_size = int(cfg.get("buffer_size", 50000))
         self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
@@ -48,8 +54,7 @@ class DQNAgent:
     # -------------------- Interaction --------------------
 
     def epsilon(self) -> float:
-        fraction = min(1.0, self.step_count / self.epsilon_decay)
-        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1 - fraction)
+        return self._epsilon_value
 
     def act(self, obs: np.ndarray, deterministic: bool = False) -> int:
         eps = 0.0 if deterministic else self.epsilon()
@@ -84,6 +89,9 @@ class DQNAgent:
         info["action_index"] = action_idx
         self.buffer.add(obs, action_vec, reward, next_obs, done, info)
         self.step_count += 1
+
+        if done:
+            self._advance_episode()
 
     # -------------------- Learning --------------------
 
@@ -124,6 +132,14 @@ class DQNAgent:
             "epsilon": float(self.epsilon()),
         }
 
+    def _advance_episode(self) -> None:
+        self.episode_count += 1
+        if self.epsilon_decay_rate:
+            next_eps = self._epsilon_value * self.epsilon_decay_rate
+            self._epsilon_value = max(self.epsilon_end, next_eps)
+        else:
+            self._epsilon_value = self._epsilon_from_counts()
+
     # -------------------- Persistence --------------------
 
     def save(self, path: str) -> None:
@@ -133,6 +149,8 @@ class DQNAgent:
                 "target_q_net": self.target_q_net.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "step_count": self.step_count,
+                "episode_count": self.episode_count,
+                "epsilon_value": self._epsilon_value,
                 "action_set": self.action_set,
             },
             path,
@@ -144,12 +162,26 @@ class DQNAgent:
         self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.step_count = int(ckpt.get("step_count", 0))
+        self.episode_count = int(ckpt.get("episode_count", 0))
+        self._epsilon_value = float(ckpt.get("epsilon_value", self._initial_epsilon()))
         if "action_set" in ckpt:
             self.action_set = np.asarray(ckpt["action_set"], dtype=np.float32)
             self.n_actions = self.action_set.shape[0]
             self.act_dim = self.action_set.shape[1]
         self.q_net.to(self.device)
         self.target_q_net.to(self.device)
+
+    def _initial_epsilon(self) -> float:
+        if self.epsilon_decay_rate:
+            if self.episode_count:
+                decayed = self.epsilon_start * (self.epsilon_decay_rate ** self.episode_count)
+                return max(self.epsilon_end, decayed)
+            return self.epsilon_start
+        return self._epsilon_from_counts()
+
+    def _epsilon_from_counts(self) -> float:
+        fraction = min(1.0, self.episode_count / self.epsilon_decay)
+        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1 - fraction)
 
     # -------------------- Helpers --------------------
 

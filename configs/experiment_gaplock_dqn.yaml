@@ -53,9 +53,9 @@ dqn:
   batch_size: 64
   buffer_size: 50000
   target_update_interval: 500
-  epsilon_start: 0.9
+  epsilon_start: 1
   epsilon_end: 0.1
-  epsilon_decay: 10000
+  epsilon_decay_rate: 0.982
   hidden_dims: [256, 256]
   action_set:
     - [-0.4, 0.5]
