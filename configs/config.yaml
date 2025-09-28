@@ -42,11 +42,22 @@ env:
   
   start_poses:
     - [0.0, 0.0, 0.0]
-    - [2.0, 0.5, 0.0]
-  start_pose_jitter:
-    pos: 0.35        # meters of uniform positional jitter per axis
-    heading: 0.2     # radians of uniform heading jitter
-    min_distance: 0.7 # minimum separation between agents after jitter
+    - [2.5, 0.5, 0.0]
+  start_pose_options:
+    -
+      - [0.0, 0.0, 0.0]
+      - [2.0, 0.5, 0.0]
+    -
+      - [0.0, -0.5, 0.0]
+      - [2.5, 0.8, 0.0]
+    -
+      - [2.0, 0.0, 0.0]
+      - [0.0, -0.5, 0.0]
+    -
+      - [2.0, -0.5, 0.0]
+      - [0.5, 0.8, 0.0]
+  start_pose_back_gap: 2.0
+  start_pose_min_spacing: 2.0
 
 mode: "mixed"
 ppo_agent_idx: 0   # choose which agent runs PPO
@@ -66,9 +77,14 @@ ppo:
 
 reward:
   # mode: "pursuit"   # "basic", "pursuit", or "herding"
-  collision_penalty: -5.0
-  alive_bonus: 0.1
-  progress_scale: 1.0
-  spin_penalty: 0.5
+  alive_bonus: 0.02
+  forward_scale: 0.15
+  reverse_penalty: 1.5
+  lateral_penalty: 0.05
+  target_distance_scale: 0.1
+  target_wall_bonus: 0.5
+  self_wall_penalty: 0.3
+  herd_bonus: 250.0
+  ego_collision_penalty: -40.0
+  spin_penalty: 1.0
   spin_thresh: 0.52   # radians ~30°
-  herd_bonus: 10.0

@@ -1,121 +1,113 @@
 import numpy as np
 
 class RewardWrapper:
-    def __init__(self,
-                 mode="basic",
-                 collision_penalty=-350.0,   # much harsher ego crash penalty
-                 alive_bonus=0.01,
-                 progress_scale=0.1,         # de-emphasize raw forward motion
-                 spin_penalty=0.55,
-                 spin_thresh=np.pi/6,
-                 pursuit_scale=0.05,
-                 herd_bonus=150.0,            # big reward if target crashes
-                 reverse_penalty=1.0,
-                 speed_scale=0.05,
-                 safe_dist=0.5,              # meters from wall for safety shaping
-                 wall_bonus=0.2):            # reward if target is near a wall
-        """
-        mode: "basic", "pursuit", "adversarial"
-        """
+    def __init__(
+        self,
+        mode="basic",
+        alive_bonus=0.02,
+        forward_scale=0.15,
+        reverse_penalty=1.5,
+        lateral_penalty=0.05,
+        target_distance_scale=0.1,
+        target_wall_bonus=0.5,
+        self_wall_penalty=0.3,
+        herd_bonus=250.0,
+        ego_collision_penalty=-40.0,
+        spin_thresh=np.pi / 6,
+        spin_penalty=1.0,
+    ):
+        """Rich reward shaping for mixed pursuit/herding."""
+
         self.mode = mode
-        self.collision_penalty = collision_penalty
         self.alive_bonus = alive_bonus
-        self.progress_scale = progress_scale
-        self.spin_penalty = spin_penalty
-        self.spin_thresh = spin_thresh
-        self.pursuit_scale = pursuit_scale
-        self.herd_bonus = herd_bonus
+        self.forward_scale = forward_scale
         self.reverse_penalty = reverse_penalty
-        self.speed_scale = speed_scale
-        self.safe_dist = safe_dist
-        self.wall_bonus = wall_bonus
+        self.lateral_penalty = lateral_penalty
+        self.target_distance_scale = target_distance_scale
+        self.target_wall_bonus = target_wall_bonus
+        self.self_wall_penalty = self_wall_penalty
+        self.herd_bonus = herd_bonus
+        self.ego_collision_penalty = ego_collision_penalty
+        self.spin_thresh = spin_thresh
+        self.spin_penalty = spin_penalty
 
         self.prev_positions = {}
-        self.prev_thetas = {}
-        self.prev_target_dists = {}
+        self.prev_target_dist = {}
 
     def reset(self):
         self.prev_positions.clear()
-        self.prev_thetas.clear()
-        self.prev_target_dists.clear()
+        self.prev_target_dist.clear()
+
+    def _select_target_obs(self, agent_id, all_obs):
+        if not all_obs:
+            return None
+        for other_id, other_obs in all_obs.items():
+            if other_id != agent_id:
+                return other_obs
+        return None
 
     def __call__(self, obs, agent_id, reward, done, info, *, all_obs=None):
         ego_obs = obs[agent_id]
-        x, y, theta = ego_obs["pose"]
+        pose = ego_obs["pose"]
+        x, y, theta = float(pose[0]), float(pose[1]), float(pose[2])
 
-        # target_collision = ego_obs[]"target_collision"]
-
-        # --- displacement ---
-        prev = self.prev_positions.get(agent_id, (x, y))
-        dx, dy = x - prev[0], y - prev[1]
-        dist = np.sqrt(dx * dx + dy * dy)
-
-        prev_theta = self.prev_thetas.get(agent_id, theta)
-        dtheta = abs(theta - prev_theta)
-
+        prev_pos = self.prev_positions.get(agent_id, (x, y))
+        dx, dy = x - prev_pos[0], y - prev_pos[1]
         self.prev_positions[agent_id] = (x, y)
-        self.prev_thetas[agent_id] = theta
 
-        shaped = reward + self.alive_bonus
+        heading = np.array([np.cos(theta), np.sin(theta)], dtype=np.float32)
+        disp = np.array([dx, dy], dtype=np.float32)
+        forward_step = float(np.dot(heading, disp))
+        lateral_step = float(np.cross(heading, disp))
 
-        # --- forward progress ---
-        heading = np.array([np.cos(theta), np.sin(theta)])
-        disp = np.array([dx, dy])
-        forward_proj = np.dot(heading, disp)
+        shaped = reward
 
-        if forward_proj > 0:
-            shaped += self.progress_scale * forward_proj
+        shaped += self.alive_bonus
+        if forward_step > 0:
+            shaped += self.forward_scale * forward_step
         else:
-            shaped -= self.reverse_penalty * abs(forward_proj)
+            shaped += self.reverse_penalty * forward_step  # negative value
 
-        # --- forward speed bonus ---
+        shaped -= self.lateral_penalty * abs(lateral_step)
+
+        if ego_obs.get("collision", False):
+            shaped += self.ego_collision_penalty
+
         if "velocity" in ego_obs:
-            vx, vy = ego_obs["velocity"]
-            forward_speed = np.dot(heading, np.array([vx, vy]))
-            if forward_speed > 0:
-                shaped += self.speed_scale * forward_speed
+            vx, vy = map(float, ego_obs["velocity"])
+            speed = np.hypot(vx, vy)
+            if speed < 0.5:
+                shaped -= 0.2
 
-        # --- survival penalties ---
-        if ego_obs["collision"]:
-    # already penalized, don't give pursuit reward
-            shaped += self.collision_penalty
-        
+        if "angular_velocity" in ego_obs:
+            omega = abs(float(ego_obs["angular_velocity"]))
+            if omega > self.spin_thresh and np.linalg.norm(disp) < 0.05:
+                shaped -= self.spin_penalty
 
-        if dist < 0.05 and dtheta > self.spin_thresh:
-            shaped -= self.spin_penalty
-
-        # --- near-wall penalty for ego ---
         if "scans" in ego_obs:
-            min_scan = float(np.min(ego_obs["scans"]))
-            if min_scan < self.safe_dist:
-                shaped -= 0.1 * (self.safe_dist - min_scan)
+            self_min_scan = float(np.min(ego_obs["scans"]))
+            shaped -= self.self_wall_penalty * max(0.0, 0.5 - self_min_scan)
 
-        # --- pursuit shaping ---
-        if self.mode in ("pursuit", "adversarial") and "target_pose" in ego_obs:
-            if not ego_obs["collision"]:
-                tx, ty, _ = ego_obs["target_pose"]
-                target_dist = np.sqrt((tx - x) ** 2 + (ty - y) ** 2)
-                prev_dist = self.prev_target_dists.get(agent_id, target_dist)
-                shaped += self.pursuit_scale * (prev_dist - target_dist)
-                self.prev_target_dists[agent_id] = target_dist
+        target_obs = self._select_target_obs(agent_id, all_obs) if all_obs else None
+        if target_obs and "pose" in target_obs:
+            tx, ty, _ = target_obs["pose"]
+            target_dist = float(np.hypot(tx - x, ty - y))
+            prev_dist = self.prev_target_dist.get(agent_id, target_dist)
+            shaped += self.target_distance_scale * (prev_dist - target_dist)
+            self.prev_target_dist[agent_id] = target_dist
 
-            # --- target-near-wall bonus ---
-            tgt_obs = None
-            if all_obs and len(all_obs) > 1:
-                for other_id, other_obs in all_obs.items():
-                    if other_id != agent_id:
-                        tgt_obs = other_obs
-                        break
-            if tgt_obs is None:
-                tgt_obs = obs.get("car_1")
-            if tgt_obs and "scans" in tgt_obs:
-                tgt_min_scan = float(np.min(tgt_obs["scans"]))
-                if tgt_min_scan < self.safe_dist:
-                    shaped += self.wall_bonus * (self.safe_dist - tgt_min_scan)
+            if "scans" in target_obs:
+                tgt_min_scan = float(np.min(target_obs["scans"]))
+                shaped += self.target_wall_bonus * max(0.0, 0.5 - tgt_min_scan)
 
-        # --- adversarial bonus ---
-        if self.mode == "adversarial":
-            if ego_obs.get("target_collision", False):
+            ego_crashed = ego_obs.get("collision", False)
+            target_crashed = target_obs.get("collision", False)
+            if ego_crashed and target_crashed:
+                shaped = 1.5*self.ego_collision_penalty
+            elif target_crashed and not ego_crashed:
                 shaped += self.herd_bonus
+
+        if done and ego_obs.get("collision", False):
+            shaped += self.ego_collision_penalty
 
         return shaped

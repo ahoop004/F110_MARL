@@ -6,7 +6,7 @@ class FollowTheGapPolicy:
                  window_size=5,
                  bubble_radius=10,
                  max_steer=0.4,
-                 min_speed=2.5,
+                 min_speed=2.0,
                  max_speed=6.0,
                  steering_gain=1.0,
                  fov=np.deg2rad(270),
@@ -62,48 +62,61 @@ class FollowTheGapPolicy:
 
     def get_action(self, action_space, obs: dict):
         scan = np.array(obs["scans"])
-
-        # Rescale if normalized to [0, 1]
         if self.normalized:
             scan = scan * self.max_distance
 
         N = len(scan)
         center_idx = N // 2
 
-        # 1. Preprocess
+        # 1. Base gap-following
         proc = self.preprocess_lidar(scan)
-
-        # 2. Bubble
         proc = self.create_bubble(proc)
-
-        # 3. Largest gap + midpoint target
         gap = self.find_max_gap(proc)
         best = self.best_point_midgap(gap)
+        offset = (best - center_idx) / center_idx
+        steering = offset * self.steering_gain * self.max_steer
 
-        # 4. Index → steering
-        offset = (best - center_idx) / center_idx   # -1..+1
+        # 2. Sector-based danger weighting
+        left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
+        right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
         min_scan = float(np.min(scan))
-        panic_factor = 1.0
-        if min_scan < 2.0:        # within 2m
-            panic_factor = 2.0    # double steering gain
-        if min_scan < 1.0:        # within 1m
-            panic_factor = 3.0    # triple steering gain
 
-        steering = offset * self.steering_gain * panic_factor * self.max_steer
+        # Dynamic panic scaling
+        panic_factor = 1.0
+        if min_scan < 2.0:
+            panic_factor = 2.0
+        if min_scan < 1.0:
+            panic_factor = 3.0
+
+        steering *= panic_factor
+
+        # Kick away from closest side
+        if left_min < right_min:
+            steering += 0.5 * self.max_steer
+        elif right_min < left_min:
+            steering -= 0.5 * self.max_steer
+
+        # Override when extremely close: pure evasive
+        if min_scan < 1.0:
+            if left_min < right_min:
+                steering = +self.max_steer
+            else:
+                steering = -self.max_steer
+
         steering = np.clip(steering, -self.max_steer, self.max_steer)
 
-        # 5. Speed schedule from forward clearance
+        # 3. Speed schedule
         free_ahead = scan[center_idx]
-        if free_ahead > 6.0:
+        if min_scan < 2.0:
+            speed = self.min_speed
+        elif free_ahead > 6.0:
             speed = self.max_speed
-        elif free_ahead > 3.0:
+        elif free_ahead > 2.0:
             speed = 0.7 * self.max_speed
         else:
             speed = self.min_speed
 
         action = np.array([steering, speed], dtype=np.float32)
-
         if action_space is not None:
             action = np.clip(action, action_space.low, action_space.high)
-
         return action

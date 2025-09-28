@@ -48,53 +48,61 @@ env_cfg["map_image_size"] = image_size
 # Environment
 env = F110ParallelEnv(**env_cfg)
 
-base_start_poses = None
-start_pose_jitter_cfg = env_cfg.get("start_pose_jitter", {})
-jitter_pos = float(start_pose_jitter_cfg.get("pos", 0.0))
-jitter_heading = float(start_pose_jitter_cfg.get("heading", 0.0))
-min_sep = float(start_pose_jitter_cfg.get("min_distance", 0.0))
-jitter_max_attempts = max(1, int(start_pose_jitter_cfg.get("max_attempts", 5)))
-if env_cfg.get("start_poses"):
-    base_start_poses = np.asarray(env_cfg["start_poses"], dtype=np.float32)
-    if base_start_poses.ndim == 1:
-        base_start_poses = np.expand_dims(base_start_poses, axis=0)
+start_pose_back_gap = float(env_cfg.get("start_pose_back_gap", 0.0))
+start_pose_min_spacing = float(env_cfg.get("start_pose_min_spacing", 0.0))
+start_pose_options = env_cfg.get("start_pose_options")
+if start_pose_options:
+    processed = []
+    for option in start_pose_options:
+        arr = np.asarray(option, dtype=np.float32)
+        if arr.ndim == 1:
+            arr = np.expand_dims(arr, axis=0)
+        processed.append(arr)
+    start_pose_options = processed
 
 
-def sample_start_poses():
-    if base_start_poses is None or base_start_poses.size == 0:
-        return None
-
-    for _ in range(jitter_max_attempts):
-        jittered = base_start_poses.copy()
-        if jitter_pos > 0.0:
-            noise = np.random.uniform(-jitter_pos, jitter_pos, size=jittered[:, :2].shape).astype(np.float32)
-            jittered[:, :2] = base_start_poses[:, :2] + noise
-        if jitter_heading > 0.0:
-            theta_noise = np.random.uniform(-jitter_heading, jitter_heading, size=(jittered.shape[0],)).astype(np.float32)
-            jittered[:, 2] = base_start_poses[:, 2] + theta_noise
-        if jitter_heading > 0.0:
-            jittered[:, 2] = np.mod(jittered[:, 2] + np.pi, 2 * np.pi) - np.pi
-
-        if min_sep <= 0.0 or jittered.shape[0] <= 1:
-            return jittered
-
-        diffs = jittered[:, None, :2] - jittered[None, :, :2]
-        dists = np.linalg.norm(diffs, axis=-1)
-        np.fill_diagonal(dists, np.inf)
-        if np.all(dists >= min_sep):
-            return jittered
-
-    return base_start_poses.copy()
 
 
-def reset_env_with_jitter(environment):
-    for _ in range(jitter_max_attempts):
-        jittered = sample_start_poses()
-        options = {"poses": jittered} if jittered is not None else None
-        obs, infos = environment.reset(options=options)
+
+def _adjust_start_poses(poses):
+    if poses.shape[0] < 2:
+        return poses
+
+    adjusted = poses.copy()
+    leader = adjusted[0]
+    heading = np.array([np.cos(leader[2]), np.sin(leader[2])], dtype=np.float32)
+
+    if start_pose_back_gap > 0.0:
+        for idx in range(1, adjusted.shape[0]):
+            rel = adjusted[idx, :2] - leader[:2]
+            proj = float(np.dot(rel, heading))
+            if proj < 0 and abs(proj) < start_pose_back_gap:
+                delta = start_pose_back_gap + proj
+                adjusted[idx, :2] -= heading * delta
+
+    if start_pose_min_spacing > 0.0:
+        for idx in range(1, adjusted.shape[0]):
+            rel = adjusted[idx, :2] - leader[:2]
+            dist = float(np.linalg.norm(rel))
+            if dist < start_pose_min_spacing and dist > 1e-6:
+                direction = heading if np.dot(rel, heading) >= 0 else -heading
+                adjusted[idx, :2] += direction * (start_pose_min_spacing - dist)
+
+    return adjusted
+
+def reset_environment(environment):
+    if not start_pose_options:
+        return environment.reset()
+
+    indices = np.random.permutation(len(start_pose_options))
+    for idx in indices:
+        poses = np.array(start_pose_options[idx], copy=True)
+        poses = _adjust_start_poses(poses)
+        obs, infos = environment.reset(options={"poses": poses})
         collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
         if not any(collisions):
             return obs, infos
+
     return environment.reset()
 
 # -------------------------------------------------------------------
@@ -198,7 +206,7 @@ def run_mixed(env, episodes=5):
     best_return = float("-inf")
 
     for ep in range(episodes):
-        obs, infos = reset_env_with_jitter(env)
+        obs, infos = reset_environment(env)
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
         reward_wrapper = get_curriculum_reward(ep)
