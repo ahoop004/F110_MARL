@@ -87,6 +87,17 @@ class PPOAgent:
 
         return scaled.detach().cpu().numpy()
 
+    def act_deterministic(self, obs, aid=None):
+        obs_np = np.asarray(obs, dtype=np.float32)
+        if not np.isfinite(obs_np).all():
+            obs_np = np.nan_to_num(obs_np, copy=False)
+        obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            mu, _ = self.actor(obs_t)
+            squashed = torch.tanh(mu)
+            scaled = self._scale_action(squashed)
+        return scaled.detach().cpu().numpy()
+
     def store(self, obs, act, rew, done):
         self.rew_buf.append(float(rew))
         self.done_buf.append(bool(done))
