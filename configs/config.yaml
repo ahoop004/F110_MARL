@@ -71,8 +71,7 @@ env:
   start_pose_back_gap: 3.0
   start_pose_min_spacing: 3.0
 
-mode: "mixed"
-ppo_agent_idx: 0   # choose which agent runs PPO
+mode: "train"
 
 ppo:
   actor_lr: 0.0005

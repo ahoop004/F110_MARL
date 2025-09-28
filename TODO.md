@@ -1,25 +1,16 @@
 # TODO
 
 ## High Priority
-- [ ] Extend trainer registry beyond PPO.
-  - [ ] TD3 trainer (shared replay buffer + delayed actor updates).
-    - [x] Add `policies/buffers/` module with replay buffer reusable by TD3/DQN.
-    - [x] Implement TD3 networks (`policies/td3/net.py`) and agent core (`policies/td3/td3.py`).
-    - [x] Create `TD3Trainer` adapter implementing select_action/observe/update/save-load.
-    - [x] Register TD3 builder in `AGENT_BUILDERS`, read TD3 config block.
-    - [x] Expose TD3 overrides in `configs/config.yaml` (lr, tau, noise, policy delay).
-    - [x] Smoke test TD3 vs heuristic opponent, log metrics to wandb.
-  - [ ] DQN (or Rainbow) trainer path for discrete agents.
-    - [x] Define discrete action abstraction (e.g., throttle/steer bins) + config.
-    - [x] Reuse/extend replay buffer utilities for discrete training needs.
-    - [x] Implement DQN/Rainbow networks and agent core (`policies/dqn/`).
-    - [x] Create `DQNTrainer` adapter, register builder, expose config block.
-    - [x] Ensure evaluation wrappers support greedy vs epsilon-greedy modes.
-    - [x] Run a short DQN smoke test vs heuristic agent, confirm logging.
-  - [ ] Shared infrastructure updates.
-    - [ ] Update docs/examples to highlight `AgentTeam` + trainer usage (PPO/TD3/DQN).
-    - [ ] Write Trainer registry README snippet explaining config wiring.
-    - [ ] Add unit tests (or sanity scripts) covering trainer selection + builder outputs.
+- [ ] Adversarial gap-busting experiment (RL vs Follow-the-Gap).
+  - [x] Finalize scenario configs (train/eval) with roster: RL agent + follow-gap opponent.
+  - [ ] Define adversarial reward shaping (reward causing opponent collision, penalize self-collision).
+  - [ ] Implement algorithm-specific action wrappers (continuous normalizer, discrete templating).
+  - [ ] Extend evaluation metrics (opponent collision flag, time-to-crash, survival time).
+  - [ ] Run baseline sweeps for PPO/TD3/DQN using the scenario; log to wandb.
+- [ ] Trainer registry polish.
+  - [ ] Update docs/examples to highlight `AgentTeam` + trainer usage (PPO/TD3/DQN).
+  - [ ] Write Trainer registry README snippet explaining config wiring.
+  - [ ] Add unit tests (or sanity scripts) covering trainer selection + builder outputs.
 - [ ] Update CLI/docs for new `--render`, `--episodes`, and trainer workflow.
 
 ## Medium Priority

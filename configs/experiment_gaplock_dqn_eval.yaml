@@ -1,0 +1,80 @@
+env:
+  seed: 654
+  n_agents: 2
+  max_steps: 1500
+  timestep: 0.01
+  integrator: 'RK4'
+  render_interval: 0
+  update: 1
+
+  map_dir: "maps"
+  map_yaml: "Shanghai_map.yaml"
+  map: 'Shanghai_map.yaml'
+  map_ext: .png
+  render_mode: 'human'
+
+  start_poses:
+    - [0.0, 0.0, 0.0]
+    - [3.0, 0.5, 0.0]
+
+agents:
+  roster:
+    - algo: dqn
+      slot: 0
+      role: attacker
+      config_ref: dqn
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            target_role: defender
+    - algo: follow_gap
+      slot: 1
+      role: defender
+
+reward:
+  alive_bonus: 0.05
+  forward_scale: 0.1
+  reverse_penalty: 2.0
+  lateral_penalty: 0.1
+  target_distance_scale: 0.2
+  target_wall_bonus: 1.0
+  self_wall_penalty: 0.2
+  herd_bonus: 200.0
+  ego_collision_penalty: -80.0
+  spin_penalty: 2.0
+  spin_thresh: 0.4
+
+dqn:
+  gamma: 0.99
+  lr: 0.0005
+  batch_size: 64
+  buffer_size: 50000
+  target_update_interval: 500
+  epsilon_start: 0.05
+  epsilon_end: 0.05
+  epsilon_decay: 1
+  hidden_dims: [256, 256]
+  action_set:
+    - [-0.4, 0.5]
+    - [0.0, 0.5]
+    - [0.4, 0.5]
+    - [0.0, 1.0]
+    - [0.0, 0.0]
+  save_dir: checkpoints/
+  checkpoint_name: dqn_gaplock.pt
+
+main:
+  mode: eval
+  wandb:
+    enabled: true
+    project: marl-f110
+    entity: null
+    tags:
+      - gaplock
+      - dqn
+  tensorboard_dir: runs/
+  save_eval_rollouts: true
+  eval_rollout_dir: eval_rollouts/
+  checkpoint: checkpoints/dqn_gaplock.pt
