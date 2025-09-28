@@ -45,6 +45,9 @@ CONFIGS=(
   "dqn configs/experiment_gaplock_dqn.yaml 2"
 )
 
+mkdir -p "$ROOT_DIR/logs"
+log_prefix="$ROOT_DIR/logs/$(date +%Y%m%d_%H%M%S)"
+
 pids=()
 
 cleanup() {
@@ -59,17 +62,19 @@ trap cleanup INT TERM
 
 for entry in "${CONFIGS[@]}"; do
   read -r name cfg gpu <<<"$entry"
-  export F110_CONFIG="$ROOT_DIR/$cfg"
-  export CUDA_VISIBLE_DEVICES="$gpu"
-  log_dir="$ROOT_DIR/logs"
-  mkdir -p "$log_dir"
-  log_file="$log_dir/${name}_$(date +%Y%m%d_%H%M%S).log"
-  echo "Launching $name on GPU $gpu (log: $log_file)"
+  log_file="${log_prefix}_${name}.log"
+  echo "Launching $name (config=$cfg) on GPU $gpu -> $log_file"
+
+  cmd=(python3 experiments/main.py)
   if [[ -n "$EPISODES" ]]; then
-    python3 experiments/main.py --episodes "$EPISODES" > "$log_file" 2>&1 &
-  else
-    python3 experiments/main.py > "$log_file" 2>&1 &
+    cmd+=(--episodes "$EPISODES")
   fi
+
+  CUDA_VISIBLE_DEVICES="$gpu" \
+  F110_CONFIG="$ROOT_DIR/$cfg" \
+  PYTHONUNBUFFERED=1 \
+  "${cmd[@]}" >"$log_file" 2>&1 &
+
   pids+=("$!")
   sleep 1
 done

@@ -243,7 +243,12 @@ def main():
         if wandb_run is not None:
             wandb_run.log(metrics)
         if tb_writer is not None:
-            step = int(metrics.get("train/update", 0))
+            if "train/update" in metrics:
+                step = int(metrics["train/update"])
+            elif "train/episode" in metrics:
+                step = int(metrics["train/episode"])
+            else:
+                step = 0
             for key, value in metrics.items():
                 if key == "train/update":
                     continue

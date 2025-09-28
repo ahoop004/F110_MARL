@@ -367,6 +367,7 @@ def run_training(
         if defender_id:
             defender_survival_steps = collision_step.get(defender_id) if defender_crashed else steps
 
+        collisions_total = int(sum(collision_counts.values()))
         episode_record: Dict[str, Any] = {
             "episode": ep + 1,
             "steps": steps,
@@ -377,7 +378,7 @@ def run_training(
             "defender_crashed": defender_crashed,
             "attacker_crashed": attacker_crashed,
             "defender_survival_steps": defender_survival_steps,
-            "collisions_total": int(sum(collision_counts.values())),
+            "collisions_total": collisions_total,
         }
 
         for aid, count in collision_counts.items():
@@ -387,6 +388,23 @@ def run_training(
                 episode_record[f"collision_step_{aid}"] = step_val
 
         results.append(episode_record)
+
+        if update_callback:
+            payload: Dict[str, float] = {"train/episode": float(ep + 1)}
+            for aid, value in returns.items():
+                payload[f"train/return_{aid}"] = float(value)
+            if ppo_id in returns:
+                payload["train/return_attacker"] = float(returns[ppo_id])
+            if defender_id and defender_id in returns:
+                payload["train/return_defender"] = float(returns[defender_id])
+            payload["train/steps"] = float(steps)
+            payload["train/collisions_total"] = float(collisions_total)
+            payload["train/success"] = float(int(success))
+            payload["train/defender_crashed"] = float(int(defender_crashed))
+            payload["train/attacker_crashed"] = float(int(attacker_crashed))
+            if defender_survival_steps is not None:
+                payload["train/defender_survival_steps"] = float(defender_survival_steps)
+            update_callback(payload)
 
         if (ep + 1) % ctx.update_after == 0:
             for trainer_id, trainer in trainers.items():
