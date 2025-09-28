@@ -98,14 +98,19 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     }
 
     ppo_bundles = [bundle for bundle in team.agents if bundle.algo.lower() == "ppo"]
-    if not ppo_bundles:
-        raise RuntimeError("Training expects at least one PPO agent in the roster")
-    if len(ppo_bundles) > 1:
-        raise RuntimeError("Training currently supports a single PPO learner")
-    ppo_bundle = ppo_bundles[0]
-    ppo_trainer = ppo_bundle.trainer
-    if ppo_trainer is None:
-        raise RuntimeError("PPO bundle is missing trainer adapter; check builder configuration")
+    if ppo_bundles:
+        primary_bundle = ppo_bundles[0]
+    else:
+        trainable_bundles = [bundle for bundle in team.agents if bundle.trainable and bundle.trainer is not None]
+        if not trainable_bundles:
+            raise RuntimeError("No trainable agent with a trainer adapter found in roster")
+        primary_bundle = trainable_bundles[0]
+
+    primary_trainer = primary_bundle.trainer
+    if primary_trainer is None:
+        raise RuntimeError(
+            f"Primary bundle '{primary_bundle.agent_id}' is missing trainer adapter; check configuration"
+        )
 
     reward_cfg = cfg.reward.to_dict()
     raw_curriculum = cfg.get("reward_curriculum", [])
@@ -119,20 +124,24 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
 
-    ppo_cfg = ppo_bundle.metadata.get("config", cfg.ppo.to_dict())
-    checkpoint_dir = Path(ppo_cfg.get("save_dir", "checkpoints")).expanduser()
+    bundle_cfg = primary_bundle.metadata.get("config", {})
+    if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":
+        bundle_cfg = cfg.ppo.to_dict()
+
+    checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_name = ppo_cfg.get("checkpoint_name", "ppo_best.pt")
+    default_name = f"{primary_bundle.algo.lower()}_best.pt"
+    checkpoint_name = bundle_cfg.get("checkpoint_name", default_name)
     best_path = checkpoint_dir / checkpoint_name
-    load_override = ppo_cfg.get("load_path")
+    load_override = bundle_cfg.get("load_path")
     checkpoint_path = Path(load_override).expanduser() if load_override else best_path
 
     if checkpoint_path.exists():
         try:
-            ppo_bundle.controller.load(str(checkpoint_path))
-            print(f"[INFO] Loaded PPO checkpoint from {checkpoint_path}")
+            primary_bundle.controller.load(str(checkpoint_path))
+            print(f"[INFO] Loaded {primary_bundle.algo.upper()} checkpoint from {checkpoint_path}")
         except Exception as exc:  # pragma: no cover - defensive load guard
-            print(f"[WARN] Failed to load PPO checkpoint at {checkpoint_path}: {exc}")
+            print(f"[WARN] Failed to load checkpoint at {checkpoint_path}: {exc}")
 
     return TrainingContext(
         cfg=cfg,
@@ -140,8 +149,8 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
         map_data=map_data,
         start_pose_options=start_pose_options,
         team=team,
-        ppo_bundle=ppo_bundle,
-        ppo_trainer=ppo_trainer,
+        ppo_bundle=primary_bundle,
+        ppo_trainer=primary_trainer,
         trainer_map=trainer_map,
         reward_cfg=reward_cfg,
         curriculum_schedule=curriculum_schedule,

@@ -83,17 +83,22 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
     team = build_agents(env, cfg)
 
     ppo_bundles = [bundle for bundle in team.agents if bundle.algo.lower() == "ppo"]
-    if not ppo_bundles:
-        raise RuntimeError("Evaluation expects a PPO agent in the roster")
-    if len(ppo_bundles) > 1:
-        raise RuntimeError("Evaluation currently supports a single PPO learner")
-    ppo_bundle = ppo_bundles[0]
+    if ppo_bundles:
+        primary_bundle = ppo_bundles[0]
+    else:
+        trainable = [bundle for bundle in team.agents if bundle.trainer is not None]
+        if not trainable:
+            raise RuntimeError("Evaluation expects at least one trainer-enabled agent in the roster")
+        primary_bundle = trainable[0]
 
     reward_cfg = cfg.reward.to_dict()
 
-    ppo_cfg = ppo_bundle.metadata.get("config", cfg.ppo.to_dict())
-    checkpoint_dir = Path(ppo_cfg.get("save_dir", "checkpoints")).expanduser()
-    checkpoint_name = ppo_cfg.get("checkpoint_name", "ppo_best.pt")
+    bundle_cfg = primary_bundle.metadata.get("config", {})
+    if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":
+        bundle_cfg = cfg.ppo.to_dict()
+
+    checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
+    checkpoint_name = bundle_cfg.get("checkpoint_name", f"{primary_bundle.algo.lower()}_best.pt")
     default_checkpoint = checkpoint_dir / checkpoint_name
     explicit_checkpoint = cfg.main.checkpoint
     checkpoint_path = None
@@ -103,7 +108,7 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
     elif default_checkpoint.exists():
         checkpoint_path = default_checkpoint
 
-    _load_checkpoint(ppo_bundle, checkpoint_path)
+    _load_checkpoint(primary_bundle, checkpoint_path)
 
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
@@ -119,7 +124,7 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
         map_data=map_data,
         start_pose_options=start_pose_options,
         team=team,
-        ppo_bundle=ppo_bundle,
+        ppo_bundle=primary_bundle,
         reward_cfg=reward_cfg,
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
@@ -143,6 +148,10 @@ def _collect_actions(
             continue
 
         controller = bundle.controller
+        if bundle.trainer is not None and bundle.algo.lower() != "ppo":
+            processed = ctx.team.observation(aid, obs)
+            actions[aid] = bundle.trainer.select_action(processed, deterministic=True)
+            continue
         if bundle.algo.lower() == "ppo":
             processed = ctx.team.observation(aid, obs)
             if hasattr(controller, "act_deterministic"):

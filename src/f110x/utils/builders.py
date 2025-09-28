@@ -21,8 +21,12 @@ from f110x.policies.gap_follow import FollowTheGapPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.random_policy import random_policy
 from f110x.policies.simple_heuristic import simple_heuristic
+from f110x.policies.td3.td3 import TD3Agent
+from f110x.policies.dqn.dqn import DQNAgent
 from f110x.trainers.base import Trainer
 from f110x.trainers.ppo_guided import PPOTrainer
+from f110x.trainers.td3_trainer import TD3Trainer
+from f110x.trainers.dqn_trainer import DQNTrainer
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +407,96 @@ def _build_algo_ppo(
     )
 
 
+def _build_algo_td3(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    wrappers: List[ObservationAdapter],
+) -> AgentBundle:
+    agent_id = assignment.agent_id
+    action_space = ctx.env.action_space(agent_id)
+    if not isinstance(action_space, spaces.Box):
+        raise TypeError(
+            "TD3 builder requires a continuous Box action space; "
+            f"received {type(action_space)!r} for agent '{agent_id}'"
+        )
+
+    if not wrappers:
+        raise ValueError(
+            f"TD3 agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
+        )
+
+    sample_obs = ctx.ensure_sample()
+    transformed = sample_obs
+    for adapter in wrappers:
+        transformed = adapter(sample_obs, agent_id, roster, transformed)
+
+    obs_vector = np.asarray(transformed, dtype=np.float32)
+    td3_cfg = _resolve_algorithm_config(ctx, assignment.spec)
+    td3_cfg["obs_dim"] = int(obs_vector.size)
+    td3_cfg["act_dim"] = int(action_space.shape[0])
+    td3_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
+    td3_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
+
+    controller = TD3Agent(td3_cfg)
+    trainer = TD3Trainer(agent_id, controller)
+    return AgentBundle(
+        assignment=assignment,
+        algo="td3",
+        controller=controller,
+        wrappers=wrappers,
+        trainable=_is_trainable(assignment.spec, default=True),
+        metadata={"config": td3_cfg},
+        trainer=trainer,
+    )
+
+
+def _build_algo_dqn(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    wrappers: List[ObservationAdapter],
+) -> AgentBundle:
+    agent_id = assignment.agent_id
+    action_space = ctx.env.action_space(agent_id)
+    if not isinstance(action_space, spaces.Box):
+        raise TypeError(
+            "DQN builder currently requires a Box action space for action templates; "
+            f"received {type(action_space)!r} for agent '{agent_id}'"
+        )
+
+    if not wrappers:
+        raise ValueError(
+            f"DQN agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
+        )
+
+    sample_obs = ctx.ensure_sample()
+    transformed = sample_obs
+    for adapter in wrappers:
+        transformed = adapter(sample_obs, agent_id, roster, transformed)
+
+    obs_vector = np.asarray(transformed, dtype=np.float32)
+    dqn_cfg = _resolve_algorithm_config(ctx, assignment.spec)
+    if "action_set" not in dqn_cfg:
+        raise ValueError(
+            f"DQN agent '{agent_id}' requires an 'action_set' list in config or spec params"
+        )
+
+    dqn_cfg["obs_dim"] = int(obs_vector.size)
+
+    controller = DQNAgent(dqn_cfg)
+    trainer = DQNTrainer(agent_id, controller)
+    return AgentBundle(
+        assignment=assignment,
+        algo="dqn",
+        controller=controller,
+        wrappers=wrappers,
+        trainable=_is_trainable(assignment.spec, default=True),
+        metadata={"config": dqn_cfg},
+        trainer=trainer,
+    )
+
+
 def _build_algo_follow_gap(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -491,8 +585,8 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "random": _build_algo_random,
     "waypoint": _build_algo_waypoint,
     "centerline": _build_algo_centerline,
-    "dqn": _unsupported_builder("dqn"),
-    "td3": _unsupported_builder("td3"),
+    "td3": _build_algo_td3,
+    "dqn": _build_algo_dqn,
 }
 
 

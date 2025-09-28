@@ -1,0 +1,100 @@
+env:
+  seed: 456
+  n_agents: 2
+  max_steps: 500
+  timestep: 0.01
+  integrator: 'RK4'
+  render_interval: 0
+  update: 1
+
+  map_dir: "maps"
+  map_yaml: "Shanghai_map.yaml"
+  map: 'Shanghai_map.yaml'
+  map_ext: .png
+  render_mode: 'human'
+
+  lidar_beams: 1080
+  lidar_range: 30.0
+  start_thresh: 0.5
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    m: 3.74
+    I: 0.04712
+    s_min: -0.4189
+    s_max: 0.4189
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 7.319
+    a_max: 9.51
+    v_min: -5.0
+    v_max: 10.0
+    width: 0.31
+    length: 0.58
+
+  start_poses:
+    - [0.0, 0.0, 0.0]
+    - [2.5, 0.5, 0.0]
+
+mode: "train"
+
+agents:
+  roster:
+    - algo: dqn
+      slot: 0
+      role: ego
+      config_ref: dqn
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            target_role: opponent
+    - algo: follow_gap
+      slot: 1
+      role: opponent
+
+dqn:
+  gamma: 0.99
+  lr: 0.0005
+  batch_size: 64
+  buffer_size: 20000
+  target_update_interval: 200
+  epsilon_start: 0.9
+  epsilon_end: 0.1
+  epsilon_decay: 5000
+  hidden_dims: [256, 256]
+  action_set:
+    - [-0.4, 0.5]
+    - [0.0, 0.5]
+    - [0.4, 0.5]
+    - [0.0, 1.0]
+    - [0.0, 0.0]
+
+reward:
+  alive_bonus: 0.02
+  forward_scale: 0.15
+  reverse_penalty: 1.5
+  lateral_penalty: 0.05
+  target_distance_scale: 0.1
+  target_wall_bonus: 0.5
+  self_wall_penalty: 0.3
+  herd_bonus: 100.0
+  ego_collision_penalty: -40.0
+  spin_penalty: 2.0
+  spin_thresh: 0.52
+
+main:
+  mode: train
+  wandb:
+    enabled: false
+    project: marl-f110
+    entity: null
+  tensorboard_dir: runs/
+  save_eval_rollouts: false
+  eval_rollout_dir: eval_rollouts/
+  checkpoint: checkpoints/dqn_smoke.pt
