@@ -74,6 +74,12 @@ dqn:
   epsilon_end: 0.1
   epsilon_decay_rate: 0.9995
   hidden_dims: [256, 256]
+  prioritized_replay: true
+  per_alpha: 0.6
+  per_beta_start: 0.4
+  per_beta_increment: 0.0001
+  per_min_priority: 0.001
+  per_epsilon: 1.0e-6
   action_set:
     - [-0.35, 2.5]
     - [0.0, 2.5]

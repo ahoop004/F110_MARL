@@ -13,7 +13,7 @@ try:  # optional dependency for richer logging
 except ImportError:  # pragma: no cover - wandb optional
     wandb = None
 
-from f110x.policies.buffers import ReplayBuffer
+from f110x.policies.buffers import PrioritizedReplayBuffer, ReplayBuffer
 from f110x.utils.torch_io import safe_load
 from f110x.policies.dqn.net import QNetwork
 
@@ -52,7 +52,24 @@ class DQNAgent:
         self._epsilon_value = self._initial_epsilon()
 
         buffer_size = int(cfg.get("buffer_size", 50000))
-        self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
+        prioritized = bool(cfg.get("prioritized_replay", True))
+        if prioritized:
+            per_args = dict(
+                alpha=float(cfg.get("per_alpha", 0.6)),
+                beta=float(cfg.get("per_beta_start", 0.4)),
+                beta_increment_per_sample=float(cfg.get("per_beta_increment", 1e-4)),
+                min_priority=float(cfg.get("per_min_priority", 1e-3)),
+                epsilon=float(cfg.get("per_epsilon", 1e-6)),
+            )
+            self.buffer: ReplayBuffer = PrioritizedReplayBuffer(
+                buffer_size,
+                (self.obs_dim,),
+                (self.act_dim,),
+                **per_args,
+            )
+        else:
+            self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
+        self._use_per = prioritized
 
         self.step_count = 0
 
@@ -111,6 +128,12 @@ class DQNAgent:
         next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
         infos = batch.get("infos", [{}] * self.batch_size)
+        weights = batch.get("weights")
+        indices = batch.get("indices")
+        if weights is None:
+            weights_t = torch.ones((self.batch_size,), dtype=torch.float32, device=self.device)
+        else:
+            weights_t = torch.as_tensor(weights, dtype=torch.float32, device=self.device).squeeze(-1)
 
         action_indices = [self._action_to_index(act, info) for act, info in zip(actions.cpu().numpy(), infos)]
         action_indices = torch.as_tensor(action_indices, dtype=torch.long, device=self.device)
@@ -119,11 +142,14 @@ class DQNAgent:
         chosen_q = q_values.gather(1, action_indices.unsqueeze(-1)).squeeze(-1)
 
         with torch.no_grad():
-            next_q = self.target_q_net(next_obs)
-            max_next_q = torch.max(next_q, dim=-1).values
-            target = rewards.squeeze(-1) + (1 - dones.squeeze(-1)) * self.gamma * max_next_q
+            next_online_q = self.q_net(next_obs)
+            next_actions = torch.argmax(next_online_q, dim=-1)
+            next_target_q = self.target_q_net(next_obs)
+            next_q_values = next_target_q.gather(1, next_actions.unsqueeze(-1)).squeeze(-1)
+            target = rewards.squeeze(-1) + (1 - dones.squeeze(-1)) * self.gamma * next_q_values
 
-        loss = F.mse_loss(chosen_q, target)
+        td_errors = chosen_q - target
+        loss = (weights_t * td_errors.pow(2)).mean()
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -135,8 +161,11 @@ class DQNAgent:
         q_values_np = q_values.detach().cpu().numpy()
         chosen_q_np = chosen_q.detach().cpu().numpy()
         target_np = target.detach().cpu().numpy()
-        td_error_np = chosen_q_np - target_np
+        td_error_np = td_errors.detach().cpu().numpy()
         action_indices_np = action_indices.detach().cpu().numpy()
+
+        if self._use_per and indices is not None:
+            self.buffer.update_priorities(np.asarray(indices), td_error_np)
 
         metrics: Dict[str, Any] = {
             "loss": float(loss.detach().cpu().item()),
@@ -152,6 +181,11 @@ class DQNAgent:
             "action_index_mean": float(action_indices_np.mean()),
             "action_index_std": float(action_indices_np.std()),
         }
+        if weights is not None:
+            weights_np = np.asarray(weights, dtype=np.float32)
+            metrics["per_beta"] = float(self.buffer.beta)
+            metrics["per_weight_mean"] = float(weights_np.mean())
+            metrics["per_weight_max"] = float(weights_np.max())
 
         if wandb is not None:
             metrics["action_index_histogram"] = wandb.Histogram(action_indices_np.astype(np.int64))
