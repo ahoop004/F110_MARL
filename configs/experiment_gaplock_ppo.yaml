@@ -39,25 +39,27 @@ agents:
 reward:
   alive_bonus: 0.00008
   forward_scale: 0.002
-  reverse_penalty: 0.005
-  lateral_penalty: 0.0006
-  target_distance_scale: 0.0015
+  reverse_penalty: 0.003
+  lateral_penalty: 0.0004
+  target_distance_scale: 0.0012
   target_wall_bonus: 0.00004
   self_wall_penalty: 0.00004
-  herd_bonus: 0.12
-  ego_collision_penalty: -0.40
-  opponent_collision_bonus: 0.08
+  herd_bonus: 0.10
+  ego_collision_penalty: -0.30
+  opponent_collision_bonus: 0.07
   herd_position_radius: 3.5
   herd_position_slack: 1.0
-  herd_position_scale: 0.00007
-  herd_angle_scale: 0.00005
+  herd_position_scale: 0.00006
+  herd_angle_scale: 0.00004
   herd_angle_power: 2.0
+  slow_speed_threshold: 0.5
+  slow_speed_penalty: -0.00008
   spin_thresh: 0.6
-  spin_penalty: 0.25
+  spin_penalty: 0.2
   spin_speed_gate: 0.3
   spin_dwell_steps: 5
-  spin_step_cap: 0.00015
-  spin_episode_cap: 0.04
+  spin_step_cap: 0.00012
+  spin_episode_cap: 0.03
   spin_grace_steps: 20
   spin_alpha: 0.2
   dt: 0.01
