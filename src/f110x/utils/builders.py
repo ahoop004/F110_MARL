@@ -523,7 +523,7 @@ def _build_algo_follow_gap(
     roster: RosterLayout,
     wrappers: List[ObservationAdapter],
 ) -> AgentBundle:
-    controller = FollowTheGapPolicy()
+    controller = FollowTheGapPolicy.from_config(assignment.spec.params)
     return AgentBundle(
         assignment=assignment,
         algo="follow_gap",

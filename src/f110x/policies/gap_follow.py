@@ -1,6 +1,19 @@
 import numpy as np
 
 class FollowTheGapPolicy:
+    CONFIG_DEFAULTS = {
+        "max_distance": 30.0,
+        "window_size": 4,
+        "bubble_radius": 2,
+        "max_steer": 0.32,
+        "min_speed": 2.0,
+        "max_speed": 20.0,
+        "steering_gain": 0.6,
+        "fov": np.deg2rad(270),
+        "normalized": False,
+        "steer_smooth": 0.4,
+    }
+
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
                  window_size=4,
@@ -25,6 +38,45 @@ class FollowTheGapPolicy:
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
+
+    @classmethod
+    def from_config(cls, params):
+        if not params:
+            return cls()
+
+        def _coerce(value, default):
+            if value is None:
+                return default
+            if isinstance(default, bool):
+                if isinstance(value, str):
+                    return value.strip().lower() in {"1", "true", "yes", "on"}
+                return bool(value)
+            if isinstance(default, int):
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return int(float(value))
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return value
+
+        kwargs = {}
+        for key, default in cls.CONFIG_DEFAULTS.items():
+            if key in params:
+                kwargs[key] = _coerce(params[key], default)
+
+        if "fov" not in kwargs:
+            if "fov_rad" in params:
+                kwargs["fov"] = float(params["fov_rad"])
+            elif "fov_deg" in params:
+                kwargs["fov"] = np.deg2rad(float(params["fov_deg"]))
+
+        unexpected = set(params) - set(kwargs) - {"fov_deg", "fov_rad"}
+        if unexpected:
+            print(f"[FollowTheGapPolicy] Ignoring unsupported config keys: {sorted(unexpected)}")
+
+        return cls(**kwargs)
 
     def preprocess_lidar(self, ranges):
         """Smooth LiDAR with moving average + clip to max_distance."""
@@ -89,17 +141,17 @@ class FollowTheGapPolicy:
         # Gentler panic scaling keeps the policy committed to the current heading longer
         panic_factor = 1.0
         if min_scan < 4.0:
-            panic_factor = 1.05
+            panic_factor = 1.15
         if min_scan < 2.0:
-            panic_factor = 1.2
+            panic_factor = 1.4
 
         steering *= panic_factor
 
         # Kick away from closest side
         if left_min < right_min:
-            steering += 0.08 * self.max_steer
+            steering += 0.18 * self.max_steer
         elif right_min < left_min:
-            steering -= 0.08 * self.max_steer
+            steering -= 0.18 * self.max_steer
 
         # Override when extremely close: pure evasive
         if min_scan < 1.0:

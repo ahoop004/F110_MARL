@@ -48,6 +48,12 @@ agents:
     - algo: follow_gap
       slot: 1
       role: defender
+      params:
+        max_speed: 12.0
+        min_speed: 1.2
+        steering_gain: 0.75
+        bubble_radius: 3
+        steer_smooth: 0.5
 
 reward:
   alive_bonus: 0.0000
