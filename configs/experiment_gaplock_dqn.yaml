@@ -1,14 +1,14 @@
 env:
   seed: 42
   n_agents: 2
-  max_steps: 1500
+  max_steps: 2500
   timestep: 0.01
   integrator: 'RK4'
   render_interval: 0
-  update: 1
+  update: 2
   vehicle_params:
     v_min: -2.0
-    v_max: 8.0
+    v_max: 10.0
 
   map_dir: "maps"
   map_yaml: "Shanghai_map.yaml"
@@ -68,11 +68,18 @@ dqn:
   epsilon_decay_rate: 0.9995
   hidden_dims: [256, 256]
   action_set:
-    - [-0.35, 1.5]
-    - [-0.15, 2.6]
-    - [0.0, 3.2]
-    - [0.15, 2.6]
-    - [0.35, 1.5]
+    - [-0.35, 2.5]
+    - [0.0, 2.5]
+    - [0.35, 2.5]
+    - [-0.25, 5.5]
+    - [0.0, 5.5]
+    - [0.25, 5.5]
+    - [-0.15, 8.0]
+    - [0.0, 8.0]
+    - [0.15, 8.0]
+    - [-0.10, 10.0]
+    - [0.0, 10.0]
+    - [0.10, 10.0]
     - [0.0, 0.0]
   train_episodes: 5000
   eval_episodes: 5
