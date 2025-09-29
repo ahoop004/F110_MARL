@@ -158,69 +158,95 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
     if run is None:
         return
 
+    focus_ids = {aid for aid in (ppo_id, gap_id) if aid}
+
     for idx, record in enumerate(results, 1):
+        episode = idx
+        payload: Dict[str, Any] = {}
+
+        def _is_focus_reward(key: str) -> bool:
+            return any(key.startswith(f"reward_component_{aid}_") for aid in focus_ids)
+
+        def _add_metric(name: str, value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, (int, float, bool)):
+                payload[name] = float(value)
+            else:
+                payload[name] = value
+
         if isinstance(record, dict):
             episode = int(record.get("episode", idx))
-            payload: Dict[str, Any] = {"train/episode": episode}
 
             returns = record.get("returns")
             if isinstance(returns, dict):
                 for aid, value in returns.items():
-                    payload[f"train/return_{aid}"] = float(value)
+                    if aid in focus_ids:
+                        continue
+                    _add_metric(f"train/return_{aid}", value)
             else:
                 try:
                     for aid, value in record.items():
+                        if aid in focus_ids:
+                            continue
                         if isinstance(value, (int, float)):
-                            payload[f"train/return_{aid}"] = float(value)
+                            _add_metric(f"train/return_{aid}", value)
                 except AttributeError:
                     pass
 
-            if ppo_id and f"train/return_{ppo_id}" in payload:
-                payload["train/return_attacker"] = payload[f"train/return_{ppo_id}"]
-            if gap_id and f"train/return_{gap_id}" in payload:
-                payload["train/return_defender"] = payload[f"train/return_{gap_id}"]
-
-            scalar_keys = {
+            duplicate_fields = {
                 "steps",
                 "collisions_total",
                 "defender_survival_steps",
+                "success",
+                "defender_crashed",
+                "attacker_crashed",
+                "idle_truncated",
+                "epsilon",
             }
-            for key in scalar_keys:
-                value = record.get(key)
-                if value is not None:
-                    payload[f"train/{key}"] = float(value)
-
-            bool_keys = {"success", "defender_crashed", "attacker_crashed"}
-            for key in bool_keys:
-                if key in record and record[key] is not None:
-                    payload[f"train/{key}"] = int(bool(record[key]))
 
             for key, value in record.items():
+                if key in {"episode", "returns"}:
+                    continue
+                if key in duplicate_fields:
+                    continue
+                if key.startswith("return_"):
+                    continue
                 if key.startswith("collision_count_") or key.startswith("collision_step_"):
-                    if value is not None:
-                        payload[f"train/{key}"] = float(value)
-
-            for key, value in record.items():
-                if key.startswith("avg_speed_") and value is not None:
-                    payload[f"train/{key}"] = float(value)
-
-            for key, value in record.items():
-                if key.startswith("reward_component_") and value is not None:
-                    payload[f"train/{key}"] = float(value)
-
-            if record.get("reward_mode"):
-                payload["train/reward_mode"] = record["reward_mode"]
-            if record.get("cause"):
-                payload["train/cause"] = record["cause"]
+                    _add_metric(f"train/{key}", value)
+                    continue
+                if key.startswith("avg_speed_"):
+                    _add_metric(f"train/{key}", value)
+                    continue
+                if key.startswith("reward_component_"):
+                    if _is_focus_reward(key):
+                        continue
+                    _add_metric(f"train/{key}", value)
+                    continue
+                if key == "reward_mode":
+                    if value:
+                        payload["train/reward_mode"] = value
+                    continue
+                if key == "cause":
+                    if value:
+                        payload["train/cause"] = value
+                    continue
+                if isinstance(value, (int, float)):
+                    _add_metric(f"train/{key}", value)
+                elif value is not None:
+                    payload[f"train/{key}"] = value
         else:
-            payload = {"train/episode": idx}
             try:
                 for aid, value in record.items():
-                    payload[f"train/return_{aid}"] = value
+                    if aid in focus_ids:
+                        continue
+                    if isinstance(value, (int, float)):
+                        _add_metric(f"train/return_{aid}", value)
             except AttributeError:
                 pass
 
-        run.log(payload)
+        if payload:
+            run.log(payload, step=episode)
 
 
 def _log_eval_results(run, results):
