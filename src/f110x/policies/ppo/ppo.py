@@ -5,6 +5,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal
 
+try:  # optional dependency for richer logging
+    import wandb  # type: ignore
+except ImportError:  # pragma: no cover - wandb optional
+    wandb = None
+
 from f110x.policies.ppo.net import Actor, Critic
 from f110x.utils.torch_io import safe_load
 
@@ -242,6 +247,12 @@ class PPOAgent:
                 self.critic_opt.step()
 
         # fresh rollout next time
+        action_np = acts.detach().cpu().numpy() if acts.numel() else np.zeros((0, self.act_dim), dtype=np.float32)
+        raw_action_np = raw_actions.detach().cpu().numpy() if raw_actions.numel() else np.zeros((0, self.act_dim), dtype=np.float32)
+        adv_np = adv.detach().cpu().numpy() if adv.numel() else np.zeros(0, dtype=np.float32)
+        with torch.no_grad():
+            value_pred_np = self.critic(obs).detach().cpu().numpy() if obs.numel() else np.zeros(0, dtype=np.float32)
+
         self.reset_buffer()
 
         if not policy_losses:
@@ -250,12 +261,28 @@ class PPOAgent:
         def _mean_safe(values):
             return float(np.mean(values)) if values else 0.0
 
-        return {
+        metrics = {
             "policy_loss": _mean_safe(policy_losses),
             "value_loss": _mean_safe(value_losses),
             "entropy": _mean_safe(entropies),
             "approx_kl": _mean_safe(approx_kls),
+            "action_mean": float(action_np.mean()) if action_np.size else 0.0,
+            "action_std": float(action_np.std()) if action_np.size else 0.0,
+            "action_abs_mean": float(np.abs(action_np).mean()) if action_np.size else 0.0,
+            "raw_action_std": float(raw_action_np.std()) if raw_action_np.size else 0.0,
+            "value_mean": float(value_pred_np.mean()) if value_pred_np.size else 0.0,
+            "value_std": float(value_pred_np.std()) if value_pred_np.size else 0.0,
+            "adv_mean": float(adv_np.mean()) if adv_np.size else 0.0,
+            "adv_std": float(adv_np.std()) if adv_np.size else 0.0,
         }
+
+        if wandb is not None:
+            if action_np.size:
+                metrics["action_histogram"] = wandb.Histogram(action_np.flatten())
+            if value_pred_np.size:
+                metrics["value_histogram"] = wandb.Histogram(value_pred_np.flatten())
+
+        return metrics
 
     # ------------------- I/O -------------------
 

@@ -230,7 +230,7 @@ def run_training(
     ctx: TrainingContext,
     episodes: int,
     *,
-    update_callback: Optional[Callable[[Dict[str, float]], None]] = None,
+    update_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     update_start: int = 0,
 ) -> List[Dict[str, Any]]:
     env = ctx.env
@@ -437,7 +437,7 @@ def run_training(
         results.append(episode_record)
 
         if update_callback:
-            payload: Dict[str, float] = {"train/episode": float(ep + 1)}
+            payload: Dict[str, Any] = {"train/episode": float(ep + 1)}
             for aid, value in returns.items():
                 payload[f"train/return_{aid}"] = float(value)
             if ppo_id in returns:
@@ -470,10 +470,12 @@ def run_training(
                 stats = trainer.update()
                 if update_callback and stats:
                     update_count += 1
-                    payload: Dict[str, float] = {"train/update": update_count}
+                    payload: Dict[str, Any] = {"train/update": update_count}
                     for key, value in stats.items():
                         if isinstance(value, (int, float)):
                             payload[f"train/{key}"] = float(value)
+                        else:
+                            payload[f"train/{key}"] = value
                     update_callback(payload)
 
         ppo_return = returns.get(ppo_id, 0.0)
@@ -499,10 +501,12 @@ def run_training(
         stats = trainer.update()
         if update_callback and stats:
             update_count += 1
-            payload: Dict[str, float] = {"train/update": update_count}
+            payload: Dict[str, Any] = {"train/update": update_count}
             for key, value in stats.items():
                 if isinstance(value, (int, float)):
                     payload[f"train/{key}"] = float(value)
+                else:
+                    payload[f"train/{key}"] = value
             update_callback(payload)
 
     return results

@@ -8,6 +8,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+try:  # optional dependency for richer logging
+    import wandb  # type: ignore
+except ImportError:  # pragma: no cover - wandb optional
+    wandb = None
+
 from f110x.policies.buffers import ReplayBuffer
 from f110x.utils.torch_io import safe_load
 from f110x.policies.dqn.net import QNetwork
@@ -95,7 +100,7 @@ class DQNAgent:
 
     # -------------------- Learning --------------------
 
-    def update(self) -> Optional[Dict[str, float]]:
+    def update(self) -> Optional[Dict[str, Any]]:
         if len(self.buffer) < self.batch_size:
             return None
 
@@ -127,10 +132,32 @@ class DQNAgent:
         if self.step_count % self.target_update_interval == 0:
             self.target_q_net.load_state_dict(self.q_net.state_dict())
 
-        return {
+        q_values_np = q_values.detach().cpu().numpy()
+        chosen_q_np = chosen_q.detach().cpu().numpy()
+        target_np = target.detach().cpu().numpy()
+        td_error_np = chosen_q_np - target_np
+        action_indices_np = action_indices.detach().cpu().numpy()
+
+        metrics: Dict[str, Any] = {
             "loss": float(loss.detach().cpu().item()),
             "epsilon": float(self.epsilon()),
+            "q_mean": float(q_values_np.mean()),
+            "q_std": float(q_values_np.std()),
+            "chosen_q_mean": float(chosen_q_np.mean()),
+            "chosen_q_std": float(chosen_q_np.std()),
+            "target_q_mean": float(target_np.mean()),
+            "target_q_std": float(target_np.std()),
+            "td_error_mean": float(td_error_np.mean()),
+            "td_error_std": float(td_error_np.std()),
+            "action_index_mean": float(action_indices_np.mean()),
+            "action_index_std": float(action_indices_np.std()),
         }
+
+        if wandb is not None:
+            metrics["action_index_histogram"] = wandb.Histogram(action_indices_np.astype(np.int64))
+            metrics["q_histogram"] = wandb.Histogram(q_values_np.flatten())
+
+        return metrics
 
     def _advance_episode(self) -> None:
         self.episode_count += 1

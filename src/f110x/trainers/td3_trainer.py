@@ -28,7 +28,7 @@ class TD3Trainer(Trainer):
             transition.info,
         )
 
-    def update(self) -> Optional[Dict[str, float]]:
+    def update(self) -> Optional[Dict[str, Any]]:
         stats = self._agent.update()
         if not stats:
             return None

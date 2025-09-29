@@ -259,7 +259,7 @@ def main():
             print("[WARN] torch.utils.tensorboard not available; skipping TensorBoard logging")
             tb_writer = None
 
-    def update_logger(metrics: Dict[str, float]):
+    def update_logger(metrics: Dict[str, Any]):
         if wandb_run is not None:
             wandb_run.log(metrics)
         if tb_writer is not None:
