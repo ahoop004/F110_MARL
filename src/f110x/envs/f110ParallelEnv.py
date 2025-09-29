@@ -553,7 +553,7 @@ class F110ParallelEnv(ParallelEnv):
         self.current_time += self.timestep
         done_flags = self._check_done()
         # simple per-step reward (customize as needed)
-        rewards = {aid: float(self.timestep) for aid in self.agents}
+        rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
         # terminations/truncations
         terminations = {}
