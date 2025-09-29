@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+import random
 from typing import Any, Dict, Optional
 
 _RENDER_FLAG = False
@@ -51,6 +52,7 @@ if _RENDER_FLAG:
 else:
     os.environ.setdefault("PYGLET_HEADLESS", "true")
 
+import numpy as np
 import yaml
 from pathlib import Path
 
@@ -80,6 +82,40 @@ def _deep_update(base: Dict, updates: Dict) -> Dict:
         else:
             base[key] = value
     return base
+
+
+def _seed_everything(seed: int) -> None:
+    """Seed python, numpy, and torch (if available) for reproducibility."""
+
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():  # pragma: no cover - optional CUDA path
+            torch.cuda.manual_seed_all(seed)
+    except ImportError:  # pragma: no cover - torch optional
+        pass
+
+
+def _apply_run_seed(cfg: Dict[str, Any]) -> Optional[int]:
+    """Override config seed from RUN_SEED environment variable if provided."""
+
+    run_seed_value = os.environ.get("RUN_SEED")
+    if run_seed_value is None:
+        return None
+
+    try:
+        seed = int(run_seed_value)
+    except (TypeError, ValueError):
+        print(f"[WARN] Ignoring invalid RUN_SEED='{run_seed_value}'")
+        return None
+
+    env_cfg = cfg.setdefault("env", {})
+    env_cfg["seed"] = seed
+    cfg.setdefault("main", {})["seed"] = seed
+    return seed
 
 def _wandb_init(cfg, mode):
     wandb_cfg = cfg.get("main", {}).get("wandb", {})
@@ -235,13 +271,24 @@ def main():
     with cfg_path.open() as f:
         cfg = yaml.safe_load(f)
 
-    main_cfg = cfg.get("main", {})
+    config_dirty = False
+    run_seed = _apply_run_seed(cfg)
+    if run_seed is not None:
+        config_dirty = True
+        print(f"[INFO] Using RUN_SEED={run_seed}")
+        _seed_everything(run_seed)
+
+    main_cfg = cfg.setdefault("main", {})
     mode = main_cfg.get("mode", "train").lower()
     wandb_run = _wandb_init(cfg, mode)
-    tmp_cfg_path: Optional[Path] = None
     if wandb_run is not None:
         overrides = wandb_run.config.as_dict()
-        _deep_update(cfg, overrides)
+        if overrides:
+            _deep_update(cfg, overrides)
+            config_dirty = True
+
+    tmp_cfg_path: Optional[Path] = None
+    if config_dirty:
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w")
         with tmp_file:
             yaml.safe_dump(cfg, tmp_file)
