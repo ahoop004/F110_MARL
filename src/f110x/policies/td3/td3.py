@@ -8,6 +8,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+try:  # optional dependency for rich logging
+    import wandb  # type: ignore
+except ImportError:  # pragma: no cover - wandb optional
+    wandb = None
+
 from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
 from f110x.utils.torch_io import safe_load
@@ -99,6 +104,8 @@ class TD3Agent:
         next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
 
+        action_samples = actions.detach().cpu().numpy()
+
         with torch.no_grad():
             noise = (torch.randn_like(actions) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
             next_action = self.actor_target(next_obs)
@@ -123,9 +130,21 @@ class TD3Agent:
         self.critic_opt.step()
 
         actor_loss = torch.zeros(1, device=self.device)
-        metrics: Dict[str, float] = {
+        metrics: Dict[str, Any] = {
             "critic_loss": float(critic_loss.detach().cpu().item()),
+            "q1_mean": float(current_q1.mean().detach().cpu().item()),
+            "q2_mean": float(current_q2.mean().detach().cpu().item()),
+            "q_target_mean": float(target.mean().detach().cpu().item()),
+            "q1_std": float(current_q1.std(unbiased=False).detach().cpu().item()),
+            "q2_std": float(current_q2.std(unbiased=False).detach().cpu().item()),
+            "q_target_std": float(target.std(unbiased=False).detach().cpu().item()),
+            "action_mean": float(action_samples.mean()),
+            "action_std": float(action_samples.std()),
+            "action_abs_mean": float(np.abs(action_samples).mean()),
         }
+
+        if wandb is not None:
+            metrics["action_histogram"] = wandb.Histogram(action_samples.flatten())
 
         if self.total_it % self.policy_delay == 0:
             actor_action = self._scale_action_torch(self.actor(obs))

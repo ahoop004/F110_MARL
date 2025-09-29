@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Dict
 
 class RewardWrapper:
     def __init__(
@@ -36,11 +37,13 @@ class RewardWrapper:
         self.prev_positions = {}
         self.prev_target_dist = {}
         self.opponent_crash_reward_given = set()
+        self._last_components: Dict[str, Dict[str, float]] = {}
 
     def reset(self):
         self.prev_positions.clear()
         self.prev_target_dist.clear()
         self.opponent_crash_reward_given.clear()
+        self._last_components.clear()
 
     def _select_target_obs(self, agent_id, all_obs):
         if not all_obs:
@@ -64,57 +67,86 @@ class RewardWrapper:
         forward_step = float(np.dot(heading, disp))
         lateral_step = float(np.cross(heading, disp))
 
-        shaped = reward
+        shaped = float(reward)
+        components: Dict[str, float] = {"env_reward": float(reward)}
 
         shaped += self.alive_bonus
+        components["alive_bonus"] = components.get("alive_bonus", 0.0) + self.alive_bonus
         if forward_step > 0:
-            shaped += self.forward_scale * forward_step
+            forward_reward = self.forward_scale * forward_step
+            shaped += forward_reward
+            components["forward_progress"] = components.get("forward_progress", 0.0) + forward_reward
         else:
-            shaped += self.reverse_penalty * forward_step  # negative value
+            reverse_penalty = self.reverse_penalty * forward_step  # negative value
+            shaped += reverse_penalty
+            components["reverse_penalty"] = components.get("reverse_penalty", 0.0) + reverse_penalty
 
-        shaped -= self.lateral_penalty * abs(lateral_step)
+        lateral_penalty = -self.lateral_penalty * abs(lateral_step)
+        shaped += lateral_penalty
+        components["lateral_penalty"] = components.get("lateral_penalty", 0.0) + lateral_penalty
 
         if ego_obs.get("collision", False):
-            shaped += self.ego_collision_penalty
+            collision_penalty = self.ego_collision_penalty
+            shaped += collision_penalty
+            components["ego_collision_penalty"] = components.get("ego_collision_penalty", 0.0) + collision_penalty
 
         if "velocity" in ego_obs:
             vx, vy = map(float, ego_obs["velocity"])
             speed = np.hypot(vx, vy)
             if speed < 0.5:
-                shaped -= 0.2
+                slow_penalty = -0.2
+                shaped += slow_penalty
+                components["slow_penalty"] = components.get("slow_penalty", 0.0) + slow_penalty
 
         if "angular_velocity" in ego_obs:
             omega = abs(float(ego_obs["angular_velocity"]))
             if omega > self.spin_thresh and np.linalg.norm(disp) < 0.05:
-                shaped -= self.spin_penalty
+                spin_penalty = -self.spin_penalty
+                shaped += spin_penalty
+                components["spin_penalty"] = components.get("spin_penalty", 0.0) + spin_penalty
 
         if "scans" in ego_obs:
             self_min_scan = float(np.min(ego_obs["scans"]))
-            shaped -= self.self_wall_penalty * max(0.0, 0.5 - self_min_scan)
+            wall_penalty = -self.self_wall_penalty * max(0.0, 0.5 - self_min_scan)
+            shaped += wall_penalty
+            components["self_wall_penalty"] = components.get("self_wall_penalty", 0.0) + wall_penalty
 
         target_obs = self._select_target_obs(agent_id, all_obs) if all_obs else None
         if target_obs and "pose" in target_obs:
             tx, ty, _ = target_obs["pose"]
             target_dist = float(np.hypot(tx - x, ty - y))
             prev_dist = self.prev_target_dist.get(agent_id, target_dist)
-            shaped += self.target_distance_scale * (prev_dist - target_dist)
+            distance_delta = self.target_distance_scale * (prev_dist - target_dist)
+            shaped += distance_delta
+            components["target_distance_delta"] = components.get("target_distance_delta", 0.0) + distance_delta
             self.prev_target_dist[agent_id] = target_dist
 
             if "scans" in target_obs:
                 tgt_min_scan = float(np.min(target_obs["scans"]))
-                shaped += self.target_wall_bonus * max(0.0, 0.5 - tgt_min_scan)
+                target_wall_term = self.target_wall_bonus * max(0.0, 0.5 - tgt_min_scan)
+                shaped += target_wall_term
+                components["target_wall_bonus"] = components.get("target_wall_bonus", 0.0) + target_wall_term
 
             ego_crashed = ego_obs.get("collision", False)
             target_crashed = target_obs.get("collision", False)
             if ego_crashed and target_crashed:
                 shaped = 0.5 * self.ego_collision_penalty
+                components = {"collision_split_penalty": shaped}
             elif target_crashed and not ego_crashed:
                 key = (agent_id, target_obs.get("agent_id", "target"))
                 if key not in self.opponent_crash_reward_given:
-                    shaped += self.herd_bonus + self.opponent_collision_bonus
+                    herd_reward = self.herd_bonus + self.opponent_collision_bonus
+                    shaped += herd_reward
+                    components["herd_bonus"] = components.get("herd_bonus", 0.0) + herd_reward
                     self.opponent_crash_reward_given.add(key)
 
         if done and ego_obs.get("collision", False):
-            shaped += self.ego_collision_penalty
+            terminal_collision = self.ego_collision_penalty
+            shaped += terminal_collision
+            components["ego_collision_penalty"] = components.get("ego_collision_penalty", 0.0) + terminal_collision
 
+        self._last_components[agent_id] = components
         return shaped
+
+    def get_last_components(self, agent_id: str) -> Dict[str, float]:
+        return dict(self._last_components.get(agent_id, {}))

@@ -1,7 +1,7 @@
 """Training entrypoint using the shared env/agent builders."""
 from __future__ import annotations
 
-from collections import deque
+from collections import deque, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -260,6 +260,9 @@ def run_training(
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
         reward_wrapper = _build_reward_wrapper(ctx, ep)
+        reward_breakdown: Dict[str, Dict[str, float]] = {
+            aid: defaultdict(float) for aid in env.possible_agents
+        }
 
         steps = 0
         collision_history: List[str] = []
@@ -292,6 +295,11 @@ def run_training(
                     )
                 totals[aid] += reward
                 shaped_rewards[aid] = reward
+
+                components = reward_wrapper.get_last_components(aid)
+                if components:
+                    for name, value in components.items():
+                        reward_breakdown[aid][name] = reward_breakdown[aid].get(name, 0.0) + float(value)
 
             collision_agents = [
                 aid for aid in next_obs.keys()
@@ -415,6 +423,17 @@ def run_training(
                 float(speed_sums.get(defender_id, 0.0) / count) if count else 0.0
             )
 
+        for aid, components in reward_breakdown.items():
+            for name, total in components.items():
+                episode_record[f"reward_component_{aid}_{name}"] = float(total)
+
+        if attacker_id in reward_breakdown:
+            for name, total in reward_breakdown[attacker_id].items():
+                episode_record[f"reward_component_attacker_{name}"] = float(total)
+        if defender_id and defender_id in reward_breakdown:
+            for name, total in reward_breakdown[defender_id].items():
+                episode_record[f"reward_component_defender_{name}"] = float(total)
+
         results.append(episode_record)
 
         if update_callback:
@@ -432,6 +451,18 @@ def run_training(
             payload["train/attacker_crashed"] = float(int(attacker_crashed))
             if defender_survival_steps is not None:
                 payload["train/defender_survival_steps"] = float(defender_survival_steps)
+
+            focus_ids: List[str] = []
+            if attacker_id:
+                focus_ids.append(attacker_id)
+            if defender_id and defender_id not in focus_ids:
+                focus_ids.append(defender_id)
+            for aid in focus_ids:
+                components = reward_breakdown.get(aid)
+                if not components:
+                    continue
+                for name, total in components.items():
+                    payload[f"train/reward_component_{aid}_{name}"] = float(total)
             update_callback(payload)
 
         if (ep + 1) % ctx.update_after == 0:

@@ -154,6 +154,10 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):
                 if key.startswith("avg_speed_") and value is not None:
                     payload[f"train/{key}"] = float(value)
 
+            for key, value in record.items():
+                if key.startswith("reward_component_") and value is not None:
+                    payload[f"train/{key}"] = float(value)
+
             if record.get("reward_mode"):
                 payload["train/reward_mode"] = record["reward_mode"]
             if record.get("cause"):
