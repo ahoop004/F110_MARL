@@ -86,11 +86,11 @@ reward:
   idle_patience_steps: 120
 
 dqn:
-  lr: 0.001
+  lr: 0.0004
   gamma: 0.99
   batch_size: 512
   buffer_size: 100000
-  target_update_interval: 10
+  target_update_interval: 500
   epsilon_start: 1
   epsilon_end: 0.1
   epsilon_decay_rate: 0.9995

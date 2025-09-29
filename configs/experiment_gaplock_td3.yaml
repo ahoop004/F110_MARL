@@ -86,8 +86,8 @@ reward:
   idle_patience_steps: 120
 
 td3:
-  actor_lr: 0.00003
-  critic_lr: 0.00003
+  actor_lr: 0.0003
+  critic_lr: 0.001
   gamma: 0.99
   tau: 0.005
   policy_noise: 0.3
@@ -95,7 +95,7 @@ td3:
   policy_delay: 2
   batch_size: 512
   buffer_size: 100000
-  warmup_steps: 1000
+  warmup_steps: 10000
   exploration_noise: 0.25
   exploration_noise_final: 0.05
   exploration_noise_decay_steps: 250000

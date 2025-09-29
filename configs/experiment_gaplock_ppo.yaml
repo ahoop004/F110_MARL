@@ -5,7 +5,7 @@ env:
   timestep: 0.01
   integrator: 'RK4'
   render_interval: 0
-  update: 2
+  update: 10
   vehicle_params:
     v_min: -2.0
     v_max: 10.0
@@ -90,14 +90,14 @@ ppo:
   critic_lr: 0.0005
   gamma: 0.99
   lam: 0.95
-  ent_coef: 0.02
+  ent_coef: 0.015
   ent_coef_schedule:
-    start: 0.02
+    start: 0.015
     final: 0.005
     decay_start: 500
     decay_episodes: 1500
   clip_eps: 0.2
-  update_epochs: 2
+  update_epochs: 10
   minibatch_size: 512
   train_episodes: 5000
   eval_episodes: 5
