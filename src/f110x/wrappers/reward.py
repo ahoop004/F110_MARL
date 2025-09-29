@@ -15,8 +15,16 @@ class RewardWrapper:
         herd_bonus=250.0,
         ego_collision_penalty=-40.0,
         opponent_collision_bonus=250.0,
-        spin_thresh=np.pi / 6,
-        spin_penalty=1.0,
+        # spin_thresh=np.pi / 6,
+        spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
+        spin_penalty=0.5,           # k in quadratic term
+        spin_speed_gate=0.3,        # m/s max speed for spin to count
+        spin_dwell_steps=5,         # consecutive steps before penalizing
+        spin_step_cap=0.001,        # max |per-step| penalty
+        spin_episode_cap=0.10,      # max |per-episode| penalty
+        spin_grace_steps=20,        # steps after reset with no spin penalty
+        spin_alpha=0.2,             # EMA smoothing for yaw rate
+        dt=0.01
     ):
         """Rich reward shaping for mixed pursuit/herding."""
 
@@ -34,6 +42,14 @@ class RewardWrapper:
         self.spin_thresh = spin_thresh
         self.spin_penalty = spin_penalty
 
+        self.spin_speed_gate = float(spin_speed_gate)
+        self.spin_dwell_steps = int(spin_dwell_steps)
+        self.spin_step_cap = float(spin_step_cap)
+        self.spin_episode_cap = float(spin_episode_cap)
+        self.spin_grace_steps = int(spin_grace_steps)
+        self.spin_alpha = float(spin_alpha)
+        self.dt = float(dt)
+
         self.prev_positions = {}
         self.prev_target_dist = {}
         self.opponent_crash_reward_given = set()
@@ -44,6 +60,14 @@ class RewardWrapper:
         self.prev_target_dist.clear()
         self.opponent_crash_reward_given.clear()
         self._last_components.clear()
+        self._spin_state.clear()
+    
+    def _spin_ctx(self, aid):
+        ctx = self._spin_state.get(aid)
+        if ctx is None:
+            ctx = {"ema_omega": 0.0, "dwell": 0, "ep_accum": 0.0, "age": 0}
+            self._spin_state[aid] = ctx
+        return ctx
 
     def _select_target_obs(self, agent_id, all_obs):
         if not all_obs:
@@ -112,6 +136,53 @@ class RewardWrapper:
             components["self_wall_penalty"] = components.get("self_wall_penalty", 0.0) + wall_penalty
 
         target_obs = self._select_target_obs(agent_id, all_obs) if all_obs else None
+
+        ctx = self._spin_ctx(agent_id)
+        ctx["age"] += 1
+
+        # derive speed and raw yaw rate
+        vx, vy = (0.0, 0.0)
+        if "velocity" in ego_obs:
+            vx, vy = map(float, ego_obs["velocity"])
+        speed = float(np.hypot(vx, vy))
+
+        omega_raw = float(abs(ego_obs.get("angular_velocity", 0.0)))
+        # EMA smoothing
+        ctx["ema_omega"] = (1.0 - self.spin_alpha) * ctx["ema_omega"] + self.spin_alpha * omega_raw
+        omega_f = ctx["ema_omega"]
+
+        # grace window
+        if ctx["age"] <= self.spin_grace_steps:
+            spin_term = 0.0
+        else:
+            # gate: only when slow AND above threshold
+            if (speed < self.spin_speed_gate) and (omega_f > self.spin_thresh):
+                ctx["dwell"] += 1
+            else:
+                ctx["dwell"] = 0
+
+            if ctx["dwell"] >= self.spin_dwell_steps and ctx["ep_accum"] > -self.spin_episode_cap:
+                # quadratic excess above threshold, time-weighted
+                excess = omega_f - self.spin_thresh
+                step_pen = - self.spin_penalty * (excess * excess) * self.dt
+                # per-step cap
+                step_pen = max(step_pen, -self.spin_step_cap)
+                # apply episode cap
+                remaining = -self.spin_episode_cap - ctx["ep_accum"]
+                # remaining ≤ 0 means cap reached
+                if remaining < 0:
+                    step_pen = 0.0
+                else:
+                    step_pen = max(step_pen, remaining)  # step_pen is negative; max keeps it ≥ remaining
+                spin_term = step_pen
+                ctx["ep_accum"] += spin_term
+            else:
+                spin_term = 0.0
+
+        shaped += spin_term
+        if spin_term:
+            components["spin_penalty"] = components.get("spin_penalty", 0.0) + float(spin_term)
+
         if target_obs and "pose" in target_obs:
             tx, ty, _ = target_obs["pose"]
             target_dist = float(np.hypot(tx - x, ty - y))

@@ -47,8 +47,15 @@ reward:
   herd_bonus: 0.30
   ego_collision_penalty: -0.50
   opponent_collision_bonus: 0.20
-  spin_penalty: 0.10
-  spin_thresh: 0.4
+  spin_thresh: 0.6
+  spin_penalty: 0.5
+  spin_speed_gate: 0.3
+  spin_dwell_steps: 5
+  spin_step_cap: 0.001
+  spin_episode_cap: 0.10
+  spin_grace_steps: 20
+  spin_alpha: 0.2
+  dt: 0.01
 
 dqn:
   lr: 0.0005
