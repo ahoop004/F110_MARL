@@ -71,8 +71,8 @@ ppo:
   lam: 0.95
   ent_coef: 0.01
   clip_eps: 0.2
-  update_epochs: 5
-  minibatch_size: 128
+  update_epochs: 2
+  minibatch_size: 512
   train_episodes: 5000
   eval_episodes: 5
   save_dir: checkpoints/

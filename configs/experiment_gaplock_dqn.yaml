@@ -67,9 +67,9 @@ reward:
 dqn:
   lr: 0.0005
   gamma: 0.99
-  batch_size: 128
+  batch_size: 512
   buffer_size: 50000
-  target_update_interval: 50
+  target_update_interval: 10
   epsilon_start: 1
   epsilon_end: 0.1
   epsilon_decay_rate: 0.9995
