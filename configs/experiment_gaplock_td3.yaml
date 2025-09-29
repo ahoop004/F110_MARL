@@ -60,6 +60,7 @@ reward:
   herd_bonus: 0.0
   ego_collision_penalty: -1.00
   opponent_collision_bonus: 0.0
+  target_crash_reward: 0.5
   herd_position_radius: 3.5
   herd_position_slack: 1.0
   herd_position_scale: 0.0

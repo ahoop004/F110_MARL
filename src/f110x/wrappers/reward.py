@@ -15,6 +15,7 @@ class RewardWrapper:
         herd_bonus=0.0,
         ego_collision_penalty=-1.0,
         opponent_collision_bonus=0.0,
+        target_crash_reward=0.5,
         herd_position_radius=3.5,
         herd_position_slack=1.0,
         herd_position_scale=0.0,
@@ -53,6 +54,7 @@ class RewardWrapper:
         self.herd_angle_power = float(herd_angle_power)
         self.slow_speed_threshold = float(slow_speed_threshold)
         self.slow_speed_penalty = float(slow_speed_penalty)
+        self.target_crash_reward = float(target_crash_reward)
         self.spin_thresh = float(spin_thresh)
         self.spin_penalty = float(spin_penalty)
 
@@ -246,8 +248,14 @@ class RewardWrapper:
                 key = (agent_id, target_obs.get("agent_id", "target"))
                 if key not in self.opponent_crash_reward_given:
                     herd_reward = self.herd_bonus + self.opponent_collision_bonus
-                    shaped += herd_reward
-                    components["herd_bonus"] = components.get("herd_bonus", 0.0) + herd_reward
+                    total_bonus = herd_reward + self.target_crash_reward
+                    shaped += total_bonus
+                    if herd_reward:
+                        components["herd_bonus"] = components.get("herd_bonus", 0.0) + herd_reward
+                    if self.target_crash_reward:
+                        components["target_crash_reward"] = (
+                            components.get("target_crash_reward", 0.0) + self.target_crash_reward
+                        )
                     self.opponent_crash_reward_given.add(key)
 
         if done and ego_obs.get("collision", False):
