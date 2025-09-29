@@ -37,29 +37,29 @@ agents:
       role: defender
 
 reward:
-  alive_bonus: 0.1
-  forward_scale: 0.12
-  reverse_penalty: 0.05
+  alive_bonus: 0.003
+  forward_scale: 0.02
+  reverse_penalty: 0.015
   lateral_penalty: 0.01
-  target_distance_scale: 0.25
-  target_wall_bonus: 1.5
-  self_wall_penalty: 0.2
-  herd_bonus: 200.0
-  ego_collision_penalty: -80.0
-  opponent_collision_bonus: 150.0
-  spin_penalty: 1.0
+  target_distance_scale: 0.2
+  target_wall_bonus: 0.0001
+  self_wall_penalty: 0.0001
+  herd_bonus: 0.30
+  ego_collision_penalty: -0.50
+  opponent_collision_bonus: 0.20
+  spin_penalty: 0.10
   spin_thresh: 0.4
 
 td3:
-  actor_lr: 0.0005
-  critic_lr: 0.0008
+  actor_lr: 0.00003
+  critic_lr: 0.00003
   gamma: 0.99
   tau: 0.005
   policy_noise: 0.3
   noise_clip: 0.5
   policy_delay: 2
-  batch_size: 128
-  buffer_size: 50000
+  batch_size: 512
+  buffer_size: 100000
   warmup_steps: 1000
   exploration_noise: 0.15
   hidden_dims: [256, 256]
