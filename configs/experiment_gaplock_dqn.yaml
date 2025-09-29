@@ -78,10 +78,10 @@ reward:
   dt: 0.01
 
 dqn:
-  lr: 0.0005
+  lr: 0.001
   gamma: 0.99
   batch_size: 512
-  buffer_size: 50000
+  buffer_size: 100000
   target_update_interval: 10
   epsilon_start: 1
   epsilon_end: 0.1
@@ -90,7 +90,7 @@ dqn:
   prioritized_replay: true
   per_alpha: 0.6
   per_beta_start: 0.4
-  per_beta_increment: 0.0001
+  per_beta_increment: 0.00005
   per_min_priority: 0.001
   per_epsilon: 1.0e-6
   action_set:
