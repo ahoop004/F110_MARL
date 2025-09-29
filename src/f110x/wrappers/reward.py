@@ -54,6 +54,7 @@ class RewardWrapper:
         self.prev_target_dist = {}
         self.opponent_crash_reward_given = set()
         self._last_components: Dict[str, Dict[str, float]] = {}
+        self._spin_state: Dict[str, Dict[str, float]] = {}
 
     def reset(self):
         self.prev_positions.clear()
