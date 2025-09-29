@@ -54,7 +54,7 @@ reward:
   forward_scale: 0.0015
   reverse_penalty: 0.0015
   lateral_penalty: 0.0
-  target_distance_scale: 0.0
+  target_distance_scale: 0.0006
   target_wall_bonus: 0.0
   self_wall_penalty: 0.0
   herd_bonus: 0.0
@@ -67,7 +67,7 @@ reward:
   herd_angle_scale: 0.0
   herd_angle_power: 2.0
   slow_speed_threshold: 0.5
-  slow_speed_penalty: -0.00005
+  slow_speed_penalty: -0.00012
   spin_thresh: 0.6
   spin_penalty: 0.0
   spin_speed_gate: 0.3
@@ -77,6 +77,9 @@ reward:
   spin_grace_steps: 20
   spin_alpha: 0.2
   dt: 0.01
+  truncation_penalty: -0.5
+  idle_speed_threshold: 0.4
+  idle_patience_steps: 200
 
 dqn:
   lr: 0.001

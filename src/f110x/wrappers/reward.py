@@ -9,7 +9,7 @@ class RewardWrapper:
         forward_scale=0.0015,
         reverse_penalty=0.0015,
         lateral_penalty=0.0,
-        target_distance_scale=0.0,
+        target_distance_scale=0.0006,
         target_wall_bonus=0.0,
         self_wall_penalty=0.0,
         herd_bonus=0.0,
@@ -22,7 +22,8 @@ class RewardWrapper:
         herd_angle_scale=0.0,
         herd_angle_power=2.0,
         slow_speed_threshold=0.5,
-        slow_speed_penalty=-0.00005,
+        slow_speed_penalty=-0.00012,
+        truncation_penalty=-0.5,
         # spin_thresh=np.pi / 6,
         spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
         spin_penalty=0.0,           # k in quadratic term
@@ -55,6 +56,7 @@ class RewardWrapper:
         self.slow_speed_threshold = float(slow_speed_threshold)
         self.slow_speed_penalty = float(slow_speed_penalty)
         self.target_crash_reward = float(target_crash_reward)
+        self.truncation_penalty = float(truncation_penalty)
         self.spin_thresh = float(spin_thresh)
         self.spin_penalty = float(spin_penalty)
 

@@ -50,7 +50,14 @@ class TD3Agent:
         self.policy_delay = int(cfg.get("policy_delay", 2))
         self.batch_size = int(cfg.get("batch_size", 128))
         self.warmup_steps = int(cfg.get("warmup_steps", 1000))
-        self.exploration_noise = float(cfg.get("exploration_noise", 0.1))
+        self.exploration_noise_initial = float(cfg.get("exploration_noise", 0.1))
+        self.exploration_noise_final = float(
+            cfg.get("exploration_noise_final", self.exploration_noise_initial)
+        )
+        self.exploration_noise_decay_steps = max(
+            1, int(cfg.get("exploration_noise_decay_steps", 50_000))
+        )
+        self._exploration_step = 0
 
         buffer_size = int(cfg.get("buffer_size", 100_000))
         self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
@@ -76,8 +83,11 @@ class TD3Agent:
 
         action = self._scale_action(action)
         if not deterministic:
-            noise = np.random.normal(0.0, self.exploration_noise, size=self.act_dim)
-            action = np.clip(action + noise, self.action_low, self.action_high)
+            noise_scale = self._current_exploration_noise()
+            if noise_scale > 0.0:
+                noise = np.random.normal(0.0, noise_scale, size=self.act_dim)
+                action = np.clip(action + noise, self.action_low, self.action_high)
+            self._exploration_step += 1
         return action.astype(np.float32)
 
     def store_transition(
@@ -141,6 +151,7 @@ class TD3Agent:
             "action_mean": float(action_samples.mean()),
             "action_std": float(action_samples.std()),
             "action_abs_mean": float(np.abs(action_samples).mean()),
+            "exploration_noise": float(self._current_exploration_noise()),
         }
 
         if wandb is not None:
@@ -163,6 +174,15 @@ class TD3Agent:
         metrics["actor_loss"] = float(actor_loss.detach().cpu().item())
         metrics["update_it"] = float(self.total_it)
         return metrics
+
+    def _current_exploration_noise(self) -> float:
+        if self.exploration_noise_decay_steps <= 0:
+            return self.exploration_noise_final
+        frac = min(1.0, self._exploration_step / self.exploration_noise_decay_steps)
+        return (
+            (1.0 - frac) * self.exploration_noise_initial
+            + frac * self.exploration_noise_final
+        )
 
     # -------------------- Persistence --------------------
 

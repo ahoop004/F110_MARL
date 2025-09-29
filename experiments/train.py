@@ -251,6 +251,10 @@ def run_training(
     attacker_id = roles.get("attacker", ppo_id)
     defender_id = roles.get("defender")
 
+    truncation_penalty = float(ctx.reward_cfg.get("truncation_penalty", 0.0))
+    idle_speed_threshold = float(ctx.reward_cfg.get("idle_speed_threshold", 0.4))
+    idle_patience_steps = int(ctx.reward_cfg.get("idle_patience_steps", 200))
+
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
             env,
@@ -276,6 +280,8 @@ def run_training(
         collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
         speed_sums: Dict[str, float] = {aid: 0.0 for aid in env.possible_agents}
         speed_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
+        idle_counter = 0
+        idle_triggered = False
 
         while True:
             actions, processed_obs = _compute_actions(ctx, obs, done)
@@ -350,6 +356,7 @@ def run_training(
 
             obs = next_obs
 
+            step_speeds: Dict[str, float] = {}
             for aid in env.possible_agents:
                 velocity = next_obs.get(aid, {}).get("velocity")
                 if velocity is None:
@@ -358,6 +365,23 @@ def run_training(
                 if not np.isnan(speed):
                     speed_sums[aid] = speed_sums.get(aid, 0.0) + speed
                     speed_counts[aid] = speed_counts.get(aid, 0) + 1
+                    step_speeds[aid] = speed
+                else:
+                    step_speeds[aid] = 0.0
+
+            if idle_patience_steps > 0:
+                observed_speeds = list(step_speeds.values())
+                if observed_speeds and all(speed < idle_speed_threshold for speed in observed_speeds):
+                    idle_counter += 1
+                else:
+                    idle_counter = 0
+
+                if idle_counter >= idle_patience_steps:
+                    idle_triggered = True
+                    for aid in env.possible_agents:
+                        truncs[aid] = True
+                        done[aid] = True
+                    break
 
             if collision_history or all(done.values()):
                 break
@@ -377,9 +401,23 @@ def run_training(
                 end_cause.append(f"term:{aid}")
             if truncs.get(aid, False):
                 end_cause.append(f"trunc:{aid}")
+        if idle_triggered:
+            end_cause.append("idle")
+            print(
+                f"[INFO] Idle stop triggered at episode {ep + 1} after {steps} steps "
+                f"(threshold={idle_patience_steps}, speed<{idle_speed_threshold})"
+            )
         if not end_cause:
             end_cause.append("unknown")
         cause_str = ",".join(end_cause)
+
+        if truncation_penalty:
+            for aid in env.possible_agents:
+                if truncs.get(aid, False):
+                    totals[aid] += truncation_penalty
+                    reward_breakdown[aid]["truncation_penalty"] = (
+                        reward_breakdown[aid].get("truncation_penalty", 0.0) + truncation_penalty
+                    )
 
         returns = {aid: float(value) for aid, value in totals.items()}
 
@@ -410,6 +448,7 @@ def run_training(
             "attacker_crashed": attacker_crashed,
             "defender_survival_steps": defender_survival_steps,
             "collisions_total": collisions_total,
+            "idle_truncated": idle_triggered,
         }
         if epsilon_val is not None:
             episode_record["epsilon"] = epsilon_val
@@ -463,6 +502,7 @@ def run_training(
             payload["train/success"] = float(int(success))
             payload["train/defender_crashed"] = float(int(defender_crashed))
             payload["train/attacker_crashed"] = float(int(attacker_crashed))
+            payload["train/idle_truncated"] = float(int(idle_triggered))
             if defender_survival_steps is not None:
                 payload["train/defender_survival_steps"] = float(defender_survival_steps)
             if epsilon_val is not None:
