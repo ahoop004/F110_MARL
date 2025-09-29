@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
 _EVAL_EP_OVERRIDE: Optional[int] = None
+_MAP_OVERRIDE: Optional[str] = None
 
 argv = list(sys.argv)
 i = 0
@@ -39,6 +40,19 @@ while i < len(argv):
             _EVAL_EP_OVERRIDE = int(value)
             argv.pop(i)
             continue
+    if arg == "--map":
+        if i + 1 >= len(argv):
+            print("[ERROR] --map requires a value", file=sys.stderr)
+            sys.exit(2)
+        _MAP_OVERRIDE = argv[i + 1]
+        argv.pop(i + 1)
+        argv.pop(i)
+        continue
+    if arg.startswith("--map="):
+        _, value = arg.split("=", 1)
+        _MAP_OVERRIDE = value
+        argv.pop(i)
+        continue
     i += 1
 
 sys.argv = argv
@@ -250,6 +264,16 @@ def main():
         cfg = yaml.safe_load(f)
 
     config_dirty = False
+    env_cfg = cfg.setdefault("env", {})
+    if _MAP_OVERRIDE is not None:
+        map_choice = _MAP_OVERRIDE.strip()
+        if not map_choice:
+            print("[ERROR] --map value cannot be empty", file=sys.stderr)
+            sys.exit(2)
+        env_cfg["map"] = map_choice
+        env_cfg["map_yaml"] = map_choice if Path(map_choice).suffix else f"{map_choice}.yaml"
+        print(f"[INFO] Using map override '{map_choice}'")
+        config_dirty = True
     run_seed = _apply_run_seed(cfg)
     if run_seed is not None:
         config_dirty = True

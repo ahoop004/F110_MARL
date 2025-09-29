@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit path to a config file (overrides --algo default).",
     )
     parser.add_argument(
+        "--map",
+        type=str,
+        help="Map name forwarded to experiments/main.py (e.g., 'line_map').",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -178,7 +183,13 @@ def main() -> None:
     if args.auto_seed and args.seed_step == 0:
         parser.error("--seed-step must be non-zero when --auto-seed is enabled")
 
-    forwarded_args = [arg for arg in args.main_args if arg]
+    forwarded_args = []
+    if args.map is not None:
+        map_name = args.map.strip()
+        if not map_name:
+            parser.error("--map value cannot be empty")
+        forwarded_args.extend(["--map", map_name])
+    forwarded_args.extend(arg for arg in args.main_args if arg)
     cfg_path = resolve_config(args.algo, args.config, parser)
     prefix = _normalize_prefix(args.wandb_prefix)
 
