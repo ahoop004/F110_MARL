@@ -1,6 +1,7 @@
 """Training entrypoint using the shared env/agent builders."""
 from __future__ import annotations
 
+import os
 from collections import deque, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +37,7 @@ class TrainingContext:
     update_after: int
     start_pose_back_gap: float
     start_pose_min_spacing: float
-    checkpoint_path: Path
+    checkpoint_path: Optional[Path]
     best_path: Path
 
     @property
@@ -127,22 +128,25 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     bundle_cfg = primary_bundle.metadata.get("config", {})
     if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":
         bundle_cfg = cfg.ppo.to_dict()
+    bundle_cfg = dict(bundle_cfg)
 
     checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     default_name = f"{primary_bundle.algo.lower()}_best.pt"
     checkpoint_name = bundle_cfg.get("checkpoint_name", default_name)
+
+    run_suffix = os.environ.get("RUN_ITER") or os.environ.get("RUN_SEED")
+    safe_suffix = None
+    if run_suffix:
+        safe_suffix = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(run_suffix)
+        ).strip("-")
+    if safe_suffix:
+        base_name = Path(checkpoint_name)
+        checkpoint_name = f"{base_name.stem}_{safe_suffix}{base_name.suffix}"
+    bundle_cfg["checkpoint_name"] = checkpoint_name
+    primary_bundle.metadata["config"] = bundle_cfg
     best_path = checkpoint_dir / checkpoint_name
-    load_override = bundle_cfg.get("load_path")
-    checkpoint_path = Path(load_override).expanduser() if load_override else best_path
-
-    if checkpoint_path.exists():
-        try:
-            primary_bundle.controller.load(str(checkpoint_path))
-            print(f"[INFO] Loaded {primary_bundle.algo.upper()} checkpoint from {checkpoint_path}")
-        except Exception as exc:  # pragma: no cover - defensive load guard
-            print(f"[WARN] Failed to load checkpoint at {checkpoint_path}: {exc}")
-
     return TrainingContext(
         cfg=cfg,
         env=env,
@@ -158,7 +162,7 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
         update_after=update_after,
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
-        checkpoint_path=checkpoint_path,
+        checkpoint_path=None,
         best_path=best_path,
     )
 
@@ -379,6 +383,14 @@ def run_training(
 
         returns = {aid: float(value) for aid, value in totals.items()}
 
+        epsilon_val: Optional[float] = None
+        epsilon_accessor = getattr(ctx.ppo_trainer, "epsilon", None)
+        if callable(epsilon_accessor):
+            try:
+                epsilon_val = float(epsilon_accessor())
+            except Exception:  # pragma: no cover - defensive guard
+                epsilon_val = None
+
         defender_crashed = bool(defender_id and collision_step.get(defender_id) is not None)
         attacker_crashed = bool(attacker_id and collision_step.get(attacker_id) is not None)
         success = bool(defender_crashed and not attacker_crashed)
@@ -399,6 +411,8 @@ def run_training(
             "defender_survival_steps": defender_survival_steps,
             "collisions_total": collisions_total,
         }
+        if epsilon_val is not None:
+            episode_record["epsilon"] = epsilon_val
 
         for aid, count in collision_counts.items():
             episode_record[f"collision_count_{aid}"] = count
@@ -451,6 +465,8 @@ def run_training(
             payload["train/attacker_crashed"] = float(int(attacker_crashed))
             if defender_survival_steps is not None:
                 payload["train/defender_survival_steps"] = float(defender_survival_steps)
+            if epsilon_val is not None:
+                payload["train/epsilon"] = float(epsilon_val)
 
             focus_ids: List[str] = []
             if attacker_id:
@@ -487,14 +503,15 @@ def run_training(
                 ppo_agent.save(str(ctx.best_path))
                 print(
                     f"[INFO] New best model saved at episode {ep + 1} "
-                    f"(avg_return={avg_return:.2f})"
+                    f"(avg_return={avg_return:.2f}) → {ctx.best_path}"
                 )
 
         success_token = "success" if success else "no-success"
+        eps_fragment = f" epsilon={epsilon_val:.3f}" if epsilon_val is not None else ""
         print(
             f"[EP {ep + 1:03d}/{episodes}] mode={reward_wrapper.mode} "
             f"steps={steps} cause={cause_str} {success_token} "
-            f"return_{ppo_id}={returns.get(ppo_id, 0.0):.2f}"
+            f"return_{ppo_id}={returns.get(ppo_id, 0.0):.2f}{eps_fragment}"
         )
 
     for trainer_id, trainer in trainers.items():

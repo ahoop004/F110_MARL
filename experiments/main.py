@@ -339,6 +339,7 @@ def main():
         gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
         _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id, tb_writer=tb_writer)
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
+        print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
     elif mode == "eval":
         # Rebuild evaluation context so explicit checkpoint overrides take effect
@@ -365,6 +366,7 @@ def main():
         gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
         _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id, tb_writer=tb_writer)
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
+        print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
         eval_ctx = eval_module.create_evaluation_context(cfg_path)
         if _RENDER_FLAG:

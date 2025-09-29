@@ -40,3 +40,6 @@ class DQNTrainer(Trainer):
 
     def load(self, path: str) -> None:
         self._agent.load(path)
+
+    def epsilon(self) -> float:
+        return float(self._agent.epsilon())
