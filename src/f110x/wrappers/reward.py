@@ -24,11 +24,11 @@ class RewardWrapper:
         slow_speed_penalty=-0.00008,
         # spin_thresh=np.pi / 6,
         spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
-        spin_penalty=0.2,           # k in quadratic term
+        spin_penalty=0.15,          # k in quadratic term
         spin_speed_gate=0.3,        # m/s max speed for spin to count
         spin_dwell_steps=5,         # consecutive steps before penalizing
-        spin_step_cap=0.00012,      # max |per-step| penalty
-        spin_episode_cap=0.03,      # max |per-episode| penalty
+        spin_step_cap=0.00008,      # max |per-step| penalty
+        spin_episode_cap=0.02,      # max |per-episode| penalty
         spin_grace_steps=20,        # steps after reset with no spin penalty
         spin_alpha=0.2,             # EMA smoothing for yaw rate
         dt=0.01
@@ -175,15 +175,11 @@ class RewardWrapper:
                 step_pen = - self.spin_penalty * (excess * excess) * self.dt
                 # per-step cap
                 step_pen = max(step_pen, -self.spin_step_cap)
-                # apply episode cap
-                remaining = -self.spin_episode_cap - ctx["ep_accum"]
-                # remaining ≤ 0 means cap reached
-                if remaining < 0:
-                    step_pen = 0.0
-                else:
-                    step_pen = max(step_pen, remaining)  # step_pen is negative; max keeps it ≥ remaining
-                spin_term = step_pen
-                ctx["ep_accum"] += spin_term
+
+                prev_accum = ctx["ep_accum"]
+                capped_accum = max(prev_accum + step_pen, -self.spin_episode_cap)
+                spin_term = capped_accum - prev_accum
+                ctx["ep_accum"] = capped_accum
             else:
                 spin_term = 0.0
 
