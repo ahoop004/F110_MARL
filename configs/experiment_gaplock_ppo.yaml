@@ -70,6 +70,7 @@ main:
     enabled: true
     project: marl-f110
     entity: null
+    group: ppo
     tags:
       - gaplock
       - ppo

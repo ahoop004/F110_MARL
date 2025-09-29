@@ -78,6 +78,7 @@ main:
     enabled: true
     project: marl-f110
     entity: null
+    group: dqn
     tags:
       - gaplock
       - dqn

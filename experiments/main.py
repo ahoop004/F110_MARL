@@ -89,8 +89,19 @@ def _wandb_init(cfg, mode):
 
     project = wandb_cfg.get("project", "f110-ppo") if isinstance(wandb_cfg, dict) else "f110-ppo"
     entity = wandb_cfg.get("entity") if isinstance(wandb_cfg, dict) else None
+    group = wandb_cfg.get("group") if isinstance(wandb_cfg, dict) else None
 
-    return wandb.init(project=project, entity=entity, config=cfg, reinit=True, tags=[mode])
+    tags = [mode]
+    if isinstance(wandb_cfg, dict):
+        extra_tags = wandb_cfg.get("tags")
+        if isinstance(extra_tags, (list, tuple)):
+            tags.extend(str(tag) for tag in extra_tags if tag)
+        elif isinstance(extra_tags, str) and extra_tags:
+            tags.append(extra_tags)
+    # Deduplicate while preserving order
+    tags = list(dict.fromkeys(tags))
+
+    return wandb.init(project=project, entity=entity, config=cfg, group=group, reinit=True, tags=tags)
 
 
 def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):

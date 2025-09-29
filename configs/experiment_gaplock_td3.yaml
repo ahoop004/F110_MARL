@@ -74,6 +74,7 @@ main:
     enabled: true
     project: marl-f110
     entity: null
+    group: td3
     tags:
       - gaplock
       - td3
