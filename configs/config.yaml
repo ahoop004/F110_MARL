@@ -159,7 +159,7 @@ main:
   wandb:
     enabled: true
     project: marl-f110
-    entity: null   # optional: set your wandb team/user
+    entity: ronnies_group
     tags:
       - dev
   save_eval_rollouts: false

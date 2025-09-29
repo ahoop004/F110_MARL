@@ -139,7 +139,7 @@ main:
   wandb:
     enabled: true
     project: marl-f110
-    entity: null
+    entity: ronnies_group
     group: dqn
     tags:
       - gaplock
