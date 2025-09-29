@@ -3,15 +3,15 @@ import numpy as np
 class FollowTheGapPolicy:
     def __init__(self,
                  max_distance=30.0,   # actual sensor range (m)
-                 window_size=2,
-                 bubble_radius=4,
-                 max_steer=0.35,
+                 window_size=4,
+                 bubble_radius=2,
+                 max_steer=0.32,
                  min_speed=2.0,
                  max_speed=20.0,
-                 steering_gain=0.8,
+                 steering_gain=0.6,
                  fov=np.deg2rad(270),
                  normalized=False,
-                 steer_smooth=0.15):   # reduced smoothing keeps bias longer
+                 steer_smooth=0.4):   # heavier smoothing slows steering corrections
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -86,24 +86,24 @@ class FollowTheGapPolicy:
         right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
         min_scan = float(np.min(scan))
 
-        # Gentler panic scaling
+        # Gentler panic scaling keeps the policy committed to the current heading longer
         panic_factor = 1.0
         if min_scan < 4.0:
-            panic_factor = 1.15
+            panic_factor = 1.05
         if min_scan < 2.0:
-            panic_factor = 1.35
+            panic_factor = 1.2
 
         steering *= panic_factor
 
         # Kick away from closest side
         if left_min < right_min:
-            steering += 0.15 * self.max_steer
+            steering += 0.08 * self.max_steer
         elif right_min < left_min:
-            steering -= 0.15 * self.max_steer
+            steering -= 0.08 * self.max_steer
 
         # Override when extremely close: pure evasive
         if min_scan < 1.0:
-            steering = np.clip(steering, -0.75 * self.max_steer, 0.75 * self.max_steer)
+            steering = np.clip(steering, -0.5 * self.max_steer, 0.5 * self.max_steer)
 
         # Clip and smooth steering
         steering = np.clip(steering, -self.max_steer, self.max_steer)

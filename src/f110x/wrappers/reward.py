@@ -24,6 +24,10 @@ class RewardWrapper:
         slow_speed_threshold=0.5,
         slow_speed_penalty=-0.00012,
         truncation_penalty=-0.5,
+        time_penalty=0.0,
+        progress_threshold=0.05,
+        progress_patience=80,
+        progress_penalty=0.0,
         # spin_thresh=np.pi / 6,
         spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
         spin_penalty=0.0,           # k in quadratic term
@@ -57,6 +61,10 @@ class RewardWrapper:
         self.slow_speed_penalty = float(slow_speed_penalty)
         self.target_crash_reward = float(target_crash_reward)
         self.truncation_penalty = float(truncation_penalty)
+        self.time_penalty = float(time_penalty)
+        self.progress_threshold = float(progress_threshold)
+        self.progress_patience = max(int(progress_patience), 1)
+        self.progress_penalty = float(progress_penalty)
         self.spin_thresh = float(spin_thresh)
         self.spin_penalty = float(spin_penalty)
 
@@ -73,6 +81,7 @@ class RewardWrapper:
         self.opponent_crash_reward_given = set()
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._spin_state: Dict[str, Dict[str, float]] = {}
+        self._progress_state: Dict[str, Dict[str, int]] = {}
 
     def reset(self):
         self.prev_positions.clear()
@@ -80,6 +89,7 @@ class RewardWrapper:
         self.opponent_crash_reward_given.clear()
         self._last_components.clear()
         self._spin_state.clear()
+        self._progress_state.clear()
     
     def _spin_ctx(self, aid):
         ctx = self._spin_state.get(aid)
@@ -115,6 +125,9 @@ class RewardWrapper:
 
         shaped += self.alive_bonus
         components["alive_bonus"] = components.get("alive_bonus", 0.0) + self.alive_bonus
+        if self.time_penalty:
+            shaped += self.time_penalty
+            components["time_penalty"] = components.get("time_penalty", 0.0) + self.time_penalty
         if forward_step > 0:
             forward_reward = self.forward_scale * forward_step
             shaped += forward_reward
@@ -199,11 +212,26 @@ class RewardWrapper:
 
             to_agent_vec = np.array([x - tx, y - ty], dtype=np.float32)
             target_dist = float(np.linalg.norm(to_agent_vec))
+            had_prev = agent_id in self.prev_target_dist
             prev_dist = self.prev_target_dist.get(agent_id, target_dist)
             distance_delta = self.target_distance_scale * (prev_dist - target_dist)
             shaped += distance_delta
             components["target_distance_delta"] = components.get("target_distance_delta", 0.0) + distance_delta
             self.prev_target_dist[agent_id] = target_dist
+
+            progress_ctx = self._progress_state.setdefault(agent_id, {"stall": 0})
+            if had_prev:
+                improvement = prev_dist - target_dist
+                if improvement >= self.progress_threshold:
+                    progress_ctx["stall"] = 0
+                else:
+                    progress_ctx["stall"] += 1
+                    if self.progress_penalty and progress_ctx["stall"] >= self.progress_patience:
+                        shaped += self.progress_penalty
+                        components["progress_penalty"] = components.get("progress_penalty", 0.0) + self.progress_penalty
+                        progress_ctx["stall"] = 0
+            else:
+                progress_ctx["stall"] = 0
 
             if "scans" in target_obs:
                 tgt_min_scan = float(np.min(target_obs["scans"]))
@@ -244,11 +272,13 @@ class RewardWrapper:
             ego_crashed = ego_obs.get("collision", False)
             target_crashed = target_obs.get("collision", False)
             if ego_crashed and target_crashed:
+                progress_ctx["stall"] = 0
                 shaped = 0.5 * self.ego_collision_penalty
                 components = {"collision_split_penalty": shaped}
             elif target_crashed and not ego_crashed:
                 key = (agent_id, target_obs.get("agent_id", "target"))
                 if key not in self.opponent_crash_reward_given:
+                    progress_ctx["stall"] = 0
                     herd_reward = self.herd_bonus + self.opponent_collision_bonus
                     total_bonus = herd_reward + self.target_crash_reward
                     shaped += total_bonus

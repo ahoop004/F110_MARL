@@ -75,7 +75,11 @@ def _load_checkpoint(bundle: AgentBundle, checkpoint_path: Optional[Path]) -> No
         print(f"[WARN] No checkpoint found at {checkpoint_path}; starting from scratch")
 
 
-def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext:
+def create_evaluation_context(
+    cfg_path: Path | None = None,
+    *,
+    auto_load: bool = False,
+) -> EvaluationContext:
     cfg_file = cfg_path or DEFAULT_CONFIG_PATH
     cfg = ExperimentConfig.load(cfg_file)
 
@@ -98,17 +102,23 @@ def create_evaluation_context(cfg_path: Path | None = None) -> EvaluationContext
         bundle_cfg = cfg.ppo.to_dict()
 
     checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
-    checkpoint_name = bundle_cfg.get("checkpoint_name", f"{primary_bundle.algo.lower()}_best.pt")
+    checkpoint_name = bundle_cfg.get(
+        "checkpoint_name",
+        f"{primary_bundle.algo.lower()}_best.pt",
+    )
     default_checkpoint = checkpoint_dir / checkpoint_name
     explicit_checkpoint = cfg.main.checkpoint
-    checkpoint_path = None
 
-    if explicit_checkpoint:
-        checkpoint_path = Path(explicit_checkpoint).expanduser()
-    elif default_checkpoint.exists():
-        checkpoint_path = default_checkpoint
+    checkpoint_path: Optional[Path] = None
 
-    _load_checkpoint(primary_bundle, checkpoint_path)
+    if auto_load:
+        if explicit_checkpoint:
+            checkpoint_path = Path(explicit_checkpoint).expanduser()
+        else:
+            checkpoint_path = default_checkpoint
+
+    if checkpoint_path is not None:
+        _load_checkpoint(primary_bundle, checkpoint_path)
 
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
@@ -370,8 +380,9 @@ GAP_AGENT = _opponents[0] if _opponents else None
 
 
 if __name__ == "__main__":
-    episodes = int(CTX.ppo_bundle.metadata.get("config", {}).get("eval_episodes", 20))
-    eval_results = evaluate(CTX, episodes=episodes)
+    main_ctx = create_evaluation_context(auto_load=True)
+    episodes = int(main_ctx.ppo_bundle.metadata.get("config", {}).get("eval_episodes", 20))
+    eval_results = evaluate(main_ctx, episodes=episodes)
     print("Evaluation finished. Results:")
     for record in eval_results:
         print(record)

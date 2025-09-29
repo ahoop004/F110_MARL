@@ -343,7 +343,7 @@ def main():
 
     elif mode == "eval":
         # Rebuild evaluation context so explicit checkpoint overrides take effect
-        eval_ctx = eval_module.create_evaluation_context(cfg_path)
+        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
         bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
@@ -368,7 +368,7 @@ def main():
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
         print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
-        eval_ctx = eval_module.create_evaluation_context(cfg_path)
+        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
         eval_bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
