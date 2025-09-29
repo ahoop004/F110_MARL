@@ -1,7 +1,7 @@
 env:
   seed: 42
   n_agents: 2
-  max_steps: 2500
+  max_steps: 1000
   timestep: 0.01
   integrator: 'RK4'
   render_interval: 0
