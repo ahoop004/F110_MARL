@@ -94,7 +94,7 @@ class RewardWrapper:
             vx, vy = map(float, ego_obs["velocity"])
             speed = np.hypot(vx, vy)
             if speed < 0.5:
-                slow_penalty = -0.2
+                slow_penalty = -0.0002
                 shaped += slow_penalty
                 components["slow_penalty"] = components.get("slow_penalty", 0.0) + slow_penalty
 
