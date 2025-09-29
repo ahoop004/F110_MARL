@@ -5,23 +5,30 @@ class RewardWrapper:
     def __init__(
         self,
         mode="basic",
-        alive_bonus=0.02,
-        forward_scale=0.15,
-        reverse_penalty=1.5,
-        lateral_penalty=0.05,
-        target_distance_scale=0.1,
-        target_wall_bonus=0.5,
-        self_wall_penalty=0.3,
-        herd_bonus=250.0,
-        ego_collision_penalty=-40.0,
-        opponent_collision_bonus=250.0,
+        alive_bonus=0.00008,
+        forward_scale=0.002,
+        reverse_penalty=0.003,
+        lateral_penalty=0.0004,
+        target_distance_scale=0.0012,
+        target_wall_bonus=0.00004,
+        self_wall_penalty=0.00004,
+        herd_bonus=0.10,
+        ego_collision_penalty=-0.3,
+        opponent_collision_bonus=0.07,
+        herd_position_radius=3.5,
+        herd_position_slack=1.0,
+        herd_position_scale=0.00006,
+        herd_angle_scale=0.00004,
+        herd_angle_power=2.0,
+        slow_speed_threshold=0.5,
+        slow_speed_penalty=-0.00008,
         # spin_thresh=np.pi / 6,
         spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
-        spin_penalty=0.5,           # k in quadratic term
+        spin_penalty=0.2,           # k in quadratic term
         spin_speed_gate=0.3,        # m/s max speed for spin to count
         spin_dwell_steps=5,         # consecutive steps before penalizing
-        spin_step_cap=0.001,        # max |per-step| penalty
-        spin_episode_cap=0.10,      # max |per-episode| penalty
+        spin_step_cap=0.00012,      # max |per-step| penalty
+        spin_episode_cap=0.03,      # max |per-episode| penalty
         spin_grace_steps=20,        # steps after reset with no spin penalty
         spin_alpha=0.2,             # EMA smoothing for yaw rate
         dt=0.01
@@ -29,18 +36,25 @@ class RewardWrapper:
         """Rich reward shaping for mixed pursuit/herding."""
 
         self.mode = mode
-        self.alive_bonus = alive_bonus
-        self.forward_scale = forward_scale
-        self.reverse_penalty = reverse_penalty
-        self.lateral_penalty = lateral_penalty
-        self.target_distance_scale = target_distance_scale
-        self.target_wall_bonus = target_wall_bonus
-        self.self_wall_penalty = self_wall_penalty
-        self.herd_bonus = herd_bonus
-        self.ego_collision_penalty = ego_collision_penalty
-        self.opponent_collision_bonus = opponent_collision_bonus
-        self.spin_thresh = spin_thresh
-        self.spin_penalty = spin_penalty
+        self.alive_bonus = float(alive_bonus)
+        self.forward_scale = float(forward_scale)
+        self.reverse_penalty = float(reverse_penalty)
+        self.lateral_penalty = float(lateral_penalty)
+        self.target_distance_scale = float(target_distance_scale)
+        self.target_wall_bonus = float(target_wall_bonus)
+        self.self_wall_penalty = float(self_wall_penalty)
+        self.herd_bonus = float(herd_bonus)
+        self.ego_collision_penalty = float(ego_collision_penalty)
+        self.opponent_collision_bonus = float(opponent_collision_bonus)
+        self.herd_position_radius = float(herd_position_radius)
+        self.herd_position_slack = max(float(herd_position_slack), 1e-6)
+        self.herd_position_scale = float(herd_position_scale)
+        self.herd_angle_scale = float(herd_angle_scale)
+        self.herd_angle_power = float(herd_angle_power)
+        self.slow_speed_threshold = float(slow_speed_threshold)
+        self.slow_speed_penalty = float(slow_speed_penalty)
+        self.spin_thresh = float(spin_thresh)
+        self.spin_penalty = float(spin_penalty)
 
         self.spin_speed_gate = float(spin_speed_gate)
         self.spin_dwell_steps = int(spin_dwell_steps)
@@ -118,8 +132,8 @@ class RewardWrapper:
         if "velocity" in ego_obs:
             vx, vy = map(float, ego_obs["velocity"])
             speed = np.hypot(vx, vy)
-            if speed < 0.5:
-                slow_penalty = -0.0002
+            if speed < self.slow_speed_threshold:
+                slow_penalty = self.slow_speed_penalty
                 shaped += slow_penalty
                 components["slow_penalty"] = components.get("slow_penalty", 0.0) + slow_penalty
 
@@ -178,8 +192,13 @@ class RewardWrapper:
             components["spin_penalty"] = components.get("spin_penalty", 0.0) + float(spin_term)
 
         if target_obs and "pose" in target_obs:
-            tx, ty, _ = target_obs["pose"]
-            target_dist = float(np.hypot(tx - x, ty - y))
+            pose_t = target_obs["pose"]
+            tx = float(pose_t[0])
+            ty = float(pose_t[1])
+            ttheta = float(pose_t[2]) if len(pose_t) > 2 else 0.0
+
+            to_agent_vec = np.array([x - tx, y - ty], dtype=np.float32)
+            target_dist = float(np.linalg.norm(to_agent_vec))
             prev_dist = self.prev_target_dist.get(agent_id, target_dist)
             distance_delta = self.target_distance_scale * (prev_dist - target_dist)
             shaped += distance_delta
@@ -191,6 +210,36 @@ class RewardWrapper:
                 target_wall_term = self.target_wall_bonus * max(0.0, 0.5 - tgt_min_scan)
                 shaped += target_wall_term
                 components["target_wall_bonus"] = components.get("target_wall_bonus", 0.0) + target_wall_term
+
+            herd_pos_bonus = 0.0
+            if target_dist > 1e-6:
+                radial_err = (target_dist - self.herd_position_radius) / self.herd_position_slack
+                radial_bonus = float(np.exp(-0.5 * radial_err * radial_err) * self.herd_position_scale)
+
+                heading_vec = np.array([np.cos(ttheta), np.sin(ttheta)], dtype=np.float32)
+                heading_norm = float(np.linalg.norm(heading_vec))
+                if heading_norm < 1e-6 and "velocity" in target_obs:
+                    target_vel = np.asarray(target_obs["velocity"], dtype=np.float32)
+                    if target_vel.shape[0] >= 2:
+                        heading_vec = target_vel[:2]
+                        heading_norm = float(np.linalg.norm(heading_vec))
+
+                align = 0.0
+                if heading_norm > 1e-6:
+                    bearing = to_agent_vec / target_dist
+                    target_heading_unit = heading_vec / heading_norm
+                    align = max(0.0, float(np.dot(bearing, -target_heading_unit)))
+
+                angle_bonus = (align ** self.herd_angle_power) * self.herd_angle_scale if align > 0.0 else 0.0
+                herd_pos_bonus = radial_bonus + float(angle_bonus)
+                if herd_pos_bonus > 0.0 and (
+                    ego_obs.get("collision", False) or target_obs.get("collision", False)
+                ):
+                    herd_pos_bonus = 0.0
+
+            if herd_pos_bonus > 0.0:
+                shaped += herd_pos_bonus
+                components["herd_position_bonus"] = components.get("herd_position_bonus", 0.0) + herd_pos_bonus
 
             ego_crashed = ego_obs.get("collision", False)
             target_crashed = target_obs.get("collision", False)
