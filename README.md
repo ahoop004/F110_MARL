@@ -22,8 +22,6 @@ tests/            Env smoke tests and sample assets
 ## Getting Started
 1. **Install dependencies** (editable install recommended):
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate
    pip install -e .[dev]
    ```
 2. **Verify the environment**:
