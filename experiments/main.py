@@ -140,8 +140,8 @@ def _wandb_init(cfg, mode):
     return wandb.init(project=project, entity=entity, config=cfg, group=group, reinit=True, tags=tags)
 
 
-def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):
-    if run is None and tb_writer is None:
+def _log_train_results(run, results, ppo_id=None, gap_id=None):
+    if run is None:
         return
 
     for idx, record in enumerate(results, 1):
@@ -206,19 +206,11 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None, tb_writer=None):
             except AttributeError:
                 pass
 
-        if run is not None:
-            run.log(payload)
-        if tb_writer is not None:
-            step = payload["train/episode"]
-            for key, value in payload.items():
-                if key == "train/episode":
-                    continue
-                if isinstance(value, (int, float)):
-                    tb_writer.add_scalar(key, value, step)
+        run.log(payload)
 
 
-def _log_eval_results(run, results, tb_writer=None):
-    if run is None and tb_writer is None:
+def _log_eval_results(run, results):
+    if run is None:
         return
 
     success_count = 0
@@ -229,15 +221,7 @@ def _log_eval_results(run, results, tb_writer=None):
         for key, value in res.items():
             if isinstance(value, (int, float)):
                 payload[f"eval/{key}"] = value
-        if run is not None:
-            run.log(payload)
-        if tb_writer is not None:
-            step = payload["eval/episode"]
-            for key, value in payload.items():
-                if key == "eval/episode":
-                    continue
-                if isinstance(value, (int, float)):
-                    tb_writer.add_scalar(key, value, step)
+        run.log(payload)
 
         defender_crashed = res.get("defender_crashed", False)
         attacker_crashed = res.get("attacker_crashed", False)
@@ -255,13 +239,7 @@ def _log_eval_results(run, results, tb_writer=None):
     if defender_survival_count:
         summary["eval/avg_defender_survival_steps"] = defender_survival_total / defender_survival_count
 
-    if run is not None:
-        run.log(summary)
-    if tb_writer is not None:
-        step = len(results)
-        for key, value in summary.items():
-            if isinstance(value, (int, float)):
-                tb_writer.add_scalar(key, value, step)
+    run.log(summary)
 
 
 def main():
@@ -295,34 +273,11 @@ def main():
         tmp_cfg_path = Path(tmp_file.name)
         cfg_path = tmp_cfg_path
 
-    tb_writer = None
-    tb_dir = main_cfg.get("tensorboard_dir")
-    if tb_dir:
-        try:
-            from torch.utils.tensorboard import SummaryWriter
-
-            tb_writer = SummaryWriter(log_dir=tb_dir)
-        except ImportError:
-            print("[WARN] torch.utils.tensorboard not available; skipping TensorBoard logging")
-            tb_writer = None
-
     def update_logger(metrics: Dict[str, Any]):
         if wandb_run is not None:
             wandb_run.log(metrics)
-        if tb_writer is not None:
-            if "train/update" in metrics:
-                step = int(metrics["train/update"])
-            elif "train/episode" in metrics:
-                step = int(metrics["train/episode"])
-            else:
-                step = 0
-            for key, value in metrics.items():
-                if key == "train/update":
-                    continue
-                if isinstance(value, (int, float)):
-                    tb_writer.add_scalar(key, value, step)
 
-    update_cb = update_logger if (wandb_run is not None or tb_writer is not None) else None
+    update_cb = update_logger if wandb_run is not None else None
 
     if mode == "train":
         train_ctx = train_module.create_training_context(cfg_path)
@@ -337,7 +292,7 @@ def main():
             update_callback=update_cb,
         )
         gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
-        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id, tb_writer=tb_writer)
+        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
         print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
@@ -349,7 +304,7 @@ def main():
         bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
         episodes = _EVAL_EP_OVERRIDE or bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
         results = eval_module.evaluate(eval_ctx, episodes=episodes, force_render=_RENDER_FLAG)
-        _log_eval_results(wandb_run, results, tb_writer=tb_writer)
+        _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
         train_ctx = train_module.create_training_context(cfg_path)
@@ -364,7 +319,7 @@ def main():
             update_callback=update_cb,
         )
         gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
-        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id, tb_writer=tb_writer)
+        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
         print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
@@ -374,14 +329,10 @@ def main():
         eval_bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
         eval_episodes = _EVAL_EP_OVERRIDE or eval_bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
         results = eval_module.evaluate(eval_ctx, episodes=eval_episodes, force_render=_RENDER_FLAG)
-        _log_eval_results(wandb_run, results, tb_writer=tb_writer)
+        _log_eval_results(wandb_run, results)
 
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Expected train/eval/train_eval.")
-
-    if tb_writer is not None:
-        tb_writer.flush()
-        tb_writer.close()
 
     if wandb_run is not None:
         wandb_run.finish()

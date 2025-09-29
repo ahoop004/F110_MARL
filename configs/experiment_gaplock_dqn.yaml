@@ -18,7 +18,7 @@ env:
 
   start_poses:
     - [0.0, 0.0, 0.0]
-    - [3.0, 0.5, 0.0]
+    - [2.0, 0.5, 0.0]
   start_pose_options:
     -
       - [0.0, 0.0, 0.0]
@@ -27,11 +27,11 @@ env:
       - [0.0, 0.0, 0.0]
       - [2.5, -0.5, 0.0]
     -
+      - [2.5, 0.5, 0.0]
       - [0.0, 0.0, 0.0]
-      - [-2.5, 0.5, 0.0]
     -
+      - [2.5, -0.5, 0.0]
       - [0.0, 0.0, 0.0]
-      - [-2.5, -0.5, 0.0]
 
 agents:
   roster:
@@ -130,7 +130,6 @@ main:
     tags:
       - gaplock
       - dqn
-  tensorboard_dir: runs/
   save_eval_rollouts: true
   eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/dqn_gaplock.pt

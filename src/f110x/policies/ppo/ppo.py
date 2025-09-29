@@ -25,7 +25,22 @@ class PPOAgent:
         self.clip_eps = float(cfg.get("clip_eps", 0.2))
         self.update_epochs = int(cfg.get("update_epochs", 10))
         self.minibatch_size = int(cfg.get("minibatch_size", 64))
-        self.ent_coef = float(cfg.get("ent_coef", 0.0))
+        base_ent_coef = float(cfg.get("ent_coef", 0.0))
+        schedule = cfg.get("ent_coef_schedule")
+        if schedule:
+            self.ent_coef_initial = float(schedule.get("start", base_ent_coef))
+            self.ent_coef = self.ent_coef_initial
+            self.ent_coef_final = float(schedule.get("final", base_ent_coef))
+            self.ent_coef_decay_start = int(schedule.get("decay_start", 0))
+            self.ent_coef_decay_episodes = max(int(schedule.get("decay_episodes", 0)), 0)
+        else:
+            self.ent_coef_initial = base_ent_coef
+            self.ent_coef = base_ent_coef
+            self.ent_coef_final = base_ent_coef
+            self.ent_coef_decay_start = 0
+            self.ent_coef_decay_episodes = 0
+
+        self._episode_idx = 0
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -176,6 +191,16 @@ class PPOAgent:
         """
         if len(self.rew_buf) == 0:
             return None
+
+        if self.ent_coef_decay_episodes > 0:
+            self._episode_idx += 1
+            if self._episode_idx >= self.ent_coef_decay_start:
+                progress = self._episode_idx - self.ent_coef_decay_start
+                frac = min(max(progress, 0) / max(self.ent_coef_decay_episodes, 1), 1.0)
+                self.ent_coef = (
+                    self.ent_coef_initial * (1.0 - frac)
+                    + self.ent_coef_final * frac
+                )
 
         self.finish_path()
 

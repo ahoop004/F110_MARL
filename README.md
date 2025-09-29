@@ -7,8 +7,11 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 - **Physics core** backed by numba-accelerated vehicle, laser, and collision models (`src/f110x/physics`).
 - **Flexible agent roster** builder that wires observation/action wrappers, controllers, and trainer adapters from YAML configs (`src/f110x/utils`).
 - **Reward shaping** for pursuit/herding scenarios with curriculum support (`src/f110x/wrappers/reward.py`).
-- **Training loop** in `experiments/train.py` and `experiments/main.py` that logs to Weights & Biases and TensorBoard.
+- **Training loop** in `experiments/train.py` and `experiments/main.py` that logs to Weights & Biases.
 - **Baseline policies** (gap-follow, random, heuristics) plus deep RL agents (PPO, TD3, DQN) under `src/f110x/policies`.
+
+### PPO Entropy Schedule
+PPO agents support an optional entropy coefficient schedule. In `configs/experiment_gaplock_ppo.yaml` the policy starts at `ent_coef=0.02`, linearly decays to `0.005` after 1 500 episodes (starting at episode 500), then holds that floor. Tweak `ent_coef_schedule` to adjust exploration decay.
 
 ## Project Layout
 ```
@@ -40,7 +43,7 @@ tests/            Env smoke tests and sample assets
 - **Agents**: `agents.roster` declares each slot's algorithm, wrappers, and trainable flag. Unfilled slots receive gap-follow heuristics automatically.
 - **Reward**: tuned through the `reward` section, with optional curricula (`reward_curriculum`) for staged difficulty.
 - **Algorithm settings**: top-level `ppo`, `td3`, `dqn` blocks feed hyperparameters into their respective trainers.
-- **Main**: toggles logging (Weights & Biases, TensorBoard), evaluation rollouts, and default checkpoints.
+- **Main**: toggles logging (Weights & Biases), evaluation rollouts, and default checkpoints.
 
 At runtime the drivers look for `F110_CONFIG` (path to a YAML file). If unset, `configs/config.yaml` is used. WandB sweeps can push overrides that are merged into the loaded config automatically.
 

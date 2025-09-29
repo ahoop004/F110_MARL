@@ -18,7 +18,7 @@ env:
 
   start_poses:
     - [0.0, 0.0, 0.0]
-    - [3.0, 0.5, 0.0]
+    - [2.0, 0.5, 0.0]
   start_pose_options:
     -
       - [0.0, 0.0, 0.0]
@@ -27,11 +27,11 @@ env:
       - [0.0, 0.0, 0.0]
       - [2.5, -0.5, 0.0]
     -
+      - [2.5, 0.5, 0.0]
       - [0.0, 0.0, 0.0]
-      - [-2.5, 0.5, 0.0]
     -
+      - [2.5, -0.5, 0.0]
       - [0.0, 0.0, 0.0]
-      - [-2.5, -0.5, 0.0]
 
 agents:
   roster:
@@ -91,6 +91,11 @@ ppo:
   gamma: 0.99
   lam: 0.95
   ent_coef: 0.02
+  ent_coef_schedule:
+    start: 0.02
+    final: 0.005
+    decay_start: 500
+    decay_episodes: 1500
   clip_eps: 0.2
   update_epochs: 2
   minibatch_size: 512
@@ -109,7 +114,6 @@ main:
     tags:
       - gaplock
       - ppo
-  tensorboard_dir: runs/
   save_eval_rollouts: true
   eval_rollout_dir: eval_rollouts/
   checkpoint: checkpoints/ppo_gaplock.pt
