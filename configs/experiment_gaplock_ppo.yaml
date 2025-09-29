@@ -50,40 +50,40 @@ agents:
       role: defender
 
 reward:
-  alive_bonus: 0.0003
-  time_penalty: -0.0009
-  forward_scale: 0.0024
-  reverse_penalty: 0.0030
-  lateral_penalty: 0.0002
-  target_distance_scale: 0.0012
-  target_wall_bonus: 0.0010
-  self_wall_penalty: 0.0002
-  herd_bonus: 0.9
+  alive_bonus: 0.00025
+  time_penalty: -0.0016
+  forward_scale: 0.0021
+  reverse_penalty: 0.0040
+  lateral_penalty: 0.00025
+  target_distance_scale: 0.0015
+  target_wall_bonus: 0.0014
+  self_wall_penalty: 0.0003
+  herd_bonus: 1.2
   ego_collision_penalty: -1.00
   opponent_collision_bonus: 0.0
-  target_crash_reward: 0.8
+  target_crash_reward: 1.2
   herd_position_radius: 3.0
   herd_position_slack: 1.2
   herd_position_scale: 0.0028
   herd_angle_scale: 0.0016
   herd_angle_power: 2.0
-  slow_speed_threshold: 0.9
-  slow_speed_penalty: -0.0013
-  progress_threshold: 0.05
-  progress_patience: 120
-  progress_penalty: -0.04
-  spin_thresh: 0.6
-  spin_penalty: 0.0
-  spin_speed_gate: 0.3
-  spin_dwell_steps: 5
-  spin_step_cap: 0.0
-  spin_episode_cap: 0.0
+  slow_speed_threshold: 1.1
+  slow_speed_penalty: -0.0022
+  progress_threshold: 0.04
+  progress_patience: 80
+  progress_penalty: -0.08
+  spin_thresh: 0.55
+  spin_penalty: 1.1
+  spin_speed_gate: 0.6
+  spin_dwell_steps: 3
+  spin_step_cap: 0.0025
+  spin_episode_cap: 0.15
   spin_grace_steps: 20
   spin_alpha: 0.2
   dt: 0.01
   truncation_penalty: -1.0
   idle_speed_threshold: 0.4
-  idle_patience_steps: 200
+  idle_patience_steps: 120
 
 ppo:
   actor_lr: 0.0003

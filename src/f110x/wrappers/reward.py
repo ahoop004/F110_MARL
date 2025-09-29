@@ -186,17 +186,22 @@ class RewardWrapper:
             else:
                 ctx["dwell"] = 0
 
-            if ctx["dwell"] >= self.spin_dwell_steps and ctx["ep_accum"] > -self.spin_episode_cap:
+            if ctx["dwell"] >= self.spin_dwell_steps and self.spin_penalty > 0.0:
                 # quadratic excess above threshold, time-weighted
                 excess = omega_f - self.spin_thresh
-                step_pen = - self.spin_penalty * (excess * excess) * self.dt
-                # per-step cap
-                step_pen = max(step_pen, -self.spin_step_cap)
+                step_pen = -self.spin_penalty * (excess * excess) * self.dt
 
-                prev_accum = ctx["ep_accum"]
-                capped_accum = max(prev_accum + step_pen, -self.spin_episode_cap)
-                spin_term = capped_accum - prev_accum
-                ctx["ep_accum"] = capped_accum
+                if self.spin_step_cap > 0.0:
+                    step_pen = max(step_pen, -self.spin_step_cap)
+
+                if self.spin_episode_cap > 0.0:
+                    prev_accum = ctx["ep_accum"]
+                    capped_accum = max(prev_accum + step_pen, -self.spin_episode_cap)
+                    spin_term = capped_accum - prev_accum
+                    ctx["ep_accum"] = capped_accum
+                else:
+                    spin_term = step_pen
+                    ctx["ep_accum"] += step_pen
             else:
                 spin_term = 0.0
 

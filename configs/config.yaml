@@ -126,30 +126,34 @@ dqn:
 
 reward:
   # mode: "pursuit"   # "basic", "pursuit", or "herding"
-  alive_bonus: 0.01
-  time_penalty: -0.03
-  forward_scale: 0.18
-  reverse_penalty: 2.0
-  lateral_penalty: 0.08
-  target_distance_scale: 0.22
-  target_wall_bonus: 1.0
-  self_wall_penalty: 0.6
-  slow_speed_threshold: 1.2
-  slow_speed_penalty: -1.2
-  progress_threshold: 0.05
-  progress_patience: 100
-  progress_penalty: -15.0
-  herd_bonus: 150.0
+  alive_bonus: 0.006
+  time_penalty: -0.06
+  forward_scale: 0.24
+  reverse_penalty: 3.0
+  lateral_penalty: 0.12
+  target_distance_scale: 0.28
+  target_wall_bonus: 1.5
+  self_wall_penalty: 0.8
+  slow_speed_threshold: 1.4
+  slow_speed_penalty: -1.8
+  progress_threshold: 0.04
+  progress_patience: 80
+  progress_penalty: -35.0
+  herd_bonus: 180.0
   herd_position_radius: 3.0
-  herd_position_slack: 1.2
-  herd_position_scale: 22.0
-  herd_angle_scale: 12.0
+  herd_position_slack: 1.1
+  herd_position_scale: 24.0
+  herd_angle_scale: 14.0
   herd_angle_power: 2.0
   ego_collision_penalty: -40.0
-  target_crash_reward: 1.0
-  truncation_penalty: -5.0
-  spin_penalty: 2.0
-  spin_thresh: 0.52   # radians ~30°
+  target_crash_reward: 1.5
+  truncation_penalty: -6.0
+  spin_penalty: 2.4
+  spin_thresh: 0.5   # radians ~29°
+  spin_speed_gate: 0.6
+  spin_dwell_steps: 3
+  spin_step_cap: 0.08
+  spin_episode_cap: 4.0
 main:
   mode: train
   wandb:
