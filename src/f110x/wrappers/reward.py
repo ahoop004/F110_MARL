@@ -37,7 +37,8 @@ class RewardWrapper:
         spin_episode_cap=0.0,       # max |per-episode| penalty
         spin_grace_steps=20,        # steps after reset with no spin penalty
         spin_alpha=0.2,             # EMA smoothing for yaw rate
-        dt=0.01
+        dt=0.01,
+        **_ignored_kwargs,
     ):
         """Rich reward shaping for mixed pursuit/herding."""
 
@@ -75,6 +76,9 @@ class RewardWrapper:
         self.spin_grace_steps = int(spin_grace_steps)
         self.spin_alpha = float(spin_alpha)
         self.dt = float(dt)
+
+        # Retain any unhandled configuration keys for introspection/debugging.
+        self._unused_keys = dict(_ignored_kwargs) if _ignored_kwargs else {}
 
         self.prev_positions = {}
         self.prev_target_dist = {}
