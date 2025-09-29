@@ -123,13 +123,6 @@ class RewardWrapper:
                 shaped += slow_penalty
                 components["slow_penalty"] = components.get("slow_penalty", 0.0) + slow_penalty
 
-        if "angular_velocity" in ego_obs:
-            omega = abs(float(ego_obs["angular_velocity"]))
-            if omega > self.spin_thresh and np.linalg.norm(disp) < 0.05:
-                spin_penalty = -self.spin_penalty
-                shaped += spin_penalty
-                components["spin_penalty"] = components.get("spin_penalty", 0.0) + spin_penalty
-
         if "scans" in ego_obs:
             self_min_scan = float(np.min(ego_obs["scans"]))
             wall_penalty = -self.self_wall_penalty * max(0.0, 0.5 - self_min_scan)
