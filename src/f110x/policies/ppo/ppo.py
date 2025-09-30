@@ -214,6 +214,8 @@ class PPOAgent:
         self.raw_act_buf = self.raw_act_buf[:T]
         self.logp_buf = self.logp_buf[:T]
         self.val_buf = list(values)
+        self.rew_buf = self.rew_buf[:T]
+        self.done_buf = self.done_buf[:T]
 
 
     # ------------------- Update -------------------

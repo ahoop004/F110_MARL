@@ -321,6 +321,8 @@ class RecurrentPPOAgent:
         self.raw_act_buf = self.raw_act_buf[:T]
         self.logp_buf = self.logp_buf[:T]
         self.val_buf = list(values)
+        self.rew_buf = self.rew_buf[:T]
+        self.done_buf = self.done_buf[:T]
 
     def _ensure_episode_boundaries(self) -> None:
         if not self._episode_boundaries:
