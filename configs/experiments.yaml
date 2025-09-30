@@ -53,8 +53,8 @@ shared:
     self_wall_penalty: 0.0003
     herd_bonus: 1.2
     ego_collision_penalty: -2.0
-    opponent_collision_bonus: 1.0
-    target_crash_reward: 1.2
+    opponent_collision_bonus: 10.0
+    target_crash_reward: 100.2
     herd_position_radius: 3.0
     herd_position_slack: 1.2
     herd_position_scale: 0.0028
