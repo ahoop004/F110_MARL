@@ -99,7 +99,7 @@ shared:  # Common building blocks reused across experiment profiles
 
   episodes:  # Shared episode counts referenced by individual algorithms
     train: &shared_train_episodes 5000  # Number of training episodes each run targets
-    eval: &shared_eval_episodes 5  # Number of evaluation rollouts per checkpoint
+    eval: &shared_eval_episodes 1  # Number of evaluation rollouts per checkpoint
 
   wandb: &wandb_base  # Common Weights & Biases defaults
     enabled: true  # Toggle experiment tracking
