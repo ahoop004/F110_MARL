@@ -28,11 +28,13 @@ from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.random_policy import random_policy
 from f110x.policies.simple_heuristic import simple_heuristic
 from f110x.policies.td3.td3 import TD3Agent
+from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
 from f110x.trainers.base import Trainer
 from f110x.trainers.ppo_guided import PPOTrainer
 from f110x.trainers.td3_trainer import TD3Trainer
 from f110x.trainers.dqn_trainer import DQNTrainer
+from f110x.trainers.sac_trainer import SACTrainer
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +319,7 @@ def _build_obs_wrapper(
         target_slot = int(target_slot)
 
     algo = assignment.spec.algo.lower()
-    if algo in {"ppo", "td3"} and "lidar_beams" not in params:
+    if algo in {"ppo", "td3", "sac"} and "lidar_beams" not in params:
         env_lidar = getattr(ctx.env, "lidar_beams", None)
         if env_lidar:
             params["lidar_beams"] = int(env_lidar)
@@ -513,6 +515,48 @@ def _build_algo_td3(
     )
 
 
+def _build_algo_sac(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    agent_id = assignment.agent_id
+    action_space = ctx.env.action_space(agent_id)
+    if not isinstance(action_space, spaces.Box):
+        raise TypeError(
+            "SAC builder requires a continuous Box action space; "
+            f"received {type(action_space)!r} for agent '{agent_id}'"
+        )
+
+    if not pipeline:
+        raise ValueError(
+            f"SAC agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
+        )
+
+    sample_obs = ctx.ensure_sample()
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
+    sac_cfg = _resolve_algorithm_config(ctx, assignment.spec)
+    sac_cfg["obs_dim"] = int(obs_vector.size)
+    sac_cfg["act_dim"] = int(action_space.shape[0])
+    sac_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
+    sac_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
+
+    controller = SACAgent(sac_cfg)
+    trainer = SACTrainer(agent_id, controller)
+    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    return AgentBundle(
+        assignment=assignment,
+        algo="sac",
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=True),
+        metadata={"config": sac_cfg},
+        trainer=trainer,
+        action_wrapper=action_wrapper,
+    )
+
+
 def _build_algo_dqn(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -654,6 +698,7 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "waypoint": _build_algo_waypoint,
     "centerline": _build_algo_centerline,
     "td3": _build_algo_td3,
+    "sac": _build_algo_sac,
     "dqn": _build_algo_dqn,
 }
 

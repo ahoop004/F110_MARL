@@ -135,7 +135,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
     td3:
       actor_lr: 0.0003  # Learning rate for the TD3 actor
       critic_lr: 0.001  # Learning rate for the TD3 critics
-      device: cuda # Compute device used for TD3 training
+      device: cuda  # Compute device used for TD3 training
       gamma: 0.99  # Discount factor applied to returns
       tau: 0.005  # Target network smoothing factor
       policy_noise: 0.3  # Noise added to target actions during updates
@@ -159,6 +159,43 @@ experiments:  # Concrete experiment profiles selectable via run.py
         <<: *wandb_base
         group: td3  # W&B group label for TD3 runs
         tags: [td3]  # W&B tags for TD3 experiments
+
+  gaplock_sac:  # SAC learner leveraging entropy-regularised continuous control
+    env:
+      <<: *env_base
+      update: 1  # Soft actor-critic updates every environment step
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: sac  # Assign SAC to the attacker slot
+          config_ref: sac  # Pull hyperparameters from the sac block
+        - *defender_policy
+    reward:
+      <<: *reward_base
+    sac:
+      actor_lr: 0.0003  # Learning rate for the stochastic policy
+      critic_lr: 0.0003  # Learning rate for twin Q critics
+      alpha: 0.2  # Initial temperature for entropy regularisation
+      alpha_lr: 0.0003  # Optimiser LR for temperature auto-tuning
+      auto_alpha: true  # Enable automatic entropy tuning
+      gamma: 0.99  # Discount factor applied to critic targets
+      tau: 0.005  # Target network smoothing factor
+      batch_size: 512  # Batch size sampled from replay
+      buffer_size: 100000  # Experience replay capacity
+      warmup_steps: 10000  # Steps collected before gradient updates
+      hidden_dims: [256, 256]  # Shared hidden sizes for actor/critics
+      device: cuda  # Compute device used for SAC training
+      train_episodes: *shared_train_episodes  # Training horizon for SAC
+      eval_episodes: *shared_eval_episodes  # Evaluation rollouts per checkpoint
+      save_dir: checkpoints  # Directory for SAC checkpoints
+      checkpoint_name: sac_gaplock.pt  # Filename for the best SAC checkpoint
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/sac_gaplock.pt  # Resume path for SAC checkpoints
+      wandb:
+        <<: *wandb_base
+        group: sac  # W&B group label for SAC runs
+        tags: [gaplock, sac]  # W&B tags for SAC experiments
 
   gaplock_dqn:  # DQN learner using discrete throttle-steer pairs
     env:

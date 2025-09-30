@@ -22,6 +22,7 @@ DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {
     "dqn": (Path("configs/experiments.yaml"), "gaplock_dqn"),
     "ppo": (Path("configs/experiments.yaml"), "gaplock_ppo"),
     "td3": (Path("configs/experiments.yaml"), "gaplock_td3"),
+    "sac": (Path("configs/experiments.yaml"), "gaplock_sac"),
 }
 
 

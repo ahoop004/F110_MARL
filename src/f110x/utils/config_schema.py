@@ -247,6 +247,23 @@ class TD3ConfigSchema(BaseSchema):
 
 
 @dataclass
+class SACConfigSchema(BaseSchema):
+    actor_lr: float = 3e-4
+    critic_lr: float = 3e-4
+    alpha: float = 0.2
+    alpha_lr: float = 3e-4
+    gamma: float = 0.99
+    tau: float = 0.005
+    batch_size: int = 256
+    buffer_size: int = 100_000
+    warmup_steps: int = 10_000
+    auto_alpha: bool = True
+    target_entropy: Optional[float] = None
+    hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
+    device: str = "cpu"
+
+
+@dataclass
 class DQNConfigSchema(BaseSchema):
     gamma: float = 0.99
     lr: float = 5e-4
