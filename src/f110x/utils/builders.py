@@ -18,7 +18,6 @@ from f110x.utils.map_loader import MapData, MapLoader
 from f110x.utils.start_pose import parse_start_pose_options
 from f110x.wrappers.observation import ObsWrapper
 from f110x.wrappers.action import (
-    ContinuousActionWrapper,
     DiscreteActionWrapper,
     DeltaDiscreteActionWrapper,
 )
@@ -462,7 +461,8 @@ def _build_algo_ppo(
 
     controller = PPOAgent(ppo_cfg)
     trainer = PPOTrainer(agent_id, controller)
-    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    # PPOAgent already scales actions to environment bounds internally.
+    action_wrapper = None
     return AgentBundle(
         assignment=assignment,
         algo="ppo",
@@ -504,7 +504,8 @@ def _build_algo_td3(
 
     controller = TD3Agent(td3_cfg)
     trainer = TD3Trainer(agent_id, controller)
-    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    # TD3Agent actions are already emitted in environment units, so skip rescaling wrapper.
+    action_wrapper = None
     return AgentBundle(
         assignment=assignment,
         algo="td3",
@@ -546,7 +547,8 @@ def _build_algo_sac(
 
     controller = SACAgent(sac_cfg)
     trainer = SACTrainer(agent_id, controller)
-    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    # SACAgent outputs environment-scaled actions directly; avoid double scaling.
+    action_wrapper = None
     return AgentBundle(
         assignment=assignment,
         algo="sac",
@@ -589,7 +591,8 @@ def _build_algo_rec_ppo(
     controller = RecurrentPPOAgent(rec_cfg)
     controller.reset_hidden_state()
     trainer = RecurrentPPOTrainer(agent_id, controller)
-    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    # Recurrent PPO emits environment-scaled actions directly.
+    action_wrapper = None
     return AgentBundle(
         assignment=assignment,
         algo="rec_ppo",
