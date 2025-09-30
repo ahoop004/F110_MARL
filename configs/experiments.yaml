@@ -118,7 +118,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
       wandb:
         <<: *wandb_base
         group: ppo  # W&B group label for PPO runs
-        tags: [gaplock, ppo]  # W&B tags to categorize PPO runs
+        tags: [ppo]  # W&B tags to categorize PPO runs
 
   gaplock_td3:  # TD3 learner with the same defender matchup
     env:
@@ -158,7 +158,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
       wandb:
         <<: *wandb_base
         group: td3  # W&B group label for TD3 runs
-        tags: [gaplock, td3]  # W&B tags for TD3 experiments
+        tags: [td3]  # W&B tags for TD3 experiments
 
   gaplock_dqn:  # DQN learner using discrete throttle-steer pairs
     env:
@@ -225,4 +225,4 @@ experiments:  # Concrete experiment profiles selectable via run.py
       wandb:
         <<: *wandb_base
         group: dqn  # W&B group label for DQN runs
-        tags: [gaplock, dqn]  # W&B tags for DQN experiments
+        tags: [dqn]  # W&B tags for DQN experiments

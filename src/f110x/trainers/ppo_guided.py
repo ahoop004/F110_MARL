@@ -25,11 +25,12 @@ class PPOTrainer(Trainer):
             except Exception:
                 pass
 
+        done_flag = transition.terminated or transition.truncated
         self._agent.store(
             next_obs,
             transition.action,
             transition.reward,
-            transition.terminated,
+            done_flag,
         )
 
     def update(self) -> Optional[Dict[str, Any]]:

@@ -41,6 +41,7 @@ class PPOAgent:
             self.ent_coef_decay_episodes = 0
 
         self._episode_idx = 0
+        self._episodes_since_update = 0
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
 
         self.device = resolve_device([cfg.get("device")])
@@ -122,6 +123,8 @@ class PPOAgent:
     def store(self, obs, act, rew, done):
         self.rew_buf.append(float(rew))
         self.done_buf.append(bool(done))
+        if done:
+            self._episodes_since_update += 1
 
     def record_final_value(self, obs):
         obs_np = np.asarray(obs, dtype=np.float32)
@@ -192,8 +195,9 @@ class PPOAgent:
         if len(self.rew_buf) == 0:
             return None
 
+        episodes_progress = self._episodes_since_update or 1
         if self.ent_coef_decay_episodes > 0:
-            self._episode_idx += 1
+            self._episode_idx += episodes_progress
             if self._episode_idx >= self.ent_coef_decay_start:
                 progress = self._episode_idx - self.ent_coef_decay_start
                 frac = min(max(progress, 0) / max(self.ent_coef_decay_episodes, 1), 1.0)
@@ -201,6 +205,7 @@ class PPOAgent:
                     self.ent_coef_initial * (1.0 - frac)
                     + self.ent_coef_final * frac
                 )
+        self._episodes_since_update = 0
 
         self.finish_path()
 
@@ -253,7 +258,8 @@ class PPOAgent:
                 value_loss = F.mse_loss(v_pred, ret_b)
 
                 entropy = dist.entropy().sum(dim=-1).mean()
-                loss = policy_loss + value_loss + self.ent_coef * entropy
+                # Encourage exploration by subtracting the entropy bonus (maximise entropy)
+                loss = policy_loss + value_loss - self.ent_coef * entropy
 
                 with torch.no_grad():
                     policy_losses.append(float(policy_loss.detach().cpu().item()))
