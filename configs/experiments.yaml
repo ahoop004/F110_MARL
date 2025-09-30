@@ -61,7 +61,7 @@ shared:  # Common building blocks reused across experiment profiles
   wandb: &wandb_base  # Common Weights & Biases defaults
     enabled: true  # Toggle experiment tracking
     project: marl-f110  # W&B project to log under
-    entity: ronnies_group  # W&B entity or team name that owns the project
+    entity: ahoop004-old-dominion-university  # W&B entity or team name that owns the project
 
   attacker_roster: &attacker_base  # Shared attacker roster template
     slot: 0  # Roster position assigned to the attacker
