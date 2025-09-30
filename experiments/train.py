@@ -5,7 +5,7 @@ import os
 from collections import deque, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -269,6 +269,39 @@ def run_training(
     idle_speed_threshold = float(ctx.reward_cfg.get("idle_speed_threshold", 0.4))
     idle_patience_steps = int(ctx.reward_cfg.get("idle_patience_steps", 200))
 
+    log_blocklist = {
+        "policy_loss",
+        "value_loss",
+        "entropy",
+        "approx_kl",
+        "action_mean",
+        "action_std",
+        "action_abs_mean",
+        "raw_action_std",
+        "value_mean",
+        "value_std",
+        "adv_mean",
+        "adv_std",
+        "action_histogram",
+        "value_histogram",
+    }
+
+    def emit_update_stats(stats: Optional[Dict[str, Any]]) -> None:
+        nonlocal update_count
+        if not update_callback or not stats:
+            return
+        payload: Dict[str, Any] = {}
+        for key, value in stats.items():
+            if key in log_blocklist:
+                continue
+            if isinstance(value, (int, float)):
+                payload[f"train/{key}"] = float(value)
+            elif value is not None:
+                payload[f"train/{key}"] = value
+        if payload:
+            update_count += 1
+            update_callback(payload)
+
     agent_ids = list(env.possible_agents)
     agent_count = len(agent_ids)
     id_to_index = {aid: idx for idx, aid in enumerate(agent_ids)}
@@ -288,21 +321,31 @@ def run_training(
     shaped_rewards = np.zeros(agent_count, dtype=np.float32)
 
     class TrajectoryBuffer:
-        __slots__ = ("trainer", "_items", "_capacity")
+        __slots__ = ("trainer", "_items", "_capacity", "off_policy", "updates_per_step")
 
-        def __init__(self, trainer: Trainer, capacity: int = 64) -> None:
+        def __init__(
+            self,
+            trainer: Trainer,
+            *,
+            capacity: int = 64,
+            off_policy: bool = False,
+            updates_per_step: int = 1,
+        ) -> None:
             self.trainer = trainer
             self._items: List[Transition] = []
             self._capacity = max(int(capacity), 1)
+            self.off_policy = bool(off_policy)
+            self.updates_per_step = max(int(updates_per_step), 1)
 
-        def append(self, item: Transition) -> None:
+        def append(self, item: Transition) -> bool:
             self._items.append(item)
             if len(self._items) >= self._capacity:
-                self.flush()
+                return self.flush()
+            return False
 
-        def flush(self) -> None:
+        def flush(self) -> bool:
             if not self._items:
-                return
+                return False
             observe_batch = getattr(self.trainer, "observe_batch", None)
             if callable(observe_batch):
                 observe_batch(self._items)
@@ -310,11 +353,26 @@ def run_training(
                 for item in self._items:
                     self.trainer.observe(item)
             self._items.clear()
+            return True
 
-    trajectory_buffers: Dict[str, TrajectoryBuffer] = {
-        aid: TrajectoryBuffer(trainer)
-        for aid, trainer in trainers.items()
-    }
+    off_policy_algos = {"td3", "sac", "dqn"}
+    trajectory_buffers: Dict[str, TrajectoryBuffer] = {}
+    off_policy_ids: Set[str] = set()
+    for aid, trainer in trainers.items():
+        bundle = ctx.team.by_id.get(aid)
+        algo_name = bundle.algo.lower() if bundle else ""
+        is_off_policy = algo_name in off_policy_algos
+        if is_off_policy:
+            off_policy_ids.add(aid)
+        config_meta = bundle.metadata.get("config", {}) if bundle else {}
+        updates_per_step = int(config_meta.get("updates_per_step", config_meta.get("gradient_steps", 1) or 1))
+        capacity = 1 if is_off_policy else 64
+        trajectory_buffers[aid] = TrajectoryBuffer(
+            trainer,
+            capacity=capacity,
+            off_policy=is_off_policy,
+            updates_per_step=updates_per_step,
+        )
 
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
@@ -416,7 +474,12 @@ def run_training(
                     raw_obs=obs,
                     raw_next_obs=next_obs,
                 )
-                trajectory_buffers[trainer_id].append(transition)
+                buffer = trajectory_buffers[trainer_id]
+                flushed = buffer.append(transition)
+                if buffer.off_policy and flushed:
+                    for _ in range(buffer.updates_per_step):
+                        stats = trainer.update()
+                        emit_update_stats(stats)
 
             for idx, aid in enumerate(agent_ids):
                 done_flag = terms.get(aid, False) or truncs.get(aid, False) or collision_flags[idx]
@@ -548,9 +611,6 @@ def run_training(
 
         results.append(episode_record)
 
-        for buffer in trajectory_buffers.values():
-            buffer.flush()
-
         if update_callback:
             payload: Dict[str, Any] = {}
             if ppo_id in returns:
@@ -564,35 +624,10 @@ def run_training(
 
         if (ep + 1) % ctx.update_after == 0:
             for trainer_id, trainer in trainers.items():
+                if trainer_id in off_policy_ids:
+                    continue
                 stats = trainer.update()
-                if update_callback and stats:
-                    update_count += 1
-                    payload: Dict[str, Any] = {}
-                    blocklist = {
-                        "policy_loss",
-                        "value_loss",
-                        "entropy",
-                        "approx_kl",
-                        "action_mean",
-                        "action_std",
-                        "action_abs_mean",
-                        "raw_action_std",
-                        "value_mean",
-                        "value_std",
-                        "adv_mean",
-                        "adv_std",
-                        "action_histogram",
-                        "value_histogram",
-                    }
-                    for key, value in stats.items():
-                        if key in blocklist:
-                            continue
-                        if isinstance(value, (int, float)):
-                            payload[f"train/{key}"] = float(value)
-                        elif value is not None:
-                            payload[f"train/{key}"] = value
-                    if payload:
-                        update_callback(payload)
+                emit_update_stats(stats)
 
         ppo_return = returns.get(ppo_id, 0.0)
         recent_returns.append(ppo_return)
@@ -616,37 +651,17 @@ def run_training(
 
     for trainer_id, trainer in trainers.items():
         buffer = trajectory_buffers.get(trainer_id)
+        flushed = False
         if buffer is not None:
-            buffer.flush()
+            flushed = buffer.flush()
+        if buffer is not None and buffer.off_policy:
+            if flushed:
+                for _ in range(buffer.updates_per_step):
+                    stats = trainer.update()
+                    emit_update_stats(stats)
+            continue
         stats = trainer.update()
-        if update_callback and stats:
-            update_count += 1
-            payload: Dict[str, Any] = {}
-            blocklist = {
-                "policy_loss",
-                "value_loss",
-                "entropy",
-                "approx_kl",
-                "action_mean",
-                "action_std",
-                "action_abs_mean",
-                "raw_action_std",
-                "value_mean",
-                "value_std",
-                "adv_mean",
-                "adv_std",
-                "action_histogram",
-                "value_histogram",
-            }
-            for key, value in stats.items():
-                if key in blocklist:
-                    continue
-                if isinstance(value, (int, float)):
-                    payload[f"train/{key}"] = float(value)
-                elif value is not None:
-                    payload[f"train/{key}"] = value
-            if payload:
-                update_callback(payload)
+        emit_update_stats(stats)
 
     return results
 
