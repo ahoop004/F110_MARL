@@ -1,9 +1,10 @@
 import numpy as np
 
 class ObsWrapper:
-    def __init__(self, max_scan=30.0, normalize=True):
+    def __init__(self, max_scan=30.0, normalize=True, lidar_beams=None):
         self.max_scan = max_scan
         self.normalize = normalize
+        self.lidar_beams = int(lidar_beams) if lidar_beams is not None else None
 
     def __call__(self, obs, ego_id, target_id=None):
         """
@@ -22,6 +23,15 @@ class ObsWrapper:
 
         # LiDAR
         scan = np.array(ego_obs["scans"], dtype=np.float32)
+        target_beams = self.lidar_beams
+        if target_beams is not None and target_beams > 0:
+            if scan.size > target_beams:
+                indices = np.linspace(0, scan.size - 1, target_beams, dtype=np.int32)
+                scan = scan[indices]
+            elif scan.size < target_beams:
+                padded = np.zeros((target_beams,), dtype=np.float32)
+                padded[: scan.size] = scan
+                scan = padded
         if self.normalize:
             scan = scan / self.max_scan
 

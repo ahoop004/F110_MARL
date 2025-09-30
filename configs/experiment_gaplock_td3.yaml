@@ -44,6 +44,7 @@ agents:
           params:
             max_scan: 30.0
             normalize: true
+            lidar_beams: 108
             target_role: defender
     - algo: follow_gap
       slot: 1
