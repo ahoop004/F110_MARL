@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover - wandb optional
     wandb = None
 
 from f110x.policies.ppo.net import Actor, Critic
-from f110x.utils.torch_io import safe_load
+from f110x.utils.torch_io import resolve_device, safe_load
 
 
 class PPOAgent:
@@ -43,7 +43,7 @@ class PPOAgent:
         self._episode_idx = 0
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device([cfg.get("device")])
 
         action_low = cfg.get("action_low")
         action_high = cfg.get("action_high")

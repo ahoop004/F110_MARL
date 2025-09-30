@@ -15,12 +15,12 @@ except ImportError:  # pragma: no cover - wandb optional
 
 from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
-from f110x.utils.torch_io import safe_load
+from f110x.utils.torch_io import resolve_device, safe_load
 
 
 class TD3Agent:
     def __init__(self, cfg: Dict[str, Any]):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device([cfg.get("device")])
 
         self.obs_dim = int(cfg["obs_dim"])
         self.act_dim = int(cfg["act_dim"])

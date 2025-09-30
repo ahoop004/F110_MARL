@@ -14,13 +14,13 @@ except ImportError:  # pragma: no cover - wandb optional
     wandb = None
 
 from f110x.policies.buffers import PrioritizedReplayBuffer, ReplayBuffer
-from f110x.utils.torch_io import safe_load
+from f110x.utils.torch_io import resolve_device, safe_load
 from f110x.policies.dqn.net import QNetwork
 
 
 class DQNAgent:
     def __init__(self, cfg: Dict[str, Any]):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device([cfg.get("device")])
 
         self.obs_dim = int(cfg["obs_dim"])
         action_set = np.asarray(cfg.get("action_set"), dtype=np.float32)

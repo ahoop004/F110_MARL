@@ -1,7 +1,8 @@
 """Compatibility helpers around torch serialization defaults."""
 from __future__ import annotations
 
-from typing import Any
+import os
+from typing import Any, Iterable, Optional
 
 import torch
 
@@ -33,4 +34,38 @@ def safe_load(path: str, *, map_location: Any | None = None, weights_only: bool 
         return torch.load(path, **load_kwargs)
 
 
-__all__ = ["safe_load"]
+def resolve_device(preferred: Optional[Iterable[Any]] = None) -> torch.device:
+    """Resolve torch device from preferred values, environment, then availability."""
+
+    candidates = []
+    if preferred:
+        for value in preferred:
+            if value is None:
+                continue
+            candidates.append(str(value))
+
+    env_value = os.environ.get("F110_DEVICE")
+    if env_value:
+        candidates.append(env_value)
+
+    for value in candidates:
+        choice = value.strip().lower()
+        if not choice:
+            continue
+        if choice == "cpu":
+            return torch.device("cpu")
+        if choice.startswith("cuda") or choice == "gpu":
+            if torch.cuda.is_available():
+                return torch.device(choice if choice.startswith("cuda") else "cuda")
+            print(
+                f"[WARN] Requested device '{value}' but CUDA is unavailable; falling back to CPU."
+            )
+            return torch.device("cpu")
+        print(f"[WARN] Unknown device '{value}'; expected 'cpu' or 'cuda'.")
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+__all__ = ["safe_load", "resolve_device"]

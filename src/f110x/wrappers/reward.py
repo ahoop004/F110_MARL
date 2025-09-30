@@ -1,12 +1,12 @@
-import math
 from typing import Dict
 
 import numpy as np
 
-from f110x.utils.geometry import (
-    compute_position2,
-    heading_alignment,
-    relative_bearing,
+from f110x.utils.reward_utils import (
+    P2Params,
+    ScalingParams,
+    apply_reward_scaling,
+    evaluate_position2,
 )
 
 class RewardWrapper:
@@ -102,38 +102,44 @@ class RewardWrapper:
         self.spin_alpha = float(spin_alpha)
         self.dt = float(dt)
 
-        self.p2_enabled = bool(p2_enabled)
-        self.p2_d_back = float(p2_d_back)
-        self.p2_lat_offset = float(p2_lat_offset)
-        self.p2_dist_thresh = float(p2_dist_thresh)
-        self.p2_angle_align_thresh = float(p2_angle_align_thresh)
-        self.p2_blind_angle = float(p2_blind_angle)
-        self.p2_hold_decay = max(float(p2_hold_decay), 1e-6)
-        self.p2_distance_scale = float(p2_distance_scale)
-        self.p2_angle_scale = float(p2_angle_scale)
-        self.p2_blind_bonus = float(p2_blind_bonus)
-        self.p2_lateral_scale = float(p2_lateral_scale)
-        self.p2_camp_speed_thresh = float(p2_camp_speed_thresh)
-        self.p2_camping_penalty = float(p2_camping_penalty)
-        self.p2_reward_clip = float(p2_reward_clip)
+        self.p2_params = P2Params(
+            enabled=bool(p2_enabled),
+            d_back=float(p2_d_back),
+            lat_offset=float(p2_lat_offset),
+            dist_thresh=float(p2_dist_thresh),
+            angle_align_thresh=float(p2_angle_align_thresh),
+            blind_angle=float(p2_blind_angle),
+            hold_decay=max(float(p2_hold_decay), 1e-6),
+            distance_scale=float(p2_distance_scale),
+            angle_scale=float(p2_angle_scale),
+            blind_bonus=float(p2_blind_bonus),
+            lateral_scale=float(p2_lateral_scale),
+            camp_speed_thresh=float(p2_camp_speed_thresh),
+            camping_penalty=float(p2_camping_penalty),
+            reward_clip=float(p2_reward_clip),
+        )
 
-        self.reward_horizon = None
+        horizon = None
         if reward_horizon not in (None, ""):
             try:
                 horizon_val = float(reward_horizon)
             except (TypeError, ValueError):
                 horizon_val = None
             if horizon_val is not None and horizon_val > 0:
-                self.reward_horizon = horizon_val
+                horizon = horizon_val
 
-        self.reward_clip = None
+        clip = None
         if reward_clip not in (None, ""):
             try:
                 clip_val = float(reward_clip)
             except (TypeError, ValueError):
                 clip_val = None
             if clip_val is not None and clip_val > 0:
-                self.reward_clip = clip_val
+                clip = clip_val
+
+        self.scaling_params = ScalingParams(horizon=horizon, clip=clip)
+        self.reward_horizon = self.scaling_params.horizon
+        self.reward_clip = self.scaling_params.clip
 
         # Retain any unhandled configuration keys for introspection/debugging.
         self._unused_keys = dict(_ignored_kwargs) if _ignored_kwargs else {}
@@ -279,97 +285,23 @@ class RewardWrapper:
             ty = float(pose_t[1])
             ttheta = float(pose_t[2]) if len(pose_t) > 2 else 0.0
 
-            if self.p2_enabled:
-                xp2, yp2 = compute_position2(
-                    pose_t,
-                    self.p2_d_back,
-                    self.p2_lat_offset,
-                )
-                dist_p2 = float(math.hypot(x - xp2, y - yp2))
-                phi = float(relative_bearing(pose_t, (x, y)))
-                angle_diff = float(heading_alignment(pose, (tx, ty)))
-
-                blind_ok = abs(phi) > self.p2_blind_angle
-                align_ok = (
-                    self.p2_angle_align_thresh <= 0.0
-                    or angle_diff <= self.p2_angle_align_thresh
-                )
-                range_ok = dist_p2 <= self.p2_dist_thresh
-
+            if self.p2_params.enabled:
                 p2_state = self._p2_state.setdefault(agent_id, {"hold": 0.0})
-                if blind_ok and align_ok and range_ok:
-                    p2_state["hold"] += self.dt
-                    in_p2 = True
-                else:
-                    p2_state["hold"] = 0.0
-                    in_p2 = False
-                hold_time = p2_state["hold"]
-
-                distance_term = -self.p2_distance_scale * dist_p2 if self.p2_distance_scale else 0.0
-                angle_term = -self.p2_angle_scale * angle_diff if self.p2_angle_scale else 0.0
-
-                blind_bonus = 0.0
-                if self.p2_blind_bonus and blind_ok:
-                    decay = math.exp(-hold_time / self.p2_hold_decay)
-                    blind_bonus = self.p2_blind_bonus * decay
-
-                lateral_term = 0.0
-                if self.p2_lateral_scale and abs(self.p2_lat_offset) > 1e-6:
-                    heading_vec = np.array([math.cos(ttheta), math.sin(ttheta)], dtype=np.float32)
-                    vec_to_attacker = np.array([x - tx, y - ty], dtype=np.float32)
-                    heading_norm = float(np.linalg.norm(heading_vec))
-                    vec_norm = float(np.linalg.norm(vec_to_attacker))
-                    if heading_norm > 1e-6 and vec_norm > 1e-6:
-                        cross = heading_vec[0] * vec_to_attacker[1] - heading_vec[1] * vec_to_attacker[0]
-                        sin_angle = cross / (heading_norm * vec_norm)
-                        desired_sign = 1.0 if self.p2_lat_offset >= 0.0 else -1.0
-                        lateral_term = self.p2_lateral_scale * desired_sign * sin_angle
-
-                camping_penalty = 0.0
-                if (
-                    self.p2_camping_penalty
-                    and hold_time > self.p2_hold_decay
-                    and speed < self.p2_camp_speed_thresh
-                ):
-                    excess = hold_time - self.p2_hold_decay
-                    camping_penalty = -self.p2_camping_penalty * min(1.0, excess / self.p2_hold_decay)
-
-                p2_raw = distance_term + angle_term + blind_bonus + lateral_term + camping_penalty
-                if self.p2_reward_clip > 0.0:
-                    p2_contrib = float(np.clip(p2_raw, -self.p2_reward_clip, self.p2_reward_clip))
-                else:
-                    p2_contrib = float(p2_raw)
-
-                shaped += p2_contrib
-
-                if p2_contrib:
-                    components["p2_total"] = components.get("p2_total", 0.0) + p2_contrib
-                if distance_term:
-                    components["p2_distance"] = components.get("p2_distance", 0.0) + distance_term
-                if angle_term:
-                    components["p2_angle"] = components.get("p2_angle", 0.0) + angle_term
-                if blind_bonus:
-                    components["p2_blind_bonus"] = components.get("p2_blind_bonus", 0.0) + blind_bonus
-                if lateral_term:
-                    components["p2_lateral"] = components.get("p2_lateral", 0.0) + lateral_term
-                if camping_penalty:
-                    components["p2_camping_penalty"] = (
-                        components.get("p2_camping_penalty", 0.0) + camping_penalty
-                    )
-
-                if isinstance(info, dict):
+                p2_total, p2_components, p2_metrics, new_hold = evaluate_position2(
+                    ego_pose=(x, y, theta),
+                    target_pose=(tx, ty, ttheta),
+                    speed=speed,
+                    state_hold=p2_state["hold"],
+                    params=self.p2_params,
+                    dt=self.dt,
+                )
+                p2_state["hold"] = new_hold
+                shaped += p2_total
+                for key, value in p2_components.items():
+                    components[key] = components.get(key, 0.0) + value
+                if isinstance(info, dict) and p2_metrics:
                     metrics = info.setdefault("p2_metrics", {})
-                    metrics.update(
-                        {
-                            "point": (xp2, yp2),
-                            "distance": dist_p2,
-                            "phi": phi,
-                            "in_blind": bool(blind_ok),
-                            "in_position": bool(in_p2),
-                            "hold_time": hold_time,
-                            "angle_diff": angle_diff,
-                        }
-                    )
+                    metrics.update(p2_metrics)
 
             to_agent_vec = np.array([x - tx, y - ty], dtype=np.float32)
             target_dist = float(np.linalg.norm(to_agent_vec))
@@ -456,21 +388,7 @@ class RewardWrapper:
             shaped += terminal_collision
             components["ego_collision_penalty"] = components.get("ego_collision_penalty", 0.0) + terminal_collision
 
-        # Post-scale rewards to keep episode totals bounded.
-        if self.reward_horizon:
-            scale = 1.0 / self.reward_horizon
-            shaped *= scale
-            for key in list(components.keys()):
-                components[key] *= scale
-            components["scale_factor"] = scale
-
-        if self.reward_clip:
-            clipped = float(np.clip(shaped, -self.reward_clip, self.reward_clip))
-            if clipped != shaped:
-                components["clip_delta"] = clipped - shaped
-                shaped = clipped
-
-        components["total_return"] = shaped
+        shaped, components = apply_reward_scaling(shaped, components, self.scaling_params)
 
         self._last_components[agent_id] = components
         return shaped

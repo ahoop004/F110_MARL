@@ -9,6 +9,14 @@ _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
 _EVAL_EP_OVERRIDE: Optional[int] = None
 _MAP_OVERRIDE: Optional[str] = None
+_CFG_OVERRIDE: Optional[str] = None
+_ALGO_OVERRIDE: Optional[str] = None
+
+_DEFAULT_CONFIGS = {
+    "dqn": "configs/experiment_gaplock_dqn.yaml",
+    "ppo": "configs/experiment_gaplock_ppo.yaml",
+    "td3": "configs/experiment_gaplock_td3.yaml",
+}
 
 argv = list(sys.argv)
 i = 0
@@ -51,6 +59,32 @@ while i < len(argv):
     if arg.startswith("--map="):
         _, value = arg.split("=", 1)
         _MAP_OVERRIDE = value
+        argv.pop(i)
+        continue
+    if arg == "--config":
+        if i + 1 >= len(argv):
+            print("[ERROR] --config requires a value", file=sys.stderr)
+            sys.exit(2)
+        _CFG_OVERRIDE = argv[i + 1]
+        argv.pop(i + 1)
+        argv.pop(i)
+        continue
+    if arg.startswith("--config="):
+        _, value = arg.split("=", 1)
+        _CFG_OVERRIDE = value
+        argv.pop(i)
+        continue
+    if arg == "--algo":
+        if i + 1 >= len(argv):
+            print("[ERROR] --algo requires a value", file=sys.stderr)
+            sys.exit(2)
+        _ALGO_OVERRIDE = argv[i + 1]
+        argv.pop(i + 1)
+        argv.pop(i)
+        continue
+    if arg.startswith("--algo="):
+        _, value = arg.split("=", 1)
+        _ALGO_OVERRIDE = value
         argv.pop(i)
         continue
     i += 1
@@ -248,8 +282,25 @@ def _log_eval_results(run, results):
 
 def main():
     cfg_env = os.environ.get("F110_CONFIG")
-    default_cfg = Path("configs/experiment_gaplock_dqn.yaml")
-    cfg_path = Path(cfg_env) if cfg_env else default_cfg
+
+    cfg_path: Optional[Path] = None
+    if _CFG_OVERRIDE:
+        cfg_path = Path(_CFG_OVERRIDE)
+    elif _ALGO_OVERRIDE:
+        algo_key = _ALGO_OVERRIDE.strip().lower()
+        cfg_candidate = _DEFAULT_CONFIGS.get(algo_key)
+        if cfg_candidate is None:
+            print(
+                f"[ERROR] Unknown algorithm '{_ALGO_OVERRIDE}'. Available: {sorted(_DEFAULT_CONFIGS)}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        cfg_path = Path(cfg_candidate)
+    elif cfg_env:
+        cfg_path = Path(cfg_env)
+    else:
+        cfg_path = Path(_DEFAULT_CONFIGS["dqn"])
+
     with cfg_path.open() as f:
         cfg = yaml.safe_load(f)
 
