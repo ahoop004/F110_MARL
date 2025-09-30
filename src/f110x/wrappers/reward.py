@@ -153,6 +153,7 @@ class RewardWrapper:
         self._spin_state: Dict[str, Dict[str, float]] = {}
         self._progress_state: Dict[str, Dict[str, int]] = {}
         self._p2_state: Dict[str, Dict[str, float]] = {}
+        self._returns: Dict[str, float] = {}
 
     def reset(self):
         self.prev_positions.clear()
@@ -162,6 +163,7 @@ class RewardWrapper:
         self._spin_state.clear()
         self._progress_state.clear()
         self._p2_state.clear()
+        self._returns.clear()
     
     def _spin_ctx(self, aid):
         ctx = self._spin_state.get(aid)
@@ -180,6 +182,7 @@ class RewardWrapper:
 
     def __call__(self, obs, agent_id, reward, done, info, *, all_obs=None):
         ego_obs = obs[agent_id]
+        accum_return = self._returns.get(agent_id, 0.0)
         pose = ego_obs["pose"]
         x, y, theta = float(pose[0]), float(pose[1]), float(pose[2])
 
@@ -383,12 +386,14 @@ class RewardWrapper:
                         components["target_crash_reward"] = (
                             components.get("target_crash_reward", 0.0) + self.target_crash_reward
                         )
-                    if self.success_reward_floor > 0.0 and shaped < self.success_reward_floor:
-                        components["success_floor"] = (
-                            components.get("success_floor", 0.0)
-                            + (self.success_reward_floor - shaped)
-                        )
-                        shaped = self.success_reward_floor
+                    if self.success_reward_floor > 0.0:
+                        current_total = accum_return + shaped
+                        bonus = max(0.0, self.success_reward_floor - current_total)
+                        if bonus > 0.0:
+                            shaped += bonus
+                            components["success_floor"] = (
+                                components.get("success_floor", 0.0) + bonus
+                            )
                     self.opponent_crash_reward_given.add(key)
 
         if done and ego_obs.get("collision", False):
@@ -398,6 +403,7 @@ class RewardWrapper:
 
         shaped, components = apply_reward_scaling(shaped, components, self.scaling_params)
 
+        self._returns[agent_id] = accum_return + shaped
         self._last_components[agent_id] = components
         return shaped
 
