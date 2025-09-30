@@ -135,13 +135,8 @@ class PPOAgent:
         obs_np = np.asarray(obs, dtype=np.float32)
         if not np.isfinite(obs_np).all():
             obs_np = np.nan_to_num(obs_np, copy=False)
-        self.obs_buf.append(obs_np)
-        self.act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
-        self.raw_act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
-        self.logp_buf.append(0.0)
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         val = self.critic(obs_t).squeeze(-1)
-        self.val_buf.append(float(val.item()))
         self._pending_bootstrap = float(val.item())
 
     # ------------------- GAE -------------------

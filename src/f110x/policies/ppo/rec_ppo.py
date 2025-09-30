@@ -323,9 +323,10 @@ class RecurrentPPOAgent:
                 continue
             obs_seq = torch.as_tensor(obs_arr[start:end], dtype=torch.float32, device=self.device)
             raw_seq = torch.as_tensor(raw_arr[start:end], dtype=torch.float32, device=self.device)
-            logp_seq = logp_old_tensor[start:end]
-            adv_seq = adv_tensor[start:end]
-            ret_seq = ret_tensor[start:end]
+            seq_len = obs_seq.shape[0]
+            logp_seq = logp_old_tensor[start : start + seq_len]
+            adv_seq = adv_tensor[start : start + seq_len]
+            ret_seq = ret_tensor[start : start + seq_len]
             episodes.append(
                 {
                     "obs": obs_seq,
