@@ -1,5 +1,13 @@
-import numpy as np
+import math
 from typing import Dict
+
+import numpy as np
+
+from f110x.utils.geometry import (
+    compute_position2,
+    heading_alignment,
+    relative_bearing,
+)
 
 class RewardWrapper:
     def __init__(
@@ -38,6 +46,21 @@ class RewardWrapper:
         spin_grace_steps=20,        # steps after reset with no spin penalty
         spin_alpha=0.2,             # EMA smoothing for yaw rate
         dt=0.01,
+        # Position-2 / blind-spot shaping parameters
+        p2_enabled=False,
+        p2_d_back=0.6,
+        p2_lat_offset=0.4,
+        p2_dist_thresh=0.3,
+        p2_angle_align_thresh=0.35,
+        p2_blind_angle=2.356194490192345,
+        p2_hold_decay=3.0,
+        p2_distance_scale=1.0,
+        p2_angle_scale=0.5,
+        p2_blind_bonus=0.4,
+        p2_lateral_scale=0.2,
+        p2_camp_speed_thresh=1.2,
+        p2_camping_penalty=0.2,
+        p2_reward_clip=1.0,
         **_ignored_kwargs,
     ):
         """Rich reward shaping for mixed pursuit/herding."""
@@ -77,6 +100,21 @@ class RewardWrapper:
         self.spin_alpha = float(spin_alpha)
         self.dt = float(dt)
 
+        self.p2_enabled = bool(p2_enabled)
+        self.p2_d_back = float(p2_d_back)
+        self.p2_lat_offset = float(p2_lat_offset)
+        self.p2_dist_thresh = float(p2_dist_thresh)
+        self.p2_angle_align_thresh = float(p2_angle_align_thresh)
+        self.p2_blind_angle = float(p2_blind_angle)
+        self.p2_hold_decay = max(float(p2_hold_decay), 1e-6)
+        self.p2_distance_scale = float(p2_distance_scale)
+        self.p2_angle_scale = float(p2_angle_scale)
+        self.p2_blind_bonus = float(p2_blind_bonus)
+        self.p2_lateral_scale = float(p2_lateral_scale)
+        self.p2_camp_speed_thresh = float(p2_camp_speed_thresh)
+        self.p2_camping_penalty = float(p2_camping_penalty)
+        self.p2_reward_clip = float(p2_reward_clip)
+
         # Retain any unhandled configuration keys for introspection/debugging.
         self._unused_keys = dict(_ignored_kwargs) if _ignored_kwargs else {}
 
@@ -86,6 +124,7 @@ class RewardWrapper:
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._spin_state: Dict[str, Dict[str, float]] = {}
         self._progress_state: Dict[str, Dict[str, int]] = {}
+        self._p2_state: Dict[str, Dict[str, float]] = {}
 
     def reset(self):
         self.prev_positions.clear()
@@ -94,6 +133,7 @@ class RewardWrapper:
         self._last_components.clear()
         self._spin_state.clear()
         self._progress_state.clear()
+        self._p2_state.clear()
     
     def _spin_ctx(self, aid):
         ctx = self._spin_state.get(aid)
@@ -218,6 +258,98 @@ class RewardWrapper:
             tx = float(pose_t[0])
             ty = float(pose_t[1])
             ttheta = float(pose_t[2]) if len(pose_t) > 2 else 0.0
+
+            if self.p2_enabled:
+                xp2, yp2 = compute_position2(
+                    pose_t,
+                    self.p2_d_back,
+                    self.p2_lat_offset,
+                )
+                dist_p2 = float(math.hypot(x - xp2, y - yp2))
+                phi = float(relative_bearing(pose_t, (x, y)))
+                angle_diff = float(heading_alignment(pose, (tx, ty)))
+
+                blind_ok = abs(phi) > self.p2_blind_angle
+                align_ok = (
+                    self.p2_angle_align_thresh <= 0.0
+                    or angle_diff <= self.p2_angle_align_thresh
+                )
+                range_ok = dist_p2 <= self.p2_dist_thresh
+
+                p2_state = self._p2_state.setdefault(agent_id, {"hold": 0.0})
+                if blind_ok and align_ok and range_ok:
+                    p2_state["hold"] += self.dt
+                    in_p2 = True
+                else:
+                    p2_state["hold"] = 0.0
+                    in_p2 = False
+                hold_time = p2_state["hold"]
+
+                distance_term = -self.p2_distance_scale * dist_p2 if self.p2_distance_scale else 0.0
+                angle_term = -self.p2_angle_scale * angle_diff if self.p2_angle_scale else 0.0
+
+                blind_bonus = 0.0
+                if self.p2_blind_bonus and blind_ok:
+                    decay = math.exp(-hold_time / self.p2_hold_decay)
+                    blind_bonus = self.p2_blind_bonus * decay
+
+                lateral_term = 0.0
+                if self.p2_lateral_scale and abs(self.p2_lat_offset) > 1e-6:
+                    heading_vec = np.array([math.cos(ttheta), math.sin(ttheta)], dtype=np.float32)
+                    vec_to_attacker = np.array([x - tx, y - ty], dtype=np.float32)
+                    heading_norm = float(np.linalg.norm(heading_vec))
+                    vec_norm = float(np.linalg.norm(vec_to_attacker))
+                    if heading_norm > 1e-6 and vec_norm > 1e-6:
+                        cross = heading_vec[0] * vec_to_attacker[1] - heading_vec[1] * vec_to_attacker[0]
+                        sin_angle = cross / (heading_norm * vec_norm)
+                        desired_sign = 1.0 if self.p2_lat_offset >= 0.0 else -1.0
+                        lateral_term = self.p2_lateral_scale * desired_sign * sin_angle
+
+                camping_penalty = 0.0
+                if (
+                    self.p2_camping_penalty
+                    and hold_time > self.p2_hold_decay
+                    and speed < self.p2_camp_speed_thresh
+                ):
+                    excess = hold_time - self.p2_hold_decay
+                    camping_penalty = -self.p2_camping_penalty * min(1.0, excess / self.p2_hold_decay)
+
+                p2_raw = distance_term + angle_term + blind_bonus + lateral_term + camping_penalty
+                if self.p2_reward_clip > 0.0:
+                    p2_contrib = float(np.clip(p2_raw, -self.p2_reward_clip, self.p2_reward_clip))
+                else:
+                    p2_contrib = float(p2_raw)
+
+                shaped += p2_contrib
+
+                if p2_contrib:
+                    components["p2_total"] = components.get("p2_total", 0.0) + p2_contrib
+                if distance_term:
+                    components["p2_distance"] = components.get("p2_distance", 0.0) + distance_term
+                if angle_term:
+                    components["p2_angle"] = components.get("p2_angle", 0.0) + angle_term
+                if blind_bonus:
+                    components["p2_blind_bonus"] = components.get("p2_blind_bonus", 0.0) + blind_bonus
+                if lateral_term:
+                    components["p2_lateral"] = components.get("p2_lateral", 0.0) + lateral_term
+                if camping_penalty:
+                    components["p2_camping_penalty"] = (
+                        components.get("p2_camping_penalty", 0.0) + camping_penalty
+                    )
+
+                if isinstance(info, dict):
+                    metrics = info.setdefault("p2_metrics", {})
+                    metrics.update(
+                        {
+                            "point": (xp2, yp2),
+                            "distance": dist_p2,
+                            "phi": phi,
+                            "in_blind": bool(blind_ok),
+                            "in_position": bool(in_p2),
+                            "hold_time": hold_time,
+                            "angle_diff": angle_diff,
+                        }
+                    )
 
             to_agent_vec = np.array([x - tx, y - ty], dtype=np.float32)
             target_dist = float(np.linalg.norm(to_agent_vec))
