@@ -19,7 +19,7 @@ from f110x.wrappers.reward import RewardWrapper
 from f110x.trainers.base import Transition, Trainer
 
 
-DEFAULT_CONFIG_PATH = Path("configs/config.yaml")
+DEFAULT_CONFIG_PATH = Path("configs/experiments.yaml")
 
 
 @dataclass
@@ -87,9 +87,9 @@ def _resolve_reward_mode(curriculum: List[Tuple[Optional[int], str]], episode_id
     return "adversarial"
 
 
-def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
+def create_training_context(cfg_path: Path | None = None, *, experiment: str | None = None) -> TrainingContext:
     cfg_file = cfg_path or DEFAULT_CONFIG_PATH
-    cfg = ExperimentConfig.load(cfg_file)
+    cfg = ExperimentConfig.load(cfg_file, experiment=experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
     team = build_agents(env, cfg)

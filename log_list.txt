@@ -1,11 +1,11 @@
 train episode callback:
 []train/return_attacker,
-[]train/steps,
+[x]train/steps,
 []train/success,
-[]train/epsilon.
+[x]train/epsilon.
 
 train optimizer updates:
-[]train/<stat name> (trainer.update output; policy/value/entropy/adv/action histogram metrics are filtered).
+[x]train/<stat name> (trainer.update output; policy/value/entropy/adv/action histogram metrics are filtered).
 
 eval logging:
 - (none; W&B logging disabled for per-episode eval summaries).

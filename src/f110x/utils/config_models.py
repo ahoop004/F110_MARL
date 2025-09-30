@@ -311,11 +311,33 @@ class ExperimentConfig:
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path) -> "ExperimentConfig":
+    def load(cls, path: Path, experiment: Optional[str] = None) -> "ExperimentConfig":
         import yaml
 
         with path.open("r") as f:
-            data = yaml.safe_load(f)
+            raw_doc = yaml.safe_load(f) or {}
+
+        if not isinstance(raw_doc, dict):
+            raise TypeError("Configuration root must be a mapping")
+
+        if "experiments" in raw_doc:
+            experiments = raw_doc.get("experiments") or {}
+            if not isinstance(experiments, dict):
+                raise TypeError("'experiments' section must be a mapping")
+            selected = experiment or raw_doc.get("default_experiment")
+            if not selected:
+                raise KeyError("No experiment provided and 'default_experiment' missing")
+            if selected not in experiments:
+                raise KeyError(f"Experiment '{selected}' not found in config")
+            data = experiments[selected] or {}
+            if not isinstance(data, dict):
+                raise TypeError(f"Experiment '{selected}' must be a mapping")
+            data = dict(data)
+            data.setdefault("main", {})
+            if isinstance(data["main"], dict):
+                data["main"].setdefault("experiment_name", selected)
+        else:
+            data = raw_doc
 
         raw_agents = data.get("agents")
         if raw_agents is not None:

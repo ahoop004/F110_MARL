@@ -17,7 +17,7 @@ from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.wrappers.reward import RewardWrapper
 
 
-DEFAULT_CONFIG_PATH = Path("configs/config.yaml")
+DEFAULT_CONFIG_PATH = Path("configs/experiments.yaml")
 
 
 def _to_serializable(value):
@@ -81,9 +81,10 @@ def create_evaluation_context(
     cfg_path: Path | None = None,
     *,
     auto_load: bool = False,
+    experiment: str | None = None,
 ) -> EvaluationContext:
     cfg_file = cfg_path or DEFAULT_CONFIG_PATH
-    cfg = ExperimentConfig.load(cfg_file)
+    cfg = ExperimentConfig.load(cfg_file, experiment=experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
     team = build_agents(env, cfg)

@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 import random
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
@@ -11,11 +11,12 @@ _EVAL_EP_OVERRIDE: Optional[int] = None
 _MAP_OVERRIDE: Optional[str] = None
 _CFG_OVERRIDE: Optional[str] = None
 _ALGO_OVERRIDE: Optional[str] = None
+_EXP_OVERRIDE: Optional[str] = None
 
-_DEFAULT_CONFIGS = {
-    "dqn": "configs/experiment_gaplock_dqn.yaml",
-    "ppo": "configs/experiment_gaplock_ppo.yaml",
-    "td3": "configs/experiment_gaplock_td3.yaml",
+_DEFAULT_CONFIGS: Dict[str, Tuple[str, str]] = {
+    "dqn": ("configs/experiments.yaml", "gaplock_dqn"),
+    "ppo": ("configs/experiments.yaml", "gaplock_ppo"),
+    "td3": ("configs/experiments.yaml", "gaplock_td3"),
 }
 
 argv = list(sys.argv)
@@ -72,6 +73,19 @@ while i < len(argv):
     if arg.startswith("--config="):
         _, value = arg.split("=", 1)
         _CFG_OVERRIDE = value
+        argv.pop(i)
+        continue
+    if arg == "--experiment":
+        if i + 1 >= len(argv):
+            print("[ERROR] --experiment requires a value", file=sys.stderr)
+            sys.exit(2)
+        _EXP_OVERRIDE = argv[i + 1]
+        argv.pop(i + 1)
+        argv.pop(i)
+        continue
+    if arg.startswith("--experiment="):
+        _, value = arg.split("=", 1)
+        _EXP_OVERRIDE = value
         argv.pop(i)
         continue
     if arg == "--algo":
@@ -255,25 +269,58 @@ def main():
     cfg_env = os.environ.get("F110_CONFIG")
 
     cfg_path: Optional[Path] = None
+    cfg_experiment: Optional[str] = _EXP_OVERRIDE
+
     if _CFG_OVERRIDE:
         cfg_path = Path(_CFG_OVERRIDE)
     elif _ALGO_OVERRIDE:
         algo_key = _ALGO_OVERRIDE.strip().lower()
-        cfg_candidate = _DEFAULT_CONFIGS.get(algo_key)
-        if cfg_candidate is None:
+        cfg_info = _DEFAULT_CONFIGS.get(algo_key)
+        if cfg_info is None:
             print(
                 f"[ERROR] Unknown algorithm '{_ALGO_OVERRIDE}'. Available: {sorted(_DEFAULT_CONFIGS)}",
                 file=sys.stderr,
             )
             sys.exit(2)
+        cfg_candidate, cfg_exp = cfg_info
         cfg_path = Path(cfg_candidate)
+        cfg_experiment = cfg_experiment or cfg_exp
     elif cfg_env:
         cfg_path = Path(cfg_env)
     else:
-        cfg_path = Path(_DEFAULT_CONFIGS["dqn"])
+        cfg_candidate, cfg_exp = _DEFAULT_CONFIGS["dqn"]
+        cfg_path = Path(cfg_candidate)
+        cfg_experiment = cfg_experiment or cfg_exp
 
     with cfg_path.open() as f:
-        cfg = yaml.safe_load(f)
+        cfg_doc = yaml.safe_load(f) or {}
+
+    if not isinstance(cfg_doc, dict):
+        print("[ERROR] Configuration root must be a mapping", file=sys.stderr)
+        sys.exit(2)
+
+    experiments_section = cfg_doc.get("experiments") if isinstance(cfg_doc.get("experiments"), dict) else None
+    if experiments_section is not None:
+        if not cfg_experiment:
+            cfg_experiment = cfg_doc.get("default_experiment")
+        if not cfg_experiment:
+            print("[ERROR] Experiment must be specified for multi-experiment configs", file=sys.stderr)
+            sys.exit(2)
+        if cfg_experiment not in experiments_section:
+            print(
+                f"[ERROR] Experiment '{cfg_experiment}' not found. Available: {sorted(experiments_section)}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        cfg = experiments_section[cfg_experiment] or {}
+        if not isinstance(cfg, dict):
+            print(f"[ERROR] Experiment '{cfg_experiment}' must be a mapping", file=sys.stderr)
+            sys.exit(2)
+    else:
+        cfg = cfg_doc
+        if cfg_experiment and _EXP_OVERRIDE:
+            print("[WARN] --experiment ignored because config has no experiments section.")
+        cfg_experiment = None
 
     config_dirty = False
     env_cfg = cfg.setdefault("env", {})
@@ -305,7 +352,12 @@ def main():
     if config_dirty:
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w")
         with tmp_file:
-            yaml.safe_dump(cfg, tmp_file)
+            if experiments_section is not None and cfg_experiment:
+                experiments_section[cfg_experiment] = cfg
+                cfg_doc["experiments"] = experiments_section
+                yaml.safe_dump(cfg_doc, tmp_file)
+            else:
+                yaml.safe_dump(cfg, tmp_file)
         tmp_cfg_path = Path(tmp_file.name)
         cfg_path = tmp_cfg_path
 
@@ -316,7 +368,7 @@ def main():
     update_cb = update_logger if wandb_run is not None else None
 
     if mode == "train":
-        train_ctx = train_module.create_training_context(cfg_path)
+        train_ctx = train_module.create_training_context(cfg_path, experiment=cfg_experiment)
         if _RENDER_FLAG:
             train_ctx.render_interval = 1
             train_ctx.env.render_mode = "human"
@@ -333,8 +385,7 @@ def main():
         print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
     elif mode == "eval":
-        # Rebuild evaluation context so explicit checkpoint overrides take effect
-        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True)
+        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True, experiment=cfg_experiment)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
         bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
@@ -343,7 +394,7 @@ def main():
         _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
-        train_ctx = train_module.create_training_context(cfg_path)
+        train_ctx = train_module.create_training_context(cfg_path, experiment=cfg_experiment)
         if _RENDER_FLAG:
             train_ctx.render_interval = 1
             train_ctx.env.render_mode = "human"
@@ -359,7 +410,7 @@ def main():
         train_ctx.ppo_agent.save(str(train_ctx.best_path))
         print(f"[INFO] Saved final model to {train_ctx.best_path}")
 
-        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True)
+        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True, experiment=cfg_experiment)
         if _RENDER_FLAG:
             eval_ctx.env.render_mode = "human"
         eval_bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
