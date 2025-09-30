@@ -179,7 +179,7 @@ experiments:
       exploration_noise_final: 0.05
       exploration_noise_decay_steps: 250000
       hidden_dims: [256, 256]
-      train_episodes: 5000
+      train_episodes: 100
       eval_episodes: 5
       save_dir: checkpoints
       checkpoint_name: td3_gaplock.pt
