@@ -44,58 +44,15 @@ shared:  # Common building blocks reused across experiment profiles
       bubble_radius: 3  # Distance ahead to ignore obstacles when selecting gaps (m)
       steer_smooth: 0.35  # Smoothing factor applied to steering commands
 
-  reward: &reward_base  # Default reward shaping used by every attacker
-    alive_bonus: 0.0  # Small incremental bonus for surviving each step
-    time_penalty: 0.0  # Dense penalty encouraging faster completion (0 disables)
-    forward_scale: 0.0021  # Scaling for progress made along the heading direction
-    reverse_penalty: 0.0040  # Penalty applied when moving backwards
-    lateral_penalty: 0.00025  # Penalty on sideways slip to promote alignment
-    target_distance_scale: 0.0015  # Incentive to close distance to the target vehicle
-    target_wall_bonus: 0.0014  # Reward for pushing the defender towards walls
-    self_wall_penalty: 0.0003  # Penalty for the attacker contacting the walls
-    herd_bonus: 1.2  # Bonus awarded for forcing the defender to crash
-    ego_collision_penalty: -2.0  # Penalty when the attacker crashes itself
-    opponent_collision_bonus: 10.0  # Extra bonus when the defender crashes
-    target_crash_reward: 100.2  # Large terminal reward for successful collisions
-    herd_position_radius: 3.0  # Preferred orbit radius around the defender for herding
-    herd_position_slack: 1.2  # Smoothness factor for radial herding reward tolerance
-    herd_position_scale: 0.0028  # Scaling applied to radial herding reward
-    herd_angle_scale: 0.0016  # Scaling applied to angular alignment during herding
-    herd_angle_power: 2.0  # Exponent controlling emphasis on alignment quality
-    slow_speed_threshold: 1.1  # Speed below which the agent is considered slow (m/s)
-    slow_speed_penalty: -0.0022  # Penalty for staying under the slow speed threshold
-    progress_threshold: 0.04  # Minimum required progress to avoid stalling penalties
-    progress_patience: 80  # Steps allowed without progress before penalties kick in
-    progress_penalty: 0.0  # Penalty applied when progress stalls
-    spin_thresh: 0.55  # Angular velocity threshold to detect spinning (rad/s)
-    spin_penalty: 1.1  # Magnitude of penalty when a spin is detected
-    spin_speed_gate: 0.6  # Maximum speed at which spin penalties are considered (m/s)
-    spin_dwell_steps: 3  # Consecutive steps required before applying spin penalty
-    spin_step_cap: 0.0025  # Maximum absolute penalty applied per spin event
-    spin_episode_cap: 0.15  # Maximum cumulative spin penalty per episode
-    spin_grace_steps: 20  # Initial steps exempt from spin penalties after reset
-    spin_alpha: 0.2  # Exponential smoothing factor for spin detection
-    dt: 0.01  # Time step used by the reward wrapper for decay calculations
-    p2_enabled: true  # Enable Position-2 (herding) shaping logic
-    p2_d_back: 0.6  # Desired longitudinal offset behind the defender (m)
-    p2_lat_offset: 0.4  # Desired lateral offset for herding (m)
-    p2_dist_thresh: 0.3  # Distance required to consider Position-2 satisfied (m)
-    p2_angle_align_thresh: 0.35  # Angular alignment threshold for Position-2 (rad)
-    p2_blind_angle: 2.356  # Angle defining the defender blind spot (rad)
-    p2_hold_decay: 3.0  # Decay constant controlling blind-spot bonus persistence
-    p2_distance_scale: 1.0  # Scaling applied to Position-2 distance shaping
-    p2_angle_scale: 0.5  # Scaling applied to Position-2 angular shaping
-    p2_blind_bonus: 0.45  # Bonus awarded for sustaining Position-2 in the blind spot
-    p2_lateral_scale: 0.25  # Scaling applied to lateral offset alignment
-    p2_camp_speed_thresh: 1.5  # Speed threshold to trigger camping penalties (m/s)
-    p2_camping_penalty: 0.3  # Penalty applied when camping too long behind the defender
-    p2_reward_clip: 1.2  # Clamp magnitude for Position-2 shaping contributions
-    truncation_penalty: -1.0  # Penalty added when episodes truncate due to max steps
-    idle_speed_threshold: 0.4  # Speed below which the idle logic considers the agent stalled (m/s)
-    idle_patience_steps: 120  # Steps allowed under idle speed before ending the episode
-    success_reward_floor: 1.0  # Minimum total reward guaranteed after successful capture
-    reward_horizon: null  # Override for reward scaling horizon (null uses env max_steps)
-    reward_clip: null  # Global clip for reward magnitude (null keeps full values)
+  reward: &reward_base  # Sparse success reward used by every attacker
+    target_crash_reward: 100.2  # Positive payout when the defender crashes and attacker does not
+    ego_collision_penalty: -2.0  # Negative reward applied if the attacker crashes
+    truncation_penalty: 0.0  # Optional penalty when episodes end via truncation
+    success_once: true  # Only award the success bonus the first time the defender crashes
+    reward_horizon: null  # Optional scaling horizon for the sparse reward (null disables scaling)
+    reward_clip: null  # Optional global reward clip (null leaves rewards unclipped)
+    idle_speed_threshold: 0.4  # Speed threshold leveraged by training utilities for idle detection (m/s)
+    idle_patience_steps: 120  # Steps tolerated under the idle threshold before flagging stagnation
 
   episodes:  # Shared episode counts referenced by individual algorithms
     train: &shared_train_episodes 5000  # Number of training episodes each run targets
