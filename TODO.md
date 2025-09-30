@@ -1,13 +1,13 @@
 # TODO
 
-- [ ] High-impact: Batch physics stepping/collision handling in simulator (`src/f110x/physics/simulaton.py`).
-    - [ ] Preallocate reusable buffers for `prev_states`, `verts`, `scans`, and collision flags to cut per-step object churn.
-    - [ ] Move agent/environment collision merging into an `@njit` helper so the hot path avoids Python loops.
-    - [ ] Re-run LiDAR sampling after collision rewinds so `agent.scan` matches the restored pose (fixes TODO at line 171).
+- [x] High-impact: Batch physics stepping/collision handling in simulator (`src/f110x/physics/simulaton.py`).
+    - [x] Preallocate reusable buffers for `prev_states`, `verts`, `scans`, and collision flags to cut per-step object churn.
+    - [x] Move agent/environment collision merging into an `@njit` helper so the hot path avoids Python loops.
+    - [x] Re-run LiDAR sampling after collision rewinds so `agent.scan` matches the restored pose (fixes TODO at line 171).
 
-- [ ] High-impact: Eliminate per-step LiDAR occlusion stacking (`src/f110x/physics/simulaton.py`, `src/f110x/physics/vehicle.py`).
-    - [ ] Pass opponent vertex views instead of rebuilding `np.stack([...])` for every agent each step.
-    - [ ] Refactor `RaceCar.ray_cast_agents` to consume contiguous float32 buffers without copying/converting per opponent.
+- [x] High-impact: Eliminate per-step LiDAR occlusion stacking (`src/f110x/physics/simulaton.py`, `src/f110x/physics/vehicle.py`).
+    - [x] Pass opponent vertex views instead of rebuilding `np.stack([...])` for every agent each step.
+    - [x] Refactor `RaceCar.ray_cast_agents` to consume contiguous float32 buffers without copying/converting per opponent.
 
 - [ ] Medium-impact: Trim repeated allocations in `RaceCar.update_pose` (`src/f110x/physics/vehicle.py`).
     - [ ] Cache frequently used params/arrays (`[sv, accl]`, `scan_pose`) instead of recreating them four times per integration step.

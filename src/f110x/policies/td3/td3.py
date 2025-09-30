@@ -8,10 +8,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-try:  # optional dependency for rich logging
-    import wandb  # type: ignore
-except ImportError:  # pragma: no cover - wandb optional
-    wandb = None
+# try:  # optional dependency for rich logging
+#     import wandb  # type: ignore
+# except ImportError:  # pragma: no cover - wandb optional
+#     wandb = None
 
 from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
@@ -139,41 +139,41 @@ class TD3Agent:
         critic_loss.backward()
         self.critic_opt.step()
 
-        actor_loss = torch.zeros(1, device=self.device)
-        metrics: Dict[str, Any] = {
-            "critic_loss": float(critic_loss.detach().cpu().item()),
-            "q1_mean": float(current_q1.mean().detach().cpu().item()),
-            "q2_mean": float(current_q2.mean().detach().cpu().item()),
-            "q_target_mean": float(target.mean().detach().cpu().item()),
-            "q1_std": float(current_q1.std(unbiased=False).detach().cpu().item()),
-            "q2_std": float(current_q2.std(unbiased=False).detach().cpu().item()),
-            "q_target_std": float(target.std(unbiased=False).detach().cpu().item()),
-            "action_mean": float(action_samples.mean()),
-            "action_std": float(action_samples.std()),
-            "action_abs_mean": float(np.abs(action_samples).mean()),
-            "exploration_noise": float(self._current_exploration_noise()),
-        }
+        # actor_loss = torch.zeros(1, device=self.device)
+        # metrics: Dict[str, Any] = {
+        #     "critic_loss": float(critic_loss.detach().cpu().item()),
+        #     "q1_mean": float(current_q1.mean().detach().cpu().item()),
+        #     "q2_mean": float(current_q2.mean().detach().cpu().item()),
+        #     "q_target_mean": float(target.mean().detach().cpu().item()),
+        #     "q1_std": float(current_q1.std(unbiased=False).detach().cpu().item()),
+        #     "q2_std": float(current_q2.std(unbiased=False).detach().cpu().item()),
+        #     "q_target_std": float(target.std(unbiased=False).detach().cpu().item()),
+        #     "action_mean": float(action_samples.mean()),
+        #     "action_std": float(action_samples.std()),
+        #     "action_abs_mean": float(np.abs(action_samples).mean()),
+        #     "exploration_noise": float(self._current_exploration_noise()),
+        # }
 
-        if wandb is not None:
-            metrics["action_histogram"] = wandb.Histogram(action_samples.flatten())
+        # if wandb is not None:
+        #     metrics["action_histogram"] = wandb.Histogram(action_samples.flatten())
 
-        if self.total_it % self.policy_delay == 0:
-            actor_action = self._scale_action_torch(self.actor(obs))
-            actor_loss = -self.critic1(obs, actor_action).mean()
+        # if self.total_it % self.policy_delay == 0:
+        #     actor_action = self._scale_action_torch(self.actor(obs))
+        #     actor_loss = -self.critic1(obs, actor_action).mean()
 
-            self.actor_opt.zero_grad(set_to_none=True)
-            actor_loss.backward()
-            self.actor_opt.step()
+        #     self.actor_opt.zero_grad(set_to_none=True)
+        #     actor_loss.backward()
+        #     self.actor_opt.step()
 
-            soft_update(self.actor_target, self.actor, self.tau)
-            soft_update(self.critic_target1, self.critic1, self.tau)
-            soft_update(self.critic_target2, self.critic2, self.tau)
+        #     soft_update(self.actor_target, self.actor, self.tau)
+        #     soft_update(self.critic_target1, self.critic1, self.tau)
+        #     soft_update(self.critic_target2, self.critic2, self.tau)
 
-        self.total_it += 1
+        # self.total_it += 1
 
-        metrics["actor_loss"] = float(actor_loss.detach().cpu().item())
-        metrics["update_it"] = float(self.total_it)
-        return metrics
+        # metrics["actor_loss"] = float(actor_loss.detach().cpu().item())
+        # metrics["update_it"] = float(self.total_it)
+        # return metrics
 
     def _current_exploration_noise(self) -> float:
         if self.exploration_noise_decay_steps <= 0:

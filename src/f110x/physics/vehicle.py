@@ -191,14 +191,14 @@ class RaceCar(object):
         # reset scan random generator
         self.scan_rng = np.random.default_rng(seed=self.seed)
 
-    def ray_cast_agents(self, opp_verts: np.ndarray):
-        """
-        Ray cast onto other agents in the env, modify original scan.
+    def ray_cast_agents(self, all_verts: np.ndarray, agent_index: int):
+        """Modify scan by accounting for other agents' hulls.
 
         Args:
-            opp_verts: (M, 4, 2) array of opponent vehicle corner vertices
+            all_verts: (N, 4, 2) contiguous vertex buffer for every agent.
+            agent_index: Index of the current agent inside ``all_verts``.
         """
-        if opp_verts is None or opp_verts.size == 0:
+        if all_verts is None or all_verts.shape[0] <= 1:
             return
 
         scan_pose = np.array([
@@ -207,13 +207,35 @@ class RaceCar(object):
             self.state[4]
         ], dtype=np.float64)
 
-        # operate on a copy so original scan remains untouched if we exit early
-        new_scan = self.scan.astype(np.float64, copy=False).copy()
+        scan_view = np.asarray(self.scan, dtype=np.float32)
 
-        for verts in opp_verts:
-            new_scan = ray_cast(scan_pose, new_scan, RaceCar.scan_angles, np.asarray(verts, dtype=np.float64))
+        total = all_verts.shape[0]
+        for idx in range(total):
+            if idx == agent_index:
+                continue
+            verts = np.asarray(all_verts[idx], dtype=np.float32)
+            ray_cast(scan_pose, scan_view, RaceCar.scan_angles, verts)
 
-        self.scan = new_scan.astype(np.float32, copy=False)
+        self.scan = scan_view
+
+    def compute_scan(self) -> np.ndarray:
+        """Recompute the LiDAR scan for the vehicle's current pose."""
+
+        scan_pose = np.array([
+            self.state[0] + self.lidar_dist * np.cos(self.state[4]),
+            self.state[1] + self.lidar_dist * np.sin(self.state[4]),
+            self.state[4],
+        ], dtype=np.float64)
+
+        current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng)
+        if current_scan is None:
+            self.scan = np.zeros((self.num_beams,), dtype=np.float32)
+            self.in_collision = False
+            return self.scan
+
+        self.check_ttc(current_scan)
+        self.scan = np.asarray(current_scan, dtype=np.float32)
+        return self.scan
 
     def check_ttc(self, current_scan):
         if current_scan is None or not isinstance(current_scan, np.ndarray) or current_scan.size == 0:
@@ -440,22 +462,19 @@ class RaceCar(object):
         """
 
         if agent_scans is not None and len(agent_scans) > agent_index:
-            current_scan = np.array(agent_scans[agent_index], dtype=np.float32)
-            self.check_ttc(current_scan)
-        else:
-    # compute a real scan at the current pose
-            scan_x = self.state[0] + self.lidar_dist * np.cos(self.state[4])
-            scan_y = self.state[1] + self.lidar_dist * np.sin(self.state[4])
-            scan_pose = np.array([scan_x, scan_y, self.state[4]], dtype=np.float32)
-            current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng).astype(np.float32)
-
-        self.scan = current_scan
-        if current_scan is not None and current_scan.size > 0:
-            try:
-                self.check_ttc(current_scan)
-            except Exception as e:
-                # safety fallback: don’t crash environment on TTC errors
-                print(f"[WARN] TTC check failed: {e}")
+            current_scan = np.asarray(agent_scans[agent_index], dtype=np.float32)
+            self.scan = current_scan
+            if current_scan.size > 0:
+                try:
+                    self.check_ttc(current_scan)
+                except Exception as e:
+                    # safety fallback: don’t crash environment on TTC errors
+                    print(f"[WARN] TTC check failed: {e}")
+                    self.in_collision = False
+            else:
                 self.in_collision = False
-        else:
+            return
+
+        current_scan = self.compute_scan()
+        if current_scan.size == 0:
             self.in_collision = False

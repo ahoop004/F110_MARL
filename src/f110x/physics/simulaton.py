@@ -6,11 +6,34 @@ import numpy as np
 from numba import njit
 
 from f110x.physics.vehicle import RaceCar
-from f110x.physics import collision_models
 from f110x.physics.collision_models import get_vertices, collision_multiple
 
 
 ENV_COLLISION_IDX = -2
+
+
+@njit(cache=True)
+def _merge_collision_results(
+    agent_flags: np.ndarray,
+    agent_indices: np.ndarray,
+    env_mask: np.ndarray,
+    out_collisions: np.ndarray,
+    out_indices: np.ndarray,
+    env_only_idx: int,
+):
+    count = out_collisions.shape[0]
+    for i in range(count):
+        env_hit = env_mask[i]
+        agent_hit = agent_flags[i] != 0.0
+        if agent_hit:
+            out_collisions[i] = 1.0
+            out_indices[i] = int(agent_indices[i])
+        elif env_hit:
+            out_collisions[i] = 1.0
+            out_indices[i] = env_only_idx
+        else:
+            out_collisions[i] = 0.0
+            out_indices[i] = -1
 
 
 class Integrator(Enum):
@@ -55,10 +78,10 @@ class Simulator(object):
         self.integrator = str(integrator)
 
         self.params = params
-        self.agent_poses = np.empty((self.num_agents, 3))
+        self.agent_poses = np.empty((self.num_agents, 3), dtype=np.float32)
         self.agents = []
-        self.collisions = np.zeros((self.num_agents, ))
-        self.collision_idx = -1 * np.ones((self.num_agents, ))
+        self.collisions = np.zeros((self.num_agents,), dtype=np.float32)
+        self.collision_idx = -1 * np.ones((self.num_agents,), dtype=np.int32)
         
 
         # initializing agents
@@ -72,6 +95,19 @@ class Simulator(object):
                 lidar_dist=lidar_dist,
             )
             self.agents.append(agent)
+
+        self._state_dim = self.agents[0].state.shape[0] if self.agents else 0
+        self._state_buffer = np.zeros((self.num_agents, self._state_dim), dtype=np.float64)
+        self._pose_buffer = np.zeros((self.num_agents, 3), dtype=np.float64)
+        self._verts_buffer_f64 = np.zeros((self.num_agents, 4, 2), dtype=np.float64)
+        self._verts_buffer_f32 = np.zeros((self.num_agents, 4, 2), dtype=np.float32)
+        self._scan_buffer = np.zeros((self.num_agents, self.num_beams), dtype=np.float32)
+        self._env_collision_mask = np.zeros((self.num_agents,), dtype=np.bool_)
+        opp_count = max(self.num_agents - 1, 1)
+        self._opp_pose_buffer = np.zeros((opp_count, 3), dtype=np.float32)
+        self._linear_vels_x = np.zeros((self.num_agents,), dtype=np.float32)
+        self._linear_vels_y = np.zeros((self.num_agents,), dtype=np.float32)
+        self._ang_vels_z = np.zeros((self.num_agents,), dtype=np.float32)
 
 
 
@@ -88,6 +124,13 @@ class Simulator(object):
         """
         for agent in self.agents:
             agent.set_map(map_path, map_ext)
+
+    def _ensure_scan_capacity(self, beam_count: int) -> None:
+        if beam_count <= 0:
+            beam_count = 1
+        if self._scan_buffer.shape[1] == beam_count:
+            return
+        self._scan_buffer = np.zeros((self.num_agents, beam_count), dtype=np.float32)
 
 
     def update_params(self, params, agent_idx=-1):
@@ -122,11 +165,21 @@ class Simulator(object):
         Returns:
             None
         """
-        # get vertices of all agents
-        all_vertices = np.empty((self.num_agents, 4, 2))
-        for i in range(self.num_agents):
-            all_vertices[i, :, :] = get_vertices(np.append(self.agents[i].state[0:2],self.agents[i].state[4]), self.params['length'], self.params['width'])
-        self.collisions, self.collision_idx = collision_multiple(all_vertices)
+        for i, agent in enumerate(self.agents):
+            self._pose_buffer[i, 0] = agent.state[0]
+            self._pose_buffer[i, 1] = agent.state[1]
+            self._pose_buffer[i, 2] = agent.state[4]
+            verts = get_vertices(
+                self._pose_buffer[i],
+                self.params['length'],
+                self.params['width'],
+            )
+            self._verts_buffer_f64[i, :, :] = verts
+            self._verts_buffer_f32[i, :, :] = verts
+
+        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
+        np.copyto(self.collisions, np.asarray(col_flags, dtype=np.float32))
+        np.copyto(self.collision_idx, np.asarray(hit_idx, dtype=np.int32))
 
 
     def step(self, control_inputs: np.ndarray) -> dict:
@@ -145,92 +198,105 @@ class Simulator(object):
         if not isinstance(control_inputs, np.ndarray) or control_inputs.shape != (N, 2):
             raise ValueError(f"control_inputs must have shape ({N}, 2)")
 
-        # --- 0) per-step collision flags reset
-        self.collisions[:] = 0
-        self.collision_idx[:] = -1
+        self.collisions.fill(0.0)
+        self.collision_idx.fill(-1)
+        env_collision_mask = self._env_collision_mask
+        env_collision_mask.fill(False)
 
-        scans_list = []
-        env_collision_mask = np.zeros((N,), dtype=np.bool_)
-        # store prev states for revert if needed
-        prev_states = [agent.state.copy() for agent in self.agents]
+        self._ensure_scan_capacity(self.num_beams)
 
-        # --- 1) advance dynamics, collect scans + detect wall/environment collision (iTTC)
+        state_buffer = self._state_buffer
+        pose_buffer = self._pose_buffer
+
         for i, agent in enumerate(self.agents):
-            current_scan = agent.update_pose(float(control_inputs[i, 0]), float(control_inputs[i, 1]))
-            # agent.update_pose internally should call agent.check_ttc(...) to set agent.in_collision
+            np.copyto(state_buffer[i], agent.state)
+            agent.update_pose(float(control_inputs[i, 0]), float(control_inputs[i, 1]))
 
             if getattr(agent, "in_collision", False):
-                # revert penetration
-                agent.state = prev_states[i]
-                # zero velocities
-                # assume state vector indices: 3 -> longitudinal vel, 5 -> angular vel
+                np.copyto(agent.state, state_buffer[i])
                 agent.state[3] = 0.0
                 agent.state[5] = 0.0
-                self.collisions[i] = 1  # mark environment collision
+                agent.compute_scan()
                 env_collision_mask[i] = True
-                # TODO: re-run the scan for the reverted pose so lidar data stays consistent with the restored state.
 
-            # ensure scan is freshest
-            agent.scan = current_scan
-            scans_list.append(current_scan)
+            pose_buffer[i, 0] = agent.state[0]
+            pose_buffer[i, 1] = agent.state[1]
+            pose_buffer[i, 2] = agent.state[4]
 
-            # update pose arrays
-            self.agent_poses[i, 0] = agent.state[0]
-            self.agent_poses[i, 1] = agent.state[1]
-            self.agent_poses[i, 2] = agent.state[4]  # theta
+            self.agent_poses[i, 0] = np.float32(agent.state[0])
+            self.agent_poses[i, 1] = np.float32(agent.state[1])
+            self.agent_poses[i, 2] = np.float32(agent.state[4])
+
+            self._linear_vels_x[i] = np.float32(agent.state[3])
+            self._linear_vels_y[i] = np.float32(agent.state[3] * np.sin(agent.state[6]))
+            self._ang_vels_z[i] = np.float32(agent.state[5])
+
+            scan_row = np.asarray(agent.scan, dtype=np.float32)
+            if scan_row.shape[0] != self._scan_buffer.shape[1]:
+                self._ensure_scan_capacity(scan_row.shape[0])
+                for j in range(i):
+                    prev = np.asarray(self.agents[j].scan, dtype=np.float32)
+                    np.copyto(self._scan_buffer[j], prev)
+                self.num_beams = self._scan_buffer.shape[1]
+            np.copyto(self._scan_buffer[i], scan_row)
 
         # --- 2) agent-agent collisions (GJK)
-        verts = [get_vertices(self.agent_poses[i], self.params["length"], self.params["width"]) for i in range(N)]
-        col_flags, hit_idx = collision_multiple(np.stack(verts, axis=0))
-        # Merge agent-agent collision flags with environment collision flags
-        np.maximum(self.collisions, col_flags, out=self.collisions)
-        self.collision_idx[:] = hit_idx
+        for i in range(N):
+            verts = get_vertices(
+                pose_buffer[i],
+                self.params["length"],
+                self.params["width"],
+            )
+            self._verts_buffer_f64[i, :, :] = verts
+            self._verts_buffer_f32[i, :, :] = verts
+        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
 
         # --- 3) opponent occlusions via LiDAR footprints, etc.
-        for i, agent in enumerate(self.agents):
-            # update opponents poses etc
-            if hasattr(agent, "update_opp_poses"):
-                if i == 0:
-                    opp_poses = self.agent_poses[1:, :]
-                elif i == N - 1:
-                    opp_poses = self.agent_poses[:N-1, :]
-                else:
-                    opp_poses = np.concatenate((self.agent_poses[:i, :], self.agent_poses[i+1:, :]), axis=0)
-                agent.update_opp_poses(opp_poses)
+        if N > 1:
+            for i, agent in enumerate(self.agents):
+                if hasattr(agent, "update_opp_poses"):
+                    count = 0
+                    for j in range(N):
+                        if j == i:
+                            continue
+                        self._opp_pose_buffer[count, 0] = self.agent_poses[j, 0]
+                        self._opp_pose_buffer[count, 1] = self.agent_poses[j, 1]
+                        self._opp_pose_buffer[count, 2] = self.agent_poses[j, 2]
+                        count += 1
+                    agent.update_opp_poses(self._opp_pose_buffer[:count])
 
-            if hasattr(agent, "ray_cast_agents"):
-                opp_verts = np.stack([verts[j] for j in range(N) if j != i], axis=0)
-                agent.ray_cast_agents(opp_verts)
-                scans_list[i] = agent.scan  # refresh occluded scan
+                if hasattr(agent, "ray_cast_agents"):
+                    agent.ray_cast_agents(self._verts_buffer_f32, i)
+                    scan_row = np.asarray(agent.scan, dtype=np.float32)
+                    if scan_row.shape[0] != self._scan_buffer.shape[1]:
+                        self._ensure_scan_capacity(scan_row.shape[0])
+                        for j in range(N):
+                            prev = np.asarray(self.agents[j].scan, dtype=np.float32)
+                            np.copyto(self._scan_buffer[j], prev)
+                        self.num_beams = self._scan_buffer.shape[1]
+                    np.copyto(self._scan_buffer[i], scan_row)
 
-            # Already accounted for environment collision via agent.in_collision
-            if getattr(agent, "in_collision", False):
-                self.collisions[i] = 1
-                env_collision_mask[i] = True
+                if getattr(agent, "in_collision", False):
+                    env_collision_mask[i] = True
 
-        if env_collision_mask.any():
-            env_only = env_collision_mask & (self.collision_idx == -1)
-            if np.any(env_only):
-                self.collision_idx[env_only] = ENV_COLLISION_IDX
-
-        # --- 4) prepare observation dict
-        scans = np.stack(scans_list, axis=0).astype(np.float32, copy=False)
-        poses_x = self.agent_poses[:, 0].astype(np.float32, copy=False)
-        poses_y = self.agent_poses[:, 1].astype(np.float32, copy=False)
-        poses_theta = self.agent_poses[:, 2].astype(np.float32, copy=False)
-        linear_vels_x = np.array([a.state[3] for a in self.agents], dtype=np.float32)
-        linear_vels_y = np.array([a.state[3] * np.sin(a.state[6]) for a in self.agents], dtype=np.float32)
-        ang_vels_z = np.array([a.state[5] for a in self.agents], dtype=np.float32)
+        _merge_collision_results(
+            np.asarray(col_flags, dtype=np.float64),
+            np.asarray(hit_idx, dtype=np.float64),
+            env_collision_mask,
+            self.collisions,
+            self.collision_idx,
+            ENV_COLLISION_IDX,
+        )
 
         obs_dict = {
-            "scans": scans,
-            "poses_x": poses_x,
-            "poses_y": poses_y,
-            "poses_theta": poses_theta,
-            "linear_vels_x": linear_vels_x,
-            "linear_vels_y": linear_vels_y,
-            "ang_vels_z": ang_vels_z,
-            "collisions": self.collisions.copy(),  # per-step 0/1
+            "scans": self._scan_buffer.copy(),
+            "poses_x": self.agent_poses[:, 0].copy(),
+            "poses_y": self.agent_poses[:, 1].copy(),
+            "poses_theta": self.agent_poses[:, 2].copy(),
+            "linear_vels_x": self._linear_vels_x.copy(),
+            "linear_vels_y": self._linear_vels_y.copy(),
+            "ang_vels_z": self._ang_vels_z.copy(),
+            "collisions": self.collisions.copy(),
         }
         return obs_dict
 
@@ -252,53 +318,88 @@ class Simulator(object):
 
         N = self.num_agents
 
-        # Reset agent states
+        self.collisions.fill(0.0)
+        self.collision_idx.fill(-1)
+        env_collision_mask = self._env_collision_mask
+        env_collision_mask.fill(False)
+
+        self._ensure_scan_capacity(self.num_beams)
+
+        pose_buffer = self._pose_buffer
+
+        for i, agent in enumerate(self.agents):
+            agent.reset(poses[i])
+
+            pose_buffer[i, 0] = agent.state[0]
+            pose_buffer[i, 1] = agent.state[1]
+            pose_buffer[i, 2] = agent.state[4]
+
+            self.agent_poses[i, 0] = np.float32(agent.state[0])
+            self.agent_poses[i, 1] = np.float32(agent.state[1])
+            self.agent_poses[i, 2] = np.float32(agent.state[4])
+
+            v_long = float(getattr(agent, "v_long", agent.state[3]))
+            v_lat = float(getattr(agent, "v_lat", agent.state[3] * np.sin(agent.state[6])))
+            yaw_rate = float(getattr(agent, "yaw_rate", agent.state[5]))
+
+            self._linear_vels_x[i] = np.float32(v_long)
+            self._linear_vels_y[i] = np.float32(v_lat)
+            self._ang_vels_z[i] = np.float32(yaw_rate)
+
+            scan_row = np.asarray(agent.compute_scan(), dtype=np.float32)
+            if scan_row.shape[0] != self._scan_buffer.shape[1]:
+                self._ensure_scan_capacity(scan_row.shape[0])
+                self.num_beams = self._scan_buffer.shape[1]
+            np.copyto(self._scan_buffer[i], scan_row)
+
         for i in range(N):
-            self.agents[i].reset(poses[i])
-        self.agent_poses[:, :] = poses.astype(np.float32, copy=False)
+            verts = get_vertices(
+                pose_buffer[i],
+                self.params["length"],
+                self.params["width"],
+            )
+            self._verts_buffer_f64[i, :, :] = verts
+            self._verts_buffer_f32[i, :, :] = verts
+        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
 
-        # Clear collisions
-        self.collisions[:] = 0
-        self.collision_idx[:] = -1
+        if N > 1:
+            for i, agent in enumerate(self.agents):
+                if hasattr(agent, "update_opp_poses"):
+                    count = 0
+                    for j in range(N):
+                        if j == i:
+                            continue
+                        self._opp_pose_buffer[count, 0] = self.agent_poses[j, 0]
+                        self._opp_pose_buffer[count, 1] = self.agent_poses[j, 1]
+                        self._opp_pose_buffer[count, 2] = self.agent_poses[j, 2]
+                        count += 1
+                    agent.update_opp_poses(self._opp_pose_buffer[:count])
 
-        # Compute scans
-        scans_list = []
-        for i in range(N):
-            self.agents[i].update_scan(scans_list, i)
-            scans_list.append(self.agents[i].scan)
+                if hasattr(agent, "ray_cast_agents"):
+                    agent.ray_cast_agents(self._verts_buffer_f32, i)
+                    scan_row = np.asarray(agent.scan, dtype=np.float32)
+                    if scan_row.shape[0] != self._scan_buffer.shape[1]:
+                        self._ensure_scan_capacity(scan_row.shape[0])
+                        self.num_beams = self._scan_buffer.shape[1]
+                    np.copyto(self._scan_buffer[i], scan_row)
 
-        # Opponent occlusion
-        verts = [get_vertices(self.agent_poses[i], self.params["length"], self.params["width"]) for i in range(N)]
-        for i in range(N):
-            opp_verts = np.stack([verts[j] for j in range(N) if j != i], axis=0)
-            self.agents[i].opp_poses = opp_verts   # <-- ensure not None
-            if hasattr(self.agents[i], "ray_cast_agents"):
-                self.agents[i].ray_cast_agents(opp_verts)
-                scans_list[i] = self.agents[i].scan
-
-        # Collisions
-        col_flags, hit_idx = collision_multiple(np.stack(verts, axis=0))
-        self.collisions[:] = col_flags.astype(np.int8, copy=False)
-        self.collision_idx[:] = hit_idx.astype(np.int32, copy=False)
-
-        # Vectorize outputs
-        poses_x       = poses[:, 0].astype(np.float32, copy=False)
-        poses_y       = poses[:, 1].astype(np.float32, copy=False)
-        poses_theta   = poses[:, 2].astype(np.float32, copy=False)
-        linear_vels_x = np.array([getattr(a, "v_long", 0.0) for a in self.agents], dtype=np.float32)
-        linear_vels_y = np.array([getattr(a, "v_lat",  0.0) for a in self.agents], dtype=np.float32)
-        ang_vels_z    = np.array([getattr(a, "yaw_rate", 0.0) for a in self.agents], dtype=np.float32)
-
-        scans = np.stack(scans_list, axis=0).astype(np.float32, copy=False)
+        _merge_collision_results(
+            np.asarray(col_flags, dtype=np.float64),
+            np.asarray(hit_idx, dtype=np.float64),
+            env_collision_mask,
+            self.collisions,
+            self.collision_idx,
+            ENV_COLLISION_IDX,
+        )
 
         obs_dict = {
-            "scans":         scans,
-            "poses_x":       poses_x,
-            "poses_y":       poses_y,
-            "poses_theta":   poses_theta,
-            "linear_vels_x": linear_vels_x,
-            "linear_vels_y": linear_vels_y,
-            "ang_vels_z":    ang_vels_z,
-            "collisions":    self.collisions.copy(),
+            "scans": self._scan_buffer.copy(),
+            "poses_x": self.agent_poses[:, 0].copy(),
+            "poses_y": self.agent_poses[:, 1].copy(),
+            "poses_theta": self.agent_poses[:, 2].copy(),
+            "linear_vels_x": self._linear_vels_x.copy(),
+            "linear_vels_y": self._linear_vels_y.copy(),
+            "ang_vels_z": self._ang_vels_z.copy(),
+            "collisions": self.collisions.copy(),
         }
         return obs_dict
