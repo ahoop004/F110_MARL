@@ -1,7 +1,32 @@
 # straight_corridor.yaml
 image: straight_corridor.png
 resolution: 0.05          # meters/pixel
-origin: [-1, 1.5, -1.5708]   # lower-left corner in the “map” frame
+origin: [-1.0, -50.0, 0.0]   # lower-left corner aligned so (0,0) sits near corridor centre
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
+
+# Suggested defaults for spawning agents when this map is used via --map.
+start_poses:
+  - [0.0, -45.0, 1.5708]
+  - [0.4, -47.0, 1.5708]
+start_pose_options:
+  -
+    - [0.0, -45.0, 1.5708]
+    - [0.4, -40.0, 1.5708]
+  -
+    - [0.0, -47.0, 1.5708]
+    - [0.4, -40.0, 1.5708]
+  -
+    - [0.0, -45.0, 1.5708]
+    - [0.0, -40.0, 1.5708]
+  -
+    - [0.0, -47.0, 1.5708]
+    - [0.0, -40.0, 1.5708]
+
+  -
+    - [0.0, -45.0, 1.5708]
+    - [-0.4, -40.0, 1.5708]
+  -
+    - [0.0, -47.0, 1.5708]
+    - [-0.4, -40.0, 1.5708]

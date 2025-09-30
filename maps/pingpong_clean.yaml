@@ -1,4 +1,4 @@
-image: pingpong.pgm
+image: pingpong_clean.pgm
 mode: trinary
 resolution: 0.1
 origin: [-13.1, -8.16, 0]

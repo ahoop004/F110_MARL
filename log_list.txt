@@ -1,63 +1,32 @@
-train episode callback: 
-[x]train/episode,
-[x]train/return_{agent},
-[]train/return_attacker, 
-[x]train/return_defender, 
-[]train/steps, 
-[x]train/collisions_total, 
-[]train/success, 
-[x]train/defender_crashed, 
-[x]train/attacker_crashed, 
-[x]train/idle_truncated, 
-[x]train/defender_survival_steps, 
-[]train/epsilon, 
-[]train/reward_component_{agent}_{name}.
+train episode callback:
+[]train/return_attacker,
+[]train/steps,
+[]train/success,
+[]train/epsilon,
+[]train/reward_component_{focus_agent}_{name}.
 
-train optimizer updates: 
-[x]train/update, 
-[]train/policy_loss, 
-[]train/value_loss, 
-[]train/entropy, 
-[]train/approx_kl, 
-[]train/action_mean, 
-[]train/action_std, 
-[]train/action_abs_mean, 
-[]train/raw_action_std, 
-[]train/value_mean, 
-[]train/value_std, 
-[]train/adv_mean, 
-[]train/adv_std, 
-[]train/action_histogram, 
+train optimizer updates:
+[]train/policy_loss,
+[]train/value_loss,
+[]train/entropy,
+[]train/approx_kl,
+[]train/action_mean,
+[]train/action_std,
+[]train/action_abs_mean,
+[]train/raw_action_std,
+[]train/value_mean,
+[]train/value_std,
+[]train/adv_mean,
+[]train/adv_std,
+[]train/action_histogram,
 []train/value_histogram.
 
-Additional per-episode metrics after cleanup: 
-[x]train/return_{other_agents}, 
-[x]train/collision_count_{agent}, 
-[x]train/collision_step_{agent}, 
-[x]train/avg_speed_{agent}, 
-[x]train/reward_component_{agent}_{name} (non-focus agents), 
-[x]train/reward_component_attacker_{name}, 
-[x]train/reward_component_defender_{name}, 
-[x]train/reward_mode, 
+additional aggregation:
 []train/cause.
 
-eval per episode: 
-[x]eval/episode, 
-[x]eval/steps, 
-[x]eval/return_{agent}, 
-[x]eval/collision_total, 
-[x]eval/collision_count_{agent}, 
-[x]eval/collision_step_{agent}, 
-[x]eval/lap_count_{agent}, 
-[x]eval/avg_speed_{agent}, 
-[]eval/avg_speed_attacker, 
-[]eval/avg_speed_defender, 
-[x]eval/defender_crashed, 
-[x]eval/attacker_crashed, 
-[x]eval/defender_crash_step, 
-[x]eval/attacker_crash_step, 
-[x]eval/defender_survival_steps.
+eval per episode:
+[]eval/avg_speed_attacker,
+[]eval/avg_speed_defender.
 
-eval summary: 
-[]eval/success_rate, 
-[x]eval/avg_defender_survival_steps.
+eval summary:
+[]eval/success_rate.

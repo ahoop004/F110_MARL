@@ -51,6 +51,11 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env_cfg["map_image_size"] = map_data.image_size
     env_cfg["map_yaml_path"] = str(map_data.yaml_path)
 
+    # Allow map metadata to override start position defaults when provided.
+    for meta_key in ("start_poses", "start_pose_options"):
+        if meta_key in map_data.metadata:
+            env_cfg[meta_key] = map_data.metadata[meta_key]
+
     env = F110ParallelEnv(**env_cfg)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
     return env, map_data, start_pose_options
