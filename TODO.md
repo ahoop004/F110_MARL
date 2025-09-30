@@ -9,9 +9,9 @@
     - [x] Pass opponent vertex views instead of rebuilding `np.stack([...])` for every agent each step.
     - [x] Refactor `RaceCar.ray_cast_agents` to consume contiguous float32 buffers without copying/converting per opponent.
 
-- [ ] Medium-impact: Trim repeated allocations in `RaceCar.update_pose` (`src/f110x/physics/vehicle.py`).
-    - [ ] Cache frequently used params/arrays (`[sv, accl]`, `scan_pose`) instead of recreating them four times per integration step.
-    - [ ] Hoist dict lookups for dynamics parameters into structured arrays for faster access inside numba kernels.
+- [x] Medium-impact: Trim repeated allocations in `RaceCar.update_pose` (`src/f110x/physics/vehicle.py`).
+    - [x] Cache frequently used params/arrays (`[sv, accl]`, `scan_pose`) instead of recreating them four times per integration step.
+    - [x] Hoist dict lookups for dynamics parameters into structured arrays for faster access inside numba kernels.
 
 - [ ] Medium-impact: Reduce training-loop Python bookkeeping (`experiments/train.py`).
     - [ ] Replace per-agent dicts (`totals`, `speed_sums`, `collision_counts`, etc.) with preallocated numpy arrays keyed by agent index.
