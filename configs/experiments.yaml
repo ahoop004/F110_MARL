@@ -45,7 +45,7 @@ shared:  # Common building blocks reused across experiment profiles
       steer_smooth: 0.35  # Smoothing factor applied to steering commands
 
   reward: &reward_base  # Sparse success reward used by every attacker
-    target_crash_reward: 100.2  # Positive payout when the defender crashes and attacker does not
+    target_crash_reward: 100.0  # Positive payout when the defender crashes and attacker does not
     ego_collision_penalty: -2.0  # Negative reward applied if the attacker crashes
     truncation_penalty: 0.0  # Optional penalty when episodes end via truncation
     success_once: true  # Only award the success bonus the first time the defender crashes
@@ -195,7 +195,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
       wandb:
         <<: *wandb_base
         group: sac  # W&B group label for SAC runs
-        tags: [gaplock, sac]  # W&B tags for SAC experiments
+        tags: [sac]  # W&B tags for SAC experiments
 
   gaplock_dqn:  # DQN learner using discrete throttle-steer pairs
     env:
