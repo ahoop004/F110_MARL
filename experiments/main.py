@@ -178,22 +178,6 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
         if isinstance(record, dict):
             episode = int(record.get("episode", idx))
 
-            returns = record.get("returns")
-            if isinstance(returns, dict):
-                for aid, value in returns.items():
-                    if aid in focus_ids:
-                        continue
-                    _add_metric(f"train/return_{aid}", value)
-            else:
-                try:
-                    for aid, value in record.items():
-                        if aid in focus_ids:
-                            continue
-                        if isinstance(value, (int, float)):
-                            _add_metric(f"train/return_{aid}", value)
-                except AttributeError:
-                    pass
-
             duplicate_fields = {
                 "steps",
                 "collisions_total",
@@ -213,19 +197,12 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
                 if key.startswith("return_"):
                     continue
                 if key.startswith("collision_count_") or key.startswith("collision_step_"):
-                    _add_metric(f"train/{key}", value)
                     continue
                 if key.startswith("avg_speed_"):
-                    _add_metric(f"train/{key}", value)
                     continue
                 if key.startswith("reward_component_"):
-                    if _is_focus_reward(key):
-                        continue
-                    _add_metric(f"train/{key}", value)
                     continue
                 if key == "reward_mode":
-                    if value:
-                        payload["train/reward_mode"] = value
                     continue
                 if key == "cause":
                     if value:
@@ -235,16 +212,6 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
                     _add_metric(f"train/{key}", value)
                 elif value is not None:
                     payload[f"train/{key}"] = value
-        else:
-            try:
-                for aid, value in record.items():
-                    if aid in focus_ids:
-                        continue
-                    if isinstance(value, (int, float)):
-                        _add_metric(f"train/return_{aid}", value)
-            except AttributeError:
-                pass
-
         if payload:
             run.log(payload, step=episode)
 
@@ -254,32 +221,29 @@ def _log_eval_results(run, results):
         return
 
     success_count = 0
-    defender_survival_total = 0.0
-    defender_survival_count = 0
     for res in results:
-        payload = {"eval/episode": res["episode"]}
-        for key, value in res.items():
-            if isinstance(value, (int, float)):
-                payload[f"eval/{key}"] = value
-        run.log(payload)
+        payload: Dict[str, Any] = {}
+
+        avg_speed_attacker = res.get("avg_speed_attacker")
+        if avg_speed_attacker is not None:
+            payload["eval/avg_speed_attacker"] = float(avg_speed_attacker)
+
+        avg_speed_defender = res.get("avg_speed_defender")
+        if avg_speed_defender is not None:
+            payload["eval/avg_speed_defender"] = float(avg_speed_defender)
+
+        if payload:
+            run.log(payload)
 
         defender_crashed = res.get("defender_crashed", False)
         attacker_crashed = res.get("attacker_crashed", False)
         if defender_crashed and not attacker_crashed:
             success_count += 1
-        survival = res.get("defender_survival_steps")
-        if survival is not None:
-            defender_survival_total += float(survival)
-            defender_survival_count += 1
 
     if not results:
         return
 
-    summary = {"eval/success_rate": success_count / len(results)}
-    if defender_survival_count:
-        summary["eval/avg_defender_survival_steps"] = defender_survival_total / defender_survival_count
-
-    run.log(summary)
+    run.log({"eval/success_rate": success_count / len(results)})
 
 
 def main():

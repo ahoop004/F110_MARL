@@ -490,21 +490,11 @@ def run_training(
         results.append(episode_record)
 
         if update_callback:
-            payload: Dict[str, Any] = {"train/episode": float(ep + 1)}
-            for aid, value in returns.items():
-                payload[f"train/return_{aid}"] = float(value)
+            payload: Dict[str, Any] = {}
             if ppo_id in returns:
                 payload["train/return_attacker"] = float(returns[ppo_id])
-            if defender_id and defender_id in returns:
-                payload["train/return_defender"] = float(returns[defender_id])
             payload["train/steps"] = float(steps)
-            payload["train/collisions_total"] = float(collisions_total)
             payload["train/success"] = float(int(success))
-            payload["train/defender_crashed"] = float(int(defender_crashed))
-            payload["train/attacker_crashed"] = float(int(attacker_crashed))
-            payload["train/idle_truncated"] = float(int(idle_triggered))
-            if defender_survival_steps is not None:
-                payload["train/defender_survival_steps"] = float(defender_survival_steps)
             if epsilon_val is not None:
                 payload["train/epsilon"] = float(epsilon_val)
 
@@ -526,13 +516,14 @@ def run_training(
                 stats = trainer.update()
                 if update_callback and stats:
                     update_count += 1
-                    payload: Dict[str, Any] = {"train/update": update_count}
+                    payload: Dict[str, Any] = {}
                     for key, value in stats.items():
                         if isinstance(value, (int, float)):
                             payload[f"train/{key}"] = float(value)
                         else:
                             payload[f"train/{key}"] = value
-                    update_callback(payload)
+                    if payload:
+                        update_callback(payload)
 
         ppo_return = returns.get(ppo_id, 0.0)
         recent_returns.append(ppo_return)
@@ -558,13 +549,14 @@ def run_training(
         stats = trainer.update()
         if update_callback and stats:
             update_count += 1
-            payload: Dict[str, Any] = {"train/update": update_count}
+            payload: Dict[str, Any] = {}
             for key, value in stats.items():
                 if isinstance(value, (int, float)):
                     payload[f"train/{key}"] = float(value)
                 else:
                     payload[f"train/{key}"] = value
-            update_callback(payload)
+            if payload:
+                update_callback(payload)
 
     return results
 
