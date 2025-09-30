@@ -258,7 +258,7 @@ class RecurrentPPOAgent:
             raise ValueError(f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}")
 
         rewards = np.asarray(self.rew_buf, dtype=np.float32)
-        values = np.asarray(self.val_buf, dtype=np.float32)
+        values = np.asarray(self.val_buf[:T], dtype=np.float32)
         dones = np.asarray(self.done_buf, dtype=np.float32)
 
         adv = np.zeros(T, dtype=np.float32)
@@ -287,6 +287,11 @@ class RecurrentPPOAgent:
 
         self.adv_buf = adv
         self.ret_buf = ret
+        self.obs_buf = self.obs_buf[:T]
+        self.act_buf = self.act_buf[:T]
+        self.raw_act_buf = self.raw_act_buf[:T]
+        self.logp_buf = self.logp_buf[:T]
+        self.val_buf = list(values)
 
     def _ensure_episode_boundaries(self) -> None:
         if not self._episode_boundaries:
