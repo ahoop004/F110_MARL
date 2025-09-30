@@ -12,6 +12,10 @@ from pettingzoo.utils import parallel_to_aec, wrappers
 # base classes
 from f110x.physics import Simulator, Integrator
 from f110x.render import EnvRenderer
+from f110x.envs.lidar import LidarProcessor
+from f110x.envs.start_pose_state import StartPoseState
+from f110x.envs.collision import build_terminations
+from f110x.envs.state_buffer import StateBuffers
 
 
 # others
@@ -142,23 +146,13 @@ class F110ParallelEnv(ParallelEnv):
             self.lidar_beams = 1080
         self.lidar_range = float(merged.get("lidar_range", 30.0))
         self._lidar_beam_count = max(int(self.lidar_beams), 1)
-        self._lidar_indices: Optional[np.ndarray] = None
+        self.lidar_processor = LidarProcessor(self._lidar_beam_count)
 
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
         self.start_thresh: float = float(merged.get("start_thresh", 0.5))
         
-        # env states
-        self.poses_x = np.zeros((self.n_agents, ))
-        self.poses_y = np.zeros((self.n_agents, ))
-        self.poses_theta = np.zeros((self.n_agents, ))
-        self.collisions = np.zeros((self.n_agents, ))
-        self.linear_vels_x_prev = np.zeros((self.n_agents,), dtype=np.float32)
-        self.linear_vels_x_curr = np.zeros((self.n_agents,), dtype=np.float32)
-        self.linear_vels_y_prev = np.zeros((self.n_agents,), dtype=np.float32)
-        self.linear_vels_y_curr = np.zeros((self.n_agents,), dtype=np.float32)
-        self.angular_vels_prev = np.zeros((self.n_agents,), dtype=np.float32)
-        self.angular_vels_curr = np.zeros((self.n_agents,), dtype=np.float32)
-        self._velocity_initialized = False
+        self.state_buffers = StateBuffers.build(self.n_agents)
+        self._bind_state_views()
 
         default_terminate = bool(merged.get("terminate_on_collision", True))
         self.terminate_on_collision = {
@@ -181,70 +175,18 @@ class F110ParallelEnv(ParallelEnv):
             laps_val = 1
         self.target_laps: int = int(laps_val)
 
-        # race info
-        self.lap_times = np.zeros((self.n_agents, ))
-        self.lap_counts = np.zeros((self.n_agents, ))
         self.current_time = 0.0
         self._elapsed_steps = 0
 
-        # finish line info
-        self.num_toggles = 0
-        self.near_start = True
-        self.near_starts = np.array([True]*self.n_agents)
-        self.toggle_list = np.zeros((self.n_agents,))
-        self.start_xs = np.zeros((self.n_agents, ))
-        self.start_ys = np.zeros((self.n_agents, ))
-        self.start_thetas = np.zeros((self.n_agents, ))
-        start_angles = np.zeros(self.n_agents, dtype=np.float32)
-        if self.start_thetas.size == self.n_agents:
-            start_angles[:] = np.asarray(self.start_thetas, dtype=np.float32)
-        start_pose_array = None
-        if self.start_poses.size > 0:
-            start_pose_array = np.atleast_2d(self.start_poses)
-            if start_pose_array.shape[1] >= 3:
-                count = min(self.n_agents, start_pose_array.shape[0])
-                start_angles[:count] = start_pose_array[:count, 2]
-
-        if start_angles.size == 0:
-            self.start_rot = np.eye(2, dtype=np.float32)
-        elif np.allclose(start_angles, start_angles[0]):
-            angle = float(start_angles[0])
-            cos_a = float(np.cos(angle))
-            sin_a = float(np.sin(angle))
-            self.start_rot = np.array(
-                [[cos_a, -sin_a],
-                 [sin_a,  cos_a]],
-                dtype=np.float32,
-            )
-        else:
-            cos_vals = np.cos(start_angles).astype(np.float32)
-            sin_vals = np.sin(start_angles).astype(np.float32)
-            rot = np.empty((self.n_agents, 2, 2), dtype=np.float32)
-            rot[:, 0, 0] = cos_vals
-            rot[:, 0, 1] = -sin_vals
-            rot[:, 1, 0] = sin_vals
-            rot[:, 1, 1] = cos_vals
-            self.start_rot = rot
-        if start_pose_array is not None:
-            count = min(self.n_agents, start_pose_array.shape[0])
-            if count:
-                cols = start_pose_array.shape[1]
-                if cols >= 1:
-                    self.start_xs[:count] = start_pose_array[:count, 0]
-                if cols >= 2:
-                    self.start_ys[:count] = start_pose_array[:count, 1]
-                if cols >= 3:
-                    self.start_thetas[:count] = start_pose_array[:count, 2]
-                else:
-                    self.start_thetas[:count] = start_angles[:count]
-
-        self.start_heading = np.zeros((self.n_agents, 2), dtype=np.float32)
-        if self.n_agents:
-            self.start_heading[:, 0] = np.cos(self.start_thetas).astype(np.float32)
-            self.start_heading[:, 1] = np.sin(self.start_thetas).astype(np.float32)
-        # TODO: Surface lap_forward_vel_epsilon via config schema and document in YAML example.
+        # Start pose state machine
         self.lap_forward_vel_epsilon = float(merged.get("lap_forward_vel_epsilon", 0.1))
-        self._left_start_forward = np.zeros((self.n_agents,), dtype=bool)
+        self.start_state = StartPoseState.build(
+            self.possible_agents,
+            self.start_poses,
+            self.lap_forward_vel_epsilon,
+        )
+        self.lap_counts = self.start_state.lap_counts
+        self.lap_times = self.start_state.lap_times
 
         # initiate stuff
         self.sim = Simulator(
@@ -326,128 +268,16 @@ class F110ParallelEnv(ParallelEnv):
             "state_space": self._state_space,
         }
 
-    def _check_done(self):
-
-        left_t = 2
-        right_t = 2
-        
-        poses_x = np.array(self.poses_x) - self.start_xs
-        poses_y = np.array(self.poses_y) - self.start_ys
-        offsets = np.stack((poses_x, poses_y), axis=-1).astype(np.float32, copy=False)
-        rotation = self.start_rot
-        if rotation.ndim == 2:
-            delta_pt = rotation @ offsets.T
-        else:
-            rotated = np.einsum("aij,aj->ai", rotation, offsets)
-            delta_pt = rotated.T
-        temp_y = delta_pt[1, :]
-        temp_y = delta_pt[1,:]
-        idx1 = temp_y > left_t
-        idx2 = temp_y < -right_t
-        temp_y[idx1] -= left_t
-        temp_y[idx2] = -right_t - temp_y[idx2]
-        temp_y[np.invert(np.logical_or(idx1, idx2))] = 0
-
-        dist2 = delta_pt[0, :]**2 + temp_y**2
-        closes = dist2 <= 0.1
-        forward_eps = self.lap_forward_vel_epsilon
-
-        # TODO: Refactor this state machine into a helper for readability/testing.
-        for i, agent in enumerate(self.possible_agents):
-            forward_vel = (
-                float(self.linear_vels_x_curr[i]) * float(self.start_heading[i, 0])
-                + float(self.linear_vels_y_curr[i]) * float(self.start_heading[i, 1])
-            )
-            forward_ok = forward_vel > forward_eps
-
-            if closes[i]:
-                if not self.near_starts[i]:
-                    self.near_starts[i] = True
-                    if self._left_start_forward[i] and forward_ok:
-                        self.toggle_list[i] += 1
-                        self._left_start_forward[i] = False
-                    elif not forward_ok:
-                        self._left_start_forward[i] = False
-                else:
-                    if forward_ok:
-                        self._left_start_forward[i] = True
-            else:
-                if self.near_starts[i]:
-                    self.near_starts[i] = False
-                    forward_exit = forward_ok
-                    self._left_start_forward[i] = forward_exit
-                    if forward_exit:
-                        self.toggle_list[i] += 1
-                else:
-                    if forward_ok:
-                        self._left_start_forward[i] = True
-
-            prev_laps = self.lap_counts[i]
-            self.lap_counts[i] = self.toggle_list[i] // 2
-            if self.lap_counts[i] > prev_laps:
-                self.lap_times[i] = self.current_time
-        
-        terminations = {}
-        target_laps = self.target_laps
-        for i, agent in enumerate(self.agents):
-            terminations[agent] = bool(self.collisions[i]) or self.lap_counts[i] >= target_laps
-
-        return terminations
-
     def _update_state(self, obs_dict):
-
-        poses_x = np.asarray(obs_dict['poses_x'], dtype=np.float32)
-        poses_y = np.asarray(obs_dict['poses_y'], dtype=np.float32)
-        poses_theta = np.asarray(obs_dict['poses_theta'], dtype=np.float32)
-        collisions = np.asarray(obs_dict['collisions'], dtype=np.float32)
-
-        zeros_n = np.zeros((self.n_agents,), dtype=np.float32)
-        linear_vels_x = np.asarray(obs_dict.get('linear_vels_x', zeros_n), dtype=np.float32)
-        linear_vels_y = np.asarray(obs_dict.get('linear_vels_y', zeros_n), dtype=np.float32)
-        ang_vels_z = np.asarray(obs_dict.get('ang_vels_z', zeros_n), dtype=np.float32)
-
-        self.poses_x = poses_x
-        self.poses_y = poses_y
-        self.poses_theta = poses_theta
-        self.collisions = collisions
-
-        self.linear_vels_x_prev = self.linear_vels_x_curr.copy()
-        self.linear_vels_y_prev = self.linear_vels_y_curr.copy()
-        self.angular_vels_prev = self.angular_vels_curr.copy()
-
-        self.linear_vels_x_curr = linear_vels_x
-        self.linear_vels_y_curr = linear_vels_y
-        self.angular_vels_curr = ang_vels_z
-
-        self._velocity_initialized = True
+        self.state_buffers.update(obs_dict)
 
    
     def _update_start_from_poses(self, poses: np.ndarray):
-        count = min(self.n_agents, poses.shape[0])
-        if count == 0:
+        if poses is None or poses.size == 0:
             return
-
-        self.start_xs[:count] = poses[:count, 0]
-        self.start_ys[:count] = poses[:count, 1]
-        self.start_thetas[:count] = poses[:count, 2]
-
-        angles = poses[:count, 2]
-        if count == 1 or np.allclose(angles, angles[0]):
-            angle = float(angles[0])
-            cos_a = float(np.cos(angle))
-            sin_a = float(np.sin(angle))
-            self.start_rot = np.array(
-                [[cos_a, -sin_a], [sin_a, cos_a]], dtype=np.float32
-            )
-        else:
-            cos_vals = np.cos(angles).astype(np.float32)
-            sin_vals = np.sin(angles).astype(np.float32)
-            rot = np.empty((self.n_agents, 2, 2), dtype=np.float32)
-            rot[:, 0, 0] = cos_vals
-            rot[:, 0, 1] = -sin_vals
-            rot[:, 1, 0] = sin_vals
-            rot[:, 1, 1] = cos_vals
-            self.start_rot = rot
+        self.start_poses = np.asarray(poses, dtype=np.float32)
+        self.start_state.apply_start_poses(self.start_poses)
+        self.start_state.reset()
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
         if seed is not None: 
@@ -456,19 +286,8 @@ class F110ParallelEnv(ParallelEnv):
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
         self.current_time = 0.0
-        self.lap_counts.fill(0.0)
-        self.lap_times.fill(0.0)
-        self.toggle_list.fill(0.0)
-        self.near_start = True
-        self.near_starts.fill(True)
-        self._left_start_forward.fill(False)
-        self.linear_vels_x_prev.fill(0.0)
-        self.linear_vels_x_curr.fill(0.0)
-        self.linear_vels_y_prev.fill(0.0)
-        self.linear_vels_y_curr.fill(0.0)
-        self.angular_vels_prev.fill(0.0)
-        self.angular_vels_curr.fill(0.0)
-        self._velocity_initialized = False
+        self.start_state.reset()
+        self.state_buffers.reset()
         poses = None
         if self.renderer is not None:
             self.renderer.reset_state()
@@ -551,25 +370,25 @@ class F110ParallelEnv(ParallelEnv):
             self.render_obs[aid] = render_entry
 
         self.current_time += self.timestep
-        done_flags = self._check_done()
+        lap_completion = self.start_state.update_progress(
+            self.poses_x,
+            self.poses_y,
+            self.linear_vels_x_curr,
+            self.linear_vels_y_curr,
+            self.current_time,
+            self.target_laps,
+        )
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
         # terminations/truncations
-        terminations = {}
         collisions = obs_joint["collisions"]
-        target_laps = self.target_laps
-        terminate_on_collision = self.terminate_on_collision
-        agent_index = self._agent_id_to_index
-        for aid in self.possible_agents:
-            idx = agent_index[aid]
-            collided = bool(collisions[idx])
-            laps_done = self.lap_counts[idx] >= target_laps
-            extra_done = done_flags.get(aid, False)
-            collision_done = collided and terminate_on_collision.get(aid, True)
-            non_collision_done = laps_done or (extra_done and not collided)
-            terminations[aid] = collision_done or non_collision_done
-
+        terminations = build_terminations(
+            self.possible_agents,
+            collisions,
+            lap_completion,
+            self.terminate_on_collision,
+        )
 
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
         truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
@@ -739,20 +558,24 @@ class F110ParallelEnv(ParallelEnv):
         self._state_space = self._single_observation_space["state"]
 
     def _select_lidar(self, scan: np.ndarray) -> np.ndarray:
-        target = self._lidar_beam_count
-        if target <= 0 or scan.size == 0:
-            return scan.astype(np.float32, copy=False)
-        if scan.size == target:
-            return scan.astype(np.float32, copy=False)
-        if scan.size < target:
-            padded = np.zeros((target,), dtype=np.float32)
-            view = scan.astype(np.float32, copy=False)
-            padded[: view.size] = view
-            return padded
-        if self._lidar_indices is None or getattr(self, "_lidar_source_size", None) != scan.size:
-            self._lidar_source_size = scan.size
-            self._lidar_indices = np.linspace(0, scan.size - 1, target, dtype=np.int32)
-        return scan[self._lidar_indices].astype(np.float32, copy=False)
+        scan_array = np.asarray(scan, dtype=np.float32)
+        if self.lidar_processor.beam_count != self._lidar_beam_count:
+            self.lidar_processor.update_beam_count(self._lidar_beam_count)
+        return self.lidar_processor.select(scan_array)
+
+    def _bind_state_views(self) -> None:
+        """Expose state buffer arrays as legacy attributes expected by callers."""
+        buffers = self.state_buffers
+        self.poses_x = buffers.poses_x
+        self.poses_y = buffers.poses_y
+        self.poses_theta = buffers.poses_theta
+        self.collisions = buffers.collisions
+        self.linear_vels_x_prev = buffers.linear_vels_x_prev
+        self.linear_vels_y_prev = buffers.linear_vels_y_prev
+        self.angular_vels_prev = buffers.angular_vels_prev
+        self.linear_vels_x_curr = buffers.linear_vels_x_curr
+        self.linear_vels_y_curr = buffers.linear_vels_y_curr
+        self.angular_vels_curr = buffers.angular_vels_curr
 
     def _central_state_tensor(self, joint: Dict[str, np.ndarray]) -> np.ndarray:
         n = self.n_agents
@@ -831,7 +654,7 @@ class F110ParallelEnv(ParallelEnv):
                 agent_obs["velocity"] = np.array([curr_vx, curr_vy], dtype=np.float32)
 
             if "acceleration" in sensors:
-                if self._velocity_initialized and i < self.linear_vels_x_curr.shape[0]:
+                if self.state_buffers.velocity_initialized and i < self.linear_vels_x_curr.shape[0]:
                     prev_vx = float(self.linear_vels_x_curr[i])
                     prev_vy = float(self.linear_vels_y_curr[i])
                     ax = (curr_vx - prev_vx) / timestep

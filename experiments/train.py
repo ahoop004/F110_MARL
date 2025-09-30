@@ -468,28 +468,6 @@ def run_training(
             else:
                 episode_record[f"avg_speed_{aid}"] = 0.0
 
-        if attacker_id in speed_counts:
-            count = speed_counts.get(attacker_id, 0)
-            episode_record["avg_speed_attacker"] = (
-                float(speed_sums.get(attacker_id, 0.0) / count) if count else 0.0
-            )
-        if defender_id and defender_id in speed_counts:
-            count = speed_counts.get(defender_id, 0)
-            episode_record["avg_speed_defender"] = (
-                float(speed_sums.get(defender_id, 0.0) / count) if count else 0.0
-            )
-
-        for aid, components in reward_breakdown.items():
-            for name, total in components.items():
-                episode_record[f"reward_component_{aid}_{name}"] = float(total)
-
-        if attacker_id in reward_breakdown:
-            for name, total in reward_breakdown[attacker_id].items():
-                episode_record[f"reward_component_attacker_{name}"] = float(total)
-        if defender_id and defender_id in reward_breakdown:
-            for name, total in reward_breakdown[defender_id].items():
-                episode_record[f"reward_component_defender_{name}"] = float(total)
-
         results.append(episode_record)
 
         if update_callback:
@@ -501,17 +479,6 @@ def run_training(
             if epsilon_val is not None:
                 payload["train/epsilon"] = float(epsilon_val)
 
-            focus_ids: List[str] = []
-            if attacker_id:
-                focus_ids.append(attacker_id)
-            if defender_id and defender_id not in focus_ids:
-                focus_ids.append(defender_id)
-            for aid in focus_ids:
-                components = reward_breakdown.get(aid)
-                if not components:
-                    continue
-                for name, total in components.items():
-                    payload[f"train/reward_component_{aid}_{name}"] = float(total)
             update_callback(payload)
 
         if (ep + 1) % ctx.update_after == 0:
@@ -520,10 +487,28 @@ def run_training(
                 if update_callback and stats:
                     update_count += 1
                     payload: Dict[str, Any] = {}
+                    blocklist = {
+                        "policy_loss",
+                        "value_loss",
+                        "entropy",
+                        "approx_kl",
+                        "action_mean",
+                        "action_std",
+                        "action_abs_mean",
+                        "raw_action_std",
+                        "value_mean",
+                        "value_std",
+                        "adv_mean",
+                        "adv_std",
+                        "action_histogram",
+                        "value_histogram",
+                    }
                     for key, value in stats.items():
+                        if key in blocklist:
+                            continue
                         if isinstance(value, (int, float)):
                             payload[f"train/{key}"] = float(value)
-                        else:
+                        elif value is not None:
                             payload[f"train/{key}"] = value
                     if payload:
                         update_callback(payload)
@@ -553,10 +538,28 @@ def run_training(
         if update_callback and stats:
             update_count += 1
             payload: Dict[str, Any] = {}
+            blocklist = {
+                "policy_loss",
+                "value_loss",
+                "entropy",
+                "approx_kl",
+                "action_mean",
+                "action_std",
+                "action_abs_mean",
+                "raw_action_std",
+                "value_mean",
+                "value_std",
+                "adv_mean",
+                "adv_std",
+                "action_histogram",
+                "value_histogram",
+            }
             for key, value in stats.items():
+                if key in blocklist:
+                    continue
                 if isinstance(value, (int, float)):
                     payload[f"train/{key}"] = float(value)
-                else:
+                elif value is not None:
                     payload[f"train/{key}"] = value
             if payload:
                 update_callback(payload)

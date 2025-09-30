@@ -192,14 +192,9 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
     if run is None:
         return
 
-    focus_ids = {aid for aid in (ppo_id, gap_id) if aid}
-
     for idx, record in enumerate(results, 1):
         episode = idx
         payload: Dict[str, Any] = {}
-
-        def _is_focus_reward(key: str) -> bool:
-            return any(key.startswith(f"reward_component_{aid}_") for aid in focus_ids)
 
         def _add_metric(name: str, value: Any) -> None:
             if value is None:
@@ -238,10 +233,6 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
                     continue
                 if key == "reward_mode":
                     continue
-                if key == "cause":
-                    if value:
-                        payload["train/cause"] = value
-                    continue
                 if isinstance(value, (int, float)):
                     _add_metric(f"train/{key}", value)
                 elif value is not None:
@@ -254,30 +245,10 @@ def _log_eval_results(run, results):
     if run is None:
         return
 
-    success_count = 0
     for res in results:
         payload: Dict[str, Any] = {}
-
-        avg_speed_attacker = res.get("avg_speed_attacker")
-        if avg_speed_attacker is not None:
-            payload["eval/avg_speed_attacker"] = float(avg_speed_attacker)
-
-        avg_speed_defender = res.get("avg_speed_defender")
-        if avg_speed_defender is not None:
-            payload["eval/avg_speed_defender"] = float(avg_speed_defender)
-
         if payload:
             run.log(payload)
-
-        defender_crashed = res.get("defender_crashed", False)
-        attacker_crashed = res.get("attacker_crashed", False)
-        if defender_crashed and not attacker_crashed:
-            success_count += 1
-
-    if not results:
-        return
-
-    run.log({"eval/success_rate": success_count / len(results)})
 
 
 def main():

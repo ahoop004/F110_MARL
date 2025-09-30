@@ -2,6 +2,14 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from f110x.utils.config_schema import (
+    EnvSchema,
+    DQNConfigSchema,
+    MainSchema,
+    PPOConfigSchema,
+    RewardSchema,
+    TD3ConfigSchema,
+)
 
 @dataclass
 class AgentWrapperSpec:
@@ -183,84 +191,119 @@ class AgentRosterConfig:
 
 @dataclass
 class EnvConfig:
-    data: Dict[str, Any] = field(default_factory=dict)
+    schema: EnvSchema = field(default_factory=EnvSchema)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EnvConfig":
-        return cls(data=dict(data))
+        return cls(schema=EnvSchema.from_dict(data))
 
     def to_kwargs(self) -> Dict[str, Any]:
-        return dict(self.data)
+        return self.schema.to_dict()
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.data.get(key, default)
+        return self.schema.get(key, default)
 
     @property
     def start_pose_options(self):
-        return self.data.get("start_pose_options")
+        return self.schema.start_pose_options
 
 
 @dataclass
 class PPOConfig:
-    data: Dict[str, Any] = field(default_factory=dict)
+    schema: PPOConfigSchema = field(default_factory=PPOConfigSchema)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PPOConfig":
-        return cls(data=dict(data))
+        return cls(schema=PPOConfigSchema.from_dict(data))
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.data.get(key, default)
+        return self.schema.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        self.data[key] = value
+        if hasattr(self.schema, key):
+            setattr(self.schema, key, value)
+        else:
+            self.schema.extras[key] = value
 
     def to_dict(self) -> Dict[str, Any]:
-        return dict(self.data)
+        return self.schema.to_dict()
 
 
 @dataclass
 class RewardConfig:
-    data: Dict[str, Any] = field(default_factory=dict)
+    schema: RewardSchema = field(default_factory=RewardSchema)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RewardConfig":
-        return cls(data=dict(data))
+        return cls(schema=RewardSchema.from_dict(data))
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.data.get(key, default)
+        return self.schema.get(key, default)
 
     def to_dict(self) -> Dict[str, Any]:
-        return dict(self.data)
+        return self.schema.to_dict()
 
 
 @dataclass
 class MainConfig:
-    data: Dict[str, Any] = field(default_factory=dict)
+    schema: MainSchema = field(default_factory=MainSchema)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MainConfig":
-        return cls(data=dict(data))
+        return cls(schema=MainSchema.from_dict(data))
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.data.get(key, default)
+        return self.schema.get(key, default)
 
     @property
     def mode(self) -> str:
-        return self.data.get("mode", "train")
+        return self.schema.mode
 
     @property
     def wandb(self) -> Any:
-        return self.data.get("wandb", {})
+        return self.schema.wandb
 
     @property
     def checkpoint(self) -> Optional[str]:
-        return self.data.get("checkpoint")
+        return self.schema.checkpoint
+
+
+@dataclass
+class TD3Config:
+    schema: TD3ConfigSchema = field(default_factory=TD3ConfigSchema)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TD3Config":
+        return cls(schema=TD3ConfigSchema.from_dict(data))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.schema.get(key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.schema.to_dict()
+
+
+@dataclass
+class DQNConfig:
+    schema: DQNConfigSchema = field(default_factory=DQNConfigSchema)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DQNConfig":
+        return cls(schema=DQNConfigSchema.from_dict(data))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.schema.get(key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.schema.to_dict()
 
 
 @dataclass
 class ExperimentConfig:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
+    td3: TD3Config = field(default_factory=TD3Config)
+    dqn: DQNConfig = field(default_factory=DQNConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
     main: MainConfig = field(default_factory=MainConfig)
     agents: AgentRosterConfig = field(default_factory=AgentRosterConfig)
@@ -285,6 +328,8 @@ class ExperimentConfig:
         return cls(
             env=EnvConfig.from_dict(data.get("env", {})),
             ppo=PPOConfig.from_dict(data.get("ppo", {})),
+            td3=TD3Config.from_dict(data.get("td3", {})),
+            dqn=DQNConfig.from_dict(data.get("dqn", {})),
             reward=RewardConfig.from_dict(data.get("reward", {})),
             main=MainConfig.from_dict(data.get("main", {})),
             agents=agents,
