@@ -80,6 +80,8 @@ class PPOAgent:
         self.rew_buf, self.done_buf = [], []
         self.logp_buf, self.val_buf = [], []
         self.raw_act_buf = []
+        self._pending_bootstrap: Optional[float] = None
+        self._episode_bootstrap: List[float] = []
 
     # ------------------- Acting -------------------
 
@@ -125,6 +127,9 @@ class PPOAgent:
         self.done_buf.append(bool(done))
         if done:
             self._episodes_since_update += 1
+            bootstrap = float(self._pending_bootstrap or 0.0)
+            self._episode_bootstrap.append(bootstrap)
+            self._pending_bootstrap = None
 
     def record_final_value(self, obs):
         obs_np = np.asarray(obs, dtype=np.float32)
@@ -137,6 +142,7 @@ class PPOAgent:
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         val = self.critic(obs_t).squeeze(-1)
         self.val_buf.append(float(val.item()))
+        self._pending_bootstrap = float(val.item())
 
     # ------------------- GAE -------------------
 
@@ -152,37 +158,47 @@ class PPOAgent:
                 f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}"
             )
 
-        if len(self.val_buf) == T + 1:
-            # keep the final critic estimate for bootstrap, but drop the extra
-            bootstrap_v = float(self.val_buf.pop())
-            self.obs_buf.pop()
-            self.act_buf.pop()
-            self.logp_buf.pop()
-            self.raw_act_buf.pop()
-        elif len(self.val_buf) == T:
-            bootstrap_v = 0.0
-        else:
-            raise ValueError(
-                f"rollout length mismatch: rewards {T}, values {len(self.val_buf)}"
-            )
-
         rewards = np.asarray(self.rew_buf, dtype=np.float32)
         values  = np.asarray(self.val_buf, dtype=np.float32)
         dones   = np.asarray(self.done_buf, dtype=np.float32)
 
-        values_ext = np.concatenate([values, np.array([bootstrap_v], dtype=np.float32)])
-
         adv = np.zeros(T, dtype=np.float32)
-        gae = 0.0
-        for t in reversed(range(T)):
-            mask = 1.0 - dones[t]
-            delta = rewards[t] + self.gamma * values_ext[t + 1] * mask - values[t]
-            gae = delta + self.gamma * self.lam * mask * gae
-            adv[t] = gae
+        ret = np.zeros(T, dtype=np.float32)
+
+        if len(self._episode_bootstrap) < 1:
+            self._episode_bootstrap = [0.0]
+
+        start = 0
+        episode_idx = 0
+        for idx, done_flag in enumerate(self.done_buf):
+            if done_flag:
+                end = idx + 1
+                bootstrap_v = self._episode_bootstrap[episode_idx] if episode_idx < len(self._episode_bootstrap) else 0.0
+                gae = 0.0
+                for t in reversed(range(start, end)):
+                    mask = 1.0 - dones[t]
+                    next_value = bootstrap_v if t == end - 1 else values[t + 1]
+                    delta = rewards[t] + self.gamma * next_value * mask - values[t]
+                    gae = delta + self.gamma * self.lam * mask * gae
+                    adv[t] = gae
+                ret[start:end] = adv[start:end] + values[start:end]
+                start = end
+                episode_idx += 1
+
+        if start < T:
+            bootstrap_v = self._episode_bootstrap[episode_idx] if episode_idx < len(self._episode_bootstrap) else 0.0
+            gae = 0.0
+            for t in reversed(range(start, T)):
+                mask = 1.0 - dones[t]
+                next_value = bootstrap_v if t == T - 1 else values[t + 1]
+                delta = rewards[t] + self.gamma * next_value * mask - values[t]
+                gae = delta + self.gamma * self.lam * mask * gae
+                adv[t] = gae
+            ret[start:T] = adv[start:T] + values[start:T]
 
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         self.adv_buf = adv
-        self.ret_buf = adv + values
+        self.ret_buf = ret
 
 
     # ------------------- Update -------------------

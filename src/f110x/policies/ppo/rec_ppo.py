@@ -121,6 +121,7 @@ class RecurrentPPOAgent:
         self.num_layers = num_layers
         self.actor_hidden: Optional[HiddenState] = None
         self.critic_hidden: Optional[HiddenState] = None
+        self._pending_bootstrap: Optional[float] = None
 
         # Rollout buffers -----------------------------------------------
         self.reset_buffer()
@@ -229,6 +230,9 @@ class RecurrentPPOAgent:
         self.done_buf.append(bool(done))
         if done:
             self._episode_boundaries.append(len(self.rew_buf))
+            bootstrap = float(self._pending_bootstrap or 0.0)
+            self._episode_bootstrap.append(bootstrap)
+            self._pending_bootstrap = None
             self._episodes_since_update += 1
             self.reset_hidden_state()
 
@@ -237,11 +241,7 @@ class RecurrentPPOAgent:
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         critic_hidden_backup = self._clone_hidden(self.critic_hidden)
         value, _ = self._critic_forward_step(obs_t, hidden_override=critic_hidden_backup)
-        self.obs_buf.append(obs_np)
-        self.act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
-        self.raw_act_buf.append(np.zeros(self.act_dim, dtype=np.float32))
-        self.logp_buf.append(0.0)
-        self.val_buf.append(float(value.item()))
+        self._pending_bootstrap = float(value.item())
 
     # ------------------------------------------------------------------
     # Advantage calculation & optimisation
@@ -257,38 +257,44 @@ class RecurrentPPOAgent:
         if len(self.done_buf) != T:
             raise ValueError(f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}")
 
-        if len(self.val_buf) == T + 1:
-            # Remove bootstrap placeholder appended via record_final_value
-            bootstrap_v = float(self.val_buf.pop())
-            self.obs_buf.pop()
-            self.act_buf.pop()
-            self.raw_act_buf.pop()
-            self.logp_buf.pop()
-        else:
-            bootstrap_v = 0.0
-
         rewards = np.asarray(self.rew_buf, dtype=np.float32)
         values = np.asarray(self.val_buf, dtype=np.float32)
         dones = np.asarray(self.done_buf, dtype=np.float32)
 
-        values_ext = np.concatenate([values, np.array([bootstrap_v], dtype=np.float32)])
-
         adv = np.zeros(T, dtype=np.float32)
-        gae = 0.0
-        for t in reversed(range(T)):
-            mask = 1.0 - dones[t]
-            delta = rewards[t] + self.gamma * values_ext[t + 1] * mask - values[t]
-            gae = delta + self.gamma * self.lam * mask * gae
-            adv[t] = gae
+        ret = np.zeros(T, dtype=np.float32)
+
+        if len(self._episode_boundaries) < 2:
+            self._episode_boundaries = [0, T]
+
+        for idx in range(len(self._episode_boundaries) - 1):
+            start = self._episode_boundaries[idx]
+            end = self._episode_boundaries[idx + 1]
+            if end <= start:
+                continue
+            bootstrap_v = self._episode_bootstrap[idx] if idx < len(self._episode_bootstrap) else 0.0
+            seg_rewards = rewards[start:end]
+            seg_values = values[start:end]
+            seg_dones = dones[start:end]
+            gae = 0.0
+            for offset in reversed(range(end - start)):
+                mask = 1.0 - seg_dones[offset]
+                next_value = bootstrap_v if offset == end - start - 1 else seg_values[offset + 1]
+                delta = seg_rewards[offset] + self.gamma * next_value * mask - seg_values[offset]
+                gae = delta + self.gamma * self.lam * mask * gae
+                adv[start + offset] = gae
+            ret[start:end] = adv[start:end] + seg_values
 
         self.adv_buf = adv
-        self.ret_buf = adv + values
+        self.ret_buf = ret
 
     def _ensure_episode_boundaries(self) -> None:
         if not self._episode_boundaries:
             self._episode_boundaries = [0]
         if self._episode_boundaries[-1] != len(self.rew_buf):
             self._episode_boundaries.append(len(self.rew_buf))
+            if len(self._episode_bootstrap) < len(self._episode_boundaries) - 1:
+                self._episode_bootstrap.append(0.0)
 
     def _prepare_sequences(self) -> List[Dict[str, torch.Tensor]]:
         self._ensure_episode_boundaries()
@@ -513,6 +519,8 @@ class RecurrentPPOAgent:
         self.adv_buf: np.ndarray = np.zeros(0, dtype=np.float32)
         self.ret_buf: np.ndarray = np.zeros(0, dtype=np.float32)
         self._episode_boundaries: List[int] = [0]
+        self._episode_bootstrap: List[float] = []
+        self._pending_bootstrap = None
 
 
 HiddenState = Optional[torch.Tensor] | Tuple[torch.Tensor, torch.Tensor]
