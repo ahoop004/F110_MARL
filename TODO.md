@@ -13,10 +13,10 @@
     - [x] Cache frequently used params/arrays (`[sv, accl]`, `scan_pose`) instead of recreating them four times per integration step.
     - [x] Hoist dict lookups for dynamics parameters into structured arrays for faster access inside numba kernels.
 
-- [ ] Medium-impact: Reduce training-loop Python bookkeeping (`experiments/train.py`).
-    - [ ] Replace per-agent dicts (`totals`, `speed_sums`, `collision_counts`, etc.) with preallocated numpy arrays keyed by agent index.
-    - [ ] Vectorize idle-speed detection and reward aggregation to avoid repeated `np.asarray`/`np.linalg.norm` per agent.
-    - [ ] Consider a lightweight trajectory buffer so trainers consume batched transitions instead of per-step dict assembly.
+- [x] Medium-impact: Reduce training-loop Python bookkeeping (`experiments/train.py`).
+    - [x] Replace per-agent dicts (`totals`, `speed_sums`, `collision_counts`, etc.) with preallocated numpy arrays keyed by agent index.
+    - [x] Vectorize idle-speed detection and reward aggregation to avoid repeated `np.asarray`/`np.linalg.norm` per agent.
+    - [x] Consider a lightweight trajectory buffer so trainers consume batched transitions instead of per-step dict assembly.
 
 - [ ] Lower-impact: Cache map metadata/image loads in `MapLoader` (`src/f110x/utils/map_loader.py`).
     - [ ] Add an in-memory cache keyed by `(map_dir, map_yaml)` and share `track_mask`/image size across env builds.

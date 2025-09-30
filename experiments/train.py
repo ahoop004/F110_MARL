@@ -272,6 +272,53 @@ def run_training(
     idle_speed_threshold = float(ctx.reward_cfg.get("idle_speed_threshold", 0.4))
     idle_patience_steps = int(ctx.reward_cfg.get("idle_patience_steps", 200))
 
+    agent_ids = list(env.possible_agents)
+    agent_count = len(agent_ids)
+    id_to_index = {aid: idx for idx, aid in enumerate(agent_ids)}
+
+    totals_array = np.zeros(agent_count, dtype=np.float32)
+    collision_counts_array = np.zeros(agent_count, dtype=np.int32)
+    collision_step_array = np.full(agent_count, -1, dtype=np.int32)
+    collision_flags = np.zeros(agent_count, dtype=bool)
+    speed_sums_array = np.zeros(agent_count, dtype=np.float32)
+    speed_counts_array = np.zeros(agent_count, dtype=np.int32)
+    done_flags = np.zeros(agent_count, dtype=bool)
+
+    # per-step scratch buffers reused across the episode loop
+    step_collision_mask = np.zeros(agent_count, dtype=bool)
+    step_speed_values = np.zeros(agent_count, dtype=np.float32)
+    step_speed_present = np.zeros(agent_count, dtype=bool)
+    shaped_rewards = np.zeros(agent_count, dtype=np.float32)
+
+    class TrajectoryBuffer:
+        __slots__ = ("trainer", "_items", "_capacity")
+
+        def __init__(self, trainer: Trainer, capacity: int = 64) -> None:
+            self.trainer = trainer
+            self._items: List[Transition] = []
+            self._capacity = max(int(capacity), 1)
+
+        def append(self, item: Transition) -> None:
+            self._items.append(item)
+            if len(self._items) >= self._capacity:
+                self.flush()
+
+        def flush(self) -> None:
+            if not self._items:
+                return
+            observe_batch = getattr(self.trainer, "observe_batch", None)
+            if callable(observe_batch):
+                observe_batch(self._items)
+            else:
+                for item in self._items:
+                    self.trainer.observe(item)
+            self._items.clear()
+
+    trajectory_buffers: Dict[str, TrajectoryBuffer] = {
+        aid: TrajectoryBuffer(trainer)
+        for aid, trainer in trainers.items()
+    }
+
     for ep in range(episodes):
         obs, infos = reset_with_start_poses(
             env,
@@ -282,25 +329,31 @@ def run_training(
         )
         ctx.team.reset_actions()
 
-        done = {aid: False for aid in env.possible_agents}
-        totals = {aid: 0.0 for aid in env.possible_agents}
+        done = {aid: False for aid in agent_ids}
+        done_flags.fill(False)
+        totals_array.fill(0.0)
         reward_wrapper = _build_reward_wrapper(ctx, ep)
         reward_breakdown: Dict[str, Dict[str, float]] = {
-            aid: defaultdict(float) for aid in env.possible_agents
+            aid: defaultdict(float) for aid in agent_ids
         }
 
         steps = 0
-        collision_history: List[str] = []
         terms: Dict[str, bool] = {}
         truncs: Dict[str, bool] = {}
-        collision_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
-        collision_step: Dict[str, Optional[int]] = {aid: None for aid in env.possible_agents}
-        speed_sums: Dict[str, float] = {aid: 0.0 for aid in env.possible_agents}
-        speed_counts: Dict[str, int] = {aid: 0 for aid in env.possible_agents}
+        collision_counts_array.fill(0)
+        collision_step_array.fill(-1)
+        collision_flags.fill(False)
+        speed_sums_array.fill(0.0)
+        speed_counts_array.fill(0)
         idle_counter = 0
         idle_triggered = False
 
         while True:
+            step_collision_mask.fill(False)
+            step_speed_present.fill(False)
+            step_speed_values.fill(0.0)
+            shaped_rewards.fill(0.0)
+
             actions, processed_obs = _compute_actions(ctx, obs, done)
             if not actions:
                 break
@@ -308,11 +361,10 @@ def run_training(
             next_obs, rewards, terms, truncs, infos = env.step(actions)
             steps += 1
 
-            shaped_rewards: Dict[str, float] = {}
-            for aid in totals:
-                reward = rewards.get(aid, 0.0)
+            for idx, aid in enumerate(agent_ids):
+                base_reward = rewards.get(aid, 0.0)
                 if next_obs.get(aid) is not None:
-                    reward = reward_wrapper(
+                    base_reward = reward_wrapper(
                         next_obs,
                         aid,
                         rewards.get(aid, 0.0),
@@ -320,30 +372,32 @@ def run_training(
                         info=infos.get(aid, {}),
                         all_obs=next_obs,
                     )
-                totals[aid] += reward
-                shaped_rewards[aid] = reward
+                totals_array[idx] += float(base_reward)
+                shaped_rewards[idx] = float(base_reward)
 
                 components = reward_wrapper.get_last_components(aid)
                 if components:
                     for name, value in components.items():
                         reward_breakdown[aid][name] = reward_breakdown[aid].get(name, 0.0) + float(value)
 
-            collision_agents = [
-                aid for aid in next_obs.keys()
-                if bool(next_obs.get(aid, {}).get("collision", False))
-            ]
-            if collision_agents:
-                collision_history.extend(collision_agents)
-                for aid in collision_agents:
-                    collision_counts[aid] = collision_counts.get(aid, 0) + 1
-                    if collision_step.get(aid) is None:
-                        collision_step[aid] = steps
+            for idx, aid in enumerate(agent_ids):
+                collided = bool(next_obs.get(aid, {}).get("collision", False))
+                if collided:
+                    step_collision_mask[idx] = True
+                    collision_counts_array[idx] += 1
+                    if collision_step_array[idx] < 0:
+                        collision_step_array[idx] = steps
+                    collision_flags[idx] = True
 
             for trainer_id, trainer in trainers.items():
                 if trainer_id not in processed_obs:
                     continue
 
-                terminated = terms.get(trainer_id, False) or (trainer_id in collision_agents)
+                agent_idx = id_to_index.get(trainer_id)
+                if agent_idx is None:
+                    continue
+
+                terminated = terms.get(trainer_id, False) or bool(step_collision_mask[agent_idx])
                 truncated = truncs.get(trainer_id, False)
 
                 patched_next = _prepare_next_observation(ctx, trainer_id, next_obs, infos)
@@ -352,7 +406,7 @@ def run_training(
                 except Exception:
                     next_wrapped = processed_obs[trainer_id]
 
-                shaped = shaped_rewards.get(trainer_id, rewards.get(trainer_id, 0.0))
+                shaped = float(shaped_rewards[agent_idx]) if agent_idx is not None else rewards.get(trainer_id, 0.0)
                 transition = Transition(
                     agent_id=trainer_id,
                     obs=processed_obs[trainer_id],
@@ -365,31 +419,34 @@ def run_training(
                     raw_obs=obs,
                     raw_next_obs=next_obs,
                 )
-                trainer.observe(transition)
+                trajectory_buffers[trainer_id].append(transition)
 
-            for aid in done:
-                done_flag = terms.get(aid, False) or truncs.get(aid, False) or (aid in collision_history)
+            for idx, aid in enumerate(agent_ids):
+                done_flag = terms.get(aid, False) or truncs.get(aid, False) or collision_flags[idx]
+                done_flags[idx] = done_flag
                 done[aid] = done_flag
 
             obs = next_obs
 
-            step_speeds: Dict[str, float] = {}
-            for aid in env.possible_agents:
+            for idx, aid in enumerate(agent_ids):
                 velocity = next_obs.get(aid, {}).get("velocity")
                 if velocity is None:
                     continue
                 speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
-                if not np.isnan(speed):
-                    speed_sums[aid] = speed_sums.get(aid, 0.0) + speed
-                    speed_counts[aid] = speed_counts.get(aid, 0) + 1
-                    step_speeds[aid] = speed
-                else:
-                    step_speeds[aid] = 0.0
+                if np.isnan(speed):
+                    speed = 0.0
+                step_speed_values[idx] = speed
+                step_speed_present[idx] = True
+                speed_sums_array[idx] += speed
+                speed_counts_array[idx] += 1
 
             if idle_patience_steps > 0:
-                observed_speeds = list(step_speeds.values())
-                if observed_speeds and all(speed < idle_speed_threshold for speed in observed_speeds):
-                    idle_counter += 1
+                if step_speed_present.any():
+                    active = step_speed_values[step_speed_present]
+                    if np.all(active < idle_speed_threshold):
+                        idle_counter += 1
+                    else:
+                        idle_counter = 0
                 else:
                     idle_counter = 0
 
@@ -400,7 +457,7 @@ def run_training(
                         done[aid] = True
                     break
 
-            if collision_history or all(done.values()):
+            if collision_flags.any() or bool(done_flags.all()):
                 break
 
             if ctx.render_interval and ((ep + 1) % ctx.render_interval == 0):
@@ -411,7 +468,7 @@ def run_training(
                     ctx.render_interval = 0
 
         end_cause: List[str] = []
-        if collision_history:
+        if collision_flags.any():
             end_cause.append("collision")
         for aid in done:
             if terms.get(aid, False):
@@ -429,14 +486,14 @@ def run_training(
         cause_str = ",".join(end_cause)
 
         if truncation_penalty:
-            for aid in env.possible_agents:
+            for idx, aid in enumerate(agent_ids):
                 if truncs.get(aid, False):
-                    totals[aid] += truncation_penalty
+                    totals_array[idx] += truncation_penalty
                     reward_breakdown[aid]["truncation_penalty"] = (
                         reward_breakdown[aid].get("truncation_penalty", 0.0) + truncation_penalty
                     )
 
-        returns = {aid: float(value) for aid, value in totals.items()}
+        returns = {aid: float(totals_array[idx]) for idx, aid in enumerate(agent_ids)}
 
         epsilon_val: Optional[float] = None
         epsilon_accessor = getattr(ctx.ppo_trainer, "epsilon", None)
@@ -446,14 +503,23 @@ def run_training(
             except Exception:  # pragma: no cover - defensive guard
                 epsilon_val = None
 
-        defender_crashed = bool(defender_id and collision_step.get(defender_id) is not None)
-        attacker_crashed = bool(attacker_id and collision_step.get(attacker_id) is not None)
+        defender_idx = id_to_index.get(defender_id) if defender_id else None
+        attacker_idx = id_to_index.get(attacker_id) if attacker_id else None
+
+        defender_crashed = bool(
+            defender_idx is not None and collision_step_array[defender_idx] >= 0
+        )
+        attacker_crashed = bool(
+            attacker_idx is not None and collision_step_array[attacker_idx] >= 0
+        )
         success = bool(defender_crashed and not attacker_crashed)
         defender_survival_steps: Optional[int] = None
-        if defender_id:
-            defender_survival_steps = collision_step.get(defender_id) if defender_crashed else steps
+        if defender_idx is not None:
+            defender_survival_steps = (
+                int(collision_step_array[defender_idx]) if defender_crashed else steps
+            )
 
-        collisions_total = int(sum(collision_counts.values()))
+        collisions_total = int(collision_counts_array.sum())
         episode_record: Dict[str, Any] = {
             "episode": ep + 1,
             "steps": steps,
@@ -470,19 +536,23 @@ def run_training(
         if epsilon_val is not None:
             episode_record["epsilon"] = epsilon_val
 
-        for aid, count in collision_counts.items():
-            episode_record[f"collision_count_{aid}"] = count
-        for aid, step_val in collision_step.items():
-            if step_val is not None:
-                episode_record[f"collision_step_{aid}"] = step_val
-        for aid in env.possible_agents:
-            count = speed_counts.get(aid, 0)
-            if count:
-                episode_record[f"avg_speed_{aid}"] = float(speed_sums.get(aid, 0.0) / count)
+        for idx, aid in enumerate(agent_ids):
+            episode_record[f"collision_count_{aid}"] = int(collision_counts_array[idx])
+        for idx, aid in enumerate(agent_ids):
+            step_val = collision_step_array[idx]
+            if step_val >= 0:
+                episode_record[f"collision_step_{aid}"] = int(step_val)
+        for idx, aid in enumerate(agent_ids):
+            count = speed_counts_array[idx]
+            if count > 0:
+                episode_record[f"avg_speed_{aid}"] = float(speed_sums_array[idx] / count)
             else:
                 episode_record[f"avg_speed_{aid}"] = 0.0
 
         results.append(episode_record)
+
+        for buffer in trajectory_buffers.values():
+            buffer.flush()
 
         if update_callback:
             payload: Dict[str, Any] = {}
@@ -548,6 +618,9 @@ def run_training(
         )
 
     for trainer_id, trainer in trainers.items():
+        buffer = trajectory_buffers.get(trainer_id)
+        if buffer is not None:
+            buffer.flush()
         stats = trainer.update()
         if update_callback and stats:
             update_count += 1
