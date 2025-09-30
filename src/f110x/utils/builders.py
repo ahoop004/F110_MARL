@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from gymnasium import spaces
@@ -22,6 +22,7 @@ from f110x.wrappers.action import (
     DiscreteActionWrapper,
     DeltaDiscreteActionWrapper,
 )
+from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.random_policy import random_policy
@@ -255,6 +256,48 @@ class ObservationAdapter:
         return fallback
 
 
+class ObservationPipeline(Sequence[ObservationAdapter]):
+    """Utility to compose ordered observation adapters."""
+
+    def __init__(self, stages: Iterable[ObservationAdapter]):
+        self._stages: List[ObservationAdapter] = list(stages)
+
+    def __len__(self) -> int:
+        return len(self._stages)
+
+    def __iter__(self):
+        return iter(self._stages)
+
+    def __getitem__(self, index: int) -> ObservationAdapter:
+        return self._stages[index]
+
+    @property
+    def stages(self) -> List[ObservationAdapter]:
+        return list(self._stages)
+
+    @property
+    def names(self) -> List[str]:
+        return [stage.name for stage in self._stages]
+
+    def transform(
+        self,
+        raw_obs: Dict[str, Any],
+        agent_id: str,
+        roster: RosterLayout,
+        *,
+        initial: Any = None,
+    ) -> Any:
+        result: Any = raw_obs if initial is None else initial
+        for stage in self._stages:
+            result = stage(raw_obs, agent_id, roster, result)
+        return result
+
+    def to_vector(self, raw_obs: Dict[str, Any], agent_id: str, roster: RosterLayout) -> np.ndarray:
+        output = self.transform(raw_obs, agent_id, roster)
+        vector = to_numpy(output, flatten=True)
+        return vector.astype(np.float32, copy=False)
+
+
 WrapperBuilder = Callable[[AgentWrapperSpec, "AgentBuildContext", AgentAssignment, RosterLayout], ObservationAdapter]
 
 
@@ -300,7 +343,7 @@ class AgentBundle:
     assignment: AgentAssignment
     algo: str
     controller: Any
-    wrappers: List[ObservationAdapter]
+    obs_pipeline: ObservationPipeline
     trainable: bool
     metadata: Dict[str, Any] = field(default_factory=dict)
     trainer: Optional[Trainer] = None
@@ -317,6 +360,12 @@ class AgentBundle:
     @property
     def slot(self) -> int:
         return self.assignment.slot
+
+    @property
+    def wrappers(self) -> ObservationPipeline:
+        """Backwards-compatible access to the observation pipeline stages."""
+
+        return self.obs_pipeline
 
 
 class FunctionPolicy:
@@ -349,7 +398,7 @@ class AgentBuildContext:
         return self.sample_obs
 
 
-AgentBuilderFn = Callable[[AgentAssignment, AgentBuildContext, RosterLayout, List[ObservationAdapter]], AgentBundle]
+AgentBuilderFn = Callable[[AgentAssignment, AgentBuildContext, RosterLayout, ObservationPipeline], AgentBundle]
 
 
 def _resolve_algorithm_config(ctx: AgentBuildContext, spec: AgentSpecConfig) -> Dict[str, Any]:
@@ -378,7 +427,7 @@ def _build_algo_ppo(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     agent_id = assignment.agent_id
     action_space = ctx.env.action_space(agent_id)
@@ -388,17 +437,13 @@ def _build_algo_ppo(
             f"received {type(action_space)!r} for agent '{agent_id}'"
         )
 
-    if not wrappers:
+    if not pipeline:
         raise ValueError(
             f"PPO agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
         )
 
     sample_obs = ctx.ensure_sample()
-    transformed = sample_obs
-    for adapter in wrappers:
-        transformed = adapter(sample_obs, agent_id, roster, transformed)
-
-    obs_vector = np.asarray(transformed, dtype=np.float32)
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
     ppo_cfg = _resolve_algorithm_config(ctx, assignment.spec)
     ppo_cfg["obs_dim"] = int(obs_vector.size)
     ppo_cfg["act_dim"] = int(action_space.shape[0])
@@ -412,7 +457,7 @@ def _build_algo_ppo(
         assignment=assignment,
         algo="ppo",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": ppo_cfg},
         trainer=trainer,
@@ -424,7 +469,7 @@ def _build_algo_td3(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     agent_id = assignment.agent_id
     action_space = ctx.env.action_space(agent_id)
@@ -434,17 +479,13 @@ def _build_algo_td3(
             f"received {type(action_space)!r} for agent '{agent_id}'"
         )
 
-    if not wrappers:
+    if not pipeline:
         raise ValueError(
             f"TD3 agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
         )
 
     sample_obs = ctx.ensure_sample()
-    transformed = sample_obs
-    for adapter in wrappers:
-        transformed = adapter(sample_obs, agent_id, roster, transformed)
-
-    obs_vector = np.asarray(transformed, dtype=np.float32)
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
     td3_cfg = _resolve_algorithm_config(ctx, assignment.spec)
     td3_cfg["obs_dim"] = int(obs_vector.size)
     td3_cfg["act_dim"] = int(action_space.shape[0])
@@ -458,7 +499,7 @@ def _build_algo_td3(
         assignment=assignment,
         algo="td3",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": td3_cfg},
         trainer=trainer,
@@ -470,7 +511,7 @@ def _build_algo_dqn(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     agent_id = assignment.agent_id
     action_space = ctx.env.action_space(agent_id)
@@ -480,17 +521,13 @@ def _build_algo_dqn(
             f"received {type(action_space)!r} for agent '{agent_id}'"
         )
 
-    if not wrappers:
+    if not pipeline:
         raise ValueError(
             f"DQN agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
         )
 
     sample_obs = ctx.ensure_sample()
-    transformed = sample_obs
-    for adapter in wrappers:
-        transformed = adapter(sample_obs, agent_id, roster, transformed)
-
-    obs_vector = np.asarray(transformed, dtype=np.float32)
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
     dqn_cfg = _resolve_algorithm_config(ctx, assignment.spec)
     if "action_set" not in dqn_cfg:
         raise ValueError(
@@ -514,7 +551,7 @@ def _build_algo_dqn(
         assignment=assignment,
         algo="dqn",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": dqn_cfg},
         trainer=trainer,
@@ -526,14 +563,14 @@ def _build_algo_follow_gap(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FollowTheGapPolicy.from_config(assignment.spec.params)
     return AgentBundle(
         assignment=assignment,
         algo="follow_gap",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
     )
 
@@ -542,14 +579,14 @@ def _build_algo_random(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(random_policy, name="random")
     return AgentBundle(
         assignment=assignment,
         algo="random",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
     )
 
@@ -558,14 +595,14 @@ def _build_algo_waypoint(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(simple_heuristic, name="waypoint")
     return AgentBundle(
         assignment=assignment,
         algo="waypoint",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
         metadata={"note": "Placeholder waypoint heuristic"},
     )
@@ -575,14 +612,14 @@ def _build_algo_centerline(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
-    wrappers: List[ObservationAdapter],
+    pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(simple_heuristic, name="centerline")
     return AgentBundle(
         assignment=assignment,
         algo="centerline",
         controller=controller,
-        wrappers=wrappers,
+        obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
         metadata={"note": "Placeholder centerline heuristic"},
     )
@@ -593,7 +630,7 @@ def _unsupported_builder(name: str) -> AgentBuilderFn:
         assignment: AgentAssignment,
         ctx: AgentBuildContext,
         roster: RosterLayout,
-        wrappers: List[ObservationAdapter],
+        pipeline: ObservationPipeline,
     ) -> AgentBundle:
         raise NotImplementedError(
             f"Agent algorithm '{name}' is registered but does not have an implementation yet"
@@ -683,10 +720,7 @@ class AgentTeam:
 
     def observation(self, agent_id: str, raw_obs: Dict[str, Any]) -> Any:
         bundle = self.by_id[agent_id]
-        result: Any = raw_obs
-        for adapter in bundle.wrappers:
-            result = adapter(raw_obs, agent_id, self.roster, result)
-        return result
+        return bundle.obs_pipeline.transform(raw_obs, agent_id, self.roster)
 
     def action(self, agent_id: str, action: Any) -> Any:
         bundle = self.by_id[agent_id]
@@ -731,20 +765,22 @@ def build_agents(env: F110ParallelEnv, cfg: ExperimentConfig, *, ensure_sample: 
     bundles: List[AgentBundle] = []
 
     for assignment in roster.assignments:
-        wrappers: List[ObservationAdapter] = []
+        stages: List[ObservationAdapter] = []
         for wrapper_spec in assignment.spec.wrappers:
             builder = WRAPPER_BUILDERS.get(wrapper_spec.factory.lower())
             if builder is None:
                 raise KeyError(
                     f"Unknown wrapper factory '{wrapper_spec.factory}' for agent '{assignment.agent_id}'"
                 )
-            wrappers.append(builder(wrapper_spec, context, assignment, roster))
+            stages.append(builder(wrapper_spec, context, assignment, roster))
+
+        pipeline = ObservationPipeline(stages)
 
         builder_fn = AGENT_BUILDERS.get(assignment.spec.algo.lower())
         if builder_fn is None:
             raise KeyError(
                 f"Unknown agent algorithm '{assignment.spec.algo}' for agent '{assignment.agent_id}'"
             )
-        bundles.append(builder_fn(assignment, context, roster, wrappers))
+        bundles.append(builder_fn(assignment, context, roster, pipeline))
 
     return AgentTeam(env=env, cfg=cfg, roster=roster, agents=bundles)

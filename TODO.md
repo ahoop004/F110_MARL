@@ -1,7 +1,7 @@
 # TODO
 
 - [x] Refactor RewardWrapper: extract Position-2 math + normalization into helper module; centralize coefficient definitions.
-- [ ] Consolidate observation/action wrapper utilities (shared LiDAR downsample, to_numpy helpers, observation pipeline abstraction).
+- [x] Consolidate observation/action wrapper utilities (shared LiDAR downsample, to_numpy helpers, observation pipeline abstraction).
 - [ ] Introduce typed config schema (pydantic or custom) so env/agent/reward defaults live in one place.
 - [ ] Split F110ParallelEnv into submodules (LiDAR, collision state machine, start-poses) for readability/testing.
 - [ ] Create shared CLI utilities (yaml loading, logging, manifest helpers) for scripts/run.py/map_validator.py.

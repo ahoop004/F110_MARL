@@ -1,17 +1,20 @@
 """Action wrappers for continuous scaling and discrete templating."""
+
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
+
+from f110x.wrappers.common import ensure_index, to_numpy
 
 
 class ContinuousActionWrapper:
     """Scale normalized actions in [-1, 1] to environment bounds."""
 
     def __init__(self, low: Iterable[float], high: Iterable[float]) -> None:
-        self.low = np.asarray(low, dtype=np.float32)
-        self.high = np.asarray(high, dtype=np.float32)
+        self.low = to_numpy(low)
+        self.high = to_numpy(high)
         if self.low.shape != self.high.shape:
             raise ValueError("low/high must have matching shapes")
         self.range = self.high - self.low
@@ -19,15 +22,17 @@ class ContinuousActionWrapper:
             raise ValueError("action range must be positive")
 
     def transform(self, _agent_id: str, action: Iterable[float]) -> np.ndarray:
-        action = np.asarray(action, dtype=np.float32)
-        return np.clip(action, -1.0, 1.0) * (self.range / 2.0) + (self.low + self.high) / 2.0
+        action_arr = to_numpy(action)
+        clipped = np.clip(action_arr, -1.0, 1.0)
+        midpoint = (self.low + self.high) / 2.0
+        return clipped * (self.range / 2.0) + midpoint
 
 
 class DiscreteActionWrapper:
     """Map discrete action indices to continuous control primitives."""
 
     def __init__(self, action_set: Iterable[Iterable[float]]) -> None:
-        action_array = np.asarray(action_set, dtype=np.float32)
+        action_array = to_numpy(action_set)
         if action_array.ndim != 2:
             raise ValueError("action_set must be 2D: (n_actions, action_dim)")
         self._actions = action_array
@@ -38,17 +43,17 @@ class DiscreteActionWrapper:
 
     def transform(self, _agent_id: str, action: Any) -> np.ndarray:
         if np.isscalar(action):
-            return self.index_to_action(int(action))
-        action_arr = np.asarray(action, dtype=np.float32)
+            return self.index_to_action(ensure_index(action))
+        action_arr = to_numpy(action)
         if action_arr.ndim == 0:
-            return self.index_to_action(int(action_arr.item()))
+            return self.index_to_action(ensure_index(action_arr))
         return action_arr
 
     def index_to_action(self, index: int) -> np.ndarray:
         return self._actions[index].copy()
 
     def action_to_index(self, action: Iterable[float]) -> int:
-        action_arr = np.asarray(action, dtype=np.float32)
+        action_arr = to_numpy(action)
         diffs = np.linalg.norm(self._actions - action_arr, axis=1)
         return int(np.argmin(diffs))
 
@@ -62,12 +67,12 @@ class DeltaDiscreteActionWrapper:
         low: Iterable[float],
         high: Iterable[float],
     ) -> None:
-        delta_array = np.asarray(action_deltas, dtype=np.float32)
+        delta_array = to_numpy(action_deltas)
         if delta_array.ndim != 2:
             raise ValueError("action_deltas must be 2D: (n_actions, action_dim)")
         self._deltas = delta_array
-        self.low = np.asarray(low, dtype=np.float32)
-        self.high = np.asarray(high, dtype=np.float32)
+        self.low = to_numpy(low)
+        self.high = to_numpy(high)
         if self.low.shape != self.high.shape:
             raise ValueError("low/high must have matching shapes")
         if self.low.shape[0] != self._deltas.shape[1]:
@@ -77,13 +82,10 @@ class DeltaDiscreteActionWrapper:
     def reset(self, agent_id: str, initial_action: Optional[Iterable[float]] = None) -> None:
         if initial_action is None:
             initial_action = np.zeros_like(self.low)
-        self._state[agent_id] = np.asarray(initial_action, dtype=np.float32)
+        self._state[agent_id] = to_numpy(initial_action)
 
     def transform(self, agent_id: str, action: Any) -> np.ndarray:
-        if np.isscalar(action):
-            index = int(action)
-        else:
-            index = int(np.asarray(action).item())
+        index = ensure_index(action)
         if agent_id not in self._state:
             self.reset(agent_id)
         baseline = self._state[agent_id]

@@ -1,57 +1,98 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 import numpy as np
 
-class ObsWrapper:
-    def __init__(self, max_scan=30.0, normalize=True, lidar_beams=None):
-        self.max_scan = max_scan
-        self.normalize = normalize
-        self.lidar_beams = int(lidar_beams) if lidar_beams is not None else None
+from f110x.wrappers.common import downsample_lidar, to_numpy
 
-    def __call__(self, obs, ego_id, target_id=None):
-        """
-        obs: per-agent obs dict from F110ParallelEnv (obs[aid] = {...})
-        ego_id: agent id string (e.g. "car_0")
-        target_id: optional agent id. If None and only 2 agents, auto-pick the other.
-        """
-        if target_id is None:
-            agent_ids = list(obs.keys())
-            if len(agent_ids) != 2:
-                raise ValueError("Auto target selection only works for 2 agents")
-            target_id = [a for a in agent_ids if a != ego_id][0]
+
+class ObsWrapper:
+    """Canonical observation adapter for policy networks."""
+
+    def __init__(self, max_scan: float = 30.0, normalize: bool = True, lidar_beams: Optional[int] = None):
+        self.max_scan = float(max_scan)
+        self.normalize = bool(normalize)
+        if lidar_beams is not None:
+            beams = int(lidar_beams)
+            self.lidar_beams = beams if beams > 0 else None
+        else:
+            self.lidar_beams = None
+
+    def __call__(
+        self,
+        obs: Dict[str, Dict[str, Any]],
+        ego_id: str,
+        target_id: Optional[str] = None,
+    ) -> np.ndarray:
+        """Project raw env observations to a flat feature vector."""
+
+        target_key = self._resolve_target_id(obs, ego_id, target_id)
 
         ego_obs = obs[ego_id]
-        tgt_obs = obs[target_id]
+        target_obs = obs[target_key] if target_key is not None else None
 
-        # LiDAR
-        scan = np.array(ego_obs["scans"], dtype=np.float32)
-        target_beams = self.lidar_beams
-        if target_beams is not None and target_beams > 0:
-            if scan.size > target_beams:
-                indices = np.linspace(0, scan.size - 1, target_beams, dtype=np.int32)
-                scan = scan[indices]
-            elif scan.size < target_beams:
-                padded = np.zeros((target_beams,), dtype=np.float32)
-                padded[: scan.size] = scan
-                scan = padded
-        if self.normalize:
+        scan = self._prepare_scan(ego_obs)
+        ego_features = self._prepare_ego_features(ego_obs)
+        target_features = self._prepare_target_features(ego_obs, target_obs)
+
+        return np.concatenate([scan, ego_features, target_features])
+
+    # ------------------------------------------------------------------
+    def _resolve_target_id(
+        self,
+        obs: Dict[str, Dict[str, Any]],
+        ego_id: str,
+        target_id: Optional[str],
+    ) -> Optional[str]:
+        if target_id is not None:
+            return target_id
+
+        agent_ids = list(obs.keys())
+        if len(agent_ids) == 2:
+            return agent_ids[0] if agent_ids[1] == ego_id else agent_ids[1]
+
+        raise ValueError("ObsWrapper requires explicit target_id when more than two agents are present")
+
+    def _prepare_scan(self, ego_obs: Dict[str, Any]) -> np.ndarray:
+        if "scans" not in ego_obs:
+            raise KeyError("ObsWrapper expects a 'scans' entry in the ego observation")
+
+        scan = downsample_lidar(ego_obs["scans"], self.lidar_beams)
+        if self.normalize and self.max_scan > 0.0:
             scan = scan / self.max_scan
+        return scan.astype(np.float32, copy=False)
 
-        # Ego features
-        # After getting pose and target
-        pose = np.array(ego_obs["pose"], dtype=np.float32)  # [x, y, theta]
-        pose[:2] /= self.max_scan   # normalize x,y roughly to LiDAR scale
-        pose[2] = np.sin(pose[2])   # replace angle with sin(theta) or sin/cos encoding
+    def _prepare_ego_features(self, ego_obs: Dict[str, Any]) -> np.ndarray:
+        pose = to_numpy(ego_obs.get("pose", ()), flatten=True)
+        if pose.size < 3:
+            raise ValueError("ObsWrapper requires ego pose with at least (x, y, theta)")
 
-        ego = np.concatenate([pose, [float(ego_obs["collision"])]], dtype=np.float32)
+        x, y, theta = map(float, pose[:3])
+        if self.max_scan > 0.0:
+            x /= self.max_scan
+            y /= self.max_scan
+        orientation = np.sin(theta)
+        collision = float(ego_obs.get("collision", False))
+        return np.array([x, y, orientation, collision], dtype=np.float32)
 
-        # Target features (if available in obs)
+    def _prepare_target_features(
+        self,
+        ego_obs: Dict[str, Any],
+        target_obs: Optional[Dict[str, Any]],
+    ) -> np.ndarray:
         if "target_pose" in ego_obs and "target_collision" in ego_obs:
-            target = np.concatenate([
-                np.array(ego_obs["target_pose"], dtype=np.float32),
-                [float(ego_obs["target_collision"])]
-            ], dtype=np.float32)
-        else:
-            # fallback: build from target agent's own obs
-            tgt_pose = np.array(tgt_obs["pose"], dtype=np.float32)
-            target = np.concatenate([tgt_pose, [float(tgt_obs["collision"])]], dtype=np.float32)
+            pose = to_numpy(ego_obs["target_pose"], flatten=True)
+            if pose.size < 3:
+                raise ValueError("ObsWrapper target_pose must have at least 3 elements")
+            collision = float(ego_obs.get("target_collision", False))
+            return np.concatenate([pose[:3].astype(np.float32, copy=False), np.array([collision], dtype=np.float32)])
 
-        return np.concatenate([scan, ego, target])
+        if target_obs is None:
+            raise ValueError("ObsWrapper could not resolve a target observation")
+
+        pose = to_numpy(target_obs.get("pose", ()), flatten=True)
+        if pose.size < 3:
+            raise ValueError("Target observation requires pose with at least (x, y, theta)")
+        collision = float(target_obs.get("collision", False))
+        return np.concatenate([pose[:3].astype(np.float32, copy=False), np.array([collision], dtype=np.float32)])
