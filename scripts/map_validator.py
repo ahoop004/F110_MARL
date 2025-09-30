@@ -8,7 +8,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 import numpy as np
 import yaml
@@ -17,6 +17,7 @@ from PIL import Image
 
 DEFAULT_TRACK_THRESHOLD_DARK = 127
 DEFAULT_TRACK_THRESHOLD_LIGHT = 200
+DEFAULT_WALL_ADJACENT_RATIO = 0.05
 
 
 @dataclass
@@ -39,6 +40,14 @@ class MapReport:
         return any(issue.severity == "ERROR" for issue in self.issues)
 
 
+@dataclass(frozen=True)
+class ValidationSettings:
+    """Runtime knobs controlling validation sensitivity and whitelisting."""
+
+    wall_adjacent_threshold: float = DEFAULT_WALL_ADJACENT_RATIO
+    whitelist: Set[str] = field(default_factory=set)
+
+
 def _resolve_image_path(yaml_path: Path, metadata: dict) -> Path:
     image_rel = metadata.get("image")
     if image_rel:
@@ -46,6 +55,16 @@ def _resolve_image_path(yaml_path: Path, metadata: dict) -> Path:
 
     map_ext = metadata.get("map_ext", ".png")
     return yaml_path.with_suffix(map_ext)
+
+
+def _load_whitelist_file(path: Path) -> Set[str]:
+    entries: Set[str] = set()
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            entry = line.split("#", 1)[0].strip()
+            if entry:
+                entries.add(entry)
+    return entries
 
 
 def _load_yaml(yaml_path: Path) -> dict:
@@ -88,7 +107,7 @@ def _adjacent_background_ratio(track_mask: np.ndarray) -> float:
     return float(adjacent) / float(total)
 
 
-def _estimate_wall_presence(gray: np.ndarray, track_mask: np.ndarray) -> bool:
+def _estimate_wall_presence(gray: np.ndarray, track_mask: np.ndarray, threshold: float) -> bool:
     if gray.size == 0:
         return False
 
@@ -97,7 +116,7 @@ def _estimate_wall_presence(gray: np.ndarray, track_mask: np.ndarray) -> bool:
         return False
 
     adjacent_ratio = _adjacent_background_ratio(track_mask)
-    return adjacent_ratio > 0.05
+    return adjacent_ratio > threshold
 
 
 def _validate_origin(report: MapReport, metadata: dict, width: int, height: int) -> None:
@@ -171,8 +190,14 @@ def _check_track_distribution(report: MapReport, track_mask: np.ndarray) -> None
         report.add("WARN", f"Track coverage very high ({coverage:.3%}); threshold may be incorrect")
 
 
-def _check_wall_presence(report: MapReport, gray: np.ndarray, track_mask: np.ndarray) -> None:
-    has_walls = _estimate_wall_presence(gray, track_mask)
+def _check_wall_presence(
+    report: MapReport,
+    gray: np.ndarray,
+    track_mask: np.ndarray,
+    *,
+    threshold: float,
+) -> None:
+    has_walls = _estimate_wall_presence(gray, track_mask, threshold)
     if not has_walls:
         report.add("WARN", "No distinct wall/background band detected; map may only contain track vs out-of-bounds")
 
@@ -183,7 +208,25 @@ def _check_start_metadata(report: MapReport, metadata: dict) -> None:
         report.add("INFO", "No start/finish metadata found in map YAML (expected in env config)")
 
 
-def validate_map(yaml_path: Path) -> MapReport:
+def _apply_whitelist(report: MapReport, whitelist: Set[str]) -> None:
+    if not whitelist:
+        return
+
+    name = report.yaml_path.name
+    stem = report.yaml_path.stem
+    if name not in whitelist and stem not in whitelist:
+        return
+
+    adjusted: List[Issue] = []
+    for issue in report.issues:
+        if issue.severity == "WARN":
+            adjusted.append(Issue(severity="INFO", message=f"{issue.message} [whitelisted]"))
+        else:
+            adjusted.append(issue)
+    report.issues = adjusted
+
+
+def validate_map(yaml_path: Path, settings: ValidationSettings) -> MapReport:
     report = MapReport(yaml_path=yaml_path)
 
     try:
@@ -216,8 +259,10 @@ def validate_map(yaml_path: Path) -> MapReport:
 
     track_mask = _compute_track_mask(gray, metadata)
     _check_track_distribution(report, track_mask)
-    _check_wall_presence(report, gray, track_mask)
+    _check_wall_presence(report, gray, track_mask, threshold=settings.wall_adjacent_threshold)
     _check_start_metadata(report, metadata)
+
+    _apply_whitelist(report, settings.whitelist)
 
     return report
 
@@ -253,6 +298,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="Return a non-zero exit code if any warnings are found",
     )
+    parser.add_argument(
+        "--wall-threshold",
+        type=float,
+        default=DEFAULT_WALL_ADJACENT_RATIO,
+        help="Adjacent background ratio required to emit the wall-band warning",
+    )
+    parser.add_argument(
+        "--whitelist",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Map filename or stem whose warnings should be downgraded to info (repeatable)",
+    )
+    parser.add_argument(
+        "--whitelist-file",
+        type=Path,
+        help="Path to file containing newline-separated map names to whitelist",
+    )
 
     args = parser.parse_args(argv)
     map_dir = args.map_dir.expanduser().resolve()
@@ -260,7 +323,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not map_dir.is_dir():
         parser.error(f"Map directory not found: {map_dir}")
 
-    reports = [validate_map(path) for path in iter_map_yaml_files(map_dir)]
+    whitelist: Set[str] = set(args.whitelist or [])
+    if args.whitelist_file:
+        if not args.whitelist_file.exists():
+            parser.error(f"Whitelist file not found: {args.whitelist_file}")
+        whitelist.update(_load_whitelist_file(args.whitelist_file))
+
+    settings = ValidationSettings(
+        wall_adjacent_threshold=float(args.wall_threshold),
+        whitelist={entry.strip() for entry in whitelist if entry.strip()},
+    )
+
+    reports = [validate_map(path, settings) for path in iter_map_yaml_files(map_dir)]
 
     any_errors = False
     any_warnings = False

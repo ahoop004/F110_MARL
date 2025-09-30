@@ -13,6 +13,7 @@ from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
 from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.start_pose import reset_with_start_poses
+from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.wrappers.reward import RewardWrapper
 
 
@@ -48,6 +49,7 @@ class EvaluationContext:
     reward_cfg: Dict[str, Any]
     start_pose_back_gap: float
     start_pose_min_spacing: float
+    output_root: Path
     checkpoint_path: Optional[Path]
     save_rollouts: bool = False
     rollout_dir: Optional[Path] = None
@@ -100,11 +102,18 @@ def create_evaluation_context(
         reward_cfg["reward_horizon"] = getattr(env, "max_steps", None)
     reward_cfg.setdefault("reward_clip", 1.0)
 
+    output_root = Path(cfg.main.get("output_root", "outputs")).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    cfg.main.schema.output_root = str(output_root)
+
     bundle_cfg = primary_bundle.metadata.get("config", {})
     if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":
         bundle_cfg = cfg.ppo.to_dict()
 
-    checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
+    save_dir_value = bundle_cfg.get("save_dir", "checkpoints")
+    checkpoint_dir = resolve_output_dir(save_dir_value, output_root)
+    bundle_cfg["save_dir"] = str(checkpoint_dir)
+
     checkpoint_name = bundle_cfg.get(
         "checkpoint_name",
         f"{primary_bundle.algo.lower()}_best.pt",
@@ -116,7 +125,10 @@ def create_evaluation_context(
 
     if auto_load:
         if explicit_checkpoint:
-            checkpoint_path = Path(explicit_checkpoint).expanduser()
+            candidate = Path(explicit_checkpoint).expanduser()
+            if not candidate.is_absolute():
+                candidate = resolve_output_file(explicit_checkpoint, output_root)
+            checkpoint_path = candidate
         else:
             checkpoint_path = default_checkpoint
 
@@ -128,8 +140,9 @@ def create_evaluation_context(
     save_rollouts = bool(cfg.main.get("save_eval_rollouts", False))
     rollout_dir: Optional[Path] = None
     if save_rollouts:
-        rollout_dir = Path(cfg.main.get("eval_rollout_dir", "eval_rollouts")).expanduser()
-        rollout_dir.mkdir(parents=True, exist_ok=True)
+        eval_dir_value = cfg.main.get("eval_rollout_dir", "eval_rollouts")
+        rollout_dir = resolve_output_dir(eval_dir_value, output_root)
+        cfg.main.schema.extras["eval_rollout_dir"] = str(rollout_dir)
 
     return EvaluationContext(
         cfg=cfg,
@@ -141,6 +154,7 @@ def create_evaluation_context(
         reward_cfg=reward_cfg,
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
+        output_root=output_root,
         checkpoint_path=checkpoint_path,
         save_rollouts=save_rollouts,
         rollout_dir=rollout_dir,

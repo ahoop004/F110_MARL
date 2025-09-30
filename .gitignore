@@ -208,5 +208,4 @@ __marimo__/
 # Weights & Biases
 wandb/
 runs/
-eval_rollouts/
-checkpoints/
+outputs/

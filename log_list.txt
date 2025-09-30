@@ -2,31 +2,10 @@ train episode callback:
 []train/return_attacker,
 []train/steps,
 []train/success,
-[]train/epsilon,
-[x]train/reward_component_{focus_agent}_{name}.
+[]train/epsilon.
 
 train optimizer updates:
-[x]train/policy_loss,
-[x]train/value_loss,
-[x]train/entropy,
-[x]train/approx_kl,
-[x]train/action_mean,
-[x]train/action_std,
-[x]train/action_abs_mean,
-[x]train/raw_action_std,
-[x]train/value_mean,
-[x]train/value_std,
-[x]train/adv_mean,
-[x]train/adv_std,
-[x]train/action_histogram,
-[x]train/value_histogram.
+[]train/<stat name> (trainer.update output; policy/value/entropy/adv/action histogram metrics are filtered).
 
-additional aggregation:
-[x]train/cause.
-
-eval per episode:
-[x]eval/avg_speed_attacker,
-[x]eval/avg_speed_defender.
-
-eval summary:
-[x]eval/success_rate.
+eval logging:
+- (none; W&B logging disabled for per-episode eval summaries).

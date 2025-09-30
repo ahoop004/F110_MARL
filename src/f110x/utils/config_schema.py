@@ -269,6 +269,7 @@ class MainSchema(BaseSchema):
     mode: str = "train"
     wandb: Dict[str, Any] = field(default_factory=dict)
     checkpoint: Optional[str] = None
+    output_root: str = "outputs"
 
 
 @dataclass

@@ -13,6 +13,7 @@ from f110x.envs import F110ParallelEnv
 from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
 from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
+from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.utils.start_pose import reset_with_start_poses
 from f110x.wrappers.reward import RewardWrapper
 from f110x.trainers.base import Transition, Trainer
@@ -37,6 +38,7 @@ class TrainingContext:
     update_after: int
     start_pose_back_gap: float
     start_pose_min_spacing: float
+    output_root: Path
     checkpoint_path: Optional[Path]
     best_path: Path
 
@@ -125,13 +127,18 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
 
+    output_root = Path(cfg.main.get("output_root", "outputs")).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    cfg.main.schema.output_root = str(output_root)
+
     bundle_cfg = primary_bundle.metadata.get("config", {})
     if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":
         bundle_cfg = cfg.ppo.to_dict()
     bundle_cfg = dict(bundle_cfg)
 
-    checkpoint_dir = Path(bundle_cfg.get("save_dir", "checkpoints")).expanduser()
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    save_dir_value = bundle_cfg.get("save_dir", "checkpoints")
+    checkpoint_dir = resolve_output_dir(save_dir_value, output_root)
+    bundle_cfg["save_dir"] = str(checkpoint_dir)
     default_name = f"{primary_bundle.algo.lower()}_best.pt"
     checkpoint_name = bundle_cfg.get("checkpoint_name", default_name)
 
@@ -147,6 +154,12 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
     bundle_cfg["checkpoint_name"] = checkpoint_name
     primary_bundle.metadata["config"] = bundle_cfg
     best_path = checkpoint_dir / checkpoint_name
+
+    main_checkpoint = cfg.main.checkpoint
+    if main_checkpoint:
+        resolved_checkpoint = resolve_output_file(main_checkpoint, output_root)
+        cfg.main.schema.checkpoint = str(resolved_checkpoint)
+
     return TrainingContext(
         cfg=cfg,
         env=env,
@@ -162,6 +175,7 @@ def create_training_context(cfg_path: Path | None = None) -> TrainingContext:
         update_after=update_after,
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
+        output_root=output_root,
         checkpoint_path=None,
         best_path=best_path,
     )
