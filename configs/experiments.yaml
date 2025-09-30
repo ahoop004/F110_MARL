@@ -1,277 +1,271 @@
-default_experiment: gaplock_dqn
+default_experiment: gaplock_dqn  # Default run profile selects the DQN experiment
 
-shared:
-  env: &base_env
-    seed: 42
-    n_agents: 2
-    max_steps: 1000
-    timestep: 0.01
-    integrator: RK4
-    render_interval: 0
-    vehicle_params:
-      v_min: -2.0
-      v_max: 10.0
-    map_dir: maps
-    map_yaml: Shanghai_map.yaml
-    map: Shanghai_map.yaml
-    map_ext: .png
-    render_mode: human
-    start_poses:
-      - [0.0, 0.0, 0.0]
-      - [2.0, 0.1, 0.0]
-    start_pose_options:
-      -
-        - [0.0, 0.0, 0.0]
-        - [2.5, 0.1, 0.0]
-      -
-        - [0.0, 0.0, 0.0]
-        - [2.5, -0.1, 0.0]
-      -
-        - [2.5, 0.1, 0.0]
-        - [0.0, 0.0, 0.0]
-      -
-        - [2.5, -0.1, 0.0]
-        - [0.0, 0.0, 0.0]
-  defender_policy: &defender_policy
-    algo: follow_gap
-    slot: 1
-    role: defender
-    params:
-      max_speed: 18.0
-      min_speed: 3.0
-      steering_gain: 0.85
-      bubble_radius: 3
-      steer_smooth: 0.35
-  reward: &base_reward
-    alive_bonus: 0.0
-    time_penalty: 0.0
-    forward_scale: 0.0021
-    reverse_penalty: 0.0040
-    lateral_penalty: 0.00025
-    target_distance_scale: 0.0015
-    target_wall_bonus: 0.0014
-    self_wall_penalty: 0.0003
-    herd_bonus: 1.2
-    ego_collision_penalty: -2.0
-    opponent_collision_bonus: 10.0
-    target_crash_reward: 100.2
-    herd_position_radius: 3.0
-    herd_position_slack: 1.2
-    herd_position_scale: 0.0028
-    herd_angle_scale: 0.0016
-    herd_angle_power: 2.0
-    slow_speed_threshold: 1.1
-    slow_speed_penalty: -0.0022
-    progress_threshold: 0.04
-    progress_patience: 80
-    progress_penalty: 0.0
-    spin_thresh: 0.55
-    spin_penalty: 1.1
-    spin_speed_gate: 0.6
-    spin_dwell_steps: 3
-    spin_step_cap: 0.0025
-    spin_episode_cap: 0.15
-    spin_grace_steps: 20
-    spin_alpha: 0.2
-    dt: 0.01
-    p2_enabled: true
-    p2_d_back: 0.6
-    p2_lat_offset: 0.4
-    p2_dist_thresh: 0.3
-    p2_angle_align_thresh: 0.35
-    p2_blind_angle: 2.356
-    p2_hold_decay: 3.0
-    p2_distance_scale: 1.0
-    p2_angle_scale: 0.5
-    p2_blind_bonus: 0.45
-    p2_lateral_scale: 0.25
-    p2_camp_speed_thresh: 1.5
-    p2_camping_penalty: 0.3
-    p2_reward_clip: 1.2
-    truncation_penalty: -1.0
-    idle_speed_threshold: 0.4
-    idle_patience_steps: 120
-    success_reward_floor: 1.0
+shared:  # Common building blocks reused across experiment profiles
+  env: &env_base  # Baseline simulator configuration for all experiments
+    seed: 42  # PRNG seed to keep environment deterministic across runs
+    n_agents: 2  # Number of simultaneous vehicles in the scene
+    max_steps: 1000  # Episode length cap before truncation
+    timestep: 0.01  # Physics integration step in seconds
+    integrator: RK4  # Numerical integrator used by the dynamics model
+    render_interval: 0  # Render every N episodes (0 disables routine rendering)
+    vehicle_params:  # Overwrites for the default vehicle model
+      v_min: -2.0  # Minimum longitudinal velocity allowed for the car
+      v_max: 10.0  # Maximum longitudinal velocity allowed for the car
+    map_dir: maps  # Directory containing track layouts
+    map_yaml: Shanghai_map.yaml  # YAML file describing the selected map
+    map: Shanghai_map.yaml  # Explicit map identifier used by the simulator
+    map_ext: .png  # File extension for the occupancy grid associated with the map
+    render_mode: human  # Visualization backend requested when rendering
+    start_poses:  # Deterministic start positions for each agent
+      - [0.0, 0.0, 0.0]  # Attacker spawn pose (x, y, yaw)
+      - [2.0, 0.1, 0.0]  # Defender spawn pose (x, y, yaw)
+    start_pose_options:  # Optional randomized start pose sets to sample from
+      -  # Option A keeps the defender ahead with a slight left offset
+        - [0.0, 0.0, 0.0]  # Attacker pose for option A
+        - [2.5, 0.1, 0.0]  # Defender pose for option A
+      -  # Option B keeps the defender ahead with a slight right offset
+        - [0.0, 0.0, 0.0]  # Attacker pose for option B
+        - [2.5, -0.1, 0.0]  # Defender pose for option B
+      -  # Option C spawns the attacker behind the defender (left offset)
+        - [2.5, 0.1, 0.0]  # Attacker pose for option C
+        - [0.0, 0.0, 0.0]  # Defender pose for option C
+      -  # Option D spawns the attacker behind the defender (right offset)
+        - [2.5, -0.1, 0.0]  # Attacker pose for option D
+        - [0.0, 0.0, 0.0]  # Defender pose for option D
 
-experiments:
-  gaplock_ppo:
+  defender_policy: &defender_policy  # Static defender policy reused by all profiles
+    algo: follow_gap  # Use the follow-the-gap reactive controller
+    slot: 1  # Slot in the multi-agent roster reserved for the defender
+    role: defender  # Semantic role label used by wrappers and logging
+    params:  # Tunables specific to the follow-gap controller
+      max_speed: 18.0  # Upper speed bound enforced by the controller (m/s)
+      min_speed: 3.0  # Lower speed bound to avoid stopping entirely
+      steering_gain: 0.85  # Proportional gain applied to steering corrections
+      bubble_radius: 3  # Distance ahead to ignore obstacles when selecting gaps (m)
+      steer_smooth: 0.35  # Smoothing factor applied to steering commands
+
+  reward: &reward_base  # Default reward shaping used by every attacker
+    alive_bonus: 0.0  # Small incremental bonus for surviving each step
+    time_penalty: 0.0  # Dense penalty encouraging faster completion (0 disables)
+    forward_scale: 0.0021  # Scaling for progress made along the heading direction
+    reverse_penalty: 0.0040  # Penalty applied when moving backwards
+    lateral_penalty: 0.00025  # Penalty on sideways slip to promote alignment
+    target_distance_scale: 0.0015  # Incentive to close distance to the target vehicle
+    target_wall_bonus: 0.0014  # Reward for pushing the defender towards walls
+    self_wall_penalty: 0.0003  # Penalty for the attacker contacting the walls
+    herd_bonus: 1.2  # Bonus awarded for forcing the defender to crash
+    ego_collision_penalty: -2.0  # Penalty when the attacker crashes itself
+    opponent_collision_bonus: 10.0  # Extra bonus when the defender crashes
+    target_crash_reward: 100.2  # Large terminal reward for successful collisions
+    herd_position_radius: 3.0  # Preferred orbit radius around the defender for herding
+    herd_position_slack: 1.2  # Smoothness factor for radial herding reward tolerance
+    herd_position_scale: 0.0028  # Scaling applied to radial herding reward
+    herd_angle_scale: 0.0016  # Scaling applied to angular alignment during herding
+    herd_angle_power: 2.0  # Exponent controlling emphasis on alignment quality
+    slow_speed_threshold: 1.1  # Speed below which the agent is considered slow (m/s)
+    slow_speed_penalty: -0.0022  # Penalty for staying under the slow speed threshold
+    progress_threshold: 0.04  # Minimum required progress to avoid stalling penalties
+    progress_patience: 80  # Steps allowed without progress before penalties kick in
+    progress_penalty: 0.0  # Penalty applied when progress stalls
+    spin_thresh: 0.55  # Angular velocity threshold to detect spinning (rad/s)
+    spin_penalty: 1.1  # Magnitude of penalty when a spin is detected
+    spin_speed_gate: 0.6  # Maximum speed at which spin penalties are considered (m/s)
+    spin_dwell_steps: 3  # Consecutive steps required before applying spin penalty
+    spin_step_cap: 0.0025  # Maximum absolute penalty applied per spin event
+    spin_episode_cap: 0.15  # Maximum cumulative spin penalty per episode
+    spin_grace_steps: 20  # Initial steps exempt from spin penalties after reset
+    spin_alpha: 0.2  # Exponential smoothing factor for spin detection
+    dt: 0.01  # Time step used by the reward wrapper for decay calculations
+    p2_enabled: true  # Enable Position-2 (herding) shaping logic
+    p2_d_back: 0.6  # Desired longitudinal offset behind the defender (m)
+    p2_lat_offset: 0.4  # Desired lateral offset for herding (m)
+    p2_dist_thresh: 0.3  # Distance required to consider Position-2 satisfied (m)
+    p2_angle_align_thresh: 0.35  # Angular alignment threshold for Position-2 (rad)
+    p2_blind_angle: 2.356  # Angle defining the defender blind spot (rad)
+    p2_hold_decay: 3.0  # Decay constant controlling blind-spot bonus persistence
+    p2_distance_scale: 1.0  # Scaling applied to Position-2 distance shaping
+    p2_angle_scale: 0.5  # Scaling applied to Position-2 angular shaping
+    p2_blind_bonus: 0.45  # Bonus awarded for sustaining Position-2 in the blind spot
+    p2_lateral_scale: 0.25  # Scaling applied to lateral offset alignment
+    p2_camp_speed_thresh: 1.5  # Speed threshold to trigger camping penalties (m/s)
+    p2_camping_penalty: 0.3  # Penalty applied when camping too long behind the defender
+    p2_reward_clip: 1.2  # Clamp magnitude for Position-2 shaping contributions
+    truncation_penalty: -1.0  # Penalty added when episodes truncate due to max steps
+    idle_speed_threshold: 0.4  # Speed below which the idle logic considers the agent stalled (m/s)
+    idle_patience_steps: 120  # Steps allowed under idle speed before ending the episode
+    success_reward_floor: 1.0  # Minimum total reward guaranteed after successful capture
+    reward_horizon: null  # Override for reward scaling horizon (null uses env max_steps)
+    reward_clip: null  # Global clip for reward magnitude (null keeps full values)
+
+  episodes:  # Shared episode counts referenced by individual algorithms
+    train: &shared_train_episodes 5000  # Number of training episodes each run targets
+    eval: &shared_eval_episodes 5  # Number of evaluation rollouts per checkpoint
+
+  wandb: &wandb_base  # Common Weights & Biases defaults
+    enabled: true  # Toggle experiment tracking
+    project: marl-f110  # W&B project to log under
+    entity: ronnies_group  # W&B entity or team name that owns the project
+
+  attacker_roster: &attacker_base  # Shared attacker roster template
+    slot: 0  # Roster position assigned to the attacker
+    role: attacker  # Semantic role for the learning agent
+    wrappers: &attacker_wrappers  # Observation/action wrappers applied to the attacker
+      - factory: obs  # Observation builder factory name
+        params:  # Arguments forwarded to the observation wrapper
+          max_scan: 30.0  # Maximum LiDAR range provided to the agent (m)
+          normalize: true  # Enable normalization of observation vectors
+          target_role: defender  # Role label used to select the opponent for features
+
+  main: &main_base  # Shared runtime configuration
+    mode: train_eval  # Run training followed by evaluation in one invocation
+    save_eval_rollouts: true  # Persist evaluation trajectories for inspection
+    eval_rollout_dir: eval_rollouts  # Directory where evaluation rollouts are stored
+    train_episodes: *shared_train_episodes  # Episodes to run during training loops
+    eval_episodes: *shared_eval_episodes  # Episodes to run during evaluation loops
+
+experiments:  # Concrete experiment profiles selectable via run.py
+  gaplock_ppo:  # PPO learner paired with a scripted defender
     env:
-      <<: *base_env
-      update: 10
+      <<: *env_base
+      update: 10  # Number of environment steps between policy updates
     agents:
       roster:
-        - algo: ppo
-          slot: 0
-          role: attacker
-          config_ref: ppo
-          wrappers:
-            - factory: obs
-              params:
-                max_scan: 30.0
-                normalize: true
-                target_role: defender
+        - <<: *attacker_base
+          algo: ppo  # Learning algorithm assigned to the attacker
+          config_ref: ppo  # Key mapping into the PPO hyperparameter block
         - *defender_policy
-    reward: *base_reward
+    reward:
+      <<: *reward_base
     ppo:
-      actor_lr: 0.0003
-      critic_lr: 0.0005
-      device: cpu
-      gamma: 0.99
-      lam: 0.95
-      ent_coef: 0.015
+      actor_lr: 0.0003  # Learning rate for the actor network
+      critic_lr: 0.0005  # Learning rate for the critic network
+      device: cpu  # Compute device used for PPO training
+      gamma: 0.99  # Discount factor for future rewards
+      lam: 0.95  # GAE lambda controlling advantage smoothing
+      ent_coef: 0.015  # Initial entropy regularization weight
       ent_coef_schedule:
-        start: 0.015
-        final: 0.005
-        decay_start: 500
-        decay_episodes: 1500
-      clip_eps: 0.2
-      update_epochs: 10
-      minibatch_size: 512
-      train_episodes: 5000
-      eval_episodes: 5
-      save_dir: checkpoints
-      checkpoint_name: ppo_gaplock.pt
+        start: 0.015  # Entropy coefficient at the beginning of training
+        final: 0.005  # Entropy coefficient after decay completes
+        decay_start: 500  # Episode index to begin decaying entropy weight
+        decay_episodes: 1500  # Number of episodes over which to decay entropy
+      clip_eps: 0.2  # PPO clipping parameter for policy ratio
+      update_epochs: 10  # Gradient update passes per batch
+      minibatch_size: 512  # Batch size for each PPO minibatch
+      train_episodes: *shared_train_episodes  # Training episodes allocated to PPO
+      eval_episodes: *shared_eval_episodes  # Evaluation episodes for validation
+      save_dir: checkpoints  # Directory to store PPO checkpoints
+      checkpoint_name: ppo_gaplock.pt  # Filename for the best PPO checkpoint
     main:
-      mode: train_eval
+      <<: *main_base
+      checkpoint: checkpoints/ppo_gaplock.pt  # Path to load/save PPO checkpoints
       wandb:
-        enabled: true
-        project: marl-f110
-        entity: ronnies_group
-        group: ppo
-        tags: [gaplock, ppo]
-      save_eval_rollouts: true
-      eval_rollout_dir: eval_rollouts
-      checkpoint: checkpoints/ppo_gaplock.pt
-      train_episodes: 5000
-      eval_episodes: 5
+        <<: *wandb_base
+        group: ppo  # W&B group label for PPO runs
+        tags: [gaplock, ppo]  # W&B tags to categorize PPO runs
 
-  gaplock_td3:
+  gaplock_td3:  # TD3 learner with the same defender matchup
     env:
-      <<: *base_env
-      update: 1
+      <<: *env_base
+      update: 1  # Frequency of TD3 environment updates (per step)
     agents:
       roster:
-        - algo: td3
-          slot: 0
-          role: attacker
-          config_ref: td3
-          wrappers:
-            - factory: obs
-              params:
-                max_scan: 30.0
-                normalize: true
-                target_role: defender
+        - <<: *attacker_base
+          algo: td3  # Use TD3 for the attacker network
+          config_ref: td3  # Key for TD3 hyperparameters
         - *defender_policy
-    reward: *base_reward
+    reward:
+      <<: *reward_base
     td3:
-      actor_lr: 0.0003
-      critic_lr: 0.001
-      device: cpu
-      gamma: 0.99
-      tau: 0.005
-      policy_noise: 0.3
-      noise_clip: 0.5
-      policy_delay: 2
-      batch_size: 512
-      buffer_size: 100000
-      warmup_steps: 10000
-      exploration_noise: 0.25
-      exploration_noise_final: 0.05
-      exploration_noise_decay_steps: 250000
-      hidden_dims: [256, 256]
-      train_episodes: 100
-      eval_episodes: 5
-      save_dir: checkpoints
-      checkpoint_name: td3_gaplock.pt
+      actor_lr: 0.0003  # Learning rate for the TD3 actor
+      critic_lr: 0.001  # Learning rate for the TD3 critics
+      device: cpu  # Compute device used for TD3 training
+      gamma: 0.99  # Discount factor applied to returns
+      tau: 0.005  # Target network smoothing factor
+      policy_noise: 0.3  # Noise added to target actions during updates
+      noise_clip: 0.5  # Clamp applied to policy noise magnitude
+      policy_delay: 2  # Frequency of policy updates relative to critic updates
+      batch_size: 512  # Batch size sampled from the replay buffer
+      buffer_size: 100000  # Capacity of the replay buffer
+      warmup_steps: 10000  # Steps collected before training begins
+      exploration_noise: 0.25  # Initial action noise scale for exploration
+      exploration_noise_final: 0.05  # Final exploration noise after decay
+      exploration_noise_decay_steps: 250000  # Steps over which exploration noise decays
+      hidden_dims: [256, 256]  # Hidden layer sizes for actor and critic networks
+      train_episodes: *shared_train_episodes  # Training episodes allocated to TD3
+      eval_episodes: *shared_eval_episodes  # Evaluation episodes for TD3 checkpoints
+      save_dir: checkpoints  # Directory for TD3 checkpoint files
+      checkpoint_name: td3_gaplock.pt  # Filename for TD3 checkpoints
     main:
-      mode: train_eval
+      <<: *main_base
+      checkpoint: checkpoints/td3_gaplock.pt  # Path used to resume TD3 checkpoints
       wandb:
-        enabled: true
-        project: marl-f110
-        entity: ronnies_group
-        group: td3
-        tags: [gaplock, td3]
-      save_eval_rollouts: true
-      eval_rollout_dir: eval_rollouts
-      checkpoint: checkpoints/td3_gaplock.pt
-      train_episodes: 5000
-      eval_episodes: 5
+        <<: *wandb_base
+        group: td3  # W&B group label for TD3 runs
+        tags: [gaplock, td3]  # W&B tags for TD3 experiments
 
-  gaplock_dqn:
+  gaplock_dqn:  # DQN learner using discrete throttle-steer pairs
     env:
-      <<: *base_env
-      update: 2
+      <<: *env_base
+      update: 2  # Number of environment steps per DQN update cycle
     agents:
       roster:
-        - algo: dqn
-          slot: 0
-          role: attacker
-          config_ref: dqn
-          wrappers:
-            - factory: obs
-              params:
-                max_scan: 30.0
-                normalize: true
-                target_role: defender
+        - <<: *attacker_base
+          algo: dqn  # Assign a DQN controller to the attacker
+          config_ref: dqn  # Key selecting the DQN hyperparameters
         - *defender_policy
-    reward: *base_reward
+    reward:
+      <<: *reward_base
     dqn:
-      device: cpu
-      lr: 0.0004
-      gamma: 0.99
-      batch_size: 512
-      buffer_size: 100000
-      target_update_interval: 500
-      epsilon_start: 1.0
-      epsilon_end: 0.1
-      epsilon_decay_rate: 0.9995
-      hidden_dims: [256, 256]
-      prioritized_replay: true
-      per_alpha: 0.6
-      per_beta_start: 0.4
-      per_beta_increment: 0.00005
-      per_min_priority: 0.001
-      per_epsilon: 1.0e-6
-      action_set:
-        - [-0.50, 2.0]
-        - [-0.25, 2.0]
-        - [0.0, 2.0]
-        - [0.25, 2.0]
-        - [0.50, 2.0]
-        - [-0.50, 4.0]
-        - [-0.25, 4.0]
-        - [0.0, 4.0]
-        - [0.25, 4.0]
-        - [0.50, 4.0]
-        - [-0.50, 6.0]
-        - [-0.25, 6.0]
-        - [0.0, 6.0]
-        - [0.25, 6.0]
-        - [0.50, 6.0]
-        - [-0.50, 8.0]
-        - [-0.25, 8.0]
-        - [0.0, 8.0]
-        - [0.25, 8.0]
-        - [0.50, 8.0]
-        - [-0.50, 10.0]
-        - [-0.25, 10.0]
-        - [0.0, 10.0]
-        - [0.25, 10.0]
-        - [0.50, 10.0]
-      train_episodes: 5000
-      eval_episodes: 5
-      save_dir: checkpoints
-      checkpoint_name: dqn_gaplock.pt
+      device: cpu  # Compute device used for DQN training
+      lr: 0.0004  # Learning rate for the Q-network optimizer
+      gamma: 0.99  # Discount factor used by the DQN backup
+      batch_size: 512  # Mini-batch size sampled from replay
+      buffer_size: 100000  # Replay buffer capacity
+      target_update_interval: 500  # Steps between target network updates
+      epsilon_start: 1.0  # Initial epsilon value for ε-greedy policy
+      epsilon_end: 0.1  # Minimum epsilon after decay
+      epsilon_decay_rate: 0.9995  # Multiplicative epsilon decay factor per step
+      hidden_dims: [256, 256]  # Hidden layer sizes for the Q-network
+      prioritized_replay: true  # Enable prioritized experience replay
+      per_alpha: 0.6  # Priority exponent controlling sampling bias
+      per_beta_start: 0.4  # Initial importance-sampling exponent
+      per_beta_increment: 0.00005  # Increment applied to β after each step
+      per_min_priority: 0.001  # Minimum allowed priority to avoid zero sampling
+      per_epsilon: 1.0e-6  # Small constant added to TD errors for stability
+      action_set:  # Discrete steering/throttle actions available to the attacker
+        - [-0.50, 2.0]  # Hard left, slow throttle
+        - [-0.25, 2.0]  # Medium left, slow throttle
+        - [0.0, 2.0]  # Straight, slow throttle
+        - [0.25, 2.0]  # Medium right, slow throttle
+        - [0.50, 2.0]  # Hard right, slow throttle
+        - [-0.50, 4.0]  # Hard left, medium throttle
+        - [-0.25, 4.0]  # Medium left, medium throttle
+        - [0.0, 4.0]  # Straight, medium throttle
+        - [0.25, 4.0]  # Medium right, medium throttle
+        - [0.50, 4.0]  # Hard right, medium throttle
+        - [-0.50, 6.0]  # Hard left, fast throttle
+        - [-0.25, 6.0]  # Medium left, fast throttle
+        - [0.0, 6.0]  # Straight, fast throttle
+        - [0.25, 6.0]  # Medium right, fast throttle
+        - [0.50, 6.0]  # Hard right, fast throttle
+        - [-0.50, 8.0]  # Hard left, faster throttle
+        - [-0.25, 8.0]  # Medium left, faster throttle
+        - [0.0, 8.0]  # Straight, faster throttle
+        - [0.25, 8.0]  # Medium right, faster throttle
+        - [0.50, 8.0]  # Hard right, faster throttle
+        - [-0.50, 10.0]  # Hard left, maximum throttle
+        - [-0.25, 10.0]  # Medium left, maximum throttle
+        - [0.0, 10.0]  # Straight, maximum throttle
+        - [0.25, 10.0]  # Medium right, maximum throttle
+        - [0.50, 10.0]  # Hard right, maximum throttle
+      train_episodes: *shared_train_episodes  # Training episodes allocated to DQN
+      eval_episodes: *shared_eval_episodes  # Evaluation episodes for DQN checkpoints
+      save_dir: checkpoints  # Directory for DQN checkpoints
+      checkpoint_name: dqn_gaplock.pt  # Filename for DQN checkpoints
     main:
-      mode: train_eval
+      <<: *main_base
+      checkpoint: checkpoints/dqn_gaplock.pt  # Path used to resume DQN checkpoints
       wandb:
-        enabled: true
-        project: marl-f110
-        entity: ronnies_group
-        group: dqn
-        tags: [gaplock, dqn]
-      save_eval_rollouts: true
-      eval_rollout_dir: eval_rollouts
-      checkpoint: checkpoints/dqn_gaplock.pt
-      train_episodes: 5000
-      eval_episodes: 5
+        <<: *wandb_base
+        group: dqn  # W&B group label for DQN runs
+        tags: [gaplock, dqn]  # W&B tags for DQN experiments
