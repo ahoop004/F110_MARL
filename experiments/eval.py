@@ -96,6 +96,9 @@ def create_evaluation_context(
         primary_bundle = trainable[0]
 
     reward_cfg = cfg.reward.to_dict()
+    if not reward_cfg.get("reward_horizon"):
+        reward_cfg["reward_horizon"] = getattr(env, "max_steps", None)
+    reward_cfg.setdefault("reward_clip", 1.0)
 
     bundle_cfg = primary_bundle.metadata.get("config", {})
     if (not bundle_cfg) and primary_bundle.algo.lower() == "ppo":

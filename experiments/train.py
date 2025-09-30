@@ -171,6 +171,9 @@ def _build_reward_wrapper(ctx: TrainingContext, episode_idx: int) -> RewardWrapp
     mode = _resolve_reward_mode(ctx.curriculum_schedule, episode_idx)
     wrapper_cfg = dict(ctx.reward_cfg)
     wrapper_cfg["mode"] = mode
+    if "reward_horizon" not in wrapper_cfg or not wrapper_cfg["reward_horizon"]:
+        wrapper_cfg["reward_horizon"] = getattr(ctx.env, "max_steps", None)
+    wrapper_cfg.setdefault("reward_clip", 1.0)
     wrapper = RewardWrapper(**wrapper_cfg)
     wrapper.reset()
     return wrapper

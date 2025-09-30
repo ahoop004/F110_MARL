@@ -61,6 +61,8 @@ class RewardWrapper:
         p2_camp_speed_thresh=1.2,
         p2_camping_penalty=0.2,
         p2_reward_clip=1.0,
+        reward_horizon=None,
+        reward_clip=1.0,
         **_ignored_kwargs,
     ):
         """Rich reward shaping for mixed pursuit/herding."""
@@ -114,6 +116,24 @@ class RewardWrapper:
         self.p2_camp_speed_thresh = float(p2_camp_speed_thresh)
         self.p2_camping_penalty = float(p2_camping_penalty)
         self.p2_reward_clip = float(p2_reward_clip)
+
+        self.reward_horizon = None
+        if reward_horizon not in (None, ""):
+            try:
+                horizon_val = float(reward_horizon)
+            except (TypeError, ValueError):
+                horizon_val = None
+            if horizon_val is not None and horizon_val > 0:
+                self.reward_horizon = horizon_val
+
+        self.reward_clip = None
+        if reward_clip not in (None, ""):
+            try:
+                clip_val = float(reward_clip)
+            except (TypeError, ValueError):
+                clip_val = None
+            if clip_val is not None and clip_val > 0:
+                self.reward_clip = clip_val
 
         # Retain any unhandled configuration keys for introspection/debugging.
         self._unused_keys = dict(_ignored_kwargs) if _ignored_kwargs else {}
@@ -435,6 +455,22 @@ class RewardWrapper:
             terminal_collision = self.ego_collision_penalty
             shaped += terminal_collision
             components["ego_collision_penalty"] = components.get("ego_collision_penalty", 0.0) + terminal_collision
+
+        # Post-scale rewards to keep episode totals bounded.
+        if self.reward_horizon:
+            scale = 1.0 / self.reward_horizon
+            shaped *= scale
+            for key in list(components.keys()):
+                components[key] *= scale
+            components["scale_factor"] = scale
+
+        if self.reward_clip:
+            clipped = float(np.clip(shaped, -self.reward_clip, self.reward_clip))
+            if clipped != shaped:
+                components["clip_delta"] = clipped - shaped
+                shaped = clipped
+
+        components["total_return"] = shaped
 
         self._last_components[agent_id] = components
         return shaped
