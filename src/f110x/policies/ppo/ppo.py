@@ -82,6 +82,7 @@ class PPOAgent:
         self.raw_act_buf = []
         self._pending_bootstrap: Optional[float] = None
         self._episode_bootstrap: List[float] = []
+        self._episode_boundaries: List[int] = [0]
 
     # ------------------- Acting -------------------
 
@@ -130,6 +131,7 @@ class PPOAgent:
             bootstrap = float(self._pending_bootstrap or 0.0)
             self._episode_bootstrap.append(bootstrap)
             self._pending_bootstrap = None
+            self._episode_boundaries.append(len(self.rew_buf))
 
     def record_final_value(self, obs):
         obs_np = np.asarray(obs, dtype=np.float32)
@@ -160,36 +162,29 @@ class PPOAgent:
         adv = np.zeros(T, dtype=np.float32)
         ret = np.zeros(T, dtype=np.float32)
 
-        if len(self._episode_bootstrap) < 1:
-            self._episode_bootstrap = [0.0]
+        if self._episode_boundaries[-1] != T:
+            self._episode_boundaries.append(T)
+        while len(self._episode_bootstrap) < len(self._episode_boundaries) - 1:
+            if self._pending_bootstrap is not None:
+                self._episode_bootstrap.append(self._pending_bootstrap)
+                self._pending_bootstrap = None
+            else:
+                self._episode_bootstrap.append(0.0)
 
-        start = 0
-        episode_idx = 0
-        for idx, done_flag in enumerate(self.done_buf):
-            if done_flag:
-                end = idx + 1
-                bootstrap_v = self._episode_bootstrap[episode_idx] if episode_idx < len(self._episode_bootstrap) else 0.0
-                gae = 0.0
-                for t in reversed(range(start, end)):
-                    mask = 1.0 - dones[t]
-                    next_value = bootstrap_v if t == end - 1 else values[t + 1]
-                    delta = rewards[t] + self.gamma * next_value * mask - values[t]
-                    gae = delta + self.gamma * self.lam * mask * gae
-                    adv[t] = gae
-                ret[start:end] = adv[start:end] + values[start:end]
-                start = end
-                episode_idx += 1
-
-        if start < T:
-            bootstrap_v = self._episode_bootstrap[episode_idx] if episode_idx < len(self._episode_bootstrap) else 0.0
+        for idx in range(len(self._episode_boundaries) - 1):
+            start = self._episode_boundaries[idx]
+            end = self._episode_boundaries[idx + 1]
+            if end <= start:
+                continue
+            bootstrap_v = self._episode_bootstrap[idx]
             gae = 0.0
-            for t in reversed(range(start, T)):
+            for t in reversed(range(start, end)):
                 mask = 1.0 - dones[t]
-                next_value = bootstrap_v if t == T - 1 else values[t + 1]
+                next_value = bootstrap_v if t == end - 1 else values[t + 1]
                 delta = rewards[t] + self.gamma * next_value * mask - values[t]
                 gae = delta + self.gamma * self.lam * mask * gae
                 adv[t] = gae
-            ret[start:T] = adv[start:T] + values[start:T]
+            ret[start:end] = adv[start:end] + values[start:end]
 
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         self.adv_buf = adv
