@@ -158,7 +158,51 @@ experiments:  # Concrete experiment profiles selectable via run.py
       wandb:
         <<: *wandb_base
         group: td3  # W&B group label for TD3 runs
-        tags: [td3]  # W&B tags for TD3 experiments
+        tags: [gaplock, td3]  # W&B tags for TD3 experiments
+
+  gaplock_rec_ppo:  # Recurrent PPO learner (configurable RNN core)
+    env:
+      <<: *env_base
+      update: 10  # Number of environment steps between policy updates
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: rec_ppo  # Use the recurrent PPO attacker
+          config_ref: rec_ppo  # Key mapping into the recurrent PPO hyperparameter block
+        - *defender_policy
+    reward:
+      <<: *reward_base
+    rec_ppo:
+      actor_lr: 0.0003  # Learning rate for the recurrent actor network
+      critic_lr: 0.0005  # Learning rate for the recurrent critic network
+      device: cuda  # Compute device used for training
+      gamma: 0.99  # Discount factor for future rewards
+      lam: 0.95  # GAE lambda controlling advantage smoothing
+      ent_coef: 0.015  # Initial entropy coefficient
+      ent_coef_schedule:
+        start: 0.015
+        final: 0.005
+        decay_start: 500
+        decay_episodes: 1500
+      clip_eps: 0.2  # PPO clipping parameter
+      update_epochs: 5  # Gradient passes per rollout batch
+      sequence_batch_size: 1  # Episodes per optimisation batch
+      rnn_type: lstm  # Choice of recurrent cell (rnn/gru/lstm)
+      rnn_hidden_size: 128  # Hidden units in the recurrent core
+      rnn_layers: 1  # Number of recurrent layers
+      rnn_dropout: 0.0  # Dropout between recurrent layers
+      mlp_hidden_dims: [256, 256]  # Encoder layers preceding the recurrent core
+      train_episodes: *shared_train_episodes  # Training episodes allocated to recurrent PPO
+      eval_episodes: *shared_eval_episodes  # Evaluation rollouts per checkpoint
+      save_dir: checkpoints  # Directory for checkpoint files
+      checkpoint_name: rec_ppo_gaplock.pt  # Filename for the best recurrent PPO checkpoint
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/rec_ppo_gaplock.pt  # Resume path for recurrent PPO checkpoints
+      wandb:
+        <<: *wandb_base
+        group: rec_ppo  # W&B group label for recurrent PPO runs
+        tags: [gaplock, rec_ppo]  # W&B tags for recurrent PPO experiments
 
   gaplock_sac:  # SAC learner leveraging entropy-regularised continuous control
     env:

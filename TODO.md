@@ -16,8 +16,9 @@
 
 
 - [ ] Extend attacker algorithm roster.
-    - [ ] Stand up SAC baseline alongside PPO/TD3/DQN.
+    - [x] Stand up SAC baseline alongside PPO/TD3/DQN.
     - [ ] Evaluate multi-agent options (MADDPG/MATD3) for co-learning defenders.
     - [ ] Prototype Rainbow-style upgrades for discrete attackers (distributional Q, noisy nets).
-    - [ ] Recurrent RL (RNN-PPO, DRQN) 
+    - [ ] RNN-PPO
+    - [ ] DRQN
 

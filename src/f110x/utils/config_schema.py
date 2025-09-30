@@ -222,6 +222,30 @@ class PPOConfigSchema(BaseSchema):
 
 
 @dataclass
+class RecPPOConfigSchema(BaseSchema):
+    actor_lr: float = 3e-4
+    critic_lr: float = 5e-4
+    device: str = "cpu"
+    gamma: float = 0.99
+    lam: float = 0.95
+    ent_coef: float = 0.01
+    clip_eps: float = 0.2
+    update_epochs: int = 5
+    sequence_batch_size: int = 1
+    max_grad_norm: float = 0.5
+    rnn_type: str = "lstm"
+    rnn_hidden_size: int = 128
+    rnn_layers: int = 1
+    rnn_dropout: float = 0.0
+    mlp_hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
+    train_episodes: int = 5000
+    eval_episodes: int = 5
+    save_dir: str = "checkpoints/"
+    checkpoint_name: Optional[str] = None
+    ent_coef_schedule: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class MainSchema(BaseSchema):
     mode: str = "train"
     wandb: Dict[str, Any] = field(default_factory=dict)

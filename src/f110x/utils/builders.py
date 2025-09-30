@@ -25,6 +25,7 @@ from f110x.wrappers.action import (
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
 from f110x.policies.ppo.ppo import PPOAgent
+from f110x.policies.ppo.rec_ppo import RecurrentPPOAgent
 from f110x.policies.random_policy import random_policy
 from f110x.policies.simple_heuristic import simple_heuristic
 from f110x.policies.td3.td3 import TD3Agent
@@ -32,6 +33,7 @@ from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
 from f110x.trainers.base import Trainer
 from f110x.trainers.ppo_guided import PPOTrainer
+from f110x.trainers.rec_ppo_trainer import RecurrentPPOTrainer
 from f110x.trainers.td3_trainer import TD3Trainer
 from f110x.trainers.dqn_trainer import DQNTrainer
 from f110x.trainers.sac_trainer import SACTrainer
@@ -319,7 +321,7 @@ def _build_obs_wrapper(
         target_slot = int(target_slot)
 
     algo = assignment.spec.algo.lower()
-    if algo in {"ppo", "td3", "sac"} and "lidar_beams" not in params:
+    if algo in {"ppo", "rec_ppo", "td3", "sac"} and "lidar_beams" not in params:
         env_lidar = getattr(ctx.env, "lidar_beams", None)
         if env_lidar:
             params["lidar_beams"] = int(env_lidar)
@@ -557,6 +559,49 @@ def _build_algo_sac(
     )
 
 
+def _build_algo_rec_ppo(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    agent_id = assignment.agent_id
+    action_space = ctx.env.action_space(agent_id)
+    if not isinstance(action_space, spaces.Box):
+        raise TypeError(
+            "Recurrent PPO builder requires a continuous Box action space; "
+            f"received {type(action_space)!r} for agent '{agent_id}'"
+        )
+
+    if not pipeline:
+        raise ValueError(
+            f"Recurrent PPO agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
+        )
+
+    sample_obs = ctx.ensure_sample()
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
+    rec_cfg = _resolve_algorithm_config(ctx, assignment.spec)
+    rec_cfg["obs_dim"] = int(obs_vector.size)
+    rec_cfg["act_dim"] = int(action_space.shape[0])
+    rec_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
+    rec_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
+
+    controller = RecurrentPPOAgent(rec_cfg)
+    controller.reset_hidden_state()
+    trainer = RecurrentPPOTrainer(agent_id, controller)
+    action_wrapper = ContinuousActionWrapper(action_space.low, action_space.high)
+    return AgentBundle(
+        assignment=assignment,
+        algo="rec_ppo",
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=True),
+        metadata={"config": rec_cfg},
+        trainer=trainer,
+        action_wrapper=action_wrapper,
+    )
+
+
 def _build_algo_dqn(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -691,6 +736,7 @@ def _unsupported_builder(name: str) -> AgentBuilderFn:
 
 AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "ppo": _build_algo_ppo,
+    "rec_ppo": _build_algo_rec_ppo,
     "follow_gap": _build_algo_follow_gap,
     "gap_follow": _build_algo_follow_gap,
     "followthegap": _build_algo_follow_gap,
@@ -732,7 +778,7 @@ class AgentTeam:
         if len(self.agents) != 2:
             return None
 
-        ppo_candidates = [bundle for bundle in self.agents if bundle.algo.lower() == "ppo"]
+        ppo_candidates = [bundle for bundle in self.agents if bundle.algo.lower() in {"ppo", "rec_ppo"}]
         if len(ppo_candidates) != 1:
             return None
         ppo_bundle = ppo_candidates[0]
@@ -792,6 +838,10 @@ class AgentTeam:
             reset_fn = getattr(wrapper, "reset", None)
             if callable(reset_fn):
                 reset_fn(bundle.agent_id)
+        for bundle in self.agents:
+            controller_reset = getattr(bundle.controller, "reset_hidden_state", None)
+            if callable(controller_reset):
+                controller_reset()
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ from f110x.utils.config_schema import (
     DQNConfigSchema,
     MainSchema,
     PPOConfigSchema,
+    RecPPOConfigSchema,
     RewardSchema,
     TD3ConfigSchema,
     SACConfigSchema,
@@ -231,6 +232,21 @@ class PPOConfig:
 
 
 @dataclass
+class RecPPOConfig:
+    schema: RecPPOConfigSchema = field(default_factory=RecPPOConfigSchema)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RecPPOConfig":
+        return cls(schema=RecPPOConfigSchema.from_dict(data))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.schema.get(key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.schema.to_dict()
+
+
+@dataclass
 class RewardConfig:
     schema: RewardSchema = field(default_factory=RewardSchema)
 
@@ -318,6 +334,7 @@ class DQNConfig:
 class ExperimentConfig:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
+    rec_ppo: RecPPOConfig = field(default_factory=RecPPOConfig)
     td3: TD3Config = field(default_factory=TD3Config)
     sac: SACConfig = field(default_factory=SACConfig)
     dqn: DQNConfig = field(default_factory=DQNConfig)
@@ -367,6 +384,7 @@ class ExperimentConfig:
         return cls(
             env=EnvConfig.from_dict(data.get("env", {})),
             ppo=PPOConfig.from_dict(data.get("ppo", {})),
+            rec_ppo=RecPPOConfig.from_dict(data.get("rec_ppo", {})),
             td3=TD3Config.from_dict(data.get("td3", {})),
             sac=SACConfig.from_dict(data.get("sac", {})),
             dqn=DQNConfig.from_dict(data.get("dqn", {})),
