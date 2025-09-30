@@ -258,8 +258,37 @@ class RecurrentPPOAgent:
             raise ValueError(f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}")
 
         rewards = np.asarray(self.rew_buf, dtype=np.float32)
-        values = np.asarray(self.val_buf[:T], dtype=np.float32)
+        values = np.asarray(self.val_buf, dtype=np.float32)
+        if values.shape[0] < T:
+            pad_val = values[-1] if values.size else 0.0
+            values = np.concatenate(
+                [values, np.full(T - values.shape[0], pad_val, dtype=np.float32)],
+                axis=0,
+            )
+        else:
+            values = values[:T]
         dones = np.asarray(self.done_buf, dtype=np.float32)
+
+        # Normalise episode boundaries and bootstrap list
+        normalised_boundaries: List[int] = []
+        seen = set()
+        for boundary in self._episode_boundaries:
+            b = min(max(int(boundary), 0), T)
+            if b not in seen:
+                normalised_boundaries.append(b)
+                seen.add(b)
+        if not normalised_boundaries or normalised_boundaries[0] != 0:
+            normalised_boundaries.insert(0, 0)
+        if normalised_boundaries[-1] != T:
+            normalised_boundaries.append(T)
+        self._episode_boundaries = normalised_boundaries
+        while len(self._episode_bootstrap) < len(self._episode_boundaries) - 1:
+            if self._pending_bootstrap is not None:
+                self._episode_bootstrap.append(self._pending_bootstrap)
+                self._pending_bootstrap = None
+            else:
+                self._episode_bootstrap.append(0.0)
+        self._episode_bootstrap = self._episode_bootstrap[: len(self._episode_boundaries) - 1]
 
         adv = np.zeros(T, dtype=np.float32)
         ret = np.zeros(T, dtype=np.float32)
