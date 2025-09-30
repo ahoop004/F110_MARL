@@ -217,6 +217,7 @@ class RewardSchema(BaseSchema):
     progress_threshold: float = 0.05
     progress_patience: int = 80
     progress_penalty: float = 0.0
+    success_reward_floor: float = 0.0
     spin_thresh: float = 0.6
     spin_penalty: float = 0.0
     spin_speed_gate: float = 0.3

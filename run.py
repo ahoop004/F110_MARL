@@ -18,10 +18,10 @@ import yaml
 BASE_DIR = Path(__file__).resolve().parent
 
 
-DEFAULT_CONFIGS: Dict[str, Path] = {
-    "dqn": Path("configs/experiment_gaplock_dqn.yaml"),
-    "ppo": Path("configs/experiment_gaplock_ppo.yaml"),
-    "td3": Path("configs/experiment_gaplock_td3.yaml"),
+DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {
+    "dqn": (Path("configs/experiments.yaml"), "gaplock_dqn"),
+    "ppo": (Path("configs/experiments.yaml"), "gaplock_ppo"),
+    "td3": (Path("configs/experiments.yaml"), "gaplock_td3"),
 }
 
 
@@ -34,12 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--algo",
         choices=sorted(DEFAULT_CONFIGS.keys()),
         default="dqn",
-        help="Selects the default config associated with an algorithm.",
+        help="Selects the default experiment profile (algo→experiment mapping).",
     )
     parser.add_argument(
         "--config",
         type=Path,
         help="Explicit path to a config file (overrides --algo default).",
+    )
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        help="Experiment name inside the config file (required when config contains multiple experiments).",
     )
     parser.add_argument(
         "--map",
@@ -99,17 +104,57 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resolve_config(algo: str, override: Path | None, parser: argparse.ArgumentParser) -> Path:
+def resolve_config(
+    algo: str,
+    override: Optional[Path],
+    experiment: Optional[str],
+    parser: argparse.ArgumentParser,
+) -> Tuple[Path, Optional[str]]:
     if override is not None:
         cfg_path = override
+        default_exp = None
     else:
-        cfg_path = DEFAULT_CONFIGS[algo]
+        cfg_path, default_exp = DEFAULT_CONFIGS[algo]
 
-    cfg_path = cfg_path if cfg_path.is_absolute() else (BASE_DIR / cfg_path)
-    cfg_path = cfg_path.resolve()
+    cfg_path = cfg_path.expanduser()
+    if not cfg_path.is_absolute():
+        cfg_path = (BASE_DIR / cfg_path).resolve()
+    else:
+        cfg_path = cfg_path.resolve()
+
     if not cfg_path.exists():
         parser.error(f"Config file not found: {cfg_path}")
-    return cfg_path
+
+    try:
+        doc = yaml.safe_load(cfg_path.read_text()) or {}
+    except Exception as exc:  # pragma: no cover - defensive
+        parser.error(f"Failed to parse config {cfg_path}: {exc}")
+
+    if not isinstance(doc, dict):
+        parser.error(f"Configuration {cfg_path} must have a mapping as its root object")
+
+    experiments_section = doc.get("experiments")
+    selected_exp = experiment or default_exp
+    if isinstance(experiments_section, dict):
+        if not selected_exp:
+            selected_exp = doc.get("default_experiment")
+        if not selected_exp:
+            parser.error(
+                f"Config {cfg_path} defines multiple experiments; please supply --experiment"
+            )
+        if selected_exp not in experiments_section:
+            parser.error(
+                f"Experiment '{selected_exp}' not found in {cfg_path}. Available: {sorted(experiments_section)}"
+            )
+    else:
+        if experiment:
+            print(
+                f"[run.py] Warning: --experiment provided but config {cfg_path} has no experiments section; ignoring.",
+                file=sys.stderr,
+            )
+        selected_exp = None
+
+    return cfg_path, selected_exp
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -118,9 +163,27 @@ def _normalize_prefix(prefix: str) -> str:
     return prefix if prefix.endswith(('-', '/', '_')) else f"{prefix}-"
 
 
+def _prune_option(args: List[str], option: str) -> List[str]:
+    cleaned: List[str] = []
+    skip_next = False
+    prefix = f"{option}="
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == option:
+            skip_next = True
+            continue
+        if token.startswith(prefix):
+            continue
+        cleaned.append(token)
+    return cleaned
+
+
 def _format_wandb_labels(
     algo: str,
     cfg_path: Path,
+    experiment: Optional[str],
     run_idx: int,
     total: int,
     prefix: str,
@@ -132,10 +195,15 @@ def _format_wandb_labels(
         "algo": algo,
         "config": cfg_path.name,
         "config_stem": cfg_path.stem,
-        "config_slug": cfg_path.stem.replace("experiment_", ""),
+        "experiment": experiment or "",
+        "config_slug": "",
         "run_idx": run_idx,
         "total_runs": total,
     }
+
+    slug = f"{cfg_path.stem}-{experiment}" if experiment else cfg_path.stem
+    slug = slug.replace("/", "_").replace(" ", "_")
+    context["config_slug"] = slug
 
     try:
         group = group_template.format(**context).strip()
@@ -160,6 +228,7 @@ def _args_to_base_spec(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "algo": args.algo,
         "config": args.config,
+        "experiment": args.experiment,
         "map": args.map,
         "repeat": args.repeat,
         "auto_seed": args.auto_seed,
@@ -329,7 +398,17 @@ def _execute_spec(
     extra_args = _normalize_main_args(spec.get("extra_main_args"))
     forwarded_args.extend(extra_args)
 
-    cfg_path = resolve_config(algo, cfg_override_path, parser)
+    spec_experiment = spec.get("experiment")
+    if spec_experiment is not None:
+        spec_experiment = str(spec_experiment).strip() or None
+
+    cfg_path, experiment_name = resolve_config(algo, cfg_override_path, spec_experiment, parser)
+
+    forwarded_args = _prune_option(forwarded_args, "--config")
+    forwarded_args = _prune_option(forwarded_args, "--experiment")
+    forwarded_args = ["--config", str(cfg_path)] + forwarded_args
+    if experiment_name:
+        forwarded_args = ["--experiment", experiment_name] + forwarded_args
 
     repeat_value = spec.get("repeat")
     repeat = _resolve_optional_int(repeat_value, "repeat", parser) or 1
@@ -379,8 +458,9 @@ def _execute_spec(
 
     label = spec.get("label") or spec.get("name") or algo
     # map_display already set in branch above
+    experiment_display = experiment_name or "(default)"
     print(
-        f"[run.py] Sweep spec {spec_index}/{total_specs}: {label} (algo={algo}, map={map_display}, runs={run_count})"
+        f"[run.py] Sweep spec {spec_index}/{total_specs}: {label} (algo={algo}, experiment={experiment_display}, map={map_display}, runs={run_count})"
     )
 
     prefix = _normalize_prefix(str(spec.get("wandb_prefix", "")))
@@ -396,6 +476,7 @@ def _execute_spec(
             wandb_labels = _format_wandb_labels(
                 algo,
                 cfg_path,
+                experiment_name,
                 run_idx,
                 run_count,
                 prefix,
@@ -405,8 +486,10 @@ def _execute_spec(
         except ValueError as exc:
             parser.error(str(exc))
         env_overrides.update(wandb_labels)
+        if experiment_name:
+            env_overrides.setdefault("F110_EXPERIMENT", experiment_name)
 
-        exit_code = run_once(cfg_path, forwarded_args, run_idx, run_count, env_overrides)
+        exit_code = run_once(cfg_path, experiment_name, forwarded_args, run_idx, run_count, env_overrides)
         if exit_code != 0:
             print(
                 f"[run.py] Spec '{label}' run {run_idx}/{run_count} failed with exit code {exit_code}; aborting."
@@ -420,6 +503,7 @@ def _execute_spec(
 
 def run_once(
     cfg_path: Path,
+    experiment: Optional[str],
     forwarded_args: Sequence[str],
     run_idx: int,
     total: int,
@@ -428,6 +512,8 @@ def run_once(
     cmd = [sys.executable, "experiments/main.py", *forwarded_args]
     env = os.environ.copy()
     env["F110_CONFIG"] = str(cfg_path)
+    if experiment:
+        env["F110_EXPERIMENT"] = experiment
     env.update(env_overrides)
 
     pretty_args = " ".join(forwarded_args) if forwarded_args else "(none)"
@@ -437,8 +523,9 @@ def run_once(
     wandb_msg = ""
     if wandb_group or wandb_name:
         wandb_msg = f", W&B group={wandb_group or '—'}, name={wandb_name or '—'}"
+    exp_msg = f" (experiment={experiment})" if experiment else ""
     print(
-        f"[run.py] Launching run {run_idx}/{total} with config '{cfg_path}'{seed_msg}{wandb_msg} and args: {pretty_args}"
+        f"[run.py] Launching run {run_idx}/{total} with config '{cfg_path}'{exp_msg}{seed_msg}{wandb_msg} and args: {pretty_args}"
     )
 
     result = subprocess.run(cmd, env=env)

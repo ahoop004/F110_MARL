@@ -91,6 +91,7 @@ shared:
     truncation_penalty: -1.0
     idle_speed_threshold: 0.4
     idle_patience_steps: 120
+    success_reward_floor: 1.0
 
 experiments:
   gaplock_ppo:

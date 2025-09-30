@@ -36,6 +36,7 @@ class RewardWrapper:
         progress_threshold=0.05,
         progress_patience=80,
         progress_penalty=0.0,
+        success_reward_floor=0.0,
         # spin_thresh=np.pi / 6,
         spin_thresh=0.6,            # rad/s threshold on filtered yaw rate
         spin_penalty=0.0,           # k in quadratic term
@@ -91,6 +92,7 @@ class RewardWrapper:
         self.progress_threshold = float(progress_threshold)
         self.progress_patience = max(int(progress_patience), 1)
         self.progress_penalty = float(progress_penalty)
+        self.success_reward_floor = float(success_reward_floor)
         self.spin_thresh = float(spin_thresh)
         self.spin_penalty = float(spin_penalty)
 
@@ -381,6 +383,12 @@ class RewardWrapper:
                         components["target_crash_reward"] = (
                             components.get("target_crash_reward", 0.0) + self.target_crash_reward
                         )
+                    if self.success_reward_floor > 0.0 and shaped < self.success_reward_floor:
+                        components["success_floor"] = (
+                            components.get("success_floor", 0.0)
+                            + (self.success_reward_floor - shaped)
+                        )
+                        shaped = self.success_reward_floor
                     self.opponent_crash_reward_given.add(key)
 
         if done and ego_obs.get("collision", False):
