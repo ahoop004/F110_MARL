@@ -144,18 +144,18 @@ class PPOAgent:
     # ------------------- GAE -------------------
 
     def finish_path(self):
-        T = len(self.rew_buf)
+        T = min(len(self.rew_buf), len(self.obs_buf), len(self.val_buf))
         if T == 0:
             self.adv_buf = np.zeros(0, dtype=np.float32)
             self.ret_buf = np.zeros(0, dtype=np.float32)
             return
 
-        if len(self.done_buf) != T:
+        if len(self.done_buf) < T:
             raise ValueError(
                 f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}"
             )
 
-        rewards = np.asarray(self.rew_buf, dtype=np.float32)
+        rewards = np.asarray(self.rew_buf[:T], dtype=np.float32)
         values = np.asarray(self.val_buf, dtype=np.float32)
         if values.shape[0] < T:
             pad_val = values[-1] if values.size else 0.0
@@ -165,7 +165,7 @@ class PPOAgent:
             )
         else:
             values = values[:T]
-        dones = np.asarray(self.done_buf, dtype=np.float32)
+        dones = np.asarray(self.done_buf[:T], dtype=np.float32)
 
         # Normalise and deduplicate episode boundaries against available rollouts
         normalised_boundaries: List[int] = []
