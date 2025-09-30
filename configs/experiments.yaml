@@ -96,7 +96,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
     ppo:
       actor_lr: 0.0003  # Learning rate for the actor network
       critic_lr: 0.0005  # Learning rate for the critic network
-      device: cpu  # Compute device used for PPO training
+      device: cuda  # Compute device used for PPO training
       gamma: 0.99  # Discount factor for future rewards
       lam: 0.95  # GAE lambda controlling advantage smoothing
       ent_coef: 0.015  # Initial entropy regularization weight
@@ -135,7 +135,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
     td3:
       actor_lr: 0.0003  # Learning rate for the TD3 actor
       critic_lr: 0.001  # Learning rate for the TD3 critics
-      device: cpu  # Compute device used for TD3 training
+      device: cuda # Compute device used for TD3 training
       gamma: 0.99  # Discount factor applied to returns
       tau: 0.005  # Target network smoothing factor
       policy_noise: 0.3  # Noise added to target actions during updates
@@ -173,7 +173,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
     reward:
       <<: *reward_base
     dqn:
-      device: cpu  # Compute device used for DQN training
+      device: cuda  # Compute device used for DQN training
       lr: 0.0004  # Learning rate for the Q-network optimizer
       gamma: 0.99  # Discount factor used by the DQN backup
       batch_size: 512  # Mini-batch size sampled from replay

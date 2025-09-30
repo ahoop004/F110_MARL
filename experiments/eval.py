@@ -99,9 +99,6 @@ def create_evaluation_context(
         primary_bundle = trainable[0]
 
     reward_cfg = cfg.reward.to_dict()
-    if not reward_cfg.get("reward_horizon"):
-        reward_cfg["reward_horizon"] = getattr(env, "max_steps", None)
-    reward_cfg.setdefault("reward_clip", 1.0)
 
     output_root = Path(cfg.main.get("output_root", "outputs")).expanduser()
     output_root.mkdir(parents=True, exist_ok=True)

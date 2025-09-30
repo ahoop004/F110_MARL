@@ -1,26 +1,5 @@
 # TODO
 
-- [x] High-impact: Batch physics stepping/collision handling in simulator (`src/f110x/physics/simulaton.py`).
-    - [x] Preallocate reusable buffers for `prev_states`, `verts`, `scans`, and collision flags to cut per-step object churn.
-    - [x] Move agent/environment collision merging into an `@njit` helper so the hot path avoids Python loops.
-    - [x] Re-run LiDAR sampling after collision rewinds so `agent.scan` matches the restored pose (fixes TODO at line 171).
-
-- [x] High-impact: Eliminate per-step LiDAR occlusion stacking (`src/f110x/physics/simulaton.py`, `src/f110x/physics/vehicle.py`).
-    - [x] Pass opponent vertex views instead of rebuilding `np.stack([...])` for every agent each step.
-    - [x] Refactor `RaceCar.ray_cast_agents` to consume contiguous float32 buffers without copying/converting per opponent.
-
-- [x] Medium-impact: Trim repeated allocations in `RaceCar.update_pose` (`src/f110x/physics/vehicle.py`).
-    - [x] Cache frequently used params/arrays (`[sv, accl]`, `scan_pose`) instead of recreating them four times per integration step.
-    - [x] Hoist dict lookups for dynamics parameters into structured arrays for faster access inside numba kernels.
-
-- [x] Medium-impact: Reduce training-loop Python bookkeeping (`experiments/train.py`).
-    - [x] Replace per-agent dicts (`totals`, `speed_sums`, `collision_counts`, etc.) with preallocated numpy arrays keyed by agent index.
-    - [x] Vectorize idle-speed detection and reward aggregation to avoid repeated `np.asarray`/`np.linalg.norm` per agent.
-    - [x] Consider a lightweight trajectory buffer so trainers consume batched transitions instead of per-step dict assembly.
-
-- [ ] Lower-impact: Cache map metadata/image loads in `MapLoader` (`src/f110x/utils/map_loader.py`).
-    - [ ] Add an in-memory cache keyed by `(map_dir, map_yaml)` and share `track_mask`/image size across env builds.
-    - [ ] Provide explicit cache invalidation when map files change on disk.
 
 - [ ] Create shared CLI utilities (yaml loading, logging, manifest helpers) for scripts/run.py/map_validator.py.
 
