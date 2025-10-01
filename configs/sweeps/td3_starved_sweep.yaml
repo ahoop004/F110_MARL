@@ -28,5 +28,5 @@ runs:
     td3_starved.policy_noise: 0.22
     td3_starved.gradient_steps: 3
     td3_starved.exploration_noise_decay_steps: 60000
-    wandb_prefix: td3-starved-focus-
+    wandb_prefix: td3-sf-
     repeat: 3
