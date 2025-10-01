@@ -1,0 +1,264 @@
+# Low-data training profiles tuned for ~500 training episodes.
+default_experiment: gaplock_ppo_starved
+
+shared:
+  env: &env_base
+    seed: 42
+    n_agents: 2
+    max_steps: 800
+    timestep: 0.01
+    integrator: RK4
+    render_interval: 0
+    map_dir: maps
+    map_yaml: Shanghai_map.yaml
+    map: Shanghai_map.yaml
+    map_ext: .png
+    render_mode: human
+    start_poses:
+      - [0.0, 0.0, 0.0]
+      - [2.0, 0.1, 0.0]
+    start_pose_options:
+      -
+        - [0.0, 0.0, 0.0]
+        - [2.5, 0.1, 0.0]
+      -
+        - [0.0, 0.0, 0.0]
+        - [2.5, -0.1, 0.0]
+      -
+        - [2.5, 0.1, 0.0]
+        - [0.0, 0.0, 0.0]
+      -
+        - [2.5, -0.1, 0.0]
+        - [0.0, 0.0, 0.0]
+
+  reward: &reward_base
+    target_crash_reward: 80.0
+    ego_collision_penalty: -3.0
+    truncation_penalty: 0.0
+    success_once: true
+    reward_horizon: null
+    reward_clip: 50.0
+
+  reward_curriculum: &reward_curriculum
+    - mode: basic
+      until: 200
+    - mode: pursuit
+      until: 400
+    - mode: adversarial
+
+  defender_policy: &defender_policy
+    algo: follow_gap
+    slot: 1
+    role: defender
+    params:
+      max_speed: 18.0
+      min_speed: 3.0
+      steering_gain: 0.85
+      bubble_radius: 3
+      steer_smooth: 0.45
+
+  attacker_roster: &attacker_base
+    slot: 0
+    role: attacker
+    wrappers:
+      - factory: obs
+        params:
+          max_scan: 30.0
+          normalize: true
+          target_role: defender
+
+  episodes:
+    train: &train_episodes 500
+    eval: &eval_episodes 5
+
+  wandb: &wandb_base
+    enabled: true
+    project: marl-f110
+    entity: ahoop004-old-dominion-university
+
+  main: &main_base
+    mode: train_eval
+    save_eval_rollouts: false
+    train_episodes: *train_episodes
+    eval_episodes: *eval_episodes
+    output_root: outputs
+
+experiments:
+  gaplock_ppo_starved:
+    env:
+      <<: *env_base
+      update: 20
+    reward:
+      <<: *reward_base
+    reward_curriculum: *reward_curriculum
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: ppo
+          config_ref: ppo_starved
+        - *defender_policy
+    ppo_starved:
+      actor_lr: 0.00045
+      critic_lr: 0.00065
+      device: cuda
+      gamma: 0.99
+      lam: 0.9
+      ent_coef: 0.01
+      ent_coef_schedule:
+        start: 0.01
+        final: 0.002
+        decay_start: 100
+        decay_episodes: 200
+      clip_eps: 0.2
+      update_epochs: 15
+      minibatch_size: 256
+      train_episodes: *train_episodes
+      eval_episodes: *eval_episodes
+      save_dir: checkpoints
+      checkpoint_name: ppo_starved.pt
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/ppo_starved.pt
+      wandb:
+        <<: *wandb_base
+        group: ppo-starved
+        tags: [ppo, starved]
+
+  gaplock_td3_starved:
+    env:
+      <<: *env_base
+      update: 1
+    reward:
+      <<: *reward_base
+    reward_curriculum: *reward_curriculum
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: td3
+          config_ref: td3_starved
+        - *defender_policy
+    td3_starved:
+      actor_lr: 0.0004
+      critic_lr: 0.0012
+      device: cuda
+      gamma: 0.99
+      tau: 0.005
+      policy_noise: 0.25
+      noise_clip: 0.4
+      policy_delay: 1
+      gradient_steps: 2
+      batch_size: 256
+      buffer_size: 50000
+      warmup_steps: 3000
+      exploration_noise: 0.3
+      exploration_noise_final: 0.05
+      exploration_noise_decay_steps: 50000
+      hidden_dims: [256, 256]
+      train_episodes: *train_episodes
+      eval_episodes: *eval_episodes
+      save_dir: checkpoints
+      checkpoint_name: td3_starved.pt
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/td3_starved.pt
+      wandb:
+        <<: *wandb_base
+        group: td3-starved
+        tags: [td3, starved]
+
+  gaplock_sac_starved:
+    env:
+      <<: *env_base
+      update: 1
+    reward:
+      <<: *reward_base
+    reward_curriculum: *reward_curriculum
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: sac
+          config_ref: sac_starved
+        - *defender_policy
+    sac_starved:
+      actor_lr: 0.0004
+      critic_lr: 0.0004
+      alpha: 0.2
+      alpha_lr: 0.00035
+      auto_alpha: true
+      gamma: 0.99
+      tau: 0.005
+      batch_size: 256
+      buffer_size: 50000
+      warmup_steps: 3000
+      hidden_dims: [256, 256]
+      gradient_steps: 2
+      device: cuda
+      train_episodes: *train_episodes
+      eval_episodes: *eval_episodes
+      save_dir: checkpoints
+      checkpoint_name: sac_starved.pt
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/sac_starved.pt
+      wandb:
+        <<: *wandb_base
+        group: sac-starved
+        tags: [sac, starved]
+
+  gaplock_dqn_starved:
+    env:
+      <<: *env_base
+      update: 2
+    reward:
+      <<: *reward_base
+    reward_curriculum: *reward_curriculum
+    agents:
+      roster:
+        - <<: *attacker_base
+          algo: dqn
+          config_ref: dqn_starved
+        - *defender_policy
+    dqn_starved:
+      device: cuda
+      lr: 0.0005
+      gamma: 0.99
+      batch_size: 256
+      buffer_size: 75000
+      target_update_interval: 1000
+      epsilon_start: 1.0
+      epsilon_end: 0.05
+      epsilon_decay_rate: 0.9990
+      hidden_dims: [256, 256]
+      prioritized_replay: true
+      per_alpha: 0.6
+      per_beta_start: 0.5
+      per_beta_increment: 0.0001
+      per_min_priority: 0.001
+      per_epsilon: 1.0e-6
+      action_set:
+        - [-0.50, 2.0]
+        - [-0.25, 2.0]
+        - [0.0, 2.0]
+        - [0.25, 2.0]
+        - [0.50, 2.0]
+        - [-0.50, 4.0]
+        - [-0.25, 4.0]
+        - [0.0, 4.0]
+        - [0.25, 4.0]
+        - [0.50, 4.0]
+        - [-0.50, 6.0]
+        - [-0.25, 6.0]
+        - [0.0, 6.0]
+        - [0.25, 6.0]
+        - [0.50, 6.0]
+      train_episodes: *train_episodes
+      eval_episodes: *eval_episodes
+      save_dir: checkpoints
+      checkpoint_name: dqn_starved.pt
+    main:
+      <<: *main_base
+      checkpoint: checkpoints/dqn_starved.pt
+      wandb:
+        <<: *wandb_base
+        group: dqn-starved
+        tags: [dqn, starved]
