@@ -1,24 +1,32 @@
 # TODO
 
+## Multi-Agent Support
 
-- [ ] Create shared CLI utilities (yaml loading, logging, manifest helpers) for scripts/run.py/map_validator.py.
+- [ ] Update experiment configs to roster two attackers plus one defender (n_agents, start pose options, roster entries).
+- [ ] Refactor roster/team role handling so multiple attackers can share a role without collisions.
+- [ ] Extend reward shaping to always target the defender when several attackers participate.
+- [ ] Rework training and evaluation loops for per-attacker metrics, checkpointing, and success criteria.
+- [ ] Land coordinated multi-agent trainers (e.g. MADDPG, MATD3) and hook them into the builder registry.
+- [ ] Add integration tests covering multi-attacker rollouts and reward bookkeeping.
+- [ ] Add per-role observation pipelines (target resolution, shared embeddings, central-state features).
+- [ ] Centralise replay/logging utilities for shared critics and parameter-sharing policies.
+- [ ] Stand up self-play scheduling and defender co-training (curriculum, cross-play evaluation).
+- [ ] Build scenario randomisation hooks (start poses, map subsets, vehicle params) tuned for multi-agent runs.
 
-- [ ] Relocate checkpoints/eval artifacts to an ignored outputs/ directory and add helper script to bundle config + git SHA per run.
-    - [ ] Add manifest writer (CSV/JSON) capturing run_id, algo, map, seed, output_dir, git_sha.
-    - [x] Update `.gitignore` for outputs/ and retrofit existing scripts to use the new directory.
+## Algorithm Baselines
 
+- [ ] Rainbow DQN attacker baseline (distributional targets, noisy nets, prioritized replay refresh).
+- [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
+- [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
+- [ ] MAPPO-style multi-agent PPO head for coordinated attackers.
+- [ ] Multi-agent SAC (MASAC/MATD3 hybrid) for continuous joint control.
+- [ ] QMIX / VDN-style discrete attackers for cooperative pursuit behaviour.
+- [ ] Parameter-sharing PPO/IMPALA baseline to compare against independent learners.
+- [ ] Offline baselines (CQL/IQL) seeded from logged self-play rollouts.
+- [ ] Behaviour cloning / DAgger attacker from expert defender trajectories as a warm-start.
 
-- [ ] Resource planning for massive sweeps.
-    - [ ] Draft compute concurrency plan (runs per GPU/CPU, reserved debug slot).
-    - [ ] Specify storage budget + retention policy (outputs/<algo>/<map>/<seed>/ layout).
-    - [ ] Add submission helper (scripts/launch_array.py or similar) with retry/status tracking.
-    - [ ] Set up monitoring/alerting (W&B dashboards, log watchdog).
+## Experiment Ops
 
-
-- [ ] Extend attacker algorithm roster.
-    - [x] Stand up SAC baseline alongside PPO/TD3/DQN.
-    - [ ] Evaluate multi-agent options (MADDPG/MATD3) for co-learning defenders.
-    - [ ] Prototype Rainbow-style upgrades for discrete attackers (distributional Q, noisy nets).
-    - [ ] RNN-PPO
-    - [ ] DRQN
-
+- [ ] Bundle run artifacts (config, git SHA, metrics) into a single manifest per training job.
+- [ ] Define resource envelopes for large sweeps (GPU/CPU concurrency, storage layout, retention policy).
+- [ ] Build a submission helper with retry/status tracking and basic monitoring hooks (W&B dashboards, log watchdog).
