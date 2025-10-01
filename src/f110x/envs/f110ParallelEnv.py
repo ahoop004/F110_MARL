@@ -57,10 +57,14 @@ class F110ParallelEnv(ParallelEnv):
         merged = {**env_config, **kwargs}
         
         self.render_mode = merged.get("render_mode", "human")
-        self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}     
+        self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
         self.renderer: Optional[EnvRenderer] = None
         self.current_obs = None
         self.render_callbacks: List[Any] = []
+        headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
+        self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
+        mode = (self.render_mode or "").lower()
+        self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
 
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
@@ -308,28 +312,30 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        self.render_obs = {}
-        agent_index = self._agent_id_to_index
-        for aid in self.agents:
-
-            idx = agent_index[aid]
-            render_entry = {
-                "poses_x": float(self.poses_x[idx]),
-                "poses_y": float(self.poses_y[idx]),
-                "poses_theta": float(self.poses_theta[idx]),
-                "pose": np.array([
-                    float(self.poses_x[idx]),
-                    float(self.poses_y[idx]),
-                    float(self.poses_theta[idx])
-                ], dtype=np.float32),
-                "lap_time":  float(self.lap_times[idx]),
-                "lap_count": int(self.lap_counts[idx]),
-                "collision": bool(self.collisions[idx])
-            }
-            scan_entry = obs[aid].get("scans")
-            if scan_entry is not None:
-                render_entry["scans"] = scan_entry
-            self.render_obs[aid] = render_entry
+        if self._collect_render_data or self.render_callbacks:
+            self.render_obs = {}
+            agent_index = self._agent_id_to_index
+            for aid in self.agents:
+                idx = agent_index[aid]
+                render_entry = {
+                    "poses_x": float(self.poses_x[idx]),
+                    "poses_y": float(self.poses_y[idx]),
+                    "poses_theta": float(self.poses_theta[idx]),
+                    "pose": np.array([
+                        float(self.poses_x[idx]),
+                        float(self.poses_y[idx]),
+                        float(self.poses_theta[idx])
+                    ], dtype=np.float32),
+                    "lap_time":  float(self.lap_times[idx]),
+                    "lap_count": int(self.lap_counts[idx]),
+                    "collision": bool(self.collisions[idx])
+                }
+                scan_entry = obs[aid].get("scans")
+                if scan_entry is not None:
+                    render_entry["scans"] = scan_entry
+                self.render_obs[aid] = render_entry
+        else:
+            self.render_obs = {}
 
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -347,27 +353,30 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        self.render_obs = {}
-        agent_index = self._agent_id_to_index
-        for aid in self.agents:
-            idx = agent_index[aid]
-            render_entry = {
-                "poses_x": float(self.poses_x[idx]),
-                "poses_y": float(self.poses_y[idx]),
-                "poses_theta": float(self.poses_theta[idx]),
-                "pose": np.array([
-                    float(self.poses_x[idx]),
-                    float(self.poses_y[idx]),
-                    float(self.poses_theta[idx])
-                ], dtype=np.float32),
-                "lap_time":  float(self.lap_times[idx]),
-                "lap_count": int(self.lap_counts[idx]),
-                "collision": bool(self.collisions[idx])
-            }
-            scan_entry = obs[aid].get("scans")
-            if scan_entry is not None:
-                render_entry["scans"] = scan_entry
-            self.render_obs[aid] = render_entry
+        if self._collect_render_data or self.render_callbacks:
+            self.render_obs = {}
+            agent_index = self._agent_id_to_index
+            for aid in self.agents:
+                idx = agent_index[aid]
+                render_entry = {
+                    "poses_x": float(self.poses_x[idx]),
+                    "poses_y": float(self.poses_y[idx]),
+                    "poses_theta": float(self.poses_theta[idx]),
+                    "pose": np.array([
+                        float(self.poses_x[idx]),
+                        float(self.poses_y[idx]),
+                        float(self.poses_theta[idx])
+                    ], dtype=np.float32),
+                    "lap_time":  float(self.lap_times[idx]),
+                    "lap_count": int(self.lap_counts[idx]),
+                    "collision": bool(self.collisions[idx])
+                }
+                scan_entry = obs[aid].get("scans")
+                if scan_entry is not None:
+                    render_entry["scans"] = scan_entry
+                self.render_obs[aid] = render_entry
+        else:
+            self.render_obs = {}
 
         self.current_time += self.timestep
         lap_completion = self.start_state.update_progress(
@@ -438,9 +447,15 @@ class F110ParallelEnv(ParallelEnv):
 
     def add_render_callback(self, callback_func):
         self.render_callbacks.append(callback_func)
+        self._collect_render_data = True
 
     def render(self):
         assert self.render_mode in ["human", "rgb_array"]
+
+        self._collect_render_data = True
+        if self._headless and self.render_mode == "human":
+            # Nothing to do when headless; keep API contract intact.
+            return None
 
         if self.renderer is None:
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,

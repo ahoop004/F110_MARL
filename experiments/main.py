@@ -201,7 +201,15 @@ def _wandb_init(cfg, mode):
     # Deduplicate while preserving order
     tags = list(dict.fromkeys(tags))
 
-    return wandb.init(project=project, entity=entity, config=cfg, group=group, reinit=True, tags=tags)
+    run = wandb.init(project=project, entity=entity, config=cfg, group=group, reinit=True, tags=tags)
+
+    if run is not None:
+        wandb.define_metric("train/episode")
+        wandb.define_metric("train/return_*", step_metric="train/episode")
+        wandb.define_metric("eval/episode")
+        wandb.define_metric("eval/return_*", step_metric="eval/episode")
+
+    return run
 
 
 def _log_train_results(run, results, ppo_id=None, gap_id=None):
@@ -212,48 +220,21 @@ def _log_train_results(run, results, ppo_id=None, gap_id=None):
         episode = idx
         payload: Dict[str, Any] = {}
 
-        def _add_metric(name: str, value: Any) -> None:
-            if value is None:
-                return
-            if isinstance(value, (int, float, bool)):
-                payload[name] = float(value)
-            else:
-                payload[name] = value
-
         if isinstance(record, dict):
             episode = int(record.get("episode", idx))
-
-            duplicate_fields = {
-                "steps",
-                "collisions_total",
-                "defender_survival_steps",
-                "success",
-                "defender_crashed",
-                "attacker_crashed",
-                "idle_truncated",
-                "epsilon",
-            }
+            returns = record.get("returns")
+            if isinstance(returns, dict):
+                for aid, value in returns.items():
+                    payload[f"train/return_{aid}"] = float(value)
 
             for key, value in record.items():
-                if key in {"episode", "returns"}:
-                    continue
-                if key in duplicate_fields:
-                    continue
-                if key.startswith("return_"):
-                    continue
-                if key.startswith("collision_count_") or key.startswith("collision_step_"):
-                    continue
-                if key.startswith("avg_speed_"):
-                    continue
-                if key.startswith("reward_component_"):
-                    continue
-                if key == "reward_mode":
+                if not key.startswith("return_"):
                     continue
                 if isinstance(value, (int, float)):
-                    _add_metric(f"train/{key}", value)
-                elif value is not None:
-                    payload[f"train/{key}"] = value
+                    payload[f"train/{key}"] = float(value)
+
         if payload:
+            payload["train/episode"] = float(episode)
             run.log(payload, step=episode)
 
 
@@ -262,9 +243,21 @@ def _log_eval_results(run, results):
         return
 
     for res in results:
+        episode = int(res.get("episode", 0) or 0)
         payload: Dict[str, Any] = {}
+
+        returns = res.get("returns")
+        if isinstance(returns, dict):
+            for aid, value in returns.items():
+                payload[f"eval/return_{aid}"] = float(value)
+
+        for key, value in res.items():
+            if key.startswith("return_") and isinstance(value, (int, float)):
+                payload[f"eval/{key}"] = float(value)
+
         if payload:
-            run.log(payload)
+            payload["eval/episode"] = float(episode)
+            run.log(payload, step=episode)
 
 
 def main():
@@ -364,8 +357,18 @@ def main():
         cfg_path = tmp_cfg_path
 
     def update_logger(metrics: Dict[str, Any]):
-        if wandb_run is not None:
-            wandb_run.log(metrics)
+        if wandb_run is None or not metrics:
+            return
+
+        safe_payload: Dict[str, Any] = {}
+        for key, value in metrics.items():
+            if isinstance(value, (int, float)):
+                safe_payload[key] = float(value)
+            else:
+                safe_payload[key] = value
+
+        if safe_payload:
+            wandb_run.log(safe_payload)
 
     update_cb = update_logger if wandb_run is not None else None
 

@@ -255,11 +255,12 @@ def run_training(
     ppo_agent = ctx.ppo_agent
     ppo_id = ctx.ppo_agent_id
 
+    _ = update_start  # retained for compatibility with older callers
+
     results: List[Dict[str, Any]] = []
     recent_window = max(1, int(ctx.ppo_bundle.metadata.get("config", {}).get("rolling_avg_window", 10)))
     recent_returns: deque[float] = deque(maxlen=recent_window)
     best_return = float("-inf")
-    update_count = update_start
     trainers = dict(ctx.trainer_map)
     roles = getattr(ctx.team, "roles", {})
     attacker_id = roles.get("attacker", ppo_id)
@@ -287,20 +288,8 @@ def run_training(
     }
 
     def emit_update_stats(stats: Optional[Dict[str, Any]]) -> None:
-        nonlocal update_count
-        if not update_callback or not stats:
-            return
-        payload: Dict[str, Any] = {}
-        for key, value in stats.items():
-            if key in log_blocklist:
-                continue
-            if isinstance(value, (int, float)):
-                payload[f"train/{key}"] = float(value)
-            elif value is not None:
-                payload[f"train/{key}"] = value
-        if payload:
-            update_count += 1
-            update_callback(payload)
+        # Caller requested return-only logging; skip optimizer metrics.
+        return
 
     agent_ids = list(env.possible_agents)
     agent_count = len(agent_ids)
@@ -612,13 +601,10 @@ def run_training(
         results.append(episode_record)
 
         if update_callback:
-            payload: Dict[str, Any] = {}
-            if ppo_id in returns:
-                payload["train/return_attacker"] = float(returns[ppo_id])
-            payload["train/steps"] = float(steps)
-            payload["train/success"] = float(int(success))
-            if epsilon_val is not None:
-                payload["train/epsilon"] = float(epsilon_val)
+            payload: Dict[str, Any] = {"train/episode": float(ep + 1)}
+
+            for aid, value in returns.items():
+                payload[f"train/return_{aid}"] = float(value)
 
             update_callback(payload)
 
