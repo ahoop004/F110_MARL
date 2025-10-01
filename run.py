@@ -9,6 +9,8 @@ import random
 import shlex
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -29,6 +31,19 @@ DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {
     "td3_starved": (Path("configs/experiments_starved.yaml"), "gaplock_td3_starved"),
     "sac_starved": (Path("configs/experiments_starved.yaml"), "gaplock_sac_starved"),
 }
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    cfg_path: Path
+    experiment: Optional[str]
+    forwarded_args: List[str]
+    run_idx: int
+    total_runs: int
+    env_overrides: Dict[str, str]
+    label: str
+    spec_index: int
+    total_specs: int
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,6 +116,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--grid",
         type=Path,
         help="YAML/JSON file describing a configuration grid to sweep over.",
+    )
+    parser.add_argument(
+        "--max-parallel",
+        type=int,
+        default=1,
+        help="Maximum concurrent runs when executing grids (1 = sequential).",
     )
     parser.add_argument(
         "main_args",
@@ -369,12 +390,12 @@ def _prepare_env_overrides(spec: Dict[str, Any], parser: argparse.ArgumentParser
     return overrides
 
 
-def _execute_spec(
+def _prepare_spec_runs(
     parser: argparse.ArgumentParser,
     spec: Dict[str, Any],
     spec_index: int,
     total_specs: int,
-) -> Tuple[bool, int, int]:
+) -> Tuple[List[RunRequest], str, int]:
     algo = spec.get("algo")
     if not algo:
         parser.error("Each run specification must define an 'algo'")
@@ -473,7 +494,7 @@ def _execute_spec(
     group_template = str(spec.get("wandb_group_template", "{prefix}{config_slug}"))
     name_template = str(spec.get("wandb_name_template", "{group}-r{run_idx:02d}"))
 
-    executed = 0
+    requests: List[RunRequest] = []
     for run_idx, seed in enumerate(seeds, start=1):
         env_overrides = dict(base_env_overrides)
         if seed is not None:
@@ -495,16 +516,21 @@ def _execute_spec(
         if experiment_name:
             env_overrides.setdefault("F110_EXPERIMENT", experiment_name)
 
-        exit_code = run_once(cfg_path, experiment_name, forwarded_args, run_idx, run_count, env_overrides)
-        if exit_code != 0:
-            print(
-                f"[run.py] Spec '{label}' run {run_idx}/{run_count} failed with exit code {exit_code}; aborting."
+        requests.append(
+            RunRequest(
+                cfg_path=cfg_path,
+                experiment=experiment_name,
+                forwarded_args=list(forwarded_args),
+                run_idx=run_idx,
+                total_runs=run_count,
+                env_overrides=env_overrides,
+                label=label,
+                spec_index=spec_index,
+                total_specs=total_specs,
             )
-            return False, executed, exit_code
-        executed += 1
+        )
 
-    print(f"[run.py] Completed spec '{label}' ({executed} run(s)).")
-    return True, executed, 0
+    return requests, label, run_count
 
 
 def run_once(
@@ -514,6 +540,10 @@ def run_once(
     run_idx: int,
     total: int,
     env_overrides: Dict[str, str],
+    *,
+    label: str,
+    spec_index: int,
+    total_specs: int,
 ) -> int:
     cmd = [sys.executable, "experiments/main.py", *forwarded_args]
     env = os.environ.copy()
@@ -531,7 +561,7 @@ def run_once(
         wandb_msg = f", W&B group={wandb_group or '—'}, name={wandb_name or '—'}"
     exp_msg = f" (experiment={experiment})" if experiment else ""
     print(
-        f"[run.py] Launching run {run_idx}/{total} with config '{cfg_path}'{exp_msg}{seed_msg}{wandb_msg} and args: {pretty_args}"
+        f"[run.py] Launching spec {spec_index}/{total_specs} '{label}' run {run_idx}/{total} with config '{cfg_path}'{exp_msg}{seed_msg}{wandb_msg} and args: {pretty_args}"
     )
 
     result = subprocess.run(cmd, env=env)
@@ -564,12 +594,77 @@ def main() -> None:
         specs.append(dict(base_spec))
 
     total_specs = len(specs)
-    total_runs = 0
+    all_requests: List[RunRequest] = []
     for idx, spec in enumerate(specs, start=1):
-        success, executed, exit_code = _execute_spec(parser, spec, idx, total_specs)
-        total_runs += executed
-        if not success:
-            sys.exit(exit_code)
+        requests, _, _ = _prepare_spec_runs(parser, spec, idx, total_specs)
+        all_requests.extend(requests)
+
+    max_parallel = max(int(args.max_parallel), 1)
+    total_runs = len(all_requests)
+
+    if not all_requests:
+        print("[run.py] No runs to execute.")
+        return
+
+    failures: List[Tuple[RunRequest, int]] = []
+
+    if max_parallel == 1:
+        for request in all_requests:
+            exit_code = run_once(
+                request.cfg_path,
+                request.experiment,
+                request.forwarded_args,
+                request.run_idx,
+                request.total_runs,
+                request.env_overrides,
+                label=request.label,
+                spec_index=request.spec_index,
+                total_specs=request.total_specs,
+            )
+            if exit_code != 0:
+                failures.append((request, exit_code))
+                break
+    else:
+        print(f"[run.py] Executing {total_runs} run(s) with max_parallel={max_parallel}...")
+        with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            future_map = {
+                pool.submit(
+                    run_once,
+                    request.cfg_path,
+                    request.experiment,
+                    request.forwarded_args,
+                    request.run_idx,
+                    request.total_runs,
+                    request.env_overrides,
+                    label=request.label,
+                    spec_index=request.spec_index,
+                    total_specs=request.total_specs,
+                ): request
+                for request in all_requests
+            }
+
+            for future in as_completed(future_map):
+                request = future_map[future]
+                try:
+                    exit_code = future.result()
+                except Exception as exc:  # pragma: no cover - defensive
+                    print(f"[run.py] Run raised an exception: {exc}")
+                    failures.append((request, 1))
+                    break
+                if exit_code != 0:
+                    failures.append((request, exit_code))
+                    break
+
+        if failures:
+            # Pool exits context manager; outstanding futures are cancelled automatically.
+            pass
+
+    if failures:
+        request, exit_code = failures[0]
+        print(
+            f"[run.py] Aborting due to failure in spec '{request.label}' (run {request.run_idx}/{request.total_runs}) with exit code {exit_code}."
+        )
+        sys.exit(exit_code)
 
     print(f"[run.py] Completed {total_runs} run(s) across {total_specs} spec(s).")
 

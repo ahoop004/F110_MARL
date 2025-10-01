@@ -227,7 +227,7 @@ experiments:
       target_update_interval: 1000
       epsilon_start: 1.0
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.9990
+      epsilon_decay_rate: 0.999
       hidden_dims: [256, 256]
       prioritized_replay: true
       per_alpha: 0.6
