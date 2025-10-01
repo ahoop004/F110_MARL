@@ -2,6 +2,10 @@
 
 ## Multi-Agent Support
 
+- [x] Draft parallel multi-agent experiment profile (new config file, keep current defaults untouched).
+- [x] Introduce role-aware lookup helpers / shared replay scaffolds behind unused feature flags.
+- [x] Add unit tests + mock fixtures for multi-attacker rosters (no change to live training path).
+
 - [ ] Update experiment configs to roster two attackers plus one defender (n_agents, start pose options, roster entries).
 - [ ] Refactor roster/team role handling so multiple attackers can share a role without collisions.
 - [ ] Extend reward shaping to always target the defender when several attackers participate.
