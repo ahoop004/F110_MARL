@@ -346,7 +346,9 @@ class RewardWrapper:
     ) -> None:
         self.config = dict(config)
         self.context = context
+        self.mode = self._normalize_mode(str(self.config.get("mode", "gaplock")))
         self._strategies: List[Tuple[RewardStrategy, float]] = self._build_strategies()
+        self.modes: Tuple[str, ...] = tuple(strategy.name for strategy, _ in self._strategies)
         self._episode_index = 0
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._step_counter = 0
@@ -417,11 +419,9 @@ class RewardWrapper:
         raise ValueError(f"Unknown reward mode '{mode}'")
 
     def _build_strategies(self) -> List[Tuple[RewardStrategy, float]]:
-        mode = self._normalize_mode(str(self.config.get("mode", "gaplock")))
-
         strategies: List[Tuple[RewardStrategy, float]] = []
 
-        if mode == "composite":
+        if self.mode == "composite":
             components_cfg = self.config.get("components", {})
             if not isinstance(components_cfg, dict) or not components_cfg:
                 raise ValueError("Composite reward mode requires a non-empty 'components' mapping")
@@ -439,8 +439,8 @@ class RewardWrapper:
                 if weight != 0.0:
                     strategies.append((strategy, weight))
         else:
-            merged_params = self._merge_mode_params(mode, self.config)
-            strategy = self._instantiate_strategy(mode, merged_params)
+            merged_params = self._merge_mode_params(self.mode, self.config)
+            strategy = self._instantiate_strategy(self.mode, merged_params)
             strategies.append((strategy, 1.0))
 
         if not strategies:
