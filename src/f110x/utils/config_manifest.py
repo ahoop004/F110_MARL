@@ -74,6 +74,7 @@ def load_scenario_manifest(path: Path | str) -> ExperimentConfig:
 
         slot = agent_decl.get("slot", index)
         role = agent_decl.get("role", agent_name)
+        agent_id = agent_decl.get("agent_id", agent_name)
 
         # Agent task overrides (optional per-agent reward tweaks)
         agent_task = agent_decl.get("task")
@@ -101,7 +102,7 @@ def load_scenario_manifest(path: Path | str) -> ExperimentConfig:
 
         agent_config.setdefault("slot", slot)
         agent_config.setdefault("role", role)
-        agent_config.setdefault("agent_id", agent_name)
+        agent_config.setdefault("agent_id", agent_id)
 
         overrides = agent_decl.get("overrides")
         if isinstance(overrides, Mapping):

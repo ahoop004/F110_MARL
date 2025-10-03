@@ -10,10 +10,11 @@
   - [x] Design a `scenario` manifest schema (YAML) describing layer stack and agent roster.
   - [x] Extend `ExperimentConfig` (or add a new factory) to resolve manifests, track provenance, and emit the current schema.
   - [x] Add a CLI flag/env override (`--scenario`) to select manifests at runtime.
-- [ ] Split existing `configs/experiments.yaml` into the new structure with representative examples.
-  - [ ] Extract shared env/reward defaults into base files (maps, episodes, logging).
-  - [ ] Create task overlays (gaplock, progress, fastest-lap, defense) and policy overlays (ppo, dqn, follow-gap, waypoint).
-  - [ ] Produce scenario manifests for current experiments (gaplock_dqn, gaplock_ppo, multi-agent) and update run.py/tests to use them.
+- [ ] Split legacy experiment configs into the layered structure.
+  - [ ] Extract shared env/reward defaults from removed `configs/experiments*.yaml` and fold them into base/task layers (extend beyond the starter templates).
+  - [ ] Produce scenario manifests mirroring current experiments (gaplock_dqn, gaplock_ppo, rec_ppo, td3, sac, starved variants, multi-agent) and verify parity vs. old configs.
+  - [ ] Update unit/integration tests and helper scripts (e.g. `tests/resources/test_env_config.yaml`, sweep configs) to point at scenario manifests where appropriate.
+- [ ] Document the workflow (how to add a task/policy/experiment) in README or docs/).
 - [ ] Document the workflow (how to add a task/policy/experiment in README or docs/).
   - [ ] Draft a guide for adding new maps/tasks/policies using the layered configs.
   - [ ] Provide manifest snippets showing overrides (reward tweaks, agent roster swaps).

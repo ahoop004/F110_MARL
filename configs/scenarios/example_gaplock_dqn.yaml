@@ -10,11 +10,13 @@ scenario:
     map_ext: .png
   agents:
     attacker:
+      agent_id: car_0
       slot: 0
       role: attacker
       task: tasks/gaplock.yaml
       policy: policies/dqn.yaml
     defender:
+      agent_id: car_1
       slot: 1
       role: defender
       policy: policies/follow_gap.yaml

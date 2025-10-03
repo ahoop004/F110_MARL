@@ -20,6 +20,8 @@ from f110x.trainers.base import Transition, Trainer
 
 
 DEFAULT_CONFIG_PATH = Path("configs/experiments.yaml")
+ENV_CONFIG_KEY = "F110_CONFIG"
+ENV_EXPERIMENT_KEY = "F110_EXPERIMENT"
 
 
 @dataclass
@@ -87,9 +89,30 @@ def _resolve_reward_mode(curriculum: List[Tuple[Optional[int], str]], episode_id
     return "adversarial"
 
 
+def _resolve_config_input(cfg_path: Path | None, experiment: str | None) -> tuple[Path, Optional[str]]:
+    explicit_path = cfg_path
+    if explicit_path is None:
+        env_value = os.environ.get(ENV_CONFIG_KEY)
+        if env_value:
+            explicit_path = Path(env_value)
+    if explicit_path is None:
+        explicit_path = DEFAULT_CONFIG_PATH
+
+    resolved_path = Path(explicit_path).expanduser().resolve()
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Config file not found: {resolved_path}")
+
+    selected_experiment = experiment
+    if selected_experiment is None:
+        env_experiment = os.environ.get(ENV_EXPERIMENT_KEY)
+        if env_experiment:
+            selected_experiment = env_experiment.strip() or None
+    return resolved_path, selected_experiment
+
+
 def create_training_context(cfg_path: Path | None = None, *, experiment: str | None = None) -> TrainingContext:
-    cfg_file = cfg_path or DEFAULT_CONFIG_PATH
-    cfg = ExperimentConfig.load(cfg_file, experiment=experiment)
+    cfg_file, resolved_experiment = _resolve_config_input(cfg_path, experiment)
+    cfg = ExperimentConfig.load(cfg_file, experiment=resolved_experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
     team = build_agents(env, cfg, map_data)
