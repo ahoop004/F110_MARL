@@ -1,23 +1,52 @@
 """Helpers for parsing and validating start pose configurations."""
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
 from f110x.utils.map_loader import MapData
 
 
-def parse_start_pose_options(options: Optional[Iterable]) -> Optional[List[np.ndarray]]:
+@dataclass
+class StartPoseOption:
+    """Container describing a start pose selection with optional metadata."""
+
+    poses: np.ndarray
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+def parse_start_pose_options(options: Optional[Iterable]) -> Optional[List[StartPoseOption]]:
     if not options:
         return None
-    processed: List[np.ndarray] = []
+    processed: List[StartPoseOption] = []
     for option in options:
-        arr = np.asarray(option, dtype=np.float32)
+        if isinstance(option, StartPoseOption):
+            processed.append(option)
+            continue
+
+        metadata: Dict[str, Any] = {}
+        payload = option
+
+        if isinstance(option, dict):
+            payload = option.get("poses", option.get("pose"))
+            metadata = option.get("metadata") or {}
+            if not metadata:
+                metadata = {
+                    key: value
+                    for key, value in option.items()
+                    if key not in {"poses", "pose"}
+                }
+
+        if payload is None:
+            continue
+
+        arr = np.asarray(payload, dtype=np.float32)
         if arr.ndim == 1:
             arr = np.expand_dims(arr, axis=0)
-        processed.append(arr)
-    return processed
+        processed.append(StartPoseOption(poses=arr, metadata=dict(metadata)))
+    return processed or None
 
 
 def _world_to_pixel(map_data: MapData, x: float, y: float) -> Tuple[int, int]:
@@ -101,7 +130,7 @@ def adjust_start_poses(
 
 def reset_with_start_poses(
     env,
-    options: Optional[List[np.ndarray]],
+    options: Optional[List[StartPoseOption]],
     back_gap: float = 0.0,
     min_spacing: float = 0.0,
     map_data: MapData | None = None,
@@ -112,8 +141,50 @@ def reset_with_start_poses(
 
     indices = np.random.permutation(len(options))
     for idx in indices[:max_attempts]:
-        poses = adjust_start_poses(options[idx], back_gap, min_spacing, map_data=map_data)
-        obs, infos = env.reset(options={"poses": poses})
+        option = options[idx]
+        metadata = option.metadata or {}
+        poses = option.poses
+
+        spawn_mapping: Dict[str, Any] = dict(metadata.get("spawn_points", {}))
+        random_pool = metadata.get("spawn_random_pool")
+        if random_pool and map_data is not None:
+            pool_names = [name for name in random_pool if name in map_data.spawn_points]
+            if not pool_names:
+                continue
+
+            allow_reuse = bool(metadata.get("spawn_random_allow_reuse", False))
+            count = int(metadata.get("spawn_random_count", len(poses)))
+            if count <= 0:
+                count = len(poses)
+
+            if not allow_reuse and len(pool_names) < count:
+                continue
+
+            rng = getattr(env, "rng", None)
+            if rng is None:
+                rng = np.random.default_rng()
+
+            if allow_reuse:
+                selected = rng.choice(pool_names, size=count, replace=True)
+            else:
+                selected = rng.choice(pool_names, size=count, replace=False)
+
+            pose_stack = [map_data.spawn_points[name] for name in selected]
+            poses = np.asarray(pose_stack, dtype=np.float32)
+            spawn_mapping = {f"car_{idx}": name for idx, name in enumerate(selected)}
+
+        adjusted = adjust_start_poses(poses, back_gap, min_spacing, map_data=map_data)
+        obs, infos = env.reset(options={"poses": adjusted})
+
+        if spawn_mapping:
+            for agent_id, spawn_name in spawn_mapping.items():
+                infos.setdefault(agent_id, {})["spawn_point"] = spawn_name
+
+        option_id = metadata.get("spawn_option_id")
+        if option_id is not None:
+            for agent_id in infos:
+                infos[agent_id].setdefault("spawn_option", option_id)
+
         collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
         if not any(collisions):
             return obs, infos

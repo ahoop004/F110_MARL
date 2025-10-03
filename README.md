@@ -8,6 +8,14 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 - The loader auto-discovers the file when `centerline_autoload: true` (default) and exposes the data to both heuristics and learning agents.
 - Rendering overlays the centerline when `centerline_render: true`, and observation wrappers append `[lateral_error, longitudinal_error, heading_error, progress]` features when `centerline_features: true`.
 
+## Spawn Point Annotations
+
+- Annotate maps with named spawn points under `annotations.spawn_points` (each entry needs a `name` and `[x, y, yaw]` pose array).
+- Use `env.spawn_points` to assign a fixed spawn per agent slot (e.g., `spawn_points: [spawn_1, spawn_2]`).
+- Provide `env.spawn_point_sets` to list reusable combinations that `reset_with_start_poses` will sample uniformly at reset time.
+- Enable `env.spawn_point_randomize` (bool or dict with `pool`, `allow_reuse`) to draw agent spawns from the annotated pool each episode without hand-coding combinations.
+- Training/eval logs now include `spawn_points` (per-agent names) and `spawn_option` so runs stay reproducible.
+
 ## Reward Strategies
 
 - Configure `reward.mode` in the experiment YAML to choose between `gaplock`, `progress`, `fastest_lap`, or `composite` strategies.

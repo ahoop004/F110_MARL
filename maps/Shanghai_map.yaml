@@ -4,3 +4,26 @@ origin: [-75.7934346866365,-35.95358066976158, 0.000000]
 negate: 0
 occupied_thresh: 0.45
 free_thresh: 0.196
+annotations:
+  spawn_points:
+  - name: spawn_1
+    pose:
+    - -4.8273
+    - -0.4751
+    - 0.0
+  - name: spawn_2
+    pose:
+    - -6.4395
+    - -1.8282
+    - 0.0
+  - name: spawn_3
+    pose:
+    - -2.0027
+    - -0.1936
+    - 0.0
+  - name: spawn_4
+    pose:
+    - 0.4622
+    - 0.2215
+    - 0.0
+

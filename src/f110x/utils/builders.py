@@ -15,7 +15,7 @@ from f110x.utils.config_models import (
     ExperimentConfig,
 )
 from f110x.utils.map_loader import MapData, MapLoader
-from f110x.utils.start_pose import parse_start_pose_options
+from f110x.utils.start_pose import StartPoseOption, parse_start_pose_options
 from f110x.wrappers.observation import ObsWrapper
 from f110x.wrappers.action import (
     DiscreteActionWrapper,
@@ -43,13 +43,15 @@ from f110x.trainers.sac_trainer import SACTrainer
 # ---------------------------------------------------------------------------
 
 
-def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional[List[np.ndarray]]]:
+def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional[List[StartPoseOption]]]:
     """Instantiate the simulator, returning env + loaded map artefacts."""
 
     loader = MapLoader()
     env_cfg_dict = cfg.env.to_kwargs()
     map_data = loader.load(env_cfg_dict)
     env_cfg = dict(env_cfg_dict)
+
+    _apply_spawn_point_config(env_cfg, map_data)
     env_cfg["map_meta"] = map_data.metadata
     env_cfg["map_image_path"] = str(map_data.image_path)
     env_cfg["map_image_size"] = map_data.image_size
@@ -64,6 +66,120 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env.set_centerline(map_data.centerline, path=map_data.centerline_path)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
     return env, map_data, start_pose_options
+
+
+def _apply_spawn_point_config(env_cfg: Dict[str, Any], map_data: MapData) -> None:
+    """Translate spawn point configuration into explicit pose options."""
+
+    spawn_points = map_data.spawn_points
+    if not spawn_points:
+        return
+
+    n_agents = int(env_cfg.get("n_agents", 0) or len(spawn_points))
+    agent_ids = [f"car_{idx}" for idx in range(n_agents)]
+
+    def _names_to_option(names: Iterable[Any], option_id: Optional[str] = None, extra_meta: Optional[Dict[str, Any]] = None):
+        name_list = list(names)
+        if len(name_list) != n_agents:
+            raise ValueError(
+                f"spawn point selection requires {n_agents} entries for map {map_data.yaml_path}, "
+                f"received {len(name_list)}"
+            )
+
+        pose_rows = []
+        metadata: Dict[str, Any] = {"spawn_points": {}}
+        if extra_meta:
+            metadata.update(extra_meta)
+
+        for idx, name in enumerate(name_list):
+            if name is None:
+                raise ValueError(
+                    f"spawn point index {idx} missing for selection on map {map_data.yaml_path}"
+                )
+            key = str(name)
+            if key not in spawn_points:
+                raise KeyError(
+                    f"spawn point '{key}' not found in annotations for {map_data.yaml_path}. "
+                    f"Available: {sorted(spawn_points)}"
+                )
+            pose_rows.append(spawn_points[key].tolist())
+            metadata.setdefault("spawn_points", {})[agent_ids[idx]] = key
+
+        if option_id is not None:
+            metadata.setdefault("spawn_option_id", option_id)
+
+        return {"poses": pose_rows, "metadata": metadata}
+
+    start_pose_options_cfg: List[Any] = list(env_cfg.get("start_pose_options", []) or [])
+
+    spawn_points_cfg = env_cfg.pop("spawn_points", None)
+    if spawn_points_cfg is not None:
+        if isinstance(spawn_points_cfg, (list, tuple)):
+            names = spawn_points_cfg
+        elif isinstance(spawn_points_cfg, dict):
+            if "names" in spawn_points_cfg:
+                names = spawn_points_cfg["names"]
+            else:
+                names = [None] * n_agents
+                for key, value in spawn_points_cfg.items():
+                    try:
+                        slot = int(key)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= slot < n_agents:
+                        names[slot] = value
+        else:
+            raise TypeError("env.spawn_points must be a list or mapping of agent slots to spawn names")
+
+        default_option = _names_to_option(names, option_id="default_spawn")
+        env_cfg["start_poses"] = default_option["poses"]
+        start_pose_options_cfg.append(default_option)
+
+    spawn_sets_cfg = env_cfg.pop("spawn_point_sets", []) or []
+    for idx, entry in enumerate(spawn_sets_cfg):
+        extra_meta: Dict[str, Any] = {}
+        option_id: Optional[str] = None
+
+        if isinstance(entry, dict):
+            names = entry.get("names") or entry.get("spawn_points") or entry.get("points") or entry.get("pose_names")
+            extra_meta = dict(entry.get("metadata", {}))
+            option_id = entry.get("id") or entry.get("name") or f"spawn_set_{idx}"
+        else:
+            names = entry
+            option_id = f"spawn_set_{idx}"
+
+        if names is None:
+            continue
+
+        option_payload = _names_to_option(names, option_id=option_id, extra_meta=extra_meta)
+        start_pose_options_cfg.append(option_payload)
+
+    random_cfg = env_cfg.pop("spawn_point_randomize", None)
+    if random_cfg:
+        if isinstance(random_cfg, dict):
+            pool = random_cfg.get("pool") or random_cfg.get("names") or list(spawn_points.keys())
+            allow_reuse = bool(random_cfg.get("allow_reuse", False))
+            option_id = random_cfg.get("id") or "spawn_random"
+        else:
+            pool = list(spawn_points.keys())
+            allow_reuse = False
+            option_id = "spawn_random"
+
+        pool = [str(name) for name in pool if str(name) in spawn_points]
+        if not pool:
+            raise ValueError("spawn_point_randomize requires at least one valid spawn point in the pool")
+
+        placeholder = np.zeros((n_agents, 3), dtype=np.float32).tolist()
+        metadata = {
+            "spawn_random_pool": pool,
+            "spawn_random_allow_reuse": allow_reuse,
+            "spawn_random_count": n_agents,
+            "spawn_option_id": option_id,
+        }
+        start_pose_options_cfg.append({"poses": placeholder, "metadata": metadata})
+
+    if start_pose_options_cfg:
+        env_cfg["start_pose_options"] = start_pose_options_cfg
 
 
 # ---------------------------------------------------------------------------

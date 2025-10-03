@@ -19,6 +19,7 @@ class MapData:
     track_mask: np.ndarray | None
     centerline_path: Optional[Path] = None
     centerline: Optional[np.ndarray] = None
+    spawn_points: Dict[str, np.ndarray] = field(default_factory=dict)
 
 
 class MapLoader:
@@ -52,8 +53,10 @@ class MapLoader:
             if not isinstance(metadata, dict):
                 raise TypeError(f"Map YAML must define a mapping at root: {map_yaml_path}")
             metadata = dict(metadata)
+            spawn_points = self._parse_spawn_points(metadata)
         else:
             metadata = cached.metadata
+            spawn_points = cached.spawn_points
 
         image_rel = metadata.get("image")
         fallback_image = env_cfg.get("map_image")
@@ -92,6 +95,7 @@ class MapLoader:
                 yaml_mtime=yaml_mtime,
                 image_mtime=image_mtime,
                 grayscale=gray,
+                spawn_points=spawn_points,
             )
             self._cache[cache_key] = cached
         threshold = env_cfg.get("track_threshold")
@@ -110,6 +114,9 @@ class MapLoader:
             track_mask = mask
 
         metadata_view = dict(cached.metadata)
+
+        if cached.spawn_points is not spawn_points:
+            cached.spawn_points = spawn_points
 
         centerline_path: Optional[Path] = None
         explicit = env_cfg.get("centerline_csv")
@@ -153,6 +160,7 @@ class MapLoader:
             track_mask=track_mask,
             centerline_path=centerline_path,
             centerline=centerline,
+            spawn_points={name: value.copy() for name, value in cached.spawn_points.items()},
         )
 
     @staticmethod
@@ -176,6 +184,40 @@ class MapLoader:
             data = data[~np.isnan(data).any(axis=1)]
         return np.asarray(data, dtype=np.float32)
 
+    @staticmethod
+    def _parse_spawn_points(metadata: Dict[str, Any]) -> Dict[str, np.ndarray]:
+        annotations = metadata.get("annotations")
+        if not isinstance(annotations, dict):
+            return {}
+
+        points_raw = annotations.get("spawn_points")
+        if not points_raw:
+            return {}
+
+        spawn_points: Dict[str, np.ndarray] = {}
+        for entry in points_raw:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name") or entry.get("id") or entry.get("label")
+            if not name:
+                continue
+            pose_raw = entry.get("pose") or entry.get("poses") or entry.get("position")
+            if pose_raw is None:
+                continue
+            pose_arr = np.asarray(pose_raw, dtype=np.float32)
+            if pose_arr.ndim != 1:
+                pose_arr = pose_arr.reshape(-1)
+            if pose_arr.size < 2:
+                continue
+            if pose_arr.size == 2:
+                pose_arr = np.concatenate([pose_arr, np.zeros(1, dtype=np.float32)])
+            elif pose_arr.size > 3:
+                pose_arr = pose_arr[:3]
+            pose_arr = pose_arr.astype(np.float32, copy=True)
+            pose_arr.setflags(write=False)
+            spawn_points[str(name)] = pose_arr
+        return spawn_points
+
 
 @dataclass
 class _CachedMap:
@@ -190,3 +232,4 @@ class _CachedMap:
     centerline_path: Optional[Path] = None
     centerline_mtime: Optional[int] = None
     centerline: Optional[np.ndarray] = None
+    spawn_points: Dict[str, np.ndarray] = field(default_factory=dict)

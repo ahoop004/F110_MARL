@@ -14,7 +14,7 @@ from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
 from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.output import resolve_output_dir, resolve_output_file
-from f110x.utils.start_pose import reset_with_start_poses
+from f110x.utils.start_pose import StartPoseOption, reset_with_start_poses
 from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 from f110x.trainers.base import Transition, Trainer
 
@@ -27,7 +27,7 @@ class TrainingContext:
     cfg: ExperimentConfig
     env: F110ParallelEnv
     map_data: MapData
-    start_pose_options: Optional[List[np.ndarray]]
+    start_pose_options: Optional[List[StartPoseOption]]
     team: AgentTeam
     ppo_bundle: AgentBundle
     ppo_trainer: Trainer
@@ -362,6 +362,19 @@ def run_training(
         )
         ctx.team.reset_actions()
 
+        spawn_selection: Dict[str, str] = {}
+        spawn_option_id: Optional[str] = None
+        for aid, info in infos.items():
+            if not isinstance(info, dict):
+                continue
+            spawn_name = info.get("spawn_point")
+            if spawn_name:
+                spawn_selection[aid] = str(spawn_name)
+            if spawn_option_id is None:
+                option_name = info.get("spawn_option")
+                if option_name is not None:
+                    spawn_option_id = str(option_name)
+
         done = {aid: False for aid in agent_ids}
         done_flags.fill(False)
         totals_array.fill(0.0)
@@ -582,6 +595,10 @@ def run_training(
             "collisions_total": collisions_total,
             "idle_truncated": idle_triggered,
         }
+        if spawn_selection:
+            episode_record["spawn_points"] = dict(spawn_selection)
+        if spawn_option_id is not None:
+            episode_record["spawn_option"] = spawn_option_id
         if epsilon_val is not None:
             episode_record["epsilon"] = epsilon_val
 
