@@ -87,3 +87,34 @@ def test_fastest_lap_strategy_rewards_lap_completion():
     components = wrapper.get_last_components("car")
     assert components.get("lap_bonus", 0.0) >= 2.0
 
+
+def test_ego_collision_penalty_applies_to_all_modes():
+    centerline = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    ], dtype=np.float32)
+    env, runtime = make_context(centerline=centerline)
+
+    for mode in ("gaplock", "progress", "fastest_lap"):
+        config = {
+            "mode": mode,
+            "ego_collision_penalty": -1.5,
+            "progress": {"progress_weight": 0.0},
+            "fastest_lap": {"lap_bonus": 0.0, "best_bonus": 0.0},
+        }
+        wrapper = RewardWrapper(config=config, context=runtime)
+        wrapper.reset(episode_index=0)
+
+        obs = {
+            "car": {
+                "pose": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+                "velocity": np.zeros(2, dtype=np.float32),
+                "collision": True,
+                "lap": np.array([0.0, 0.0], dtype=np.float32),
+            }
+        }
+
+        reward = wrapper(obs, "car", 0.0, done=False, info={}, all_obs=obs, step_index=0)
+        assert math.isclose(reward, -1.5, rel_tol=1e-6)
+        components = wrapper.get_last_components("car")
+        assert math.isclose(components.get("ego_collision_penalty", 0.0), -1.5, rel_tol=1e-6)

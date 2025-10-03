@@ -47,16 +47,24 @@ shared:  # Common building blocks reused across experiment profiles
       bubble_radius: 4 # Distance ahead to ignore obstacles when selecting gaps (m)
       steer_smooth: 0.0  # Smoothing factor applied to steering commands
 
-  reward: &reward_base  # Sparse success reward used by every attacker
-    mode: gaplock  # Reward strategy (gaplock, progress, fastest_lap, composite)
-    target_crash_reward: 1.0  # Positive payout when the defender crashes and attacker does not
-    ego_collision_penalty: -1.0  # Negative reward applied if the attacker crashes
-    truncation_penalty: 0.0  # Optional penalty when episodes end via truncation
-    success_once: true  # Only award the success bonus the first time the defender crashes
-    reward_horizon: null  # Optional scaling horizon for the sparse reward (null disables scaling)
-    reward_clip: null  # Optional global reward clip (null leaves rewards unclipped)
-    idle_speed_threshold: 0.4  # Speed threshold leveraged by training utilities for idle detection (m/s)
-    idle_patience_steps: 120  # Steps tolerated under the idle threshold before flagging stagnation
+  # reward: &reward_base  # Sparse success reward used by every attacker
+  #   mode: gaplock  # Reward strategy (gaplock, progress, fastest_lap, composite)
+  #   target_crash_reward: 1.0  # Positive payout when the defender crashes and attacker does not
+  #   ego_collision_penalty: -1.0  # Negative reward applied if the attacker crashes
+  #   truncation_penalty: 0.0  # Optional penalty when episodes end via truncation
+  #   success_once: true  # Only award the success bonus the first time the defender crashes
+  #   reward_horizon: null  # Optional scaling horizon for the sparse reward (null disables scaling)
+  #   reward_clip: null  # Optional global reward clip (null leaves rewards unclipped)
+  #   idle_speed_threshold: 0.4  # Speed threshold leveraged by training utilities for idle detection (m/s)
+  #   idle_patience_steps: 120  # Steps tolerated under the idle threshold before flagging stagnation
+  reward: &reward_base
+    mode: progress
+    progress:
+      progress_weight: 1.0     # forward motion per step
+      speed_weight: 0.0        # optional velocity shaping
+      lateral_penalty: 0.05    # penalise distance from centerline
+      heading_penalty: 0.02    # penalise heading error
+
 
   episodes:  # Shared episode counts referenced by individual algorithms
     train: &shared_train_episodes 100  # Number of training episodes each run targets

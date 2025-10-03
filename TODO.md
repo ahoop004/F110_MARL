@@ -1,10 +1,43 @@
 # TODO
 
-## Multi-Agent Support
+## Reward Enhancements
 
-- [x] Draft parallel multi-agent experiment profile (new config file, keep current defaults untouched).
-- [x] Introduce role-aware lookup helpers / shared replay scaffolds behind unused feature flags.
-- [x] Add unit tests + mock fixtures for multi-attacker rosters (no change to live training path).
+- [ ] Reward mode curriculum that transitions from progress shaping to sparse gaplock bonuses.
+  - [ ] Define curriculum schedule template and config knobs.
+  - [ ] Wire the schedule into reward wrapper factory and add tests.
+  - [ ] Document recommended usage in README / configs.
+- [ ] Centerline projection diagnostics and tooling.
+  - [ ] CLI or notebook to visualise centerline projection errors on recorded trajectories.
+  - [ ] Sanity check script for waypoint spacing / continuity per map.
+  - [ ] Optional live logging hook for lateral/heading error distributions during training.
+- [ ] Evaluation metrics expansion.
+  - [ ] Log per-episode progress, fastest lap time, and centerline error statistics.
+  - [ ] Surface metrics in evaluation summaries and W&B reporting.
+
+## Experiment Templates
+
+- [ ] Create dedicated `gaplock_dqn_progress` experiment profile.
+  - [ ] Tune progress reward weights and DQN hyperparams.
+  - [ ] Add config documentation and comparison notes vs. gaplock baseline.
+- [ ] Extend evaluation config to compare gaplock vs. progress runs in a single sweep.
+
+## Algorithm Baselines
+
+- [ ] Rate-based discrete control head for DQN attacker.
+  - [ ] Tune steering/brake rates and document defaults per track.
+  - [ ] Add regression test covering replay index logging for rate mode.
+  - [ ] Benchmark vs absolute action grid (W&B sweep template).
+- [ ] Rainbow DQN attacker baseline (distributional targets, noisy nets, prioritized replay refresh).
+- [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
+- [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
+- [ ] MAPPO-style multi-agent PPO head for coordinated attackers.
+- [ ] Multi-agent SAC (MASAC/MATD3 hybrid) for continuous joint control.
+- [ ] QMIX / VDN-style discrete attackers for cooperative pursuit behaviour.
+- [ ] Parameter-sharing PPO/IMPALA baseline to compare against independent learners.
+- [ ] Offline baselines (CQL/IQL) seeded from logged self-play rollouts.
+- [ ] Behaviour cloning / DAgger attacker from expert defender trajectories as a warm-start.
+
+## Multi-Agent Support
 
 - [ ] Update experiment configs to roster two attackers plus one defender (n_agents, start pose options, roster entries).
 - [ ] Refactor roster/team role handling so multiple attackers can share a role without collisions.
@@ -16,37 +49,6 @@
 - [ ] Centralise replay/logging utilities for shared critics and parameter-sharing policies.
 - [ ] Stand up self-play scheduling and defender co-training (curriculum, cross-play evaluation).
 - [ ] Build scenario randomisation hooks (start poses, map subsets, vehicle params) tuned for multi-agent runs.
-
-## Algorithm Baselines
-
-- [ ] Rainbow DQN attacker baseline (distributional targets, noisy nets, prioritized replay refresh).
-- [ ] Rate-based discrete control head for DQN attacker.
-  - [x] Integrate rate-based delta wrapper and builder plumbing.
-  - [ ] Tune steering/brake rates and document defaults per track.
-  - [ ] Add regression test covering replay index logging for rate mode.
-  - [ ] Benchmark vs absolute action grid (W&B sweep template).
-- [x] Centerline-aware rendering and policies.
-  - [x] Auto-discover `<map>_centerline.csv` (x,y,theta columns) alongside map assets.
-  - [x] Extend renderer to overlay the centerline polyline when the file is present (toggleable).
-  - [x] Publish centerline waypoints to heuristics (e.g., gap-follow, centerline) via shared map context.
-  - [x] Add observation wrapper features exposing nearest centerline point / heading for RL agents.
-  - [x] Document the CSV schema and update configs to enable/disable centerline usage per experiment.
-- [x] Reward strategy abstraction.
-  - [x] Define a `RewardStrategy` interface and training loop hook-up.
-  - [x] Expose reward mode selection + parameters in experiment config.
-  - [x] Implement gaplock target strategy on top of the new interface.
-  - [x] Implement track-progress shaping using centerline progress.
-  - [x] Implement fastest-lap/elapsed-time incentive strategy.
-  - [x] Support composite weighting and per-component logging.
-  - [x] Add unit/integration tests and update docs/examples.
-- [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
-- [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
-- [ ] MAPPO-style multi-agent PPO head for coordinated attackers.
-- [ ] Multi-agent SAC (MASAC/MATD3 hybrid) for continuous joint control.
-- [ ] QMIX / VDN-style discrete attackers for cooperative pursuit behaviour.
-- [ ] Parameter-sharing PPO/IMPALA baseline to compare against independent learners.
-- [ ] Offline baselines (CQL/IQL) seeded from logged self-play rollouts.
-- [ ] Behaviour cloning / DAgger attacker from expert defender trajectories as a warm-start.
 
 ## Experiment Ops
 

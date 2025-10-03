@@ -64,14 +64,12 @@ class GaplockRewardStrategy(RewardStrategy):
         self,
         *,
         target_crash_reward: float = 1.0,
-        ego_collision_penalty: float = 0.0,
         truncation_penalty: float = 0.0,
         success_once: bool = True,
         reward_horizon: Optional[float] = None,
         reward_clip: Optional[float] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
-        self.ego_collision_penalty = float(ego_collision_penalty)
         self.truncation_penalty = float(truncation_penalty)
         self.success_once = bool(success_once)
         self.scaling_params = ScalingParams(
@@ -131,12 +129,6 @@ class GaplockRewardStrategy(RewardStrategy):
                     components["success_reward"] = (
                         components.get("success_reward", 0.0) + self.target_crash_reward
                     )
-
-        if ego_crashed and self.ego_collision_penalty:
-            shaped += self.ego_collision_penalty
-            components["ego_collision_penalty"] = (
-                components.get("ego_collision_penalty", 0.0) + self.ego_collision_penalty
-            )
 
         truncated = bool(step.info.get("truncated", False)) if isinstance(step.info, dict) else False
         if truncated and self.truncation_penalty:
@@ -314,7 +306,6 @@ class FastestLapRewardStrategy(RewardStrategy):
 
 GAPLOCK_PARAM_KEYS = {
     "target_crash_reward",
-    "ego_collision_penalty",
     "truncation_penalty",
     "success_once",
     "reward_horizon",
@@ -349,6 +340,7 @@ class RewardWrapper:
         self.mode = self._normalize_mode(str(self.config.get("mode", "gaplock")))
         self._strategies: List[Tuple[RewardStrategy, float]] = self._build_strategies()
         self.modes: Tuple[str, ...] = tuple(strategy.name for strategy, _ in self._strategies)
+        self.ego_collision_penalty = float(self.config.get("ego_collision_penalty", 0.0))
         self._episode_index = 0
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._step_counter = 0
@@ -503,6 +495,12 @@ class RewardWrapper:
                     effective_value = value * weight
                     key = f"{strategy.name}/{name}" if multi_strategy else name
                     components[key] = components.get(key, 0.0) + effective_value
+
+        if self.ego_collision_penalty and bool(agent_obs.get("collision", False)):
+            total_reward += self.ego_collision_penalty
+            components["ego_collision_penalty"] = (
+                components.get("ego_collision_penalty", 0.0) + self.ego_collision_penalty
+            )
 
         components["total"] = total_reward
         self._last_components[agent_id] = components

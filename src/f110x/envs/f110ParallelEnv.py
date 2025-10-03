@@ -274,6 +274,10 @@ class F110ParallelEnv(ParallelEnv):
         poses = None
         if self.renderer is not None:
             self.renderer.reset_state()
+            if self.centerline_render_enabled:
+                self.renderer.update_centerline(self.centerline_points)
+            else:
+                self.renderer.update_centerline(None)
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
