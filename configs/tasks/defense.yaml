@@ -1,0 +1,4 @@
+# Task layer placeholder for scripted defender roles (no learning reward).
+
+reward:
+  mode: gaplock

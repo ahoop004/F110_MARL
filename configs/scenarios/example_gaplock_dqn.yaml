@@ -1,0 +1,20 @@
+# Example scenario manifest combining base, task, and policy layers.
+
+scenario:
+  name: example_gaplock_dqn
+  description: Example manifest showing attacker DQN with gaplock task and scripted defender.
+  base: base/default.yaml
+  env:
+    map_yaml: shanghai/Shanghai_map.yaml
+    map: shanghai/Shanghai_map.yaml
+    map_ext: .png
+  agents:
+    attacker:
+      slot: 0
+      role: attacker
+      task: tasks/gaplock.yaml
+      policy: policies/dqn.yaml
+    defender:
+      slot: 1
+      role: defender
+      policy: policies/follow_gap.yaml
