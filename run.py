@@ -9,12 +9,15 @@ import random
 import shlex
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
+
+from f110x.utils.config_manifest import load_scenario_manifest, ScenarioConfigError
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -61,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         help="Explicit path to a config file (overrides --algo default).",
+    )
+    parser.add_argument(
+        "--scenario",
+        type=Path,
+        help="Path to a scenario manifest (composes layered configs).",
     )
     parser.add_argument(
         "--experiment",
@@ -255,6 +263,7 @@ def _args_to_base_spec(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "algo": args.algo,
         "config": args.config,
+        "scenario": args.scenario,
         "experiment": args.experiment,
         "map": args.map,
         "repeat": args.repeat,
@@ -409,6 +418,11 @@ def _prepare_spec_runs(
     else:
         cfg_override_path = None
 
+    scenario_override = spec.get("scenario")
+    scenario_path = None
+    if scenario_override is not None:
+        scenario_path = Path(str(scenario_override)).expanduser()
+
     map_name = spec.get("map")
     forwarded_args: List[str] = []
     if map_name is not None:
@@ -429,7 +443,13 @@ def _prepare_spec_runs(
     if spec_experiment is not None:
         spec_experiment = str(spec_experiment).strip() or None
 
-    cfg_path, experiment_name = resolve_config(algo, cfg_override_path, spec_experiment, parser)
+    if scenario_path is not None:
+        cfg_path, experiment_name = _resolve_scenario_manifest(
+            parser,
+            scenario_path,
+        )
+    else:
+        cfg_path, experiment_name = resolve_config(algo, cfg_override_path, spec_experiment, parser)
 
     forwarded_args = _prune_option(forwarded_args, "--config")
     forwarded_args = _prune_option(forwarded_args, "--experiment")
@@ -568,6 +588,31 @@ def run_once(
     return result.returncode
 
 
+_TEMP_CONFIG_PATHS: List[Path] = []
+
+
+def _resolve_scenario_manifest(
+    parser: argparse.ArgumentParser,
+    scenario_path: Path,
+) -> Tuple[Path, Optional[str]]:
+    scenario_path = scenario_path.expanduser().resolve()
+    if not scenario_path.exists():
+        parser.error(f"Scenario manifest not found: {scenario_path}")
+    try:
+        cfg = load_scenario_manifest(scenario_path)
+    except ScenarioConfigError as exc:
+        parser.error(f"Failed to load scenario '{scenario_path}': {exc}")
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w", encoding="utf-8")
+    with tmp:
+        yaml.safe_dump(cfg.raw, tmp)
+    tmp_path = Path(tmp.name)
+    _TEMP_CONFIG_PATHS.append(tmp_path)
+    return tmp_path, None
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -667,6 +712,12 @@ def main() -> None:
         sys.exit(exit_code)
 
     print(f"[run.py] Completed {total_runs} run(s) across {total_specs} spec(s).")
+
+    for temp_path in _TEMP_CONFIG_PATHS:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 if __name__ == "__main__":

@@ -2,19 +2,19 @@
 
 ## Configuration Architecture
 
-- [ ] Define modular config layering (shared base, task, policy, experiment overlays).
-  - [ ] Finalize layer naming/paths (e.g. `configs/base/`, `configs/tasks/`, `configs/policies/`, `configs/scenarios/`).
-  - [ ] Decide merge precedence (base → task → policy → scenario) and collision rules (deep merge with per-section replace).
-  - [ ] Provide starter templates for base/task/policy/scenario files.
-- [ ] Implement manifest loader that composes task + policy + overrides into final configs.
-  - [ ] Design a `scenario` manifest schema (YAML) describing layer stack and agent roster.
-  - [ ] Extend `ExperimentConfig` (or add a new factory) to resolve manifests, track provenance, and emit the current schema.
-  - [ ] Add CLI flags/env overrides (`--scenario`, `--task`, `--policy`, layer overrides) to select manifests at runtime.
+- [x] Define modular config layering (shared base, task, policy, experiment overlays).
+  - [x] Finalize layer naming/paths (e.g. `configs/base/`, `configs/tasks/`, `configs/policies/`, `configs/scenarios/`).
+  - [x] Decide merge precedence (base → task → policy → scenario) and collision rules (deep merge with per-section replace).
+  - [x] Provide starter templates for base/task/policy/scenario files.
+- [x] Implement manifest loader that composes task + policy + overrides into final configs.
+  - [x] Design a `scenario` manifest schema (YAML) describing layer stack and agent roster.
+  - [x] Extend `ExperimentConfig` (or add a new factory) to resolve manifests, track provenance, and emit the current schema.
+  - [x] Add a CLI flag/env override (`--scenario`) to select manifests at runtime.
 - [ ] Split existing `configs/experiments.yaml` into the new structure with representative examples.
   - [ ] Extract shared env/reward defaults into base files (maps, episodes, logging).
   - [ ] Create task overlays (gaplock, progress, fastest-lap, defense) and policy overlays (ppo, dqn, follow-gap, waypoint).
   - [ ] Produce scenario manifests for current experiments (gaplock_dqn, gaplock_ppo, multi-agent) and update run.py/tests to use them.
-- [ ] Document the workflow (how to add a task/policy/experiment) in README or docs/).
+- [ ] Document the workflow (how to add a task/policy/experiment in README or docs/).
   - [ ] Draft a guide for adding new maps/tasks/policies using the layered configs.
   - [ ] Provide manifest snippets showing overrides (reward tweaks, agent roster swaps).
   - [ ] Call out migration steps for converting legacy `experiments.yaml` entries.

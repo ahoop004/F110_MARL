@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 
 from f110x.utils.config_schema import (
     EnvSchema,
@@ -373,26 +373,32 @@ class ExperimentConfig:
         else:
             data = raw_doc
 
-        raw_agents = data.get("agents")
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExperimentConfig":
+        data_map = dict(data)
+
+        raw_agents = data_map.get("agents")
         if raw_agents is not None:
             agents = AgentRosterConfig.from_dict(raw_agents)
             if not agents:
-                agents = AgentRosterConfig.legacy_default(data)
+                agents = AgentRosterConfig.legacy_default(data_map)
         else:
-            agents = AgentRosterConfig.legacy_default(data)
+            agents = AgentRosterConfig.legacy_default(data_map)
 
         return cls(
-            env=EnvConfig.from_dict(data.get("env", {})),
-            ppo=PPOConfig.from_dict(data.get("ppo", {})),
-            rec_ppo=RecPPOConfig.from_dict(data.get("rec_ppo", {})),
-            td3=TD3Config.from_dict(data.get("td3", {})),
-            sac=SACConfig.from_dict(data.get("sac", {})),
-            dqn=DQNConfig.from_dict(data.get("dqn", {})),
-            reward=RewardConfig.from_dict(data.get("reward", {})),
-            main=MainConfig.from_dict(data.get("main", {})),
+            env=EnvConfig.from_dict(data_map.get("env", {})),
+            ppo=PPOConfig.from_dict(data_map.get("ppo", {})),
+            rec_ppo=RecPPOConfig.from_dict(data_map.get("rec_ppo", {})),
+            td3=TD3Config.from_dict(data_map.get("td3", {})),
+            sac=SACConfig.from_dict(data_map.get("sac", {})),
+            dqn=DQNConfig.from_dict(data_map.get("dqn", {})),
+            reward=RewardConfig.from_dict(data_map.get("reward", {})),
+            main=MainConfig.from_dict(data_map.get("main", {})),
             agents=agents,
-            ppo_agent_idx=int(data.get("ppo_agent_idx", 0)),
-            raw=data,
+            ppo_agent_idx=int(data_map.get("ppo_agent_idx", 0)),
+            raw=data_map,
         )
 
     def get(self, key: str, default: Any = None) -> Any:
