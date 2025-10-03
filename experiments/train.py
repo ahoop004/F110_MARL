@@ -92,7 +92,7 @@ def create_training_context(cfg_path: Path | None = None, *, experiment: str | N
     cfg = ExperimentConfig.load(cfg_file, experiment=experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
-    team = build_agents(env, cfg)
+    team = build_agents(env, cfg, map_data)
 
     trainer_map: Dict[str, Trainer] = {
         bundle.agent_id: bundle.trainer

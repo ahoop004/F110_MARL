@@ -60,6 +60,11 @@ class F110ParallelEnv(ParallelEnv):
         self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
         mode = (self.render_mode or "").lower()
         self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
+        self.centerline_render_enabled = bool(merged.get("centerline_render", True))
+        self._centerline_feature_requested = bool(merged.get("centerline_features", True))
+        self.centerline_features_enabled = self._centerline_feature_requested
+        self.centerline_points: Optional[np.ndarray] = None
+        self.centerline_path: Optional[Path] = None
 
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
@@ -412,6 +417,7 @@ class F110ParallelEnv(ParallelEnv):
                 map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
+                centerline_points=self.centerline_points if self.centerline_render_enabled else None,
             )
 
     def update_params(self, params, index=-1):
@@ -436,6 +442,7 @@ class F110ParallelEnv(ParallelEnv):
                 self.map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
+                centerline_points=self.centerline_points if self.centerline_render_enabled else None,
             )
 
         if self.render_obs:
@@ -454,6 +461,21 @@ class F110ParallelEnv(ParallelEnv):
             data = img.get_data("RGB", -w * 3)
             frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3).copy()
             return frame
+
+    def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
+        if centerline is not None:
+            array = np.asarray(centerline, dtype=np.float32)
+            array.setflags(write=False)
+        else:
+            array = None
+        self.centerline_points = array
+        self.centerline_path = path.resolve() if path is not None else None
+        self.centerline_features_enabled = self._centerline_feature_requested and array is not None
+        if self.renderer is not None:
+            if self.centerline_render_enabled:
+                self.renderer.update_centerline(self.centerline_points)
+            else:
+                self.renderer.update_centerline(None)
     
     def close(self):
         if self.renderer is not None:

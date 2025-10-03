@@ -87,7 +87,7 @@ def create_evaluation_context(
     cfg = ExperimentConfig.load(cfg_file, experiment=experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
-    team = build_agents(env, cfg)
+    team = build_agents(env, cfg, map_data)
 
     ppo_bundles = [bundle for bundle in team.agents if bundle.algo.lower() == "ppo"]
     if ppo_bundles:

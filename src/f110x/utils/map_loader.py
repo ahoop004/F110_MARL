@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, Tuple, MutableMapping
+from typing import Dict, Any, Tuple, MutableMapping, Optional
 
 import numpy as np
 import yaml
@@ -17,6 +17,8 @@ class MapData:
     image_size: Tuple[int, int]
     yaml_path: Path
     track_mask: np.ndarray | None
+    centerline_path: Optional[Path] = None
+    centerline: Optional[np.ndarray] = None
 
 
 class MapLoader:
@@ -109,13 +111,70 @@ class MapLoader:
 
         metadata_view = dict(cached.metadata)
 
+        centerline_path: Optional[Path] = None
+        explicit = env_cfg.get("centerline_csv")
+        auto_flag = bool(env_cfg.get("centerline_autoload", True))
+        centerline_enabled = auto_flag or explicit is not None
+        if centerline_enabled:
+            if explicit:
+                candidate_path = Path(explicit)
+                if candidate_path.is_absolute():
+                    candidate = candidate_path.resolve()
+                else:
+                    candidate = (map_dir / candidate_path).resolve()
+            else:
+                candidate = cached.yaml_path.with_name(f"{cached.yaml_path.stem}_centerline.csv")
+            if candidate.exists():
+                centerline_path = candidate
+
+        centerline: Optional[np.ndarray] = None
+        if centerline_path is not None:
+            cl_mtime = centerline_path.stat().st_mtime_ns
+            cached_cl = cached.centerline
+            if (
+                cached.centerline_path != centerline_path
+                or cached.centerline_mtime != cl_mtime
+                or cached_cl is None
+            ):
+                centerline = self._load_centerline(centerline_path)
+                if centerline is not None:
+                    centerline.setflags(write=False)
+                cached.centerline = centerline
+                cached.centerline_path = centerline_path
+                cached.centerline_mtime = cl_mtime
+            else:
+                centerline = cached_cl
+
         return MapData(
             metadata=metadata_view,
             image_path=cached.image_path,
             image_size=cached.image_size,
             yaml_path=cached.yaml_path,
             track_mask=track_mask,
+            centerline_path=centerline_path,
+            centerline=centerline,
         )
+
+    @staticmethod
+    def _load_centerline(path: Path) -> np.ndarray:
+        def _read(skip_header: int) -> np.ndarray:
+            return np.genfromtxt(
+                path,
+                delimiter=",",
+                comments="#",
+                skip_header=skip_header,
+                usecols=(0, 1, 2),
+                dtype=np.float32,
+            )
+
+        data = _read(1)
+        if data.size == 0:
+            data = _read(0)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        if np.isnan(data).any():
+            data = data[~np.isnan(data).any(axis=1)]
+        return np.asarray(data, dtype=np.float32)
 
 
 @dataclass
@@ -128,3 +187,6 @@ class _CachedMap:
     image_mtime: int
     grayscale: np.ndarray
     track_masks: Dict[tuple[int, bool], np.ndarray] = field(default_factory=dict)
+    centerline_path: Optional[Path] = None
+    centerline_mtime: Optional[int] = None
+    centerline: Optional[np.ndarray] = None

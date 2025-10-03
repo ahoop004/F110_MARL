@@ -10,7 +10,16 @@ from f110x.wrappers.common import downsample_lidar, to_numpy
 class ObsWrapper:
     """Canonical observation adapter for policy networks."""
 
-    def __init__(self, max_scan: float = 30.0, normalize: bool = True, lidar_beams: Optional[int] = None):
+    def __init__(
+        self,
+        max_scan: float = 30.0,
+        normalize: bool = True,
+        lidar_beams: Optional[int] = None,
+        *,
+        centerline: Optional[np.ndarray] = None,
+        centerline_features: bool = False,
+        centerline_normalize: bool = True,
+    ):
         self.max_scan = float(max_scan)
         self.normalize = bool(normalize)
         if lidar_beams is not None:
@@ -18,6 +27,11 @@ class ObsWrapper:
             self.lidar_beams = beams if beams > 0 else None
         else:
             self.lidar_beams = None
+        self.centerline_points = None if centerline is None else np.asarray(centerline, dtype=np.float32)
+        self.centerline_features_enabled = bool(centerline_features) and self.centerline_points is not None
+        self.centerline_normalize = bool(centerline_normalize)
+        self._centerline_zero = np.zeros(4, dtype=np.float32)
+        self._centerline_last_index: Optional[int] = None
 
     def __call__(
         self,
@@ -36,7 +50,10 @@ class ObsWrapper:
         ego_features = self._prepare_ego_features(ego_obs)
         target_features = self._prepare_target_features(ego_obs, target_obs)
 
-        return np.concatenate([scan, ego_features, target_features])
+        pieces = [scan, ego_features, target_features]
+        if self.centerline_features_enabled:
+            pieces.append(self._prepare_centerline_features(ego_obs))
+        return np.concatenate(pieces)
 
     # ------------------------------------------------------------------
     def _resolve_target_id(
@@ -96,3 +113,47 @@ class ObsWrapper:
             raise ValueError("Target observation requires pose with at least (x, y, theta)")
         collision = float(target_obs.get("collision", False))
         return np.concatenate([pose[:3].astype(np.float32, copy=False), np.array([collision], dtype=np.float32)])
+
+    # ------------------------------------------------------------------
+    def _prepare_centerline_features(self, ego_obs: Dict[str, Any]) -> np.ndarray:
+        if self.centerline_points is None or self.centerline_points.size == 0:
+            return self._centerline_zero.copy()
+
+        pose = to_numpy(ego_obs.get("pose", ()), flatten=True)
+        if pose.size < 3:
+            return self._centerline_zero.copy()
+
+        x, y, theta = map(float, pose[:3])
+        points = self.centerline_points
+        positions = points[:, :2]
+        diffs = positions - np.array([x, y], dtype=np.float32)
+        dists = np.einsum("ij,ij->i", diffs, diffs)
+
+        if self._centerline_last_index is not None:
+            idx_hint = self._centerline_last_index
+            window = 50
+            start = max(0, idx_hint - window)
+            end = min(len(points), idx_hint + window + 1)
+            local_dists = dists[start:end]
+            local_idx = int(np.argmin(local_dists)) + start
+            best_index = local_idx
+        else:
+            best_index = int(np.argmin(dists))
+
+        self._centerline_last_index = best_index
+        nearest_point = positions[best_index]
+        tangent_theta = float(points[best_index, 2]) if points.shape[1] > 2 else 0.0
+
+        tangent = np.array([np.cos(tangent_theta), np.sin(tangent_theta)], dtype=np.float32)
+        normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+        offset = np.array([x, y], dtype=np.float32) - nearest_point
+        lateral_error = float(np.dot(offset, normal))
+        longitudinal_error = float(np.dot(offset, tangent))
+        heading_error = float(np.arctan2(np.sin(theta - tangent_theta), np.cos(theta - tangent_theta)))
+        progress = best_index / max(points.shape[0] - 1, 1)
+
+        features = np.array([lateral_error, longitudinal_error, heading_error, progress], dtype=np.float32)
+        if self.centerline_normalize and self.max_scan > 0.0:
+            features[0] /= self.max_scan
+            features[1] /= self.max_scan
+        return features

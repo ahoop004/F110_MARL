@@ -44,6 +44,9 @@ class DeltaDiscreteActionWrapper:
         high: Iterable[float],
         *,
         initial_action: Optional[Iterable[float]] = None,
+        prevent_reverse: bool = False,
+        stop_threshold: float = 0.0,
+        speed_index: int = 1,
     ) -> None:
         delta_array = to_numpy(action_deltas)
         if delta_array.ndim != 2:
@@ -59,6 +62,9 @@ class DeltaDiscreteActionWrapper:
         self._default_initial = (
             None if initial_action is None else to_numpy(initial_action)
         )
+        self._prevent_reverse = bool(prevent_reverse)
+        self._stop_threshold = float(stop_threshold)
+        self._speed_index = int(speed_index)
 
     def reset(self, agent_id: str, initial_action: Optional[Iterable[float]] = None) -> None:
         baseline = initial_action if initial_action is not None else self._default_initial
@@ -72,6 +78,18 @@ class DeltaDiscreteActionWrapper:
             self.reset(agent_id)
         baseline = self._state[agent_id]
         delta = self._deltas[index]
+
+        if self._prevent_reverse and 0 <= self._speed_index < delta.shape[0]:
+            throttle_delta = float(delta[self._speed_index])
+            current_speed = float(baseline[self._speed_index])
+            if throttle_delta < 0.0 and current_speed <= self._stop_threshold:
+                delta = delta.copy()
+                delta[self._speed_index] = 0.0
+
         updated = np.clip(baseline + delta, self.low, self.high)
+        if self._prevent_reverse and 0 <= self._speed_index < updated.shape[0]:
+            if updated[self._speed_index] < max(0.0, self._stop_threshold):
+                updated = updated.copy()
+                updated[self._speed_index] = max(0.0, self._stop_threshold)
         self._state[agent_id] = updated
         return updated.copy()

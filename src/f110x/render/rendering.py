@@ -9,10 +9,11 @@ from pyglet.graphics import ShaderGroup
 
 import numpy as np
 from array import array
+from pathlib import Path
+from typing import Optional
 from PIL import Image
 import yaml
 import pandas as pd
-from pathlib import Path
 
 # Adjust import to your project layout:
 # from f110_gym.envs.collision_models import get_vertices
@@ -31,6 +32,7 @@ CAR_WIDTH  = 0.31
 CAR_LEARNER = tuple(c / 255.0 for c in (183, 193, 222))
 CAR_OTHER   = tuple(c / 255.0 for c in ( 99,  52,  94))
 MAP_COLOR   = tuple(c / 255.0 for c in (255, 193,  50))
+CENTERLINE_COLOR = tuple(c / 255.0 for c in (102, 255, 102))
 LIDAR_COLOR_HIT = (1.0, 0.0, 0.0)
 LIDAR_COLOR_MAX = tuple(c / 255.0 for c in (180, 180, 180))
 
@@ -66,6 +68,7 @@ class EnvRenderer(pyglet.window.Window):
         self.map_points = None
         self.map_vlist = None
         self._map_vertex_count = 0
+        self._centerline_vlist = None
 
         # per-agent drawables and cached state
         self.cars_vlist = {}       # aid -> vertex_list (GL_QUADS)
@@ -96,7 +99,15 @@ class EnvRenderer(pyglet.window.Window):
 
     # ---------- Map ----------
 
-    def update_map(self, map_path_no_ext: str, map_ext: str, *, map_meta=None, map_image_path=None):
+    def update_map(
+        self,
+        map_path_no_ext: str,
+        map_ext: str,
+        *,
+        map_meta=None,
+        map_image_path=None,
+        centerline_points: Optional[np.ndarray] = None,
+    ):
         """
         Update map geometry.
         map_path_no_ext: absolute path WITHOUT extension (e.g., '/.../maps/levine')
@@ -180,6 +191,38 @@ class EnvRenderer(pyglet.window.Window):
         self._map_vertex_count = N
         self.map_points = pts
 
+        self.update_centerline(centerline_points)
+
+    def update_centerline(self, centerline_points: Optional[np.ndarray]) -> None:
+        if self._centerline_vlist is not None:
+            try:
+                self._centerline_vlist.delete()
+            except Exception:
+                pass
+            self._centerline_vlist = None
+
+        if centerline_points is None:
+            return
+
+        points_np = np.asarray(centerline_points, dtype=np.float32)
+        if points_np.ndim != 2 or points_np.shape[0] == 0:
+            return
+
+        verts = (points_np[:, :2] * self.render_scale).astype(np.float32, copy=False).ravel().tolist()
+        colors = list(CENTERLINE_COLOR) * points_np.shape[0]
+
+        try:
+            self._centerline_vlist = self.shader.vertex_list(
+                points_np.shape[0],
+                pyglet.gl.GL_LINE_STRIP,
+                batch=self.batch,
+                group=self.shader_group,
+                position=('f', verts),
+                color=('f', colors),
+            )
+        except Exception:
+            self._centerline_vlist = None
+
     def reset_state(self):
         for v in self.cars_vlist.values():
             try:
@@ -197,6 +240,12 @@ class EnvRenderer(pyglet.window.Window):
         self.agent_ids = []
         self._camera_target = None
         self.hud_label.text = 'Agents: 0'
+        if self._centerline_vlist is not None:
+            try:
+                self._centerline_vlist.delete()
+            except Exception:
+                pass
+            self._centerline_vlist = None
 
     # ---------- Window / Camera ----------
 

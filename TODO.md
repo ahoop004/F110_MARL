@@ -25,6 +25,12 @@
   - [ ] Tune steering/brake rates and document defaults per track.
   - [ ] Add regression test covering replay index logging for rate mode.
   - [ ] Benchmark vs absolute action grid (W&B sweep template).
+- [x] Centerline-aware rendering and policies.
+  - [x] Auto-discover `<map>_centerline.csv` (x,y,theta columns) alongside map assets.
+  - [x] Extend renderer to overlay the centerline polyline when the file is present (toggleable).
+  - [x] Publish centerline waypoints to heuristics (e.g., gap-follow, centerline) via shared map context.
+  - [x] Add observation wrapper features exposing nearest centerline point / heading for RL agents.
+  - [x] Document the CSV schema and update configs to enable/disable centerline usage per experiment.
 - [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
 - [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
 - [ ] MAPPO-style multi-agent PPO head for coordinated attackers.

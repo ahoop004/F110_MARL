@@ -177,6 +177,10 @@ class EnvSchema(BaseSchema):
     start_thresh: float = 0.5
     target_laps: int = 1
     terminate_on_collision: bool = True
+    centerline_autoload: bool = True
+    centerline_csv: Optional[str] = None
+    centerline_render: bool = True
+    centerline_features: bool = True
     vehicle_params: Dict[str, float] = field(default_factory=_default_vehicle_params)
 
     def update_from_dict(self, data: Mapping[str, Any]) -> None:  # type: ignore[override]
@@ -311,5 +315,8 @@ class DQNConfigSchema(BaseSchema):
     rate_dt: Optional[float] = None
     rate_initial_steer: float = 0.0
     rate_initial_speed: float = 0.0
+    rate_prevent_reverse: bool = True
+    rate_stop_speed: float = 0.0
+    rate_speed_index: int = 1
     action_set: List[List[float]] = field(default_factory=list)
     device: str = "cpu"

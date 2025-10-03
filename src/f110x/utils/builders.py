@@ -61,6 +61,7 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
             env_cfg[meta_key] = map_data.metadata[meta_key]
 
     env = F110ParallelEnv(**env_cfg)
+    env.set_centerline(map_data.centerline, path=map_data.centerline_path)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
     return env, map_data, start_pose_options
 
@@ -318,6 +319,18 @@ def _build_obs_wrapper(
         if env_lidar:
             params["lidar_beams"] = int(env_lidar)
 
+    # Centerline-aware features
+    centerline_points = ctx.map_data.centerline
+    use_centerline = params.pop("use_centerline_features", None)
+    if use_centerline is None:
+        use_centerline = ctx.env.centerline_features_enabled
+    use_centerline = bool(use_centerline)
+    if use_centerline and centerline_points is not None:
+        params.setdefault("centerline", centerline_points)
+        params.setdefault("centerline_features", True)
+    else:
+        params.setdefault("centerline_features", False)
+
     obs_wrapper = ObsWrapper(**params)
     return ObservationAdapter(
         name=wrapper_spec.factory,
@@ -386,6 +399,7 @@ class AgentBuildContext:
     env: F110ParallelEnv
     cfg: ExperimentConfig
     roster: RosterLayout
+    map_data: MapData
     sample_obs: Optional[Dict[str, Any]] = None
 
     def ensure_sample(self) -> Dict[str, Any]:
@@ -629,6 +643,9 @@ def _build_algo_dqn(
         steering_rate = abs(float(dqn_cfg.get("steering_rate", 0.5)))
         accel_rate = abs(float(dqn_cfg.get("accel_rate", 2.0)))
         brake_rate = abs(float(dqn_cfg.get("brake_rate", 4.0)))
+        prevent_reverse = bool(dqn_cfg.get("rate_prevent_reverse", True))
+        stop_threshold = float(dqn_cfg.get("rate_stop_speed", 0.0))
+        speed_index = int(dqn_cfg.get("rate_speed_index", 1))
         steer_delta = steering_rate * timestep
         accel_delta = accel_rate * timestep
         brake_delta = -brake_rate * timestep
@@ -664,6 +681,9 @@ def _build_algo_dqn(
             action_space.low,
             action_space.high,
             initial_action=rate_initial,
+            prevent_reverse=prevent_reverse,
+            stop_threshold=stop_threshold,
+            speed_index=speed_index,
         )
     else:
         action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])
@@ -686,12 +706,15 @@ def _build_algo_follow_gap(
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FollowTheGapPolicy.from_config(assignment.spec.params)
+    if ctx.map_data.centerline is not None:
+        setattr(controller, "centerline", ctx.map_data.centerline)
     return AgentBundle(
         assignment=assignment,
         algo="follow_gap",
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
+        metadata={"centerline": ctx.map_data.centerline},
     )
 
 
@@ -702,12 +725,15 @@ def _build_algo_random(
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(random_policy, name="random")
+    if ctx.map_data.centerline is not None:
+        setattr(controller, "centerline", ctx.map_data.centerline)
     return AgentBundle(
         assignment=assignment,
         algo="random",
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
+        metadata={"centerline": ctx.map_data.centerline},
     )
 
 
@@ -718,13 +744,18 @@ def _build_algo_waypoint(
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(simple_heuristic, name="waypoint")
+    if ctx.map_data.centerline is not None:
+        setattr(controller, "centerline", ctx.map_data.centerline)
     return AgentBundle(
         assignment=assignment,
         algo="waypoint",
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
-        metadata={"note": "Placeholder waypoint heuristic"},
+        metadata={
+            "note": "Placeholder waypoint heuristic",
+            "centerline": ctx.map_data.centerline,
+        },
     )
 
 
@@ -735,13 +766,18 @@ def _build_algo_centerline(
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
     controller = FunctionPolicy(simple_heuristic, name="centerline")
+    if ctx.map_data.centerline is not None:
+        setattr(controller, "centerline", ctx.map_data.centerline)
     return AgentBundle(
         assignment=assignment,
         algo="centerline",
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
-        metadata={"note": "Placeholder centerline heuristic"},
+        metadata={
+            "note": "Placeholder centerline heuristic",
+            "centerline": ctx.map_data.centerline,
+        },
     )
 
 AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
@@ -769,6 +805,7 @@ class AgentTeam:
     env: F110ParallelEnv
     cfg: ExperimentConfig
     roster: RosterLayout
+    map_data: MapData
     agents: List[AgentBundle]
 
     def __post_init__(self) -> None:
@@ -852,7 +889,13 @@ class AgentTeam:
 # ---------------------------------------------------------------------------
 
 
-def build_agents(env: F110ParallelEnv, cfg: ExperimentConfig, *, ensure_sample: bool = True) -> AgentTeam:
+def build_agents(
+    env: F110ParallelEnv,
+    cfg: ExperimentConfig,
+    map_data: MapData,
+    *,
+    ensure_sample: bool = True,
+) -> AgentTeam:
     """Build all controller instances declared in the config.
 
     Returns an :class:`AgentTeam` facade which exposes convenient lookups for
@@ -862,7 +905,7 @@ def build_agents(env: F110ParallelEnv, cfg: ExperimentConfig, *, ensure_sample: 
     """
 
     roster = _compile_roster(cfg, env)
-    context = AgentBuildContext(env=env, cfg=cfg, roster=roster)
+    context = AgentBuildContext(env=env, cfg=cfg, roster=roster, map_data=map_data)
     if ensure_sample:
         context.ensure_sample()
 
@@ -887,4 +930,4 @@ def build_agents(env: F110ParallelEnv, cfg: ExperimentConfig, *, ensure_sample: 
             )
         bundles.append(builder_fn(assignment, context, roster, pipeline))
 
-    return AgentTeam(env=env, cfg=cfg, roster=roster, agents=bundles)
+    return AgentTeam(env=env, cfg=cfg, roster=roster, map_data=map_data, agents=bundles)
