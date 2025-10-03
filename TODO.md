@@ -43,9 +43,9 @@
 
 ## Render Controls
 
-- [ ] Add renderer tracking toggles (follow attacker/defender/free camera).
-- [ ] Restore and expose zoom controls via keyboard/mouse bindings.
-- [ ] Implement viewport pan/“move view” shortcuts and document usage in README.
+- [x] Add renderer tracking toggles (follow attacker/defender/free camera).
+- [x] Restore and expose zoom controls via keyboard/mouse bindings.
+- [x] Implement viewport pan/“move view” shortcuts and document usage in README.
 
 ## Algorithm Baselines
 

@@ -6,6 +6,7 @@ import pyglet
 from pyglet.gl import *
 from pyglet.math import Mat4
 from pyglet.graphics import ShaderGroup
+from pyglet.window import key
 
 import numpy as np
 from array import array
@@ -56,6 +57,8 @@ class EnvRenderer(pyglet.window.Window):
         self.zoom_level = 1.2
         self.zoomed_width = width
         self.zoomed_height = height
+        self._pan_step_pixels = 50.0
+        self._follow_enabled = True
 
         # shader + batch
         self.shader = get_default_shader()
@@ -261,25 +264,16 @@ class EnvRenderer(pyglet.window.Window):
         self.hud_label.y = height - 10
 
     def on_mouse_drag(self, x, y, dx, dy, _buttons, _modifiers):
-        self.left -= dx * self.zoom_level
-        self.right -= dx * self.zoom_level
-        self.bottom -= dy * self.zoom_level
-        self.top += dy * self.zoom_level
+        if self._follow_enabled:
+            self._follow_enabled = False
+            self._user_camera_target = None
+        self._pan_view(dx, dy)
 
     def on_mouse_scroll(self, x, y, dx, dy):
-        f = ZOOM_IN_FACTOR if dy > 0 else ZOOM_OUT_FACTOR if dy < 0 else 1.0
-        if 0.01 < self.zoom_level * f < 10.0:
-            self.zoom_level *= f
+        factor = ZOOM_IN_FACTOR if dy > 0 else ZOOM_OUT_FACTOR if dy < 0 else 1.0
+        if factor != 1.0:
             w, h = self.get_size()
-            mx, my = x / w, y / h
-            mx_world = self.left + mx * self.zoomed_width
-            my_world = self.bottom + my * self.zoomed_height
-            self.zoomed_width *= f
-            self.zoomed_height *= f
-            self.left = mx_world - mx * self.zoomed_width
-            self.right = mx_world + (1 - mx) * self.zoomed_width
-            self.bottom = my_world - my * self.zoomed_height
-            self.top = my_world + (1 - my) * self.zoomed_height
+            self._apply_zoom(factor, (x / max(w, 1)), (y / max(h, 1)))
 
     def on_close(self):
         super().on_close()
@@ -343,12 +337,17 @@ class EnvRenderer(pyglet.window.Window):
         elif not self.agent_ids and self.agent_infos:
             self.agent_ids = sorted(self.agent_infos.keys())
 
-        if self._user_camera_target and self._user_camera_target in self.agent_infos:
-            self._camera_target = self._user_camera_target
-        elif self.agent_ids:
-            self._camera_target = self.agent_ids[0]
-        else:
+        if not self._follow_enabled:
             self._camera_target = None
+        else:
+            if self._user_camera_target and self._user_camera_target in self.agent_infos:
+                self._camera_target = self._user_camera_target
+            elif self.agent_ids:
+                self._camera_target = self.agent_ids[0]
+            elif self.agent_infos:
+                self._camera_target = sorted(self.agent_infos.keys())[0]
+            else:
+                self._camera_target = None
 
         all_ids = sorted(self.agent_infos.keys())
 
@@ -451,7 +450,13 @@ class EnvRenderer(pyglet.window.Window):
                 scan_vlist.position[:] = positions_array
                 scan_vlist.color[:] = colors_array
 
-        hud_lines = [f'Agents: {len(all_ids)}']
+        if not self._follow_enabled:
+            camera_line = 'Camera: free'
+        else:
+            target_label = str(self._camera_target) if (self._camera_target is not None) else 'auto'
+            camera_line = f'Camera: follow {target_label}'
+
+        hud_lines = [f'Agents: {len(all_ids)}', camera_line]
         for aid in all_ids:
             st = self.agent_infos[aid]
             lap_val = st.get("lap_count")
@@ -475,12 +480,14 @@ class EnvRenderer(pyglet.window.Window):
 
         self.hud_label.text = "\n".join(hud_lines)
 
-        self._camera_follow_first()
+        if self._follow_enabled:
+            self._camera_follow_first()
 
     # ---------- Helpers ----------
 
     def set_camera_target(self, agent_id):
         """Persistently select which agent the camera should follow."""
+        self._follow_enabled = True
         self._user_camera_target = agent_id
         if agent_id is None:
             if self.agent_ids:
@@ -514,6 +521,99 @@ class EnvRenderer(pyglet.window.Window):
         self.right = cx + half_w
         self.bottom = cy - half_h
         self.top = cy + half_h
+
+    def on_key_press(self, symbol, modifiers):
+        if symbol in (key.PLUS, key.EQUAL, key.NUM_ADD):
+            self._apply_zoom(ZOOM_IN_FACTOR)
+            return True
+        if symbol in (key.MINUS, key.NUM_SUBTRACT):
+            self._apply_zoom(ZOOM_OUT_FACTOR)
+            return True
+        if symbol == key.T:
+            self._follow_enabled = not self._follow_enabled
+            if not self._follow_enabled:
+                self._user_camera_target = None
+                self._camera_target = None
+        elif symbol == key.SPACE:
+            self._reset_view()
+        elif symbol == key.PAGEUP:
+            self._cycle_camera_target(1)
+        elif symbol == key.PAGEDOWN:
+            self._cycle_camera_target(-1)
+        elif symbol == key.RIGHT or symbol == key.D:
+            self._manual_pan(-self._pan_step_pixels, 0.0, modifiers)
+        elif symbol == key.LEFT or symbol == key.A:
+            self._manual_pan(self._pan_step_pixels, 0.0, modifiers)
+        elif symbol == key.UP or symbol == key.W:
+            self._manual_pan(0.0, -self._pan_step_pixels, modifiers)
+        elif symbol == key.DOWN or symbol == key.S:
+            self._manual_pan(0.0, self._pan_step_pixels, modifiers)
+        elif symbol == key.HOME:
+            self._reset_view()
+        elif symbol == key.TAB:
+            direction = -1 if modifiers & key.MOD_SHIFT else 1
+            self._cycle_camera_target(direction)
+        else:
+            return super().on_key_press(symbol, modifiers)
+        return True
+
+    def _manual_pan(self, dx_pixels: float, dy_pixels: float, modifiers: int) -> None:
+        if self._follow_enabled:
+            self._follow_enabled = False
+            self._user_camera_target = None
+        factor = 4.0 if modifiers & key.MOD_SHIFT else 1.0
+        self._pan_view(dx_pixels * factor, dy_pixels * factor)
+
+    def _cycle_camera_target(self, direction: int) -> None:
+        if not self.agent_ids:
+            return
+        if self._user_camera_target in self.agent_ids:
+            idx = self.agent_ids.index(self._user_camera_target)
+        elif self._camera_target in self.agent_ids:
+            idx = self.agent_ids.index(self._camera_target)
+        else:
+            idx = 0
+        idx = (idx + direction) % len(self.agent_ids)
+        self._user_camera_target = self.agent_ids[idx]
+        self._follow_enabled = True
+        self._camera_target = self._user_camera_target
+
+    def _apply_zoom(self, factor: float, anchor_x: float = 0.5, anchor_y: float = 0.5) -> None:
+        new_zoom = self.zoom_level * factor
+        if not 0.01 < new_zoom < 10.0:
+            return
+        w, h = self.get_size()
+        if w <= 0 or h <= 0:
+            return
+        mx_world = self.left + anchor_x * self.zoomed_width
+        my_world = self.bottom + anchor_y * self.zoomed_height
+        self.zoom_level = new_zoom
+        self.zoomed_width *= factor
+        self.zoomed_height *= factor
+        self.left = mx_world - anchor_x * self.zoomed_width
+        self.right = self.left + self.zoomed_width
+        self.bottom = my_world - anchor_y * self.zoomed_height
+        self.top = self.bottom + self.zoomed_height
+
+    def _pan_view(self, dx_pixels: float, dy_pixels: float) -> None:
+        self.left -= dx_pixels * self.zoom_level
+        self.right -= dx_pixels * self.zoom_level
+        self.bottom -= dy_pixels * self.zoom_level
+        self.top -= dy_pixels * self.zoom_level
+
+    def _reset_view(self) -> None:
+        self._follow_enabled = True
+        self._user_camera_target = None
+        w, h = self.get_size()
+        if w <= 0 or h <= 0:
+            return
+        self.zoom_level = 1.2
+        self.zoomed_width = self.zoom_level * w
+        self.zoomed_height = self.zoom_level * h
+        self.left = -self.zoomed_width / 2
+        self.right = self.zoomed_width / 2
+        self.bottom = -self.zoomed_height / 2
+        self.top = self.zoomed_height / 2
 
     # ---------- Optional: utilities for extra overlays ----------
 

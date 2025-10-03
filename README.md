@@ -22,6 +22,14 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 - Enable `env.spawn_point_randomize` (bool or dict with `pool`, `allow_reuse`) to draw agent spawns from the annotated pool each episode without hand-coding combinations.
 - Training/eval logs now include `spawn_points` (per-agent names) and `spawn_option` so runs stay reproducible.
 
+## Render Controls
+
+- `T` toggles camera follow mode (auto-follow vs. free camera). Dragging with the mouse or using pan keys also switches to free mode.
+- `TAB` cycles the tracked agent (hold `Shift` for previous). `PageUp/PageDown` are equivalent shortcuts.
+- `+` / `-` (or mouse scroll) zoom in/out; hold the mouse over a point to zoom around it. Zoom obeys `Shift` to accelerate.
+- Arrow keys or `WASD` pan the view; hold `Shift` for faster movement. Mouse drag also pans.
+- `Space` or `Home` resets the camera to the default follow view.
+
 ## Reward Strategies
 
 - Configure `reward.mode` in the experiment YAML to choose between `gaplock`, `progress`, `fastest_lap`, or `composite` strategies.
