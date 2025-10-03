@@ -8,6 +8,12 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 - The loader auto-discovers the file when `centerline_autoload: true` (default) and exposes the data to both heuristics and learning agents.
 - Rendering overlays the centerline when `centerline_render: true`, and observation wrappers append `[lateral_error, longitudinal_error, heading_error, progress]` features when `centerline_features: true`.
 
+### Map Folder Layout
+
+- Store each track under its own directory in `maps/`, e.g. `maps/shanghai/Shanghai_map.yaml`, `maps/shanghai/Shanghai_map.png`, and optional extras like `*_centerline.csv` or wall CSVs.
+- Configs should reference the YAML relative to `map_dir`, e.g. `map_yaml: shanghai/Shanghai_map.yaml`.
+- The loader preserves backwards compatibility by falling back to a recursive search, but the per-map folders keep assets self-contained and travel well with version control.
+
 ## Spawn Point Annotations
 
 - Annotate maps with named spawn points under `annotations.spawn_points` (each entry needs a `name` and `[x, y, yaw]` pose array).

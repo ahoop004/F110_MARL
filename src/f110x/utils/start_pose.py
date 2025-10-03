@@ -139,26 +139,37 @@ def reset_with_start_poses(
     if not options:
         return env.reset()
 
-    indices = np.random.permutation(len(options))
-    for idx in indices[:max_attempts]:
-        option = options[idx]
-        metadata = option.metadata or {}
-        poses = option.poses
+    option_count = len(options)
+    if option_count == 0:
+        return env.reset()
 
+    agent_ids = list(getattr(env, "possible_agents", []))
+
+    def _agent_id(idx: int) -> str:
+        if idx < len(agent_ids):
+            return agent_ids[idx]
+        return f"car_{idx}"
+
+    indices = np.random.permutation(option_count)
+
+    def _sample_option(option: StartPoseOption) -> Optional[Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]]:
+        metadata = dict(option.metadata or {})
+        poses = option.poses
         spawn_mapping: Dict[str, Any] = dict(metadata.get("spawn_points", {}))
+
         random_pool = metadata.get("spawn_random_pool")
         if random_pool and map_data is not None:
             pool_names = [name for name in random_pool if name in map_data.spawn_points]
             if not pool_names:
-                continue
+                return None
 
             allow_reuse = bool(metadata.get("spawn_random_allow_reuse", False))
-            count = int(metadata.get("spawn_random_count", len(poses)))
+            count = int(metadata.get("spawn_random_count", len(agent_ids) or len(poses)))
             if count <= 0:
-                count = len(poses)
+                count = len(agent_ids) or len(poses)
 
             if not allow_reuse and len(pool_names) < count:
-                continue
+                return None
 
             rng = getattr(env, "rng", None)
             if rng is None:
@@ -169,9 +180,21 @@ def reset_with_start_poses(
             else:
                 selected = rng.choice(pool_names, size=count, replace=False)
 
-            pose_stack = [map_data.spawn_points[name] for name in selected]
+            pose_stack = [map_data.spawn_points[str(name)] for name in selected]
             poses = np.asarray(pose_stack, dtype=np.float32)
-            spawn_mapping = {f"car_{idx}": name for idx, name in enumerate(selected)}
+            spawn_mapping = {_agent_id(idx): str(name) for idx, name in enumerate(selected)}
+
+        return poses, spawn_mapping, metadata
+
+    max_tries = max_attempts if max_attempts and max_attempts > 0 else option_count
+    attempt_idx = 0
+    while attempt_idx < max_tries:
+        option = options[indices[attempt_idx % option_count]]
+        sampled = _sample_option(option)
+        if sampled is None:
+            attempt_idx += 1
+            continue
+        poses, spawn_mapping, metadata = sampled
 
         adjusted = adjust_start_poses(poses, back_gap, min_spacing, map_data=map_data)
         obs, infos = env.reset(options={"poses": adjusted})
@@ -188,5 +211,7 @@ def reset_with_start_poses(
         collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
         if not any(collisions):
             return obs, infos
+
+        attempt_idx += 1
 
     return env.reset()

@@ -38,9 +38,19 @@ class MapLoader:
         if map_yaml_name is None:
             raise ValueError("env configuration must define 'map_yaml' or 'map'")
 
-        map_yaml_path = (map_dir / map_yaml_name).expanduser().resolve()
-        if not map_yaml_path.exists():
-            raise FileNotFoundError(f"Map YAML not found: {map_yaml_path}")
+        yaml_candidate = Path(map_yaml_name).expanduser()
+        if not yaml_candidate.is_absolute():
+            yaml_candidate = (map_dir / yaml_candidate)
+        map_yaml_path = yaml_candidate.resolve()
+
+        if not map_yaml_path.is_file():
+            search_name = Path(map_yaml_name).name
+            matches = [match for match in map_dir.rglob(search_name) if match.is_file()]
+            if not matches and not Path(search_name).suffix:
+                matches = [match for match in map_dir.rglob(f"{search_name}.yaml") if match.is_file()]
+            if not matches:
+                raise FileNotFoundError(f"Map YAML not found: {map_yaml_path}")
+            map_yaml_path = matches[0].resolve()
 
         cache_key = (str(map_dir), map_yaml_name)
         cached = self._cache.get(cache_key)

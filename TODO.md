@@ -33,6 +33,20 @@
   - [ ] Persist selection metadata to logs for reproducibility.
   - [ ] Document the YAML schema and configuration options.
 
+## Map Asset Packaging
+
+- [x] Restructure map assets into per-map folders bundling YAML, image (png/pgm), centerline CSV, and wall CSV files.
+- [x] Update `MapLoader` resolution logic to support nested map directories and normalise relative asset paths.
+- [x] Adjust configuration parsing/CLI plumbing so `map_yaml` / `map` entries and builder logic resolve foldered maps gracefully (with backwards-compatible fallbacks).
+- [x] Refresh scripts/tests (e.g., `map_validator.py`, fixtures) to cover the new directory structure.
+- [x] Document the folder convention and migration steps in README and user guides.
+
+## Render Controls
+
+- [ ] Add renderer tracking toggles (follow attacker/defender/free camera).
+- [ ] Restore and expose zoom controls via keyboard/mouse bindings.
+- [ ] Implement viewport pan/“move view” shortcuts and document usage in README.
+
 ## Algorithm Baselines
 
 - [ ] Rate-based discrete control head for DQN attacker.

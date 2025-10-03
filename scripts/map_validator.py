@@ -268,8 +268,8 @@ def validate_map(yaml_path: Path, settings: ValidationSettings) -> MapReport:
 
 
 def iter_map_yaml_files(map_dir: Path) -> Iterable[Path]:
-    for path in sorted(map_dir.glob("*.yaml")):
-        if path.name.lower().endswith(".yaml"):
+    for path in sorted(map_dir.rglob("*.yaml")):
+        if path.is_file() and path.suffix.lower() == ".yaml":
             yield path
 
 

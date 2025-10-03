@@ -10,8 +10,8 @@ shared:
     integrator: RK4
     render_interval: 0
     map_dir: maps
-    map_yaml: Shanghai_map.yaml
-    map: Shanghai_map.yaml
+    map_yaml: shanghai/Shanghai_map.yaml
+    map: shanghai/Shanghai_map.yaml
     map_ext: .png
     render_mode: human
     start_poses:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -56,6 +57,22 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env_cfg["map_image_path"] = str(map_data.image_path)
     env_cfg["map_image_size"] = map_data.image_size
     env_cfg["map_yaml_path"] = str(map_data.yaml_path)
+    env_cfg["map_ext"] = map_data.image_path.suffix or env_cfg.get("map_ext")
+
+    map_root_raw = env_cfg.get("map_dir")
+    map_root_path: Optional[Path] = None
+    if map_root_raw:
+        map_root_path = Path(str(map_root_raw)).expanduser().resolve()
+    try:
+        if map_root_path is not None:
+            relative_yaml = map_data.yaml_path.relative_to(map_root_path)
+        else:
+            relative_yaml = map_data.yaml_path
+    except ValueError:
+        relative_yaml = map_data.yaml_path
+    yaml_value = str(relative_yaml)
+    env_cfg["map_yaml"] = yaml_value
+    env_cfg["map"] = yaml_value
 
     # Allow map metadata to override start position defaults when provided.
     for meta_key in ("start_poses", "start_pose_options"):
@@ -111,6 +128,13 @@ def _apply_spawn_point_config(env_cfg: Dict[str, Any], map_data: MapData) -> Non
         return {"poses": pose_rows, "metadata": metadata}
 
     start_pose_options_cfg: List[Any] = list(env_cfg.get("start_pose_options", []) or [])
+
+    if not env_cfg.get("start_poses") and env_cfg.get("spawn_points") is None:
+        available_names = list(spawn_points.keys())
+        if len(available_names) >= n_agents:
+            default_option = _names_to_option(available_names[:n_agents], option_id="map_default")
+            env_cfg["start_poses"] = default_option["poses"]
+            start_pose_options_cfg.append(default_option)
 
     spawn_points_cfg = env_cfg.pop("spawn_points", None)
     if spawn_points_cfg is not None:

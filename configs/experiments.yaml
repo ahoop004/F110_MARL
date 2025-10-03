@@ -12,29 +12,24 @@ shared:  # Common building blocks reused across experiment profiles
       v_min: -2.0  # Minimum longitudinal velocity allowed for the car
       v_max: 10.0  # Maximum longitudinal velocity allowed for the car
     map_dir: maps  # Directory containing track layouts
-    map_yaml: Shanghai_map.yaml  # YAML file describing the selected map
-    map: Shanghai_map.yaml  # Explicit map identifier used by the simulator
+    map_yaml: shanghai/Shanghai_map.yaml  # YAML file describing the selected map
+    map: shanghai/Shanghai_map.yaml  # Explicit map identifier used by the simulator
     map_ext: .png  # File extension for the occupancy grid associated with the map
     centerline_autoload: true  # Attempt to load <map>_centerline.csv alongside the map assets
     centerline_render: true  # Overlay the centerline during rendering when available
     centerline_features: true  # Append centerline-relative features to learning observations when available
     render_mode: human  # Visualization backend requested when rendering
-    start_poses:  # Deterministic start positions for each agent
-      - [0.0, 0.0, 0.0]  # Attacker spawn pose (x, y, yaw)
-      - [2.0, 0.1, 0.0]  # Defender spawn pose (x, y, yaw)
-    start_pose_options:  # Optional randomized start pose sets to sample from
-      -  # Option A keeps the defender ahead with a slight left offset
-        - [0.0, 0.0, 0.0]  # Attacker pose for option A
-        - [2.5, 0.1, 0.0]  # Defender pose for option A
-      -  # Option B keeps the defender ahead with a slight right offset
-        - [0.0, 0.0, 0.0]  # Attacker pose for option B
-        - [2.5, -0.1, 0.0]  # Defender pose for option B
-      -  # Option C spawns the attacker behind the defender (left offset)
-        - [2.5, 0.1, 0.0]  # Attacker pose for option C
-        - [0.0, 0.0, 0.0]  # Defender pose for option C
-      -  # Option D spawns the attacker behind the defender (right offset)
-        - [2.5, -0.1, 0.0]  # Attacker pose for option D
-        - [0.0, 0.0, 0.0]  # Defender pose for option D
+    spawn_points: [spawn_1, spawn_2]  # Default attacker/defender start names from map annotations
+    spawn_point_sets:  # Optional named spawn combinations to cycle through
+      - id: swap_roles
+        names: [spawn_2, spawn_1]
+      - id: stagger_left
+        names: [spawn_3, spawn_2]
+      - id: stagger_right
+        names: [spawn_3, spawn_4]
+    spawn_point_randomize:  # Random selection from annotated spawn pool
+      pool: [spawn_1, spawn_2, spawn_3, spawn_4]
+      allow_reuse: false
 
   defender_policy: &defender_policy  # Static defender policy reused by all profiles
     algo: follow_gap  # Use the follow-the-gap reactive controller
