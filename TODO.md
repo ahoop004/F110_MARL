@@ -1,5 +1,12 @@
 # TODO
 
+## Configuration Architecture
+
+- [ ] Define modular config layering (shared base, task, policy, experiment overlays).
+- [ ] Implement loader/manifest that composes task + policy + overrides into final configs.
+- [ ] Split existing `configs/experiments.yaml` into the new structure with representative examples.
+- [ ] Document the workflow (how to add a task/policy/experiment) in README.
+
 ## Reward Enhancements
 
 - [ ] Reward mode curriculum that transitions from progress shaping to sparse gaplock bonuses.
@@ -20,6 +27,11 @@
   - [ ] Tune progress reward weights and DQN hyperparams.
   - [ ] Add config documentation and comparison notes vs. gaplock baseline.
 - [ ] Extend evaluation config to compare gaplock vs. progress runs in a single sweep.
+- [ ] Map-based spawn point annotations.
+  - [ ] Update MapLoader/env reset to consume `annotations.spawn_points` in order.
+  - [ ] Allow experiments to request named spawns or random selection from annotated set.
+  - [ ] Persist selection metadata to logs for reproducibility.
+  - [ ] Document the YAML schema and configuration options.
 
 ## Algorithm Baselines
 
