@@ -31,6 +31,14 @@
   - [x] Publish centerline waypoints to heuristics (e.g., gap-follow, centerline) via shared map context.
   - [x] Add observation wrapper features exposing nearest centerline point / heading for RL agents.
   - [x] Document the CSV schema and update configs to enable/disable centerline usage per experiment.
+- [x] Reward strategy abstraction.
+  - [x] Define a `RewardStrategy` interface and training loop hook-up.
+  - [x] Expose reward mode selection + parameters in experiment config.
+  - [x] Implement gaplock target strategy on top of the new interface.
+  - [x] Implement track-progress shaping using centerline progress.
+  - [x] Implement fastest-lap/elapsed-time incentive strategy.
+  - [x] Support composite weighting and per-component logging.
+  - [x] Add unit/integration tests and update docs/examples.
 - [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
 - [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
 - [ ] MAPPO-style multi-agent PPO head for coordinated attackers.

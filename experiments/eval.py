@@ -14,7 +14,7 @@ from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.start_pose import reset_with_start_poses
 from f110x.utils.output import resolve_output_dir, resolve_output_file
-from f110x.wrappers.reward import RewardWrapper
+from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 
 
 DEFAULT_CONFIG_PATH = Path("configs/experiments.yaml")
@@ -212,8 +212,9 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
 
         done = {aid: False for aid in env.possible_agents}
         totals = {aid: 0.0 for aid in env.possible_agents}
-        reward_wrapper = RewardWrapper(**ctx.reward_cfg)
-        reward_wrapper.reset()
+        reward_context = RewardRuntimeContext(env=env, map_data=ctx.map_data)
+        reward_wrapper = RewardWrapper(config=ctx.reward_cfg, context=reward_context)
+        reward_wrapper.reset(ep)
 
         steps = 0
         terms: Dict[str, bool] = {}
@@ -252,6 +253,7 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
                         done=terms.get(aid, False) or truncs.get(aid, False),
                         info=infos.get(aid, {}),
                         all_obs=next_obs,
+                        step_index=steps,
                     )
                 totals[aid] += reward
 

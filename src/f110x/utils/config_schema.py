@@ -197,6 +197,10 @@ class EnvSchema(BaseSchema):
 
 @dataclass
 class RewardSchema(BaseSchema):
+    mode: str = "gaplock"
+    components: Dict[str, Any] = field(default_factory=dict)
+    progress: Dict[str, Any] = field(default_factory=dict)
+    fastest_lap: Dict[str, Any] = field(default_factory=dict)
     target_crash_reward: float = 1.0
     ego_collision_penalty: float = 0.0
     truncation_penalty: float = 0.0

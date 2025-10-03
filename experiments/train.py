@@ -15,7 +15,7 @@ from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.utils.start_pose import reset_with_start_poses
-from f110x.wrappers.reward import RewardWrapper
+from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 from f110x.trainers.base import Transition, Trainer
 
 
@@ -185,8 +185,9 @@ def _build_reward_wrapper(ctx: TrainingContext, episode_idx: int) -> RewardWrapp
     mode = _resolve_reward_mode(ctx.curriculum_schedule, episode_idx)
     wrapper_cfg = dict(ctx.reward_cfg)
     wrapper_cfg["mode"] = mode
-    wrapper = RewardWrapper(**wrapper_cfg)
-    wrapper.reset()
+    reward_context = RewardRuntimeContext(env=ctx.env, map_data=ctx.map_data)
+    wrapper = RewardWrapper(config=wrapper_cfg, context=reward_context)
+    wrapper.reset(episode_idx)
     return wrapper
 
 
@@ -403,6 +404,7 @@ def run_training(
                         done=terms.get(aid, False) or truncs.get(aid, False),
                         info=infos.get(aid, {}),
                         all_obs=next_obs,
+                        step_index=steps,
                     )
                 totals_array[idx] += float(base_reward)
                 shaped_rewards[idx] = float(base_reward)
