@@ -1,29 +1,21 @@
-"""Scenario manifest loader composing layered configs into ExperimentConfig."""
+"""Load simplified scenario manifests into :class:`ExperimentConfig`."""
 from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import yaml
 
-from .config_layers import (
-    LAYER_NAME_TO_DIR,
-    CONFIG_BASE_DIR,
-    CONFIG_TASK_DIR,
-    CONFIG_POLICY_DIR,
-    CONFIG_ALGO_DIR,
-    deep_merge,
-)
-from .config_models import ExperimentConfig
+from .config_models import ExperimentConfig, AgentRosterConfig
 
 
 class ScenarioConfigError(ValueError):
-    """Raised when a scenario manifest cannot be composed."""
+    """Raised when scenario manifests are malformed."""
 
 
 def load_scenario_manifest(path: Path | str) -> ExperimentConfig:
-    """Load a scenario manifest and return a composed :class:`ExperimentConfig`."""
+    """Compose a scenario manifest into an :class:`ExperimentConfig`."""
 
     manifest_path = Path(path).expanduser().resolve()
     if not manifest_path.exists():
@@ -33,128 +25,67 @@ def load_scenario_manifest(path: Path | str) -> ExperimentConfig:
         doc = yaml.safe_load(handle) or {}
 
     if not isinstance(doc, Mapping):
-        raise ScenarioConfigError("Scenario manifest root must be a mapping")
+        raise ScenarioConfigError("Scenario manifest must contain a mapping")
 
-    payload = doc.get("scenario") or doc
-    if not isinstance(payload, Mapping):
-        raise ScenarioConfigError("Scenario manifest must define a 'scenario' mapping")
+    scenario = doc.get("scenario") or doc
+    if not isinstance(scenario, Mapping):
+        raise ScenarioConfigError("Scenario manifest must contain a 'scenario' mapping")
 
-    scenario_dir = manifest_path.parent
+    cfg = ExperimentConfig()
+    raw: Dict[str, Any] = {}
 
-    base_path = payload.get("base", "base/default.yaml")
-    base_doc = _load_yaml(base_path, CONFIG_BASE_DIR, scenario_dir)
+    _apply_section(cfg.env.schema.update_from_dict, scenario.get("env"), raw, "env")
+    _apply_section(cfg.reward.schema.update_from_dict, scenario.get("reward"), raw, "reward")
+    _apply_section(cfg.main.schema.update_from_dict, scenario.get("main"), raw, "main")
 
-    merged: Dict[str, Any] = {}
-    deep_merge(merged, deepcopy(base_doc))
+    algorithms = scenario.get("algorithms", {})
+    if algorithms and not isinstance(algorithms, Mapping):
+        raise ScenarioConfigError("Scenario 'algorithms' must be a mapping")
 
-    # Scenario-level task (optional)
-    task_decl = payload.get("task")
-    if task_decl:
-        task_doc = _load_yaml(task_decl, CONFIG_TASK_DIR, scenario_dir)
-        deep_merge(merged, deepcopy(task_doc))
+    for name, overrides in algorithms.items():
+        if not isinstance(overrides, Mapping):
+            raise ScenarioConfigError(f"Algorithm overrides for '{name}' must be a mapping")
+        section = getattr(cfg, name, None)
+        if section is None or not hasattr(section, "schema"):
+            raise ScenarioConfigError(f"Unknown algorithm section '{name}' in scenario")
+        section.schema.update_from_dict(dict(overrides))
+        raw[name] = dict(overrides)
 
-    # Scenario-level overrides (env, episodes, wandb, reward, main, etc.)
-    for key in ("env", "episodes", "wandb", "reward", "main", "ppo_agent_idx"):
-        if key in payload:
-            deep_merge(merged, {key: payload[key]})
+    agents_block = scenario.get("agents", {})
+    if not isinstance(agents_block, Mapping):
+        raise ScenarioConfigError("Scenario 'agents' must be a mapping of agent identifiers")
 
-    merged.setdefault("main", {})
-    if isinstance(merged["main"], Mapping):
-        merged["main"].setdefault("experiment_name", payload.get("name") or manifest_path.stem)
+    roster_payload = []
+    for index, (agent_name, agent_cfg) in enumerate(agents_block.items()):
+        if not isinstance(agent_cfg, Mapping):
+            raise ScenarioConfigError(f"Agent '{agent_name}' configuration must be a mapping")
+        spec = dict(agent_cfg)
+        spec.setdefault("slot", index)
+        spec.setdefault("agent_id", agent_name)
+        if "algo" not in spec:
+            raise ScenarioConfigError(f"Agent '{agent_name}' must declare an 'algo'")
+        roster_payload.append(spec)
 
-    algorithms: Dict[str, Any] = {}
-    roster: list[Dict[str, Any]] = []
-    agents_decl = payload.get("agents", {})
-    if not isinstance(agents_decl, Mapping):
-        raise ScenarioConfigError("Scenario 'agents' must be a mapping of agent names")
+    if roster_payload:
+        cfg.agents = AgentRosterConfig.from_dict({"roster": roster_payload})
+        raw["agents"] = {"roster": deepcopy(roster_payload)}
 
-    for index, (agent_name, agent_decl) in enumerate(agents_decl.items()):
-        if not isinstance(agent_decl, Mapping):
-            raise ScenarioConfigError(f"Agent '{agent_name}' config must be a mapping")
-
-        slot = agent_decl.get("slot", index)
-        role = agent_decl.get("role", agent_name)
-        agent_id = agent_decl.get("agent_id", agent_name)
-
-        # Agent task overrides (optional per-agent reward tweaks)
-        agent_task = agent_decl.get("task")
-        if agent_task:
-            task_doc = _load_yaml(agent_task, CONFIG_TASK_DIR, scenario_dir)
-            deep_merge(merged, deepcopy(task_doc))
-
-        policy_path = agent_decl.get("policy")
-        if not policy_path:
-            raise ScenarioConfigError(f"Agent '{agent_name}' is missing a policy reference")
-        policy_doc = _load_yaml(policy_path, CONFIG_POLICY_DIR, scenario_dir)
-        if "agent" not in policy_doc:
-            raise ScenarioConfigError(f"Policy '{policy_path}' must contain an 'agent' mapping")
-        agent_config = deepcopy(policy_doc["agent"])
-
-        algo_name = str(agent_config.get("algo", "")).strip()
-        if not algo_name:
-            raise ScenarioConfigError(f"Policy '{policy_path}' for agent '{agent_name}' missing 'algo'")
-
-        config_entry = agent_config.pop("config", None)
-        if config_entry:
-            algo_doc = _load_yaml(config_entry, CONFIG_ALGO_DIR, scenario_dir)
-            deep_merge(algorithms.setdefault(algo_name, {}), deepcopy(algo_doc))
-            agent_config.setdefault("config_ref", algo_name)
-
-        agent_config.setdefault("slot", slot)
-        agent_config.setdefault("role", role)
-        agent_config.setdefault("agent_id", agent_id)
-
-        overrides = agent_decl.get("overrides")
-        if isinstance(overrides, Mapping):
-            deep_merge(agent_config, overrides)
-
-        roster.append(agent_config)
-
-    if roster:
-        merged.setdefault("agents", {})
-        merged["agents"]["roster"] = roster
-
-    for algo, payload_doc in algorithms.items():
-        deep_merge(merged.setdefault(algo, {}), payload_doc)
-
-    return ExperimentConfig.from_dict(merged)
-
-
-def _load_yaml(path_str: str, default_dir: Optional[Path], scenario_dir: Path) -> Dict[str, Any]:
-    resolved = _resolve_layer_path(path_str, default_dir, scenario_dir)
-    with resolved.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, Mapping):
-        raise ScenarioConfigError(f"Layer file must be a mapping: {resolved}")
-    return dict(data)
-
-
-def _resolve_layer_path(path_str: str, default_dir: Optional[Path], scenario_dir: Path) -> Path:
-    candidate = Path(path_str)
-    search_paths: Iterable[Path]
-
-    config_root = Path("configs")
-
-    if candidate.is_absolute():
-        search_paths = [candidate]
-    else:
-        search_paths = [
-            scenario_dir / candidate,
-            config_root / candidate,
-        ]
-        if default_dir and len(candidate.parts) == 1:
-            search_paths.append(default_dir / candidate)
-        search_paths.append(candidate)
-
-    for raw in search_paths:
-        if raw is None:
+    for key, value in scenario.items():
+        if key in {"env", "reward", "main", "algorithms", "agents"}:
             continue
-        if raw.exists():
-            return raw.resolve()
-        if raw.suffix == "" and raw.with_suffix(".yaml").exists():
-            return raw.with_suffix(".yaml").resolve()
+        raw[key] = value
 
-    raise FileNotFoundError(f"Unable to resolve config layer path '{path_str}'")
+    cfg.raw = raw
+    return cfg
+
+
+def _apply_section(updater, payload: Optional[Mapping[str, Any]], raw: Dict[str, Any], key: str) -> None:
+    if not payload:
+        return
+    if not isinstance(payload, Mapping):
+        raise ScenarioConfigError(f"Scenario '{key}' section must be a mapping")
+    updater(dict(payload))
+    raw[key] = dict(payload)
 
 
 __all__ = ["load_scenario_manifest", "ScenarioConfigError"]

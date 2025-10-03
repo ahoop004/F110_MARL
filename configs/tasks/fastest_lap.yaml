@@ -1,8 +1,0 @@
-# Task layer for fastest-lap evaluation.
-
-reward:
-  mode: fastest_lap
-  fastest_lap:
-    step_penalty: 0.0
-    lap_bonus: 1.0
-    best_bonus: 0.5

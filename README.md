@@ -22,6 +22,13 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 - Enable `env.spawn_point_randomize` (bool or dict with `pool`, `allow_reuse`) to draw agent spawns from the annotated pool each episode without hand-coding combinations.
 - Training/eval logs now include `spawn_points` (per-agent names) and `spawn_option` so runs stay reproducible.
 
+## Layered Configuration
+
+- Modular config layers live under `configs/`: `base/` (shared env/runtime defaults), `tasks/` (reward + curriculum presets), `policies/` (agent definitions), `algorithms/` (hyperparameters), and `scenarios/` (top-level manifests that compose layers).
+- A scenario manifest selects a base file, lists agents with their tasks/policies, and can override env/runtime settings. Example: `configs/scenarios/gaplock_dqn.yaml` mirrors the legacy `gaplock_dqn` experiment.
+- Use `run.py --scenario CONFIGS/scenarios/gaplock_dqn.yaml ...` (or `python experiments/main.py --config ...`) to launch runs. `run.py` also accepts legacy flags (`--algo`, `--grid`) and now sets `F110_CONFIG`/`F110_EXPERIMENT` so the training/eval pipelines pick up the composed config.
+- To create a new scenario, drop task/policy/algorithm files (or reuse existing ones), author a manifest in `configs/scenarios/`, and pass it to `run.py --scenario`.
+
 ## Render Controls
 
 - `T` toggles camera follow mode (auto-follow vs. free camera). Dragging with the mouse or using pan keys also switches to free mode.

@@ -1,5 +1,5 @@
 scenario:
-  name: example_gaplock_dqn
+  name: gaplock_dqn
   env:
     seed: 42
     n_agents: 2
@@ -99,4 +99,3 @@ scenario:
           max_scan: 30.0
           normalize: true
           target_role: defender
-  description: Minimal example scenario manifest for DQN attacker and follow-gap defender.

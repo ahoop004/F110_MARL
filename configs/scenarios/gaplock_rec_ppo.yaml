@@ -1,5 +1,5 @@
 scenario:
-  name: example_gaplock_dqn
+  name: gaplock_rec_ppo
   env:
     seed: 42
     n_agents: 2
@@ -18,7 +18,7 @@ scenario:
     centerline_render: true
     centerline_features: true
     render_mode: human
-    update: 2
+    update: 10
   reward:
     mode: progress
     progress:
@@ -31,44 +31,43 @@ scenario:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: dqn
+      group: rec_ppo
       tags:
-      - dqn
+      - gaplock
+      - rec_ppo
     mode: train_eval
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
     train_episodes: 100
     eval_episodes: 1
-    checkpoint: checkpoints/dqn_gaplock.pt
+    checkpoint: checkpoints/rec_ppo_gaplock.pt
   algorithms:
-    dqn:
-      device: cpu
-      lr: 0.0004
+    rec_ppo:
+      actor_lr: 0.0003
+      critic_lr: 0.0005
+      device: cuda
       gamma: 0.99
-      batch_size: 512
-      buffer_size: 100000
-      target_update_interval: 500
-      epsilon_start: 1.0
-      epsilon_end: 0.1
-      epsilon_decay_rate: 0.9995
-      hidden_dims:
+      lam: 0.95
+      ent_coef: 0.015
+      ent_coef_schedule:
+        start: 0.015
+        final: 0.005
+        decay_start: 500
+        decay_episodes: 1500
+      clip_eps: 0.2
+      update_epochs: 5
+      sequence_batch_size: 1
+      rnn_type: lstm
+      rnn_hidden_size: 128
+      rnn_layers: 1
+      rnn_dropout: 0.0
+      mlp_hidden_dims:
       - 256
       - 256
-      prioritized_replay: true
-      per_alpha: 0.6
-      per_beta_start: 0.4
-      per_beta_increment: 5.0e-05
-      per_min_priority: 0.001
-      per_epsilon: 1.0e-06
-      action_mode: rate
-      steering_rate: 0.5
-      accel_rate: 2.0
-      brake_rate: 4.0
-      rate_initial_speed: 0.0
       train_episodes: 100
       eval_episodes: 1
       save_dir: checkpoints
-      checkpoint_name: dqn_gaplock.pt
+      checkpoint_name: rec_ppo_gaplock.pt
   agents:
     car_0:
       slot: 0
@@ -79,8 +78,8 @@ scenario:
           max_scan: 30.0
           normalize: true
           target_role: defender
-      algo: dqn
-      config_ref: dqn
+      algo: rec_ppo
+      config_ref: rec_ppo
       agent_id: car_0
     car_1:
       algo: follow_gap
@@ -99,4 +98,3 @@ scenario:
           max_scan: 30.0
           normalize: true
           target_role: defender
-  description: Minimal example scenario manifest for DQN attacker and follow-gap defender.

@@ -2,23 +2,12 @@
 
 ## Configuration Architecture
 
-- [x] Define modular config layering (shared base, task, policy, experiment overlays).
-  - [x] Finalize layer naming/paths (e.g. `configs/base/`, `configs/tasks/`, `configs/policies/`, `configs/scenarios/`).
-  - [x] Decide merge precedence (base → task → policy → scenario) and collision rules (deep merge with per-section replace).
-  - [x] Provide starter templates for base/task/policy/scenario files.
-- [x] Implement manifest loader that composes task + policy + overrides into final configs.
-  - [x] Design a `scenario` manifest schema (YAML) describing layer stack and agent roster.
-  - [x] Extend `ExperimentConfig` (or add a new factory) to resolve manifests, track provenance, and emit the current schema.
-  - [x] Add a CLI flag/env override (`--scenario`) to select manifests at runtime.
-- [ ] Split legacy experiment configs into the layered structure.
-  - [ ] Extract shared env/reward defaults from removed `configs/experiments*.yaml` and fold them into base/task layers (extend beyond the starter templates).
-  - [ ] Produce scenario manifests mirroring current experiments (gaplock_dqn, gaplock_ppo, rec_ppo, td3, sac, starved variants, multi-agent) and verify parity vs. old configs.
-  - [ ] Update unit/integration tests and helper scripts (e.g. `tests/resources/test_env_config.yaml`, sweep configs) to point at scenario manifests where appropriate.
-- [ ] Document the workflow (how to add a task/policy/experiment) in README or docs/).
-- [ ] Document the workflow (how to add a task/policy/experiment in README or docs/).
-  - [ ] Draft a guide for adding new maps/tasks/policies using the layered configs.
-  - [ ] Provide manifest snippets showing overrides (reward tweaks, agent roster swaps).
-  - [ ] Call out migration steps for converting legacy `experiments.yaml` entries.
+- [x] Establish scenario-first configuration flow (manifests override schema defaults directly).
+- [x] Implement manifest loader and CLI support (`--scenario`, `F110_CONFIG`/`F110_EXPERIMENT`).
+- [x] Convert legacy experiments into scenario manifests (gaplock, starved, multi-agent variants).
+- [ ] Polish scenario manifests (remove redundant overrides, ensure consistent `algo`/`config_ref` usage).
+- [ ] Update tests & tooling to consume scenarios (`tests/resources/test_env_config.yaml`, sweep configs, docs examples).
+- [ ] Document the scenario workflow (adding maps/agents, available override keys, migration tips).
 
 ## Reward Enhancements
 

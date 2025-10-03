@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import os
+import yaml
 
 import numpy as np
 import pickle
 
 from f110x.envs import F110ParallelEnv
 from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
+from f110x.utils.config_manifest import load_scenario_manifest, ScenarioConfigError
 from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.start_pose import StartPoseOption, reset_with_start_poses
@@ -18,7 +20,7 @@ from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 
 
-DEFAULT_CONFIG_PATH = Path("configs/experiments.yaml")
+DEFAULT_CONFIG_PATH = Path("configs/scenarios/gaplock_dqn.yaml")
 ENV_CONFIG_KEY = "F110_CONFIG"
 ENV_EXPERIMENT_KEY = "F110_EXPERIMENT"
 
@@ -101,6 +103,24 @@ def _resolve_config_input(cfg_path: Path | None, experiment: str | None) -> tupl
     return resolved_path, selected_experiment
 
 
+def _load_experiment_config(cfg_path: Path, experiment: Optional[str]) -> ExperimentConfig:
+    try:
+        with cfg_path.open("r", encoding="utf-8") as handle:
+            doc = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError(f"Failed to parse config {cfg_path}: {exc}") from exc
+
+    if isinstance(doc, dict) and "scenario" in doc:
+        try:
+            return load_scenario_manifest(cfg_path)
+        except (ScenarioConfigError, FileNotFoundError) as exc:
+            raise RuntimeError(f"Failed to compose scenario {cfg_path}: {exc}") from exc
+
+    return ExperimentConfig.load(cfg_path, experiment=experiment)
+
+
 def create_evaluation_context(
     cfg_path: Path | None = None,
     *,
@@ -108,7 +128,7 @@ def create_evaluation_context(
     experiment: str | None = None,
 ) -> EvaluationContext:
     cfg_file, resolved_experiment = _resolve_config_input(cfg_path, experiment)
-    cfg = ExperimentConfig.load(cfg_file, experiment=resolved_experiment)
+    cfg = _load_experiment_config(cfg_file, resolved_experiment)
 
     env, map_data, start_pose_options = build_env(cfg)
     team = build_agents(env, cfg, map_data)

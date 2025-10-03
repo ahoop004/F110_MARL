@@ -23,16 +23,21 @@ from f110x.utils.config_manifest import load_scenario_manifest, ScenarioConfigEr
 BASE_DIR = Path(__file__).resolve().parent
 
 
+DEFAULT_SCENARIOS: Dict[str, Path] = {
+    "dqn": Path("configs/scenarios/gaplock_dqn.yaml"),
+    "ppo": Path("configs/scenarios/gaplock_ppo.yaml"),
+    "rec_ppo": Path("configs/scenarios/gaplock_rec_ppo.yaml"),
+    "td3": Path("configs/scenarios/gaplock_td3.yaml"),
+    "sac": Path("configs/scenarios/gaplock_sac.yaml"),
+    "dqn_starved": Path("configs/scenarios/gaplock_dqn_starved.yaml"),
+    "ppo_starved": Path("configs/scenarios/gaplock_ppo_starved.yaml"),
+    "td3_starved": Path("configs/scenarios/gaplock_td3_starved.yaml"),
+    "sac_starved": Path("configs/scenarios/gaplock_sac_starved.yaml"),
+    "gaplock_multi_independent": Path("configs/scenarios/gaplock_multi_independent.yaml"),
+}
+
 DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {
-    "dqn": (Path("configs/experiments.yaml"), "gaplock_dqn"),
-    "ppo": (Path("configs/experiments.yaml"), "gaplock_ppo"),
-    "rec_ppo": (Path("configs/experiments.yaml"), "gaplock_rec_ppo"),
-    "td3": (Path("configs/experiments.yaml"), "gaplock_td3"),
-    "sac": (Path("configs/experiments.yaml"), "gaplock_sac"),
-    "dqn_starved": (Path("configs/experiments_starved.yaml"), "gaplock_dqn_starved"),
-    "ppo_starved": (Path("configs/experiments_starved.yaml"), "gaplock_ppo_starved"),
-    "td3_starved": (Path("configs/experiments_starved.yaml"), "gaplock_td3_starved"),
-    "sac_starved": (Path("configs/experiments_starved.yaml"), "gaplock_sac_starved"),
+    algo: (path, "") for algo, path in DEFAULT_SCENARIOS.items()
 }
 
 
@@ -442,6 +447,11 @@ def _prepare_spec_runs(
     spec_experiment = spec.get("experiment")
     if spec_experiment is not None:
         spec_experiment = str(spec_experiment).strip() or None
+
+    if scenario_path is None and cfg_override_path is None:
+        default_scenario = DEFAULT_SCENARIOS.get(algo)
+        if default_scenario is not None:
+            scenario_path = default_scenario
 
     if scenario_path is not None:
         cfg_path, experiment_name = _resolve_scenario_manifest(

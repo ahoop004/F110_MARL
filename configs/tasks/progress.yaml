@@ -1,9 +1,0 @@
-# Task layer for progress-based shaping rewards.
-
-reward:
-  mode: progress
-  progress:
-    progress_weight: 1.0
-    speed_weight: 0.0
-    lateral_penalty: 0.05
-    heading_penalty: 0.02
