@@ -194,9 +194,10 @@ def _compute_actions(
     ctx: TrainingContext,
     obs: Dict[str, Any],
     done: Dict[str, bool],
-) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
+) -> Tuple[Dict[str, Any], Dict[str, np.ndarray], Dict[str, Dict[str, Any]]]:
     actions: Dict[str, Any] = {}
     processed_obs: Dict[str, np.ndarray] = {}
+    controller_infos: Dict[str, Dict[str, Any]] = {}
 
     for bundle in ctx.team.agents:
         aid = bundle.agent_id
@@ -212,6 +213,10 @@ def _compute_actions(
             action = ctx.team.action(aid, action_raw)
             actions[aid] = action
             processed_obs[aid] = np.asarray(obs_vector, dtype=np.float32)
+            if np.isscalar(action_raw) or (
+                isinstance(action_raw, np.ndarray) and action_raw.ndim == 0
+            ):
+                controller_infos[aid] = {"action_index": int(np.asarray(action_raw).item())}
         elif hasattr(controller, "get_action"):
             action_space = ctx.env.action_space(aid)
             action = controller.get_action(action_space, obs[aid])
@@ -223,7 +228,7 @@ def _compute_actions(
         else:
             raise TypeError(f"Controller for agent '{aid}' does not expose an act/get_action method")
 
-    return actions, processed_obs
+    return actions, processed_obs, controller_infos
 
 
 def _prepare_next_observation(
@@ -381,7 +386,7 @@ def run_training(
             step_speed_values.fill(0.0)
             shaped_rewards.fill(0.0)
 
-            actions, processed_obs = _compute_actions(ctx, obs, done)
+            actions, processed_obs, controller_infos = _compute_actions(ctx, obs, done)
             if not actions:
                 break
 
@@ -434,6 +439,17 @@ def run_training(
                     next_wrapped = processed_obs[trainer_id]
 
                 shaped = float(shaped_rewards[agent_idx]) if agent_idx is not None else rewards.get(trainer_id, 0.0)
+                info_payload = infos.get(trainer_id)
+                extra_info = controller_infos.get(trainer_id)
+                if extra_info:
+                    merged_info: Dict[str, Any]
+                    if info_payload is None:
+                        merged_info = dict(extra_info)
+                    else:
+                        merged_info = dict(info_payload)
+                        merged_info.update(extra_info)
+                    info_payload = merged_info
+
                 transition = Transition(
                     agent_id=trainer_id,
                     obs=processed_obs[trainer_id],
@@ -442,7 +458,7 @@ def run_training(
                     next_obs=next_wrapped,
                     terminated=terminated,
                     truncated=truncated,
-                    info=infos.get(trainer_id),
+                    info=info_payload,
                     raw_obs=obs,
                 )
                 buffer = trajectory_buffers[trainer_id]

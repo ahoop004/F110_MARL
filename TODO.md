@@ -20,6 +20,11 @@
 ## Algorithm Baselines
 
 - [ ] Rainbow DQN attacker baseline (distributional targets, noisy nets, prioritized replay refresh).
+- [ ] Rate-based discrete control head for DQN attacker.
+  - [x] Integrate rate-based delta wrapper and builder plumbing.
+  - [ ] Tune steering/brake rates and document defaults per track.
+  - [ ] Add regression test covering replay index logging for rate mode.
+  - [ ] Benchmark vs absolute action grid (W&B sweep template).
 - [ ] RNN-PPO attacker variant with LSTM core and sequence batching.
 - [ ] DRQN / Deep Recurrent Q attacker for discrete throttle-steer grids.
 - [ ] MAPPO-style multi-agent PPO head for coordinated attackers.

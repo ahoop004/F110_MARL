@@ -100,17 +100,29 @@ class DQNAgent:
     ) -> None:
         if info is None:
             info = {}
-        # allow action passed as index or vector
-        if np.isscalar(action):
-            action_idx = int(action)
-            action_vec = self.action_set[action_idx]
+        action_arr: Optional[np.ndarray]
+        if np.isscalar(action) or (
+            isinstance(action, np.ndarray) and action.ndim == 0
+        ):
+            action_idx_fallback = int(np.asarray(action).item())
+            action_arr = self.action_set[action_idx_fallback]
         else:
-            action_vec = np.asarray(action, dtype=np.float32)
-            action_idx = self._action_to_index(action_vec)
+            action_arr = np.asarray(action, dtype=np.float32)
+            action_idx_fallback = self._action_to_index(action_arr, info)
+
         info = dict(info)
+        action_idx: int
+        if "action_index" in info:
+            action_idx = int(info["action_index"])
+        else:
+            action_idx = action_idx_fallback
         info["action_index"] = action_idx
+        action_vec = action_arr if action_arr is not None else self.action_set[action_idx]
         self.buffer.add(obs, action_vec, reward, next_obs, done, info)
         self.step_count += 1
+        if self.epsilon_decay_rate:
+            next_eps = self._epsilon_value * self.epsilon_decay_rate
+            self._epsilon_value = max(self.epsilon_end, next_eps)
 
         if done:
             self._advance_episode()
@@ -135,7 +147,13 @@ class DQNAgent:
         else:
             weights_t = torch.as_tensor(weights, dtype=torch.float32, device=self.device).squeeze(-1)
 
-        action_indices = [self._action_to_index(act, info) for act, info in zip(actions.cpu().numpy(), infos)]
+        action_indices = []
+        actions_np = actions.detach().cpu().numpy()
+        for act, info in zip(actions_np, infos):
+            if info and "action_index" in info:
+                action_indices.append(int(info["action_index"]))
+            else:
+                action_indices.append(self._action_to_index(act, info))
         action_indices = torch.as_tensor(action_indices, dtype=torch.long, device=self.device)
 
         q_values = self.q_net(obs)
@@ -190,10 +208,7 @@ class DQNAgent:
 
     def _advance_episode(self) -> None:
         self.episode_count += 1
-        if self.epsilon_decay_rate:
-            next_eps = self._epsilon_value * self.epsilon_decay_rate
-            self._epsilon_value = max(self.epsilon_end, next_eps)
-        else:
+        if not self.epsilon_decay_rate:
             self._epsilon_value = self._epsilon_from_counts()
 
     # -------------------- Persistence --------------------
@@ -229,9 +244,6 @@ class DQNAgent:
 
     def _initial_epsilon(self) -> float:
         if self.epsilon_decay_rate:
-            if self.episode_count:
-                decayed = self.epsilon_start * (self.epsilon_decay_rate ** self.episode_count)
-                return max(self.epsilon_end, decayed)
             return self.epsilon_start
         return self._epsilon_from_counts()
 

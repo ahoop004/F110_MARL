@@ -40,7 +40,7 @@ shared:  # Common building blocks reused across experiment profiles
     params:  # Tunables specific to the follow-gap controller
       max_speed: 18.0  # Upper speed bound enforced by the controller (m/s)
       min_speed: 3.0  # Lower speed bound to avoid stopping entirely
-      steering_gain: 0.85  # Proportional gain applied to steering corrections
+      steering_gain: 0.95  # Proportional gain applied to steering corrections
       bubble_radius: 3  # Distance ahead to ignore obstacles when selecting gaps (m)
       steer_smooth: 0.35  # Smoothing factor applied to steering commands
 
@@ -254,7 +254,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
     reward:
       <<: *reward_base
     dqn:
-      device: cuda  # Compute device used for DQN training
+      device: cpu  # Compute device used for DQN training
       lr: 0.0004  # Learning rate for the Q-network optimizer
       gamma: 0.99  # Discount factor used by the DQN backup
       batch_size: 512  # Mini-batch size sampled from replay
@@ -262,7 +262,7 @@ experiments:  # Concrete experiment profiles selectable via run.py
       target_update_interval: 500  # Steps between target network updates
       epsilon_start: 1.0  # Initial epsilon value for ε-greedy policy
       epsilon_end: 0.1  # Minimum epsilon after decay
-      epsilon_decay_rate: 0.9995  # Multiplicative epsilon decay factor per step
+      epsilon_decay_rate: 0.9995  # Multiplicative epsilon decay factor per environment step
       hidden_dims: [256, 256]  # Hidden layer sizes for the Q-network
       prioritized_replay: true  # Enable prioritized experience replay
       per_alpha: 0.6  # Priority exponent controlling sampling bias
@@ -270,32 +270,11 @@ experiments:  # Concrete experiment profiles selectable via run.py
       per_beta_increment: 0.00005  # Increment applied to β after each step
       per_min_priority: 0.001  # Minimum allowed priority to avoid zero sampling
       per_epsilon: 1.0e-6  # Small constant added to TD errors for stability
-      action_set:  # Discrete steering/throttle actions available to the attacker
-        - [-0.50, 2.0]  # Hard left, slow throttle
-        - [-0.25, 2.0]  # Medium left, slow throttle
-        - [0.0, 2.0]  # Straight, slow throttle
-        - [0.25, 2.0]  # Medium right, slow throttle
-        - [0.50, 2.0]  # Hard right, slow throttle
-        - [-0.50, 4.0]  # Hard left, medium throttle
-        - [-0.25, 4.0]  # Medium left, medium throttle
-        - [0.0, 4.0]  # Straight, medium throttle
-        - [0.25, 4.0]  # Medium right, medium throttle
-        - [0.50, 4.0]  # Hard right, medium throttle
-        - [-0.50, 6.0]  # Hard left, fast throttle
-        - [-0.25, 6.0]  # Medium left, fast throttle
-        - [0.0, 6.0]  # Straight, fast throttle
-        - [0.25, 6.0]  # Medium right, fast throttle
-        - [0.50, 6.0]  # Hard right, fast throttle
-        - [-0.50, 8.0]  # Hard left, faster throttle
-        - [-0.25, 8.0]  # Medium left, faster throttle
-        - [0.0, 8.0]  # Straight, faster throttle
-        - [0.25, 8.0]  # Medium right, faster throttle
-        - [0.50, 8.0]  # Hard right, faster throttle
-        - [-0.50, 10.0]  # Hard left, maximum throttle
-        - [-0.25, 10.0]  # Medium left, maximum throttle
-        - [0.0, 10.0]  # Straight, maximum throttle
-        - [0.25, 10.0]  # Medium right, maximum throttle
-        - [0.50, 10.0]  # Hard right, maximum throttle
+      action_mode: rate  # Use rate-based steering/throttle deltas integrated each step
+      steering_rate: 0.5  # Steering rate (rad/s) applied when choosing left/right
+      accel_rate: 2.0  # Forward acceleration rate (m/s²)
+      brake_rate: 4.0  # Braking deceleration rate (m/s²)
+      rate_initial_speed: 0.0  # Initial commanded speed for delta integration (m/s)
       train_episodes: *shared_train_episodes  # Training episodes allocated to DQN
       eval_episodes: *shared_eval_episodes  # Evaluation episodes for DQN checkpoints
       save_dir: checkpoints  # Directory for DQN checkpoints

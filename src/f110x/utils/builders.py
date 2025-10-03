@@ -620,12 +620,34 @@ def _build_algo_dqn(
     sample_obs = ctx.ensure_sample()
     obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
     dqn_cfg = _resolve_algorithm_config(ctx, assignment.spec)
-    if "action_set" not in dqn_cfg:
-        raise ValueError(
-            f"DQN agent '{agent_id}' requires an 'action_set' list in config or spec params"
-        )
-
     action_mode = str(dqn_cfg.get("action_mode", "absolute")).lower()
+
+    if action_mode == "rate":
+        timestep = float(dqn_cfg.get("rate_dt") or ctx.cfg.env.schema.timestep or 0.01)
+        if timestep <= 0:
+            raise ValueError("rate-based DQN requires a positive timestep")
+        steering_rate = abs(float(dqn_cfg.get("steering_rate", 0.5)))
+        accel_rate = abs(float(dqn_cfg.get("accel_rate", 2.0)))
+        brake_rate = abs(float(dqn_cfg.get("brake_rate", 4.0)))
+        steer_delta = steering_rate * timestep
+        accel_delta = accel_rate * timestep
+        brake_delta = -brake_rate * timestep
+        steer_options = (-steer_delta, 0.0, steer_delta)
+        pedal_options = (brake_delta, 0.0, accel_delta)
+        action_deltas = [[s, p] for s in steer_options for p in pedal_options]
+        dqn_cfg["action_set"] = action_deltas
+        dqn_cfg["action_deltas"] = action_deltas
+        rate_initial = [
+            float(dqn_cfg.get("rate_initial_steer", 0.0)),
+            float(dqn_cfg.get("rate_initial_speed", 0.0)),
+        ]
+    else:
+        if "action_set" not in dqn_cfg:
+            raise ValueError(
+                f"DQN agent '{agent_id}' requires an 'action_set' list in config or spec params"
+            )
+        rate_initial = None
+
     dqn_cfg["obs_dim"] = int(obs_vector.size)
 
     controller = DQNAgent(dqn_cfg)
@@ -635,6 +657,13 @@ def _build_algo_dqn(
             dqn_cfg.get("action_deltas", dqn_cfg["action_set"]),
             action_space.low,
             action_space.high,
+        )
+    elif action_mode == "rate":
+        action_wrapper = DeltaDiscreteActionWrapper(
+            dqn_cfg["action_deltas"],
+            action_space.low,
+            action_space.high,
+            initial_action=rate_initial,
         )
     else:
         action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])

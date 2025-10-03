@@ -42,6 +42,8 @@ class DeltaDiscreteActionWrapper:
         action_deltas: Iterable[Iterable[float]],
         low: Iterable[float],
         high: Iterable[float],
+        *,
+        initial_action: Optional[Iterable[float]] = None,
     ) -> None:
         delta_array = to_numpy(action_deltas)
         if delta_array.ndim != 2:
@@ -54,11 +56,15 @@ class DeltaDiscreteActionWrapper:
         if self.low.shape[0] != self._deltas.shape[1]:
             raise ValueError("delta dimensionality must match action bounds")
         self._state: Dict[str, np.ndarray] = {}
+        self._default_initial = (
+            None if initial_action is None else to_numpy(initial_action)
+        )
 
     def reset(self, agent_id: str, initial_action: Optional[Iterable[float]] = None) -> None:
-        if initial_action is None:
-            initial_action = np.zeros_like(self.low)
-        self._state[agent_id] = to_numpy(initial_action)
+        baseline = initial_action if initial_action is not None else self._default_initial
+        if baseline is None:
+            baseline = np.zeros_like(self.low)
+        self._state[agent_id] = to_numpy(baseline)
 
     def transform(self, agent_id: str, action: Any) -> np.ndarray:
         index = ensure_index(action)

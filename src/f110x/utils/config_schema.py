@@ -304,5 +304,12 @@ class DQNConfigSchema(BaseSchema):
     per_beta_increment: float = 0.0001
     per_min_priority: float = 0.001
     per_epsilon: float = 1e-6
+    action_mode: str = "absolute"
+    steering_rate: float = 0.5
+    accel_rate: float = 2.0
+    brake_rate: float = 4.0
+    rate_dt: Optional[float] = None
+    rate_initial_steer: float = 0.0
+    rate_initial_speed: float = 0.0
     action_set: List[List[float]] = field(default_factory=list)
     device: str = "cpu"
