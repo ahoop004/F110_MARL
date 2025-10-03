@@ -31,7 +31,6 @@ class RewardWrapper:
 
         mode_value = _ignored_kwargs.pop('mode', None) if isinstance(_ignored_kwargs, dict) else None
         self.mode = str(mode_value) if mode_value not in (None, '') else 'sparse'
-        self._unused_keys = dict(_ignored_kwargs) if _ignored_kwargs else {}
 
         self._success_awarded: Set[Tuple[str, str]] = set()
         self._returns: Dict[str, float] = {}

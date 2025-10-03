@@ -5,7 +5,7 @@
 import pyglet
 from pyglet.gl import *
 from pyglet.math import Mat4
-from pyglet.graphics import Group, ShaderGroup
+from pyglet.graphics import ShaderGroup
 
 import numpy as np
 from array import array
@@ -211,7 +211,7 @@ class EnvRenderer(pyglet.window.Window):
         self.zoomed_height = self.zoom_level * height
         self.hud_label.y = height - 10
 
-    def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
+    def on_mouse_drag(self, x, y, dx, dy, _buttons, _modifiers):
         self.left -= dx * self.zoom_level
         self.right -= dx * self.zoom_level
         self.bottom -= dy * self.zoom_level

@@ -88,20 +88,6 @@ class ReplayBuffer:
             batch["infos"] = infos
         return batch
 
-    def last(self) -> Transition:
-        if self._size == 0:
-            raise IndexError("ReplayBuffer is empty")
-        idx = (self._idx - 1) % self._size
-        return Transition(
-            obs=self._observations[idx].copy(),
-            action=self._actions[idx].copy(),
-            reward=float(self._rewards[idx]),
-            next_obs=self._next_observations[idx].copy(),
-            done=bool(self._dones[idx]),
-            info=self._infos[idx],
-        )
-
-
 class PrioritizedReplayBuffer(ReplayBuffer):
     """Proportional prioritized replay buffer with importance sampling weights."""
 

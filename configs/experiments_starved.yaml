@@ -1,4 +1,4 @@
-# Low-data training profiles tuned for ~500 training episodes.
+
 default_experiment: gaplock_ppo_starved
 
 shared:
@@ -130,7 +130,12 @@ experiments:
       update: 1
     reward:
       <<: *reward_base
-    reward_curriculum: *reward_curriculum
+    reward_curriculum:
+      - mode: basic
+        until: 60
+      - mode: pursuit
+        until: 120
+      - mode: adversarial
     agents:
       roster:
         - <<: *attacker_base
@@ -154,12 +159,13 @@ experiments:
       exploration_noise_final: 0.05
       exploration_noise_decay_steps: 50000
       hidden_dims: [256, 256]
-      train_episodes: *train_episodes
+      train_episodes: 150
       eval_episodes: *eval_episodes
       save_dir: checkpoints
       checkpoint_name: td3_starved.pt
     main:
       <<: *main_base
+      train_episodes: 150
       checkpoint: checkpoints/td3_starved.pt
       wandb:
         <<: *wandb_base

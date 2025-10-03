@@ -231,7 +231,6 @@ class ObservationAdapter:
         raw_obs: Dict[str, Any],
         agent_id: str,
         roster: RosterLayout,
-        current: Any = None,
     ) -> Any:
         target_id = self._resolve_target(agent_id, roster)
         return self.wrapper(raw_obs, agent_id, target_id)
@@ -278,21 +277,15 @@ class ObservationPipeline(Sequence[ObservationAdapter]):
     def stages(self) -> List[ObservationAdapter]:
         return list(self._stages)
 
-    @property
-    def names(self) -> List[str]:
-        return [stage.name for stage in self._stages]
-
     def transform(
         self,
         raw_obs: Dict[str, Any],
         agent_id: str,
         roster: RosterLayout,
-        *,
-        initial: Any = None,
     ) -> Any:
-        result: Any = raw_obs if initial is None else initial
+        result: Any = raw_obs
         for stage in self._stages:
-            result = stage(raw_obs, agent_id, roster, result)
+            result = stage(raw_obs, agent_id, roster)
         return result
 
     def to_vector(self, raw_obs: Dict[str, Any], agent_id: str, roster: RosterLayout) -> np.ndarray:
@@ -394,7 +387,6 @@ class AgentBuildContext:
     cfg: ExperimentConfig
     roster: RosterLayout
     sample_obs: Optional[Dict[str, Any]] = None
-    sample_infos: Optional[Dict[str, Any]] = None
 
     def ensure_sample(self) -> Dict[str, Any]:
         if self.sample_obs is None:
@@ -403,7 +395,8 @@ class AgentBuildContext:
                 reset_seed = None if seed is None else int(seed)
             except (TypeError, ValueError):
                 reset_seed = None
-            self.sample_obs, self.sample_infos = self.env.reset(seed=reset_seed)
+            sample_obs, _ = self.env.reset(seed=reset_seed)
+            self.sample_obs = sample_obs
         return self.sample_obs
 
 
@@ -722,21 +715,6 @@ def _build_algo_centerline(
         metadata={"note": "Placeholder centerline heuristic"},
     )
 
-
-def _unsupported_builder(name: str) -> AgentBuilderFn:
-    def builder(
-        assignment: AgentAssignment,
-        ctx: AgentBuildContext,
-        roster: RosterLayout,
-        pipeline: ObservationPipeline,
-    ) -> AgentBundle:
-        raise NotImplementedError(
-            f"Agent algorithm '{name}' is registered but does not have an implementation yet"
-        )
-
-    return builder
-
-
 AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "ppo": _build_algo_ppo,
     "rec_ppo": _build_algo_rec_ppo,
@@ -815,9 +793,6 @@ class AgentTeam:
         return iter(self._legacy_tuple)
 
     # Convenience accessors -------------------------------------------------
-    def policy(self, agent_id: str) -> Any:
-        return self.by_id[agent_id].controller
-
     def observation(self, agent_id: str, raw_obs: Dict[str, Any]) -> Any:
         bundle = self.by_id[agent_id]
         return bundle.obs_pipeline.transform(raw_obs, agent_id, self.roster)
@@ -828,10 +803,6 @@ class AgentTeam:
         if wrapper is None:
             return action
         return wrapper.transform(agent_id, action)
-
-    @property
-    def trainable_agents(self) -> List[str]:
-        return [bundle.agent_id for bundle in self.agents if bundle.trainable]
 
     def reset_actions(self) -> None:
         for bundle in self.agents:

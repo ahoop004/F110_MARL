@@ -21,7 +21,6 @@ class Transition:
     truncated: bool = False
     info: Optional[Dict[str, Any]] = None
     raw_obs: Optional[ObservationDict] = None
-    raw_next_obs: Optional[ObservationDict] = None
 
 
 class Trainer(Protocol):

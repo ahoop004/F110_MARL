@@ -114,8 +114,6 @@ class TD3Agent:
         next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
 
-        action_samples = actions.detach().cpu().numpy()
-
         with torch.no_grad():
             noise = (torch.randn_like(actions) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
             next_action = self.actor_target(next_obs)

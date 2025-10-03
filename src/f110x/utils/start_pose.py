@@ -35,17 +35,6 @@ def _pixel_to_world(map_data: MapData, px: int, py: int) -> Tuple[float, float]:
     y = py * resolution + origin[1]
     return float(x), float(y)
 
-
-def validate_pose_on_map(pose: np.ndarray, map_data: MapData) -> bool:
-    if not hasattr(map_data, "track_mask") or map_data.track_mask is None:
-        return True
-    px, py = _world_to_pixel(map_data, float(pose[0]), float(pose[1]))
-    mask = map_data.track_mask
-    if px < 0 or py < 0 or py >= mask.shape[0] or px >= mask.shape[1]:
-        return False
-    return bool(mask[py, px])
-
-
 def _project_to_track(pose: np.ndarray, map_data: MapData, max_radius: int = 20) -> np.ndarray:
     if map_data.track_mask is None:
         return pose

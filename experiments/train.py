@@ -270,23 +270,6 @@ def run_training(
     idle_speed_threshold = float(ctx.reward_cfg.get("idle_speed_threshold", 0.4))
     idle_patience_steps = int(ctx.reward_cfg.get("idle_patience_steps", 200))
 
-    log_blocklist = {
-        "policy_loss",
-        "value_loss",
-        "entropy",
-        "approx_kl",
-        "action_mean",
-        "action_std",
-        "action_abs_mean",
-        "raw_action_std",
-        "value_mean",
-        "value_std",
-        "adv_mean",
-        "adv_std",
-        "action_histogram",
-        "value_histogram",
-    }
-
     def emit_update_stats(stats: Optional[Dict[str, Any]]) -> None:
         # Caller requested return-only logging; skip optimizer metrics.
         return
@@ -461,7 +444,6 @@ def run_training(
                     truncated=truncated,
                     info=infos.get(trainer_id),
                     raw_obs=obs,
-                    raw_next_obs=next_obs,
                 )
                 buffer = trajectory_buffers[trainer_id]
                 flushed = buffer.append(transition)
@@ -654,20 +636,6 @@ def run_training(
 
 # Instantiate a default context for callers expecting module-level objects
 CTX = create_training_context()
-cfg = CTX.cfg
-env = CTX.env
-team = CTX.team
-ppo_agent = CTX.ppo_agent
-ppo_trainer = CTX.ppo_trainer
-PPO_AGENT = CTX.ppo_agent_id
-_opponents = CTX.opponent_ids
-GAP_AGENT = _opponents[0] if _opponents else None
-
-
-def run_mixed(environment: F110ParallelEnv, episodes: int = 5):
-    if environment is not env:
-        raise ValueError("run_mixed currently operates on the default env context")
-    return run_training(CTX, episodes)
 
 
 if __name__ == "__main__":

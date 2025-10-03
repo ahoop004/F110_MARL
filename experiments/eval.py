@@ -383,17 +383,6 @@ def evaluate(ctx: EvaluationContext, episodes: int = 20, force_render: bool = Fa
     return results
 
 
-# Instantiate default context for legacy imports
-CTX = create_evaluation_context()
-cfg = CTX.cfg
-env = CTX.env
-team = CTX.team
-ppo_agent = CTX.ppo_agent
-PPO_AGENT = CTX.ppo_agent_id
-_opponents = CTX.opponent_ids
-GAP_AGENT = _opponents[0] if _opponents else None
-
-
 if __name__ == "__main__":
     main_ctx = create_evaluation_context(auto_load=True)
     episodes = int(main_ctx.ppo_bundle.metadata.get("config", {}).get("eval_episodes", 20))

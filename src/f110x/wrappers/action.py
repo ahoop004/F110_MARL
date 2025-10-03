@@ -9,25 +9,6 @@ import numpy as np
 from f110x.wrappers.common import ensure_index, to_numpy
 
 
-class ContinuousActionWrapper:
-    """Scale normalized actions in [-1, 1] to environment bounds."""
-
-    def __init__(self, low: Iterable[float], high: Iterable[float]) -> None:
-        self.low = to_numpy(low)
-        self.high = to_numpy(high)
-        if self.low.shape != self.high.shape:
-            raise ValueError("low/high must have matching shapes")
-        self.range = self.high - self.low
-        if np.any(self.range <= 0):
-            raise ValueError("action range must be positive")
-
-    def transform(self, _agent_id: str, action: Iterable[float]) -> np.ndarray:
-        action_arr = to_numpy(action)
-        clipped = np.clip(action_arr, -1.0, 1.0)
-        midpoint = (self.low + self.high) / 2.0
-        return clipped * (self.range / 2.0) + midpoint
-
-
 class DiscreteActionWrapper:
     """Map discrete action indices to continuous control primitives."""
 
@@ -51,11 +32,6 @@ class DiscreteActionWrapper:
 
     def index_to_action(self, index: int) -> np.ndarray:
         return self._actions[index].copy()
-
-    def action_to_index(self, action: Iterable[float]) -> int:
-        action_arr = to_numpy(action)
-        diffs = np.linalg.norm(self._actions - action_arr, axis=1)
-        return int(np.argmin(diffs))
 
 
 class DeltaDiscreteActionWrapper:

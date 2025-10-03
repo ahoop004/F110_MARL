@@ -117,32 +117,6 @@ class MapLoader:
             track_mask=track_mask,
         )
 
-    def augment_config(self, env_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        data = self.load(env_cfg)
-        augmented = dict(env_cfg)
-        augmented["map_meta"] = data.metadata
-        augmented["map_image_path"] = str(data.image_path)
-        augmented["map_image_size"] = data.image_size
-        augmented["map_yaml_path"] = str(data.yaml_path)
-        return augmented
-
-    def invalidate(self, map_dir: Path | None = None, map_yaml: str | None = None) -> None:
-        """Invalidate cached map data.
-
-        If both arguments are provided, only that entry is removed. Otherwise clears
-        the entire cache.
-        """
-
-        if map_dir is None and map_yaml is None:
-            self._cache.clear()
-            return
-
-        if map_dir is None or map_yaml is None:
-            raise ValueError("Both map_dir and map_yaml must be provided to invalidate a specific entry")
-
-        cache_key = (str(self._resolve_path(Path(map_dir))), map_yaml)
-        self._cache.pop(cache_key, None)
-
 
 @dataclass
 class _CachedMap:

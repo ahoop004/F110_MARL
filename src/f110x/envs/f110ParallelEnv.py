@@ -1,18 +1,15 @@
-import functools
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Any, List
 import gymnasium as gym
-from gymnasium import error, spaces, utils
+from gymnasium import spaces
 import yaml
 from PIL import Image
 
 from pettingzoo import ParallelEnv
-from pettingzoo.utils import parallel_to_aec, wrappers
 
 # base classes
 from f110x.physics import Simulator, Integrator
 from f110x.render import EnvRenderer
-from f110x.envs.lidar import LidarProcessor
 from f110x.envs.start_pose_state import StartPoseState
 from f110x.envs.collision import build_terminations
 from f110x.envs.state_buffer import StateBuffers
@@ -59,8 +56,6 @@ class F110ParallelEnv(ParallelEnv):
         self.render_mode = merged.get("render_mode", "human")
         self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
         self.renderer: Optional[EnvRenderer] = None
-        self.current_obs = None
-        self.render_callbacks: List[Any] = []
         headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
         self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
         mode = (self.render_mode or "").lower()
@@ -120,7 +115,6 @@ class F110ParallelEnv(ParallelEnv):
 
         self.map_path = (self.map_dir / f"{self.map_name}").resolve()
         self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
-        self.map_base = self.yaml_path.with_suffix("")
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
         defaults = {'mu': 1.0489,
                     'C_Sf': 4.718,
@@ -150,10 +144,8 @@ class F110ParallelEnv(ParallelEnv):
             self.lidar_beams = 1080
         self.lidar_range = float(merged.get("lidar_range", 30.0))
         self._lidar_beam_count = max(int(self.lidar_beams), 1)
-        self.lidar_processor = LidarProcessor(self._lidar_beam_count)
 
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
-        self.start_thresh: float = float(merged.get("start_thresh", 0.5))
         
         self.state_buffers = StateBuffers.build(self.n_agents)
         self._bind_state_views()
@@ -250,27 +242,9 @@ class F110ParallelEnv(ParallelEnv):
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
         }
-        
-    def __del__(self):
-
-        pass
-    
-    def observation_space(self, agent: str):
-        return self.observation_spaces[agent]
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
-
-    def env_info(self) -> Dict[str, Any]:
-        return {
-            "possible_agents": tuple(self.possible_agents),
-            "num_agents": self.n_agents,
-            "observation_space": self._single_observation_space,
-            "action_space": self._single_action_space,
-            "observation_spaces": dict(self.observation_spaces),
-            "action_spaces": dict(self.action_spaces),
-            "state_space": self._state_space,
-        }
 
     def _update_state(self, obs_dict):
         self.state_buffers.update(obs_dict)
@@ -312,7 +286,7 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        if self._collect_render_data or self.render_callbacks:
+        if self._collect_render_data:
             self.render_obs = {}
             agent_index = self._agent_id_to_index
             for aid in self.agents:
@@ -353,7 +327,7 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        if self._collect_render_data or self.render_callbacks:
+        if self._collect_render_data:
             self.render_obs = {}
             agent_index = self._agent_id_to_index
             for aid in self.agents:
@@ -427,7 +401,6 @@ class F110ParallelEnv(ParallelEnv):
             img_path = (path.parent / image_rel).resolve()
         else:
             img_path = path.with_suffix(map_ext)
-
         self.map_meta = meta
         self.map_image_path = img_path
 
@@ -444,10 +417,6 @@ class F110ParallelEnv(ParallelEnv):
     def update_params(self, params, index=-1):
 
         self.sim.update_params(params, agent_idx=index)
-
-    def add_render_callback(self, callback_func):
-        self.render_callbacks.append(callback_func)
-        self._collect_render_data = True
 
     def render(self):
         assert self.render_mode in ["human", "rgb_array"]
@@ -472,9 +441,6 @@ class F110ParallelEnv(ParallelEnv):
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
 
-        for render_callback in self.render_callbacks:
-            render_callback(self.renderer)
-
         self.renderer.dispatch_events()
         self.renderer.on_draw()
         self.renderer.flip()
@@ -497,9 +463,6 @@ class F110ParallelEnv(ParallelEnv):
     def _build_observation_spaces(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
         pose_low = np.array([x_min, y_min, -np.pi], dtype=np.float32)
         pose_high = np.array([x_max, y_max, np.pi], dtype=np.float32)
-        self._pose_low = pose_low
-        self._pose_high = pose_high
-
         v_min = float(self.params.get("v_min", -5.0))
         v_max = float(self.params.get("v_max", 20.0))
         vel_low = np.array([v_min, v_min], dtype=np.float32)
@@ -559,24 +522,21 @@ class F110ParallelEnv(ParallelEnv):
             obs_spaces[aid] = spaces.Dict(components)
 
         if obs_spaces:
-            self._single_observation_space = next(iter(obs_spaces.values()))
+            self.observation_spaces = obs_spaces
         else:
-            self._single_observation_space = spaces.Dict({
-                "state": spaces.Box(
-                    -np.inf,
-                    np.inf,
-                    shape=(self._central_state_dim,),
-                    dtype=np.float32,
+            self.observation_spaces = {
+                aid: spaces.Dict(
+                    {
+                        "state": spaces.Box(
+                            -np.inf,
+                            np.inf,
+                            shape=(self._central_state_dim,),
+                            dtype=np.float32,
+                        )
+                    }
                 )
-            })
-        self.observation_spaces = obs_spaces
-        self._state_space = self._single_observation_space["state"]
-
-    def _select_lidar(self, scan: np.ndarray) -> np.ndarray:
-        scan_array = np.asarray(scan, dtype=np.float32)
-        if self.lidar_processor.beam_count != self._lidar_beam_count:
-            self.lidar_processor.update_beam_count(self._lidar_beam_count)
-        return self.lidar_processor.select(scan_array)
+                for aid in self.possible_agents
+            }
 
     def _bind_state_views(self) -> None:
         """Expose state buffer arrays as legacy attributes expected by callers."""
@@ -718,24 +678,3 @@ class F110ParallelEnv(ParallelEnv):
 
         return out
     
-    def _zero_joint_actions(self) -> np.ndarray:
-        """
-        Returns a joint action array of shape (n_agents, action_dim)
-        filled with zeros or neutral actions so that sim.step() produces
-        valid observations without causing movement or collisions.
-        """
-
-        # determine dims, using current agents list
-        n = len(self.possible_agents)
-        # assuming actions are 2-dimensional: [steer, throttle]
-        action_dim = 2
-
-        joint = np.zeros((n, action_dim), dtype=np.float32)
-
-        # If your action space has different structure or normalization, adapt here.
-        # For example, if throttle neutral is 0.5, or steer neutral is mid-value.
-        # E.g. if action[1] in [-1,1] means throttle, maybe use 0.
-        # If your action_space sample() method gives a neutral, you can do:
-        #   joint[i] = self.action_space(self.possible_agents[i]).sample() * 0
-        #
-        return joint

@@ -158,13 +158,8 @@ class DQNAgent:
         if self.step_count % self.target_update_interval == 0:
             self.target_q_net.load_state_dict(self.q_net.state_dict())
 
-        q_values_np = q_values.detach().cpu().numpy()
-        chosen_q_np = chosen_q.detach().cpu().numpy()
-        target_np = target.detach().cpu().numpy()
-        td_error_np = td_errors.detach().cpu().numpy()
-        action_indices_np = action_indices.detach().cpu().numpy()
-
         if self._use_per and indices is not None:
+            td_error_np = td_errors.detach().cpu().numpy()
             self.buffer.update_priorities(np.asarray(indices), td_error_np)
 
         # metrics: Dict[str, Any] = {

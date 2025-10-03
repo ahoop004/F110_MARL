@@ -244,7 +244,6 @@ class PPOAgent:
 
         # Convert buffers -> tensors
         obs = torch.as_tensor(np.asarray(self.obs_buf), dtype=torch.float32, device=self.device)
-        acts = torch.as_tensor(np.asarray(self.act_buf), dtype=torch.float32, device=self.device)
         raw_actions = torch.as_tensor(np.asarray(self.raw_act_buf), dtype=torch.float32, device=self.device)
         logp_old = torch.as_tensor(np.asarray(self.logp_buf), dtype=torch.float32, device=self.device)
         adv  = torch.as_tensor(self.adv_buf, dtype=torch.float32, device=self.device)
@@ -267,7 +266,6 @@ class PPOAgent:
                 mb_idx = idx[start:end]
 
                 ob_b   = obs[mb_idx]
-                act_b  = acts[mb_idx]
                 raw_b  = raw_actions[mb_idx]
                 squashed_b = torch.tanh(raw_b)
                 adv_b  = adv[mb_idx]
@@ -309,13 +307,6 @@ class PPOAgent:
                     torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                 self.actor_opt.step()
                 self.critic_opt.step()
-
-        # fresh rollout next time
-        action_np = acts.detach().cpu().numpy() if acts.numel() else np.zeros((0, self.act_dim), dtype=np.float32)
-        raw_action_np = raw_actions.detach().cpu().numpy() if raw_actions.numel() else np.zeros((0, self.act_dim), dtype=np.float32)
-        adv_np = adv.detach().cpu().numpy() if adv.numel() else np.zeros(0, dtype=np.float32)
-        with torch.no_grad():
-            value_pred_np = self.critic(obs).detach().cpu().numpy() if obs.numel() else np.zeros(0, dtype=np.float32)
 
         self.reset_buffer()
 
