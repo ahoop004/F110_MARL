@@ -1,21 +1,61 @@
 # TODO
 
-## Configuration Architecture
+## High-Priority · Redundancy & Engine Cleanup
 
-- [x] Establish scenario-first configuration flow (manifests override schema defaults directly).
-- [x] Implement manifest loader and CLI support (`--scenario`, `F110_CONFIG`/`F110_EXPERIMENT`).
-- [x] Convert legacy experiments into scenario manifests (gaplock, starved, multi-agent variants).
+- [x] Retire the legacy simulator duplicate in `src/f110x/physics/base_classes.py` or collapse it into a compatibility shim.
+- [x] Share a single `Integrator` enum between `src/f110x/physics/simulaton.py` and `src/f110x/physics/vehicle.py`.
+- [x] Extract the repeated render-observer assembly block in `src/f110x/envs/f110ParallelEnv.py` into a shared helper.
+- [x] Audit remaining legacy runner/trainer shims and remove them once downstream imports are migrated to the new packages.
+
+## High-Priority · Testing & Regression
+
+- [ ] Add unit/integration coverage for `utils/config.load_config`, runner context creation, engine builder, rollout loop, and trainer registry resolution.
+- [ ] Add smoke tests covering the new logger façade and runner wiring (train/eval).
+- [ ] Run regression passes with baseline PPO and DQN scenarios to validate the extraction path.
+
+## High-Priority · MARL Enablement
+
+### Multi-Agent Roster & Training
+
+- [ ] Update experiment configs to roster two attackers plus one defender (agent counts, start pose options, roster entries).
+- [ ] Refactor roster/team role handling so multiple attackers can share a role without collisions.
+- [ ] Extend reward shaping to always target the defender when several attackers participate.
+- [ ] Rework training and evaluation loops for per-attacker metrics, checkpointing, and success criteria.
+- [ ] Land coordinated multi-agent trainers (e.g., MADDPG, MATD3) and hook them into the builder registry.
+- [ ] Add integration tests covering multi-attacker rollouts and reward bookkeeping.
+- [ ] Add per-role observation pipelines (target resolution, shared embeddings, central-state features).
+- [ ] Centralise replay/logging utilities for shared critics and parameter-sharing policies.
+- [ ] Stand up self-play scheduling and defender co-training (curriculum, cross-play evaluation).
+- [ ] Build scenario randomisation hooks (start poses, map subsets, vehicle params) tuned for multi-agent runs.
+
+### Async / Distributed Infrastructure
+
+- [ ] Wrap `engine/rollout.run_episode()` in a rollout actor interface usable by subprocess or remote workers.
+- [ ] Introduce a pluggable `ExperienceSource` (local iterator vs async queue) so trainers stay transport-agnostic.
+- [ ] Expose lightweight policy sync hooks (`get_policy_snapshot`, `sync_policy`) on trainers/agents for stale weight refresh.
+- [ ] Thread logger and checkpoint broadcasts through the coordinator so metric tags include actor/agent IDs.
+- [ ] Build a minimal async regression test (single learner + >1 worker) before scaling to cluster deployments.
+
+### Continuation & Resume
+
+- [ ] Build checkpoint resume + experiment continuation workflow leveraging the new context and logger utilities.
+- [ ] Simplify CLI entrypoints once legacy flags are retired (e.g., `python main.py train --algo ppo --episodes 1000`).
+
+## Secondary · Configuration & Reward
+
+### Configuration Architecture
+
 - [ ] Polish scenario manifests (remove redundant overrides, ensure consistent `algo`/`config_ref` usage).
-- [ ] Make sure scenario `reward.mode` takes effect without an explicit curriculum (adjust `_resolve_reward_mode` defaults or seed a matching curriculum stage).
-- [ ] Audit manifests for redundant keys/wrappers (e.g., drop duplicate `env.map` aliases and remove unused heuristic observation pipelines).
+- [ ] Make sure scenario `reward.mode` takes effect without an explicit curriculum (adjust defaults or seed a matching stage).
+- [ ] Audit manifests for redundant keys/wrappers (drop duplicate `env.map` aliases, remove unused heuristic pipelines).
 - [ ] Update tests & tooling to consume scenarios (`tests/resources/test_env_config.yaml`, sweep configs, docs examples).
-- [ ] Document the scenario workflow (adding maps/agents, available override keys, migration tips).
+- [ ] Document the scenario workflow (adding maps/agents, override keys, migration tips).
 
-## Reward Enhancements
+### Reward Enhancements
 
 - [ ] Reward mode curriculum that transitions from progress shaping to sparse gaplock bonuses.
   - [ ] Define curriculum schedule template and config knobs.
-  - [ ] Wire the schedule into reward wrapper factory and add tests.
+  - [ ] Wire the schedule into the reward wrapper factory and add tests.
   - [ ] Document recommended usage in README / configs.
 - [ ] Centerline projection diagnostics and tooling.
   - [ ] CLI or notebook to visualise centerline projection errors on recorded trajectories.
@@ -25,7 +65,7 @@
   - [ ] Log per-episode progress, fastest lap time, and centerline error statistics.
   - [ ] Surface metrics in evaluation summaries and W&B reporting.
 
-## Experiment Templates
+## Secondary · Experiment Templates
 
 - [ ] Create dedicated `gaplock_dqn_progress` experiment profile.
   - [ ] Tune progress reward weights and DQN hyperparams.
@@ -37,21 +77,7 @@
   - [ ] Persist selection metadata to logs for reproducibility.
   - [ ] Document the YAML schema and configuration options.
 
-## Map Asset Packaging
-
-- [x] Restructure map assets into per-map folders bundling YAML, image (png/pgm), centerline CSV, and wall CSV files.
-- [x] Update `MapLoader` resolution logic to support nested map directories and normalise relative asset paths.
-- [x] Adjust configuration parsing/CLI plumbing so `map_yaml` / `map` entries and builder logic resolve foldered maps gracefully (with backwards-compatible fallbacks).
-- [x] Refresh scripts/tests (e.g., `map_validator.py`, fixtures) to cover the new directory structure.
-- [x] Document the folder convention and migration steps in README and user guides.
-
-## Render Controls
-
-- [x] Add renderer tracking toggles (follow attacker/defender/free camera).
-- [x] Restore and expose zoom controls via keyboard/mouse bindings.
-- [x] Implement viewport pan/“move view” shortcuts and document usage in README.
-
-## Algorithm Baselines
+## Secondary · Algorithm Baselines
 
 - [ ] Rate-based discrete control head for DQN attacker.
   - [ ] Tune steering/brake rates and document defaults per track.
@@ -67,20 +93,7 @@
 - [ ] Offline baselines (CQL/IQL) seeded from logged self-play rollouts.
 - [ ] Behaviour cloning / DAgger attacker from expert defender trajectories as a warm-start.
 
-## Multi-Agent Support
-
-- [ ] Update experiment configs to roster two attackers plus one defender (n_agents, start pose options, roster entries).
-- [ ] Refactor roster/team role handling so multiple attackers can share a role without collisions.
-- [ ] Extend reward shaping to always target the defender when several attackers participate.
-- [ ] Rework training and evaluation loops for per-attacker metrics, checkpointing, and success criteria.
-- [ ] Land coordinated multi-agent trainers (e.g. MADDPG, MATD3) and hook them into the builder registry.
-- [ ] Add integration tests covering multi-attacker rollouts and reward bookkeeping.
-- [ ] Add per-role observation pipelines (target resolution, shared embeddings, central-state features).
-- [ ] Centralise replay/logging utilities for shared critics and parameter-sharing policies.
-- [ ] Stand up self-play scheduling and defender co-training (curriculum, cross-play evaluation).
-- [ ] Build scenario randomisation hooks (start poses, map subsets, vehicle params) tuned for multi-agent runs.
-
-## Experiment Ops
+## Secondary · Experiment Ops
 
 - [ ] Bundle run artifacts (config, git SHA, metrics) into a single manifest per training job.
 - [ ] Define resource envelopes for large sweeps (GPU/CPU concurrency, storage layout, retention policy).

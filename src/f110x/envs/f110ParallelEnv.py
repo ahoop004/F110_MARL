@@ -254,6 +254,37 @@ class F110ParallelEnv(ParallelEnv):
     def _update_state(self, obs_dict):
         self.state_buffers.update(obs_dict)
 
+    def _refresh_render_observations(self, obs: Dict[str, Dict[str, Any]]) -> None:
+        if not self._collect_render_data:
+            self.render_obs = {}
+            return
+
+        render_obs: Dict[str, Dict[str, Any]] = {}
+        agent_index = self._agent_id_to_index
+        for aid in self.agents:
+            idx = agent_index[aid]
+            entry = {
+                "poses_x": float(self.poses_x[idx]),
+                "poses_y": float(self.poses_y[idx]),
+                "poses_theta": float(self.poses_theta[idx]),
+                "pose": np.array([
+                    float(self.poses_x[idx]),
+                    float(self.poses_y[idx]),
+                    float(self.poses_theta[idx])
+                ], dtype=np.float32),
+                "lap_time": float(self.lap_times[idx]),
+                "lap_count": int(self.lap_counts[idx]),
+                "collision": bool(self.collisions[idx]),
+            }
+            agent_obs = obs.get(aid) if obs is not None else None
+            if agent_obs is not None:
+                scan_entry = agent_obs.get("scans")
+                if scan_entry is not None:
+                    entry["scans"] = scan_entry
+            render_obs[aid] = entry
+
+        self.render_obs = render_obs
+
    
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
@@ -295,30 +326,7 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        if self._collect_render_data:
-            self.render_obs = {}
-            agent_index = self._agent_id_to_index
-            for aid in self.agents:
-                idx = agent_index[aid]
-                render_entry = {
-                    "poses_x": float(self.poses_x[idx]),
-                    "poses_y": float(self.poses_y[idx]),
-                    "poses_theta": float(self.poses_theta[idx]),
-                    "pose": np.array([
-                        float(self.poses_x[idx]),
-                        float(self.poses_y[idx]),
-                        float(self.poses_theta[idx])
-                    ], dtype=np.float32),
-                    "lap_time":  float(self.lap_times[idx]),
-                    "lap_count": int(self.lap_counts[idx]),
-                    "collision": bool(self.collisions[idx])
-                }
-                scan_entry = obs[aid].get("scans")
-                if scan_entry is not None:
-                    render_entry["scans"] = scan_entry
-                self.render_obs[aid] = render_entry
-        else:
-            self.render_obs = {}
+        self._refresh_render_observations(obs)
 
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -336,30 +344,7 @@ class F110ParallelEnv(ParallelEnv):
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        if self._collect_render_data:
-            self.render_obs = {}
-            agent_index = self._agent_id_to_index
-            for aid in self.agents:
-                idx = agent_index[aid]
-                render_entry = {
-                    "poses_x": float(self.poses_x[idx]),
-                    "poses_y": float(self.poses_y[idx]),
-                    "poses_theta": float(self.poses_theta[idx]),
-                    "pose": np.array([
-                        float(self.poses_x[idx]),
-                        float(self.poses_y[idx]),
-                        float(self.poses_theta[idx])
-                    ], dtype=np.float32),
-                    "lap_time":  float(self.lap_times[idx]),
-                    "lap_count": int(self.lap_counts[idx]),
-                    "collision": bool(self.collisions[idx])
-                }
-                scan_entry = obs[aid].get("scans")
-                if scan_entry is not None:
-                    render_entry["scans"] = scan_entry
-                self.render_obs[aid] = render_entry
-        else:
-            self.render_obs = {}
+        self._refresh_render_observations(obs)
 
         self.current_time += self.timestep
         lap_completion = self.start_state.update_progress(

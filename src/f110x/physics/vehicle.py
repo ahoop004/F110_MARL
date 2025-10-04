@@ -1,17 +1,12 @@
-from enum import Enum
 import warnings
 
 import numpy as np
 from numba import njit
 
 from f110x.physics.dynamic_models import vehicle_dynamics_st, pid
+from f110x.physics.integration import Integrator
 from f110x.physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from f110x.physics.collision_models import get_vertices
-
-
-class Integrator(Enum):
-    RK4 = "RK4"
-    Euler = "Euler"
 
 
 class RaceCar(object):

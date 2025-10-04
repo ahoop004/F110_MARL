@@ -1,10 +1,10 @@
 
-from enum import Enum
 import warnings
 
 import numpy as np
 from numba import njit
 
+from f110x.physics.integration import Integrator
 from f110x.physics.vehicle import RaceCar
 from f110x.physics.collision_models import get_vertices, collision_multiple
 
@@ -34,11 +34,6 @@ def _merge_collision_results(
         else:
             out_collisions[i] = 0.0
             out_indices[i] = -1
-
-
-class Integrator(Enum):
-    RK4 = "RK4"
-    Euler = "Euler"
 
 
 class Simulator(object):
@@ -73,7 +68,7 @@ class Simulator(object):
         self.seed = seed
         self.time_step = time_step
         self.num_beams = int(num_beams)
-        if isinstance(integrator, Enum):
+        if isinstance(integrator, Integrator):
             integrator = integrator.value
         self.integrator = str(integrator)
 
