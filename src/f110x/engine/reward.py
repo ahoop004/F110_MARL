@@ -63,6 +63,7 @@ def build_reward_wrapper(
     episode_idx: int,
     *,
     curriculum: CurriculumSchedule,
+    roster: Optional[Any] = None,
 ) -> RewardWrapper:
     """Construct a reward wrapper instance for the given episode."""
 
@@ -70,7 +71,7 @@ def build_reward_wrapper(
     mode = resolve_reward_mode(curriculum, episode_idx)
     wrapper_cfg["mode"] = mode
 
-    runtime_context = RewardRuntimeContext(env=env, map_data=map_data)
+    runtime_context = RewardRuntimeContext(env=env, map_data=map_data, roster=roster)
     wrapper = RewardWrapper(config=wrapper_cfg, context=runtime_context)
     wrapper.reset(episode_idx)
     return wrapper

@@ -225,25 +225,42 @@ class RosterLayout:
     def __post_init__(self) -> None:
         by_id: Dict[str, AgentAssignment] = {}
         by_slot: Dict[int, AgentAssignment] = {}
-        by_role: Dict[str, AgentAssignment] = {}
+        by_role: Dict[str, List[AgentAssignment]] = {}
         for assignment in self.assignments:
             by_id[assignment.agent_id] = assignment
             by_slot[assignment.slot] = assignment
             role = assignment.spec.role
             if role:
-                by_role[role] = assignment
+                by_role.setdefault(role, []).append(assignment)
         self._by_id = by_id
         self._by_slot = by_slot
-        self._by_role = by_role
+        self._by_role = {role: list(assignments) for role, assignments in by_role.items()}
 
     # Lookups ---------------------------------------------------------------
     def resolve_slot(self, slot: int) -> Optional[str]:
         assignment = self._by_slot.get(slot)
         return assignment.agent_id if assignment else None
 
-    def resolve_role(self, role: str) -> Optional[str]:
-        assignment = self._by_role.get(role)
-        return assignment.agent_id if assignment else None
+    def resolve_role(
+        self,
+        role: str,
+        *,
+        index: int = 0,
+        exclude: Optional[str] = None,
+    ) -> Optional[str]:
+        if not role:
+            return None
+
+        assignments = list(self._by_role.get(role, ()))
+        if exclude is not None:
+            assignments = [assn for assn in assignments if assn.agent_id != exclude]
+
+        if not assignments:
+            return None
+
+        count = len(assignments)
+        normalized_index = index % count if count else 0
+        return assignments[normalized_index].agent_id
 
     def first_other(self, agent_id: str) -> Optional[str]:
         for other_id in self._by_id.keys():
@@ -256,12 +273,16 @@ class RosterLayout:
         return [assignment.agent_id for assignment in self.assignments]
 
     @property
-    def roles(self) -> Dict[str, str]:
+    def roles(self) -> Dict[str, List[str]]:
         return {
-            assignment.spec.role: assignment.agent_id
-            for assignment in self.assignments
-            if assignment.spec.role
+            role: [assn.agent_id for assn in assignments]
+            for role, assignments in self._by_role.items()
         }
+
+    def role_ids(self, role: str) -> List[str]:
+        if not role:
+            return []
+        return [assn.agent_id for assn in self._by_role.get(role, [])]
 
 
 def _compile_roster(cfg: ExperimentConfig, env: F110ParallelEnv) -> RosterLayout:
@@ -378,8 +399,8 @@ class ObservationAdapter:
             return explicit
 
         if self.target_role is not None:
-            resolved = roster.resolve_role(self.target_role)
-            if resolved is not None and resolved != agent_id:
+            resolved = roster.resolve_role(self.target_role, exclude=agent_id)
+            if resolved is not None:
                 return resolved
 
         if self.target_slot is not None:
@@ -946,9 +967,12 @@ class AgentTeam:
 
     def __post_init__(self) -> None:
         self.by_id: Dict[str, AgentBundle] = {bundle.agent_id: bundle for bundle in self.agents}
-        self.roles: Dict[str, str] = {
-            bundle.role: bundle.agent_id for bundle in self.agents if bundle.role
-        }
+        role_map: Dict[str, List[str]] = {}
+        for bundle in self.agents:
+            if not bundle.role:
+                continue
+            role_map.setdefault(bundle.role, []).append(bundle.agent_id)
+        self.roles: Dict[str, List[str]] = role_map
         self._legacy_tuple: Optional[Tuple[Any, Any, str, str, ObsWrapper]] = self._compute_legacy_tuple()
         self.trainers: Dict[str, Trainer] = {
             bundle.agent_id: bundle.trainer
@@ -1018,6 +1042,22 @@ class AgentTeam:
             controller_reset = getattr(bundle.controller, "reset_hidden_state", None)
             if callable(controller_reset):
                 controller_reset()
+
+    # Role helpers ---------------------------------------------------------
+    def role_ids(self, role: str) -> List[str]:
+        """Return all agent identifiers bound to a given role."""
+
+        if not role:
+            return []
+        return list(self.roles.get(role, []))
+
+    def primary_role(self, role: str) -> Optional[str]:
+        """Return the first declared agent identifier for a role, if unique."""
+
+        members = self.role_ids(role)
+        if len(members) == 1:
+            return members[0]
+        return None
 
 
 # ---------------------------------------------------------------------------

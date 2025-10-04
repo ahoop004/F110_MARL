@@ -132,8 +132,8 @@ class EvalRunner:
         results: List[Dict[str, Any]] = []
 
         primary_id = self.primary_agent_id
-        attacker_id = team.roles.get("attacker", primary_id)
-        defender_id = team.roles.get("defender")
+        attacker_id = team.primary_role("attacker")
+        defender_id = team.primary_role("defender")
         agent_ids = list(env.possible_agents)
 
         logger = self._logger
@@ -161,6 +161,7 @@ class EvalRunner:
                 map_data=self.context.map_data,
                 episode_idx=ep_index,
                 curriculum=self.context.curriculum_schedule,
+                roster=team.roster,
             )
 
         def compute_actions(obs: Dict[str, Any], done: Dict[str, bool]):
@@ -219,10 +220,21 @@ class EvalRunner:
 
             lap_counts = self._extract_lap_counts(env, agent_ids)
 
-            defender_crashed = bool(defender_id and collision_steps.get(defender_id) is not None)
-            attacker_crashed = bool(attacker_id and collision_steps.get(attacker_id) is not None)
-            defender_crash_step = collision_steps.get(defender_id)
-            attacker_crash_step = collision_steps.get(attacker_id)
+            defender_crashed: Optional[bool] = None
+            defender_crash_step: Optional[int] = None
+            if defender_id is not None:
+                defender_step = collision_steps.get(defender_id)
+                defender_crashed = defender_step is not None
+                if defender_step is not None:
+                    defender_crash_step = int(defender_step)
+
+            attacker_crashed: Optional[bool] = None
+            attacker_crash_step: Optional[int] = None
+            if attacker_id is not None:
+                attacker_step = collision_steps.get(attacker_id)
+                attacker_crashed = attacker_step is not None
+                if attacker_step is not None:
+                    attacker_crash_step = int(attacker_step)
 
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
@@ -247,19 +259,21 @@ class EvalRunner:
             for aid in agent_ids:
                 record[f"avg_speed_{aid}"] = float(rollout.average_speeds.get(aid, 0.0))
 
-            if attacker_id in rollout.average_speeds:
+            if attacker_id and attacker_id in rollout.average_speeds:
                 record["avg_speed_attacker"] = float(rollout.average_speeds.get(attacker_id, 0.0))
-            if defender_id:
+            if defender_id and defender_id in rollout.average_speeds:
                 record["avg_speed_defender"] = float(rollout.average_speeds.get(defender_id, 0.0))
+            if defender_crashed is not None:
                 record["defender_crashed"] = defender_crashed
-                if defender_crash_step is not None:
-                    record["defender_crash_step"] = int(defender_crash_step)
-                    record["defender_survival_steps"] = int(defender_crash_step)
-                else:
-                    record["defender_survival_steps"] = rollout.steps
-            record["attacker_crashed"] = attacker_crashed
+            if defender_crash_step is not None:
+                record["defender_crash_step"] = defender_crash_step
+                record["defender_survival_steps"] = defender_crash_step
+            elif defender_id is not None:
+                record["defender_survival_steps"] = rollout.steps
+            if attacker_crashed is not None:
+                record["attacker_crashed"] = attacker_crashed
             if attacker_crash_step is not None:
-                record["attacker_crash_step"] = int(attacker_crash_step)
+                record["attacker_crash_step"] = attacker_crash_step
 
             defender_survival_steps_value = record.get("defender_survival_steps")
 
@@ -276,12 +290,14 @@ class EvalRunner:
                 "eval/steps": float(rollout.steps),
                 "eval/cause": rollout.cause,
                 "eval/collisions_total": float(collision_total),
-                "eval/defender_crashed": defender_crashed,
-                "eval/attacker_crashed": attacker_crashed,
             }
             if primary_id:
                 metrics["eval/primary_agent"] = primary_id
             metrics["eval/primary_return"] = float(returns.get(primary_id, 0.0))
+            if defender_crashed is not None:
+                metrics["eval/defender_crashed"] = bool(defender_crashed)
+            if attacker_crashed is not None:
+                metrics["eval/attacker_crashed"] = bool(attacker_crashed)
             for aid, value in returns.items():
                 metrics[f"eval/return_{aid}"] = float(value)
             for aid, count in rollout.collisions.items():

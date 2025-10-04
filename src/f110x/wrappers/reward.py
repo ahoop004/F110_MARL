@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 
@@ -24,6 +24,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing helpers only
 class RewardRuntimeContext:
     env: "F110ParallelEnv"
     map_data: "MapData"
+    roster: Optional[Any] = None
 
 
 @dataclass
@@ -68,6 +69,7 @@ class GaplockRewardStrategy(RewardStrategy):
         success_once: bool = True,
         reward_horizon: Optional[float] = None,
         reward_clip: Optional[float] = None,
+        target_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.truncation_penalty = float(truncation_penalty)
@@ -77,6 +79,7 @@ class GaplockRewardStrategy(RewardStrategy):
             clip=self._coerce_positive_float(reward_clip),
         )
         self._success_awarded: Dict[str, set[Tuple[str, str]]] = {}
+        self._target_resolver = target_resolver
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -91,13 +94,24 @@ class GaplockRewardStrategy(RewardStrategy):
     def reset(self, episode_index: int) -> None:
         self._success_awarded.clear()
 
-    def _select_target_obs(self, step: RewardStep) -> Optional[Dict[str, Any]]:
+    def _select_target_obs(
+        self,
+        step: RewardStep,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if not step.all_obs:
-            return None
+            return None, None
+
+        if callable(self._target_resolver):
+            candidate_id = self._target_resolver(step.agent_id)
+            if candidate_id and candidate_id in step.all_obs:
+                candidate_obs = step.all_obs.get(candidate_id)
+                if candidate_obs is not None:
+                    return candidate_obs, candidate_id
+
         for other_id, other_obs in step.all_obs.items():
             if other_id != step.agent_id:
-                return other_obs
-        return None
+                return other_obs, other_id
+        return None, None
 
     def _has_awarded(self, agent_id: str, target_id: str) -> bool:
         awarded = self._success_awarded.setdefault(agent_id, set())
@@ -117,13 +131,13 @@ class GaplockRewardStrategy(RewardStrategy):
             components["env_reward"] = env_reward
 
         ego_obs = step.obs
-        target_obs = self._select_target_obs(step)
+        target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
 
         if target_obs is not None:
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
-                target_id = str(target_obs.get("agent_id", "target"))
+                target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
                 if not self.success_once or not self._has_awarded(step.agent_id, target_id):
                     shaped += self.target_crash_reward
                     components["success_reward"] = (
@@ -338,9 +352,15 @@ class RewardWrapper:
         self.config = dict(config)
         self.context = context
         self.mode = self._normalize_mode(str(self.config.get("mode", "gaplock")))
+        self.ego_collision_penalty = float(self.config.get("ego_collision_penalty", 0.0))
+
+        roster = getattr(self.context, "roster", None)
+        self._role_members = self._normalise_role_members(roster)
+        self._agent_roles = self._extract_agent_roles(roster)
+        self._gaplock_target_resolver = self._build_gaplock_target_resolver()
+
         self._strategies: List[Tuple[RewardStrategy, float]] = self._build_strategies()
         self.modes: Tuple[str, ...] = tuple(strategy.name for strategy, _ in self._strategies)
-        self.ego_collision_penalty = float(self.config.get("ego_collision_penalty", 0.0))
         self._episode_index = 0
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._step_counter = 0
@@ -352,6 +372,74 @@ class RewardWrapper:
         if normalized in {"", "sparse", "basic", "pursuit", "adversarial"}:
             return "gaplock"
         return normalized
+
+    @staticmethod
+    def _normalise_role_members(roster: Any) -> Dict[str, List[str]]:
+        mapping: Dict[str, List[str]] = {}
+        if roster is None:
+            return mapping
+
+        raw_roles = getattr(roster, "roles", None)
+        if isinstance(raw_roles, dict):
+            for role, members in raw_roles.items():
+                if isinstance(members, (list, tuple, set)):
+                    normalised = [str(member) for member in members]
+                elif members is None:
+                    normalised = []
+                else:
+                    normalised = [str(members)]
+                if normalised:
+                    mapping[str(role)] = normalised
+        return mapping
+
+    @staticmethod
+    def _extract_agent_roles(roster: Any) -> Dict[str, str]:
+        roles: Dict[str, str] = {}
+        if roster is None:
+            return roles
+
+        assignments = getattr(roster, "assignments", None)
+        if isinstance(assignments, Iterable):
+            for assignment in assignments:
+                agent_id = getattr(assignment, "agent_id", None)
+                spec = getattr(assignment, "spec", None)
+                role = getattr(spec, "role", None)
+                if agent_id and role:
+                    roles[str(agent_id)] = str(role)
+        return roles
+
+    def _build_gaplock_target_resolver(self) -> Optional[Callable[[str], Optional[str]]]:
+        if not self._agent_roles and not self._role_members:
+            return None
+
+        role_members = {role: list(members) for role, members in self._role_members.items()}
+        agent_roles = dict(self._agent_roles)
+
+        attackers = role_members.get("attacker", [])
+        defenders = role_members.get("defender", [])
+
+        def resolver(agent_id: str) -> Optional[str]:
+            role = agent_roles.get(agent_id)
+            if role == "defender":
+                for candidate in attackers:
+                    if candidate != agent_id:
+                        return candidate
+            else:
+                for candidate in defenders:
+                    if candidate != agent_id:
+                        return candidate
+
+            for candidates in role_members.values():
+                for candidate in candidates:
+                    if candidate != agent_id:
+                        return candidate
+
+            for candidate in agent_roles.keys():
+                if candidate != agent_id:
+                    return candidate
+            return None
+
+        return resolver
 
     def _merge_mode_params(self, mode: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         params = dict(params or {})
@@ -402,7 +490,10 @@ class RewardWrapper:
 
     def _instantiate_strategy(self, mode: str, params: Dict[str, Any]) -> RewardStrategy:
         if mode == "gaplock":
-            return GaplockRewardStrategy(**params)
+            effective = dict(params)
+            if "target_resolver" not in effective and self._gaplock_target_resolver is not None:
+                effective["target_resolver"] = self._gaplock_target_resolver
+            return GaplockRewardStrategy(**effective)
         if mode == "progress":
             centerline = getattr(self.context.map_data, "centerline", None)
             return ProgressRewardStrategy(centerline=centerline, **params)

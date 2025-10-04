@@ -105,8 +105,8 @@ class TrainRunner:
 
         primary_id = self.primary_agent_id
         primary_bundle = self.primary_bundle
-        attacker_id = team.roles.get("attacker", primary_id)
-        defender_id = team.roles.get("defender")
+        attacker_id = team.primary_role("attacker")
+        defender_id = team.primary_role("defender")
 
         primary_cfg = primary_bundle.metadata.get("config", {})
         recent_window = max(1, int(primary_cfg.get("rolling_avg_window", 10)))
@@ -133,6 +133,7 @@ class TrainRunner:
                 map_data=self.context.map_data,
                 episode_idx=ep_index,
                 curriculum=self.context.curriculum_schedule,
+                roster=team.roster,
             )
 
         def compute_actions(obs: Dict[str, Any], done: Dict[str, bool]):
@@ -216,21 +217,27 @@ class TrainRunner:
 
             epsilon_val = self._resolve_primary_epsilon()
 
-            defender_idx = id_to_index.get(defender_id) if defender_id else None
-            attacker_idx = id_to_index.get(attacker_id)
-            defender_crashed = bool(
-                defender_idx is not None and rollout.collision_steps.get(defender_id, -1) >= 0
-            )
-            attacker_crashed = bool(attacker_idx is not None and rollout.collision_steps.get(attacker_id, -1) >= 0)
-            success = bool(defender_crashed and not attacker_crashed)
-
+            defender_crashed: Optional[bool] = None
             defender_survival_steps: Optional[int] = None
             if defender_id is not None:
+                defender_step = rollout.collision_steps.get(defender_id, -1)
+                defender_crashed = defender_step >= 0
                 defender_survival_steps = (
-                    int(rollout.collision_steps.get(defender_id, rollout.steps))
-                    if defender_crashed
-                    else rollout.steps
+                    int(defender_step) if defender_crashed else rollout.steps
                 )
+
+            attacker_crashed: Optional[bool] = None
+            if attacker_id is not None:
+                attacker_step = rollout.collision_steps.get(attacker_id, -1)
+                attacker_crashed = attacker_step >= 0
+
+            success: Optional[bool] = None
+            if defender_crashed is not None and attacker_crashed is not None:
+                success = defender_crashed and not attacker_crashed
+            elif defender_crashed is not None:
+                success = defender_crashed
+            elif attacker_crashed is not None:
+                success = not attacker_crashed
 
             collisions_total = int(sum(rollout.collisions.values()))
             episode_record: Dict[str, Any] = {
@@ -241,12 +248,16 @@ class TrainRunner:
                 "returns": returns,
                 "reward_breakdown": reward_breakdown,
                 "success": success,
-                "defender_crashed": defender_crashed,
-                "attacker_crashed": attacker_crashed,
-                "defender_survival_steps": defender_survival_steps,
                 "collisions_total": collisions_total,
                 "idle_truncated": rollout.idle_triggered,
             }
+
+            if defender_crashed is not None:
+                episode_record["defender_crashed"] = defender_crashed
+            if attacker_crashed is not None:
+                episode_record["attacker_crashed"] = attacker_crashed
+            if defender_survival_steps is not None:
+                episode_record["defender_survival_steps"] = defender_survival_steps
 
             if rollout.spawn_points:
                 episode_record["spawn_points"] = dict(rollout.spawn_points)
@@ -267,18 +278,21 @@ class TrainRunner:
                 "train/total_episodes": float(total_episodes),
                 "train/steps": float(rollout.steps),
                 "train/collisions_total": float(collisions_total),
-                "train/success": success,
                 "train/idle_truncated": rollout.idle_triggered,
                 "train/cause": rollout.cause,
                 "train/reward_mode": rollout.reward_mode,
             }
+            if success is not None:
+                metrics["train/success"] = bool(success)
             if primary_id:
                 metrics["train/primary_agent"] = primary_id
             metrics["train/primary_return"] = float(returns.get(primary_id, 0.0))
             if epsilon_val is not None:
                 metrics["train/epsilon"] = float(epsilon_val)
-            metrics["train/attacker_crashed"] = attacker_crashed
-            metrics["train/defender_crashed"] = defender_crashed
+            if attacker_crashed is not None:
+                metrics["train/attacker_crashed"] = bool(attacker_crashed)
+            if defender_crashed is not None:
+                metrics["train/defender_crashed"] = bool(defender_crashed)
             if defender_survival_steps is not None:
                 metrics["train/defender_survival_steps"] = float(defender_survival_steps)
             for aid, value in returns.items():
