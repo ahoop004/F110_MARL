@@ -1,14 +1,20 @@
-"""Trainer adapters and interfaces."""
-
-from f110x.trainers.base import Trainer, Transition
-from f110x.trainers.ppo_guided import PPOTrainer
-from f110x.trainers.td3_trainer import TD3Trainer
-from f110x.trainers.dqn_trainer import DQNTrainer
+"""Legacy compatibility exports for trainer refactor."""
+from f110x.trainer import (
+    DQNTrainer,
+    PPOTrainer,
+    RecurrentPPOTrainer,
+    SACTrainer,
+    TD3Trainer,
+    Trainer,
+    Transition,
+)
 
 __all__ = [
     "Trainer",
     "Transition",
     "PPOTrainer",
-    "TD3Trainer",
+    "RecurrentPPOTrainer",
     "DQNTrainer",
+    "TD3Trainer",
+    "SACTrainer",
 ]

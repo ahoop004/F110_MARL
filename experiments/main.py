@@ -178,6 +178,14 @@ def _apply_run_seed(cfg: Dict[str, Any]) -> Optional[int]:
     cfg.setdefault("main", {})["seed"] = seed
     return seed
 
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced if coerced > 0 else default
+
 def _wandb_init(cfg, mode):
     wandb_cfg = cfg.get("main", {}).get("wandb", {})
     enabled = wandb_cfg if isinstance(wandb_cfg, bool) else wandb_cfg.get("enabled", False)
@@ -370,55 +378,97 @@ def main():
     update_cb = update_logger if wandb_run is not None else None
 
     if mode == "train":
-        train_ctx = train_module.create_training_context(cfg_path, experiment=cfg_experiment)
+        train_session = train_module.create_training_session(cfg_path, experiment=cfg_experiment)
         if _RENDER_FLAG:
-            train_ctx.render_interval = 1
-            train_ctx.env.render_mode = "human"
-        bundle_cfg = train_ctx.ppo_bundle.metadata.get("config", {})
-        episodes = _EP_OVERRIDE or bundle_cfg.get("train_episodes") or cfg.get("main", {}).get("train_episodes", 10)
+            train_session.enable_render()
+        fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+        episodes = train_module.resolve_train_episodes(
+            train_session,
+            override=_EP_OVERRIDE,
+            fallback=fallback_train,
+        )
         results = train_module.run_training(
-            train_ctx,
+            train_session,
             episodes=episodes,
             update_callback=update_cb,
         )
-        gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
-        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
-        train_ctx.ppo_agent.save(str(train_ctx.best_path))
-        print(f"[INFO] Saved final model to {train_ctx.best_path}")
+        gap_id = (
+            train_session.runner.opponent_agent_ids[0]
+            if train_session.runner.opponent_agent_ids
+            else None
+        )
+        _log_train_results(wandb_run, results, train_session.runner.primary_agent_id, gap_id)
+        final_path = train_session.save_final_model()
+        if final_path is not None:
+            print(f"[INFO] Saved final model to {final_path}")
 
     elif mode == "eval":
-        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True, experiment=cfg_experiment)
+        eval_session = eval_module.create_evaluation_session(
+            cfg_path,
+            auto_load=True,
+            experiment=cfg_experiment,
+        )
         if _RENDER_FLAG:
-            eval_ctx.env.render_mode = "human"
-        bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
-        episodes = _EVAL_EP_OVERRIDE or bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
-        results = eval_module.evaluate(eval_ctx, episodes=episodes, force_render=_RENDER_FLAG)
+            eval_session.enable_render()
+        fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+        episodes = eval_module.resolve_eval_episodes(
+            eval_session,
+            override=_EVAL_EP_OVERRIDE,
+            fallback=fallback_eval,
+        )
+        results = eval_module.run_evaluation(
+            eval_session,
+            episodes=episodes,
+            force_render=_RENDER_FLAG,
+            auto_load=False,
+        )
         _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
-        train_ctx = train_module.create_training_context(cfg_path, experiment=cfg_experiment)
+        train_session = train_module.create_training_session(cfg_path, experiment=cfg_experiment)
         if _RENDER_FLAG:
-            train_ctx.render_interval = 1
-            train_ctx.env.render_mode = "human"
-        bundle_cfg = train_ctx.ppo_bundle.metadata.get("config", {})
-        train_episodes = _EP_OVERRIDE or bundle_cfg.get("train_episodes") or cfg.get("main", {}).get("train_episodes", 10)
-        results = train_module.run_training(
-            train_ctx,
+            train_session.enable_render()
+        fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+        train_episodes = train_module.resolve_train_episodes(
+            train_session,
+            override=_EP_OVERRIDE,
+            fallback=fallback_train,
+        )
+        train_results = train_module.run_training(
+            train_session,
             episodes=train_episodes,
             update_callback=update_cb,
         )
-        gap_id = train_ctx.opponent_ids[0] if train_ctx.opponent_ids else None
-        _log_train_results(wandb_run, results, train_ctx.ppo_agent_id, gap_id)
-        train_ctx.ppo_agent.save(str(train_ctx.best_path))
-        print(f"[INFO] Saved final model to {train_ctx.best_path}")
+        gap_id = (
+            train_session.runner.opponent_agent_ids[0]
+            if train_session.runner.opponent_agent_ids
+            else None
+        )
+        _log_train_results(wandb_run, train_results, train_session.runner.primary_agent_id, gap_id)
+        final_path = train_session.save_final_model()
+        if final_path is not None:
+            print(f"[INFO] Saved final model to {final_path}")
 
-        eval_ctx = eval_module.create_evaluation_context(cfg_path, auto_load=True, experiment=cfg_experiment)
+        eval_session = eval_module.create_evaluation_session(
+            cfg_path,
+            auto_load=True,
+            experiment=cfg_experiment,
+        )
         if _RENDER_FLAG:
-            eval_ctx.env.render_mode = "human"
-        eval_bundle_cfg = eval_ctx.ppo_bundle.metadata.get("config", {})
-        eval_episodes = _EVAL_EP_OVERRIDE or eval_bundle_cfg.get("eval_episodes") or cfg.get("main", {}).get("eval_episodes", 5)
-        results = eval_module.evaluate(eval_ctx, episodes=eval_episodes, force_render=_RENDER_FLAG)
-        _log_eval_results(wandb_run, results)
+            eval_session.enable_render()
+        fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+        eval_episodes = eval_module.resolve_eval_episodes(
+            eval_session,
+            override=_EVAL_EP_OVERRIDE,
+            fallback=fallback_eval,
+        )
+        eval_results = eval_module.run_evaluation(
+            eval_session,
+            episodes=eval_episodes,
+            force_render=_RENDER_FLAG,
+            auto_load=False,
+        )
+        _log_eval_results(wandb_run, eval_results)
 
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Expected train/eval/train_eval.")

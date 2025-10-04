@@ -1,53 +1,49 @@
-- [ ] Core Architecture Setup
-  - [ ] Create new package structure for experiments, runner, trainer, engine, utils.
-  - [ ] Move environment setup and config logic to `engine/builder.py`.
-  - [ ] Add unified context class in `runner/context.py`.
-  - [ ] Maintain compatibility with `ExperimentConfig` and scenario YAMLs.
+- [ ] Phase 0 – Shared Extraction Milestones
+  - [x] Freeze current behaviour with smoke tests/notes so post-migration regressions are obvious. (`docs/smoke_tests.md`)
+  - [x] Lift `_resolve_config_input`/`_load_experiment_config` into `utils/config.py` (`load_config(path, experiment=None)`), keeping scenario manifests + `F110_CONFIG`/`F110_EXPERIMENT` overrides intact.
+  - [x] Extract `_build_curriculum_schedule`, `_resolve_reward_mode`, and `_build_reward_wrapper` into `engine/reward.py`, exposing a small surface that both legacy loops and new runners can call.
+  - [x] Extract `TrajectoryBuffer`, idle-speed truncation logic, and best-model bookkeeping from `run_training` into `engine/rollout.py`, returning neutral data so trainers/runners stay lean.
+  - [x] Introduce a shim in `experiments/train.py`/`experiments/eval.py` that delegates to the new helpers without changing their public API (first green refactor checkpoint).
 
-- [ ] Configuration Handling
-  - [ ] Create `utils/config.py` with `load_config(path, experiment=None)` helper.
-  - [ ] Support CLI and W&B overrides in centralized YAML parsing and merging logic.
-  - [ ] Route per-algorithm configuration through the registry to avoid hard-coded sections like `cfg.ppo`.
+- [ ] Phase 1 – Core Architecture Setup
+  - [x] Create packages: `engine/`, `runner/`, `trainer/`, `utils/` (reuse existing modules where possible).
+  - [x] Flesh out `runner/context.py` as a runner-tailored context object (config, env handles, map data, trainers, reward hooks, IO paths) without PPO-specific fields.
+  - [x] Migrate environment setup + agent building into `engine/builder.py`, leaving thin adapter shells in the old entrypoints until callers move.
+  - [x] Ensure `ExperimentConfig` + scenario YAML compatibility by funnelling everything through the extracted config loader.
 
-- [ ] Trainer Layer
-  - [ ] Define abstract `Trainer` class (`base.py`) with core methods: `__init__`, `select_action`, `observe`, `update`, `save`, `load`.
-  - [ ] Implement specialized trainer modules.
-    - [ ] `on_policy.py` for PPO, A2C, REINFORCE.
-    - [ ] `off_policy.py` for DQN, TD3, SAC.
-  - [ ] Create `registry.py` for algorithm lookup (`ALGO_REGISTRY`).
+- [ ] Phase 2 – Trainer Layer
+  - [x] Define abstract `Trainer` base (`trainer/base.py`) with `__init__`, `select_action`, `observe`, `update`, `save`, `load`.
+  - [x] Split concrete trainers into `on_policy.py` (PPO, A2C, REINFORCE) and `off_policy.py` (DQN, TD3, SAC), reusing existing trainer implementations.
+  - [x] Add `trainer/registry.py` for algorithm lookup so runner/context picks trainers without hard-coded `cfg.ppo` branches.
 
-- [ ] Engine Utilities
-  - [ ] Build `rollout.py` with shared environment stepping helpers such as `run_episode()` and `collect_trajectory()`.
-  - [ ] Build `reward.py` to combine reward construction and curriculum logic, porting `_build_reward_wrapper` and `_resolve_reward_mode`.
+- [x] Phase 3 – Engine Utilities
+  - [x] Finalise `engine/rollout.py` with shared stepping helpers (`run_episode()`, `collect_trajectory()`), idle handling, curriculum triggers, and checkpoint callbacks.
+  - [x] Finalise `engine/reward.py` with curriculum-aware wrapper construction + mode resolution, backing onto the extracted helpers.
 
-- [ ] Runner Layer
-  - [ ] Implement `train_runner.py` to initialize context and trainer, execute episodes via `trainer.train_episode()`, and handle metric logging plus checkpointing.
-  - [ ] Implement `eval_runner.py` to load trained models, run deterministic evaluation episodes, and support optional rollout recording.
-  - [ ] Implement `context.py` to merge training and evaluation context, storing config, env, agents, map, reward, and output paths.
-  - [ ] Ensure runners and contexts expose algorithm-agnostic primary agent interfaces instead of PPO-specific fields.
-  - [ ] Allow evaluation contexts to run with heuristic-only rosters (no trainer adapters).
+- [x] Phase 4 – Runner Layer
+  - [x] Implement `runner/train_runner.py` to compose context + trainers, run training episodes via engine rollouts, handle logging/checkpoint hooks.
+  - [x] Implement `runner/eval_runner.py` to reuse context, load checkpoints, run deterministic evaluation, and optional rollout recording.
+  - [x] Ensure runners expose algorithm-agnostic agent interfaces (primary agent, opponents, roster metadata) and allow heuristic-only evaluation rosters.
+  - [x] Replace interim TrainRunner/EvalRunner shims (currently delegate to legacy loops) with engine-native execution.
 
-- [ ] Integration and Migration
-  - [ ] Refactor `main.py` to keep only CLI, seeding, and mode dispatch, deferring to runners for execution.
-  - [ ] Replace direct training/eval calls with runner abstractions.
-  - [ ] Remove duplicate setup logic from `train.py` and `eval.py`.
-  - [ ] Confirm backward compatibility with YAML configs and scenario manifests.
-  - [ ] Drive default CLI algorithm presets from the algorithm registry instead of hard-coding DQN.
-  - [ ] Rework `run.py` to source experiment configs and overrides from scenario manifests (via the registry) instead of maintaining local defaults.
+- [x] Phase 5 – CLI Integration & Migration
+  - [x] Refactor `experiments/main.py` to keep only CLI parsing, seeding, and mode dispatch; runners handle execution.
+  - [x] Update `experiments/train.py`/`experiments/eval.py` to delegate into the new runner modules (maintaining backwards-compatible CLI flags/env vars until removed).
+- [x] Rework `run.py` to source presets from the trainer registry instead of `_DEFAULT_CONFIGS`, and stream scenarios through `utils/config.load_config`.
+- [x] Confirm CLI and YAML manifest compatibility end-to-end.
+- [ ] Ensure `run.py` flattens scenario manifests when supplied via `--config`/grid specs so `experiments/main.py` receives legacy-style configs for overrides.
+- [ ] Populate or remap algorithm preset files (e.g. `scenarios/ppo.yaml`, `scenarios/dqn.yaml`) so trainer registry discovery aligns with shipped scenarios.
 
-- [ ] Logging & Monitoring
-  - [ ] Move W&B setup and logging to `utils/logger.py`.
-  - [ ] Standardize metric naming (e.g., `train/return_*`, `eval/return_*`).
-  - [ ] Add CSV or TensorBoard fallback logging.
+- [ ] Logging & Monitoring Refresh
+  - [ ] Build `utils/logger.py` that redefines output formatting (structured console summaries, CSV fallbacks, W&B adapter) instead of mirroring current print statements.
+  - [ ] Standardise metric keys (`train/return_*`, `eval/return_*`, curriculum state, collision stats) and thread them through engine/runner hooks.
 
 - [ ] Cleanup & Testing
-  - [ ] Remove deprecated functions and repeated logic.
-  - [ ] Add unit tests covering trainer classes, context creation, builder functions, scenario parsing, config parsing, and rollout loop correctness.
-  - [ ] Run regression tests with baseline PPO and DQN experiments.
+  - [x] Delete legacy helpers once shims point to the new modules and the import-time `CTX = create_training_context()` side effect is removed.
+  - [ ] Add unit/integration coverage for config loader, runner context creation, builder functions, rollout loop, and registry resolution.
+  - [ ] Run regression passes with baseline PPO/DQN scenarios to validate the extraction approach.
 
 - [ ] Stretch Goals
-  - [ ] Implement asynchronous or distributed training support.
-  - [ ] Add checkpoint resume and experiment continuation.
-  - [ ] Provide simplified CLI commands.
-    - [ ] `python main.py train --algo ppo --episodes 1000`
-    - [ ] `python main.py eval --config scenarios/gaplock_dqn.yaml`
+  - [ ] Asynchronous/distributed training support once rollouts live in the engine package.
+  - [ ] Checkpoint resume + experiment continuation workflow leveraging the new context + logger utilities.
+  - [ ] Simplified CLI entrypoints (`python main.py train --algo ppo --episodes 1000`, etc.) after legacy flags are retired.

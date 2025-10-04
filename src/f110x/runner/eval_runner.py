@@ -1,0 +1,439 @@
+"""Evaluation runner built around the shared engine rollout helpers."""
+from __future__ import annotations
+
+import pickle
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
+from f110x.engine.reward import build_reward_wrapper
+from f110x.engine.rollout import IdleTerminationTracker, collect_trajectory, run_episode
+from f110x.runner.context import RunnerContext
+from f110x.trainer.base import Trainer
+from f110x.utils.builders import AgentBundle, AgentTeam
+from f110x.utils.output import resolve_output_dir, resolve_output_file
+from f110x.utils.start_pose import reset_with_start_poses
+
+
+@dataclass
+class EvalRunner:
+    """Execute deterministic evaluation episodes for a prepared runner context."""
+
+    context: RunnerContext
+    trainer_map: Dict[str, Trainer] = field(init=False)
+    default_checkpoint_path: Optional[Path] = field(init=False, default=None)
+    explicit_checkpoint_path: Optional[Path] = field(init=False, default=None)
+    rollout_dir: Optional[Path] = field(init=False, default=None)
+    save_rollouts_default: bool = field(init=False, default=False)
+    _primary_bundle: Optional[AgentBundle] = field(init=False, default=None)
+
+    def __post_init__(self) -> None:  # noqa: D401 - behaviour captured in class docstring
+        self._ensure_primary_agent()
+        self.trainer_map = dict(self.context.trainer_map)
+        self._primary_bundle = self._resolve_primary_bundle()
+        self._configure_paths()
+
+    # ------------------------------------------------------------------
+    # Public surface
+    # ------------------------------------------------------------------
+    @property
+    def team(self) -> AgentTeam:
+        return self.context.team
+
+    @property
+    def env(self):
+        return self.context.env
+
+    @property
+    def primary_agent_id(self) -> Optional[str]:
+        if self.context.primary_agent_id:
+            return self.context.primary_agent_id
+        return self._primary_bundle.agent_id if self._primary_bundle else None
+
+    @property
+    def primary_bundle(self) -> Optional[AgentBundle]:
+        return self._primary_bundle
+
+    @property
+    def trainable_agent_ids(self) -> List[str]:
+        return list(self.context.trainable_agent_ids)
+
+    @property
+    def opponent_agent_ids(self) -> List[str]:
+        primary_id = self.primary_agent_id
+        if primary_id is None:
+            return [bundle.agent_id for bundle in self.team.agents]
+        return [bundle.agent_id for bundle in self.team.agents if bundle.agent_id != primary_id]
+
+    @property
+    def roster_metadata(self) -> Dict[str, Any]:
+        return {
+            "agent_ids": [bundle.agent_id for bundle in self.team.agents],
+            "roles": dict(self.team.roles),
+            "trainable": list(self.context.trainable_agent_ids),
+        }
+
+    def load_checkpoint(self, checkpoint_path: Optional[Path | str] = None) -> Optional[Path]:
+        bundle = self.primary_bundle
+        if bundle is None:
+            return None
+        candidate = self._resolve_checkpoint_path(checkpoint_path)
+        if candidate is None:
+            return None
+        if not candidate.exists():
+            print(f"[WARN] No checkpoint found at {candidate}; skipping load")
+            return None
+        controller = bundle.controller
+        load_fn = getattr(controller, "load", None)
+        if not callable(load_fn):
+            print(
+                f"[WARN] Controller for agent '{bundle.agent_id}' does not support load(); "
+                f"skipping checkpoint {candidate}"
+            )
+            return None
+        load_fn(str(candidate))
+        print(f"[INFO] Loaded checkpoint from {candidate}")
+        return candidate
+
+    def run(
+        self,
+        *,
+        episodes: int,
+        auto_load: bool = False,
+        checkpoint_path: Optional[Path | str] = None,
+        force_render: bool = False,
+        save_rollouts: Optional[bool] = None,
+        rollout_dir: Optional[Path | str] = None,
+    ) -> List[Dict[str, Any]]:
+        if auto_load:
+            self.load_checkpoint(checkpoint_path)
+
+        env = self.env
+        team = self.team
+        trainer_map = self.trainer_map
+        results: List[Dict[str, Any]] = []
+
+        primary_id = self.primary_agent_id
+        attacker_id = team.roles.get("attacker", primary_id)
+        defender_id = team.roles.get("defender")
+        agent_ids = list(env.possible_agents)
+
+        render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
+        idle_tracker = IdleTerminationTracker(0.0, 0)
+
+        def reward_factory(ep_index: int):
+            return build_reward_wrapper(
+                self.context.reward_cfg,
+                env=env,
+                map_data=self.context.map_data,
+                episode_idx=ep_index,
+                curriculum=self.context.curriculum_schedule,
+            )
+
+        def compute_actions(obs: Dict[str, Any], done: Dict[str, bool]):
+            return self._compute_actions(team, obs, done, deterministic=True)
+
+        def prepare_next(agent_id: str, next_obs: Dict[str, Any], infos: Dict[str, Any]):
+            return self._prepare_next_observation(agent_id, next_obs, infos)
+
+        save_rollouts_flag = self.save_rollouts_default if save_rollouts is None else bool(save_rollouts)
+        rollout_dir_path = self._ensure_rollout_dir(rollout_dir) if rollout_dir else self.rollout_dir
+        if save_rollouts_flag and rollout_dir_path is None:
+            rollout_dir_path = resolve_output_dir("eval_rollouts", self.context.output_root)
+        if rollout_dir_path is not None and save_rollouts_flag:
+            rollout_dir_path.mkdir(parents=True, exist_ok=True)
+
+        for ep_index in range(int(episodes)):
+            trace_buffer: Optional[List[Any]] = [] if save_rollouts_flag and rollout_dir_path else None
+
+            def reset_env():
+                return reset_with_start_poses(
+                    env,
+                    self.context.start_pose_options,
+                    back_gap=self.context.start_pose_back_gap,
+                    min_spacing=self.context.start_pose_min_spacing,
+                    map_data=self.context.map_data,
+                )
+
+            if render_enabled:
+                def render_condition(_episode: int, _step: int) -> bool:
+                    return True
+            else:
+                render_condition = None
+
+            rollout = run_episode(
+                env=env,
+                team=team,
+                trainer_map=trainer_map,
+                trajectory_buffers={},
+                reward_wrapper_factory=reward_factory,
+                compute_actions=compute_actions,
+                prepare_next_observation=prepare_next,
+                idle_tracker=idle_tracker,
+                episode_index=ep_index,
+                reset_fn=reset_env,
+                agent_ids=agent_ids,
+                render_condition=render_condition,
+                trace_buffer=trace_buffer,
+            )
+
+            returns = dict(rollout.returns)
+            collision_total = int(sum(rollout.collisions.values()))
+            collision_steps = {
+                aid: (step if step >= 0 else None)
+                for aid, step in rollout.collision_steps.items()
+            }
+
+            lap_counts = self._extract_lap_counts(env, agent_ids)
+
+            defender_crashed = bool(defender_id and collision_steps.get(defender_id) is not None)
+            attacker_crashed = bool(attacker_id and collision_steps.get(attacker_id) is not None)
+            defender_crash_step = collision_steps.get(defender_id)
+            attacker_crash_step = collision_steps.get(attacker_id)
+
+            return_fragment = (
+                f" return_{primary_id}={returns.get(primary_id, 0.0):.2f}" if primary_id else ""
+            )
+            print(
+                f"[EVAL {ep_index + 1:03d}/{episodes}] steps={rollout.steps} cause={rollout.cause} "
+                f"collisions={collision_total} defender_crash={defender_crashed} "
+                f"attacker_crash={attacker_crashed}{return_fragment}"
+            )
+
+            record: Dict[str, Any] = {
+                "episode": ep_index + 1,
+                "steps": rollout.steps,
+                "cause": rollout.cause,
+                "returns": returns,
+                "collision_total": collision_total,
+            }
+            if rollout.spawn_points:
+                record["spawn_points"] = dict(rollout.spawn_points)
+            if rollout.spawn_option is not None:
+                record["spawn_option"] = rollout.spawn_option
+            for aid, value in returns.items():
+                record[f"return_{aid}"] = value
+            for aid, count in rollout.collisions.items():
+                record[f"collision_count_{aid}"] = count
+            for aid, count in lap_counts.items():
+                record[f"lap_count_{aid}"] = count
+            for aid, step_val in collision_steps.items():
+                if step_val is not None:
+                    record[f"collision_step_{aid}"] = int(step_val)
+            for aid in agent_ids:
+                record[f"avg_speed_{aid}"] = float(rollout.average_speeds.get(aid, 0.0))
+
+            if attacker_id in rollout.average_speeds:
+                record["avg_speed_attacker"] = float(rollout.average_speeds.get(attacker_id, 0.0))
+            if defender_id:
+                record["avg_speed_defender"] = float(rollout.average_speeds.get(defender_id, 0.0))
+                record["defender_crashed"] = defender_crashed
+                if defender_crash_step is not None:
+                    record["defender_crash_step"] = int(defender_crash_step)
+                    record["defender_survival_steps"] = int(defender_crash_step)
+                else:
+                    record["defender_survival_steps"] = rollout.steps
+            record["attacker_crashed"] = attacker_crashed
+            if attacker_crash_step is not None:
+                record["attacker_crash_step"] = int(attacker_crash_step)
+
+            if trace_buffer is not None and rollout_dir_path is not None:
+                transformed = collect_trajectory(trace_buffer, transform=self._trace_transform)
+                rollout_path = rollout_dir_path / f"episode_{ep_index + 1:03d}.pkl"
+                with rollout_path.open("wb") as handle:
+                    pickle.dump({"trajectory": transformed, "metrics": record}, handle)
+                record["rollout_path"] = str(rollout_path)
+
+            results.append(record)
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _ensure_primary_agent(self) -> None:
+        if self.context.primary_agent_id:
+            return
+        candidates = list(self.context.trainable_agent_ids)
+        if not candidates:
+            candidates = [bundle.agent_id for bundle in self.context.team.agents]
+        if not candidates:
+            raise RuntimeError("RunnerContext does not expose any agents for evaluation")
+        self.context.set_primary_agent(candidates[0])
+
+    def _resolve_primary_bundle(self) -> Optional[AgentBundle]:
+        try:
+            return self.context.primary_bundle
+        except RuntimeError:
+            return None
+
+    def _configure_paths(self) -> None:
+        output_root = self.context.output_root
+        output_root.mkdir(parents=True, exist_ok=True)
+        self.context.cfg.main.schema.output_root = str(output_root)
+
+        bundle = self._primary_bundle
+        bundle_cfg: Dict[str, Any] = dict(bundle.metadata.get("config", {})) if bundle else {}
+        if bundle and (not bundle_cfg) and bundle.algo.lower() == "ppo":
+            bundle_cfg = self.context.cfg.ppo.to_dict()
+
+        save_dir_value = bundle_cfg.get("save_dir", "checkpoints")
+        checkpoint_dir = resolve_output_dir(save_dir_value, output_root)
+        bundle_cfg["save_dir"] = str(checkpoint_dir)
+
+        checkpoint_name = bundle_cfg.get(
+            "checkpoint_name",
+            f"{bundle.algo.lower()}_best.pt" if bundle else "model.pt",
+        )
+        self.default_checkpoint_path = checkpoint_dir / checkpoint_name if bundle else None
+
+        explicit_raw = self.context.cfg.main.checkpoint
+        if explicit_raw:
+            candidate = Path(explicit_raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = resolve_output_file(explicit_raw, output_root)
+            self.explicit_checkpoint_path = candidate
+            self.context.cfg.main.schema.checkpoint = str(candidate)
+        else:
+            self.explicit_checkpoint_path = None
+
+        save_rollouts_flag = bool(self.context.cfg.main.get("save_eval_rollouts", False))
+        self.save_rollouts_default = save_rollouts_flag
+        if save_rollouts_flag:
+            rollout_dir_value = self.context.cfg.main.get("eval_rollout_dir", "eval_rollouts")
+            self.rollout_dir = resolve_output_dir(rollout_dir_value, output_root)
+            self.context.cfg.main.schema.extras["eval_rollout_dir"] = str(self.rollout_dir)
+        else:
+            self.rollout_dir = None
+
+        if bundle is not None:
+            bundle_cfg["checkpoint_name"] = checkpoint_name
+            bundle.metadata["config"] = bundle_cfg
+
+    def _resolve_checkpoint_path(self, override: Optional[Path | str]) -> Optional[Path]:
+        if override is not None:
+            candidate = Path(override).expanduser() if not isinstance(override, Path) else override.expanduser()
+            if not candidate.is_absolute():
+                candidate = resolve_output_file(str(candidate), self.context.output_root)
+            return candidate
+        if self.explicit_checkpoint_path is not None:
+            return self.explicit_checkpoint_path
+        return self.default_checkpoint_path
+
+    def _ensure_rollout_dir(self, path_like: Path | str) -> Path:
+        path = Path(path_like).expanduser()
+        if not path.is_absolute():
+            return resolve_output_dir(str(path), self.context.output_root)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _compute_actions(
+        self,
+        team: AgentTeam,
+        obs: Dict[str, Any],
+        done: Dict[str, bool],
+        *,
+        deterministic: bool,
+    ) -> Tuple[Dict[str, Any], Dict[str, np.ndarray], Dict[str, Dict[str, Any]]]:
+        actions: Dict[str, Any] = {}
+        processed_obs: Dict[str, np.ndarray] = {}
+        controller_infos: Dict[str, Dict[str, Any]] = {}
+
+        for bundle in team.agents:
+            agent_id = bundle.agent_id
+            if done.get(agent_id, False):
+                continue
+            if agent_id not in obs:
+                continue
+
+            controller = bundle.controller
+            if bundle.trainer is not None:
+                observation = team.observation(agent_id, obs)
+                processed_obs[agent_id] = np.asarray(observation, dtype=np.float32)
+                action_raw = bundle.trainer.select_action(observation, deterministic=deterministic)
+                actions[agent_id] = team.action(agent_id, action_raw)
+                if np.isscalar(action_raw) or (
+                    isinstance(action_raw, np.ndarray) and action_raw.ndim == 0
+                ):
+                    controller_infos[agent_id] = {"action_index": int(np.asarray(action_raw).item())}
+            elif hasattr(controller, "get_action"):
+                action_space = team.env.action_space(agent_id)
+                action = controller.get_action(action_space, obs[agent_id])
+                actions[agent_id] = team.action(agent_id, action)
+            elif hasattr(controller, "act"):
+                transformed = team.observation(agent_id, obs)
+                action = controller.act(transformed, agent_id)
+                actions[agent_id] = team.action(agent_id, action)
+            else:
+                raise TypeError(
+                    f"Controller for agent '{agent_id}' does not expose a supported act/get_action interface"
+                )
+
+        return actions, processed_obs, controller_infos
+
+    @staticmethod
+    def _prepare_next_observation(
+        agent_id: str,
+        obs: Dict[str, Any],
+        infos: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if agent_id in obs:
+            return obs
+        terminal = infos.get(agent_id, {}).get("terminal_observation")
+        if terminal is not None:
+            patched = dict(obs)
+            patched[agent_id] = terminal
+            return patched
+        return obs
+
+    @staticmethod
+    def _extract_lap_counts(env, agent_ids: List[str]) -> Dict[str, float]:
+        counts: Dict[str, float] = {}
+        lap_counts = getattr(env, "lap_counts", None)
+        id_to_index = getattr(env, "_agent_id_to_index", {})
+        if lap_counts is None or not isinstance(id_to_index, dict):
+            return counts
+        for agent_id in agent_ids:
+            idx = id_to_index.get(agent_id)
+            if idx is None:
+                continue
+            if 0 <= idx < len(lap_counts):
+                counts[agent_id] = float(lap_counts[idx])
+        return counts
+
+    @staticmethod
+    def _trace_transform(step) -> Dict[str, Any]:
+        return {
+            "step": step.step,
+            "obs": {aid: EvalRunner._serialize_obs(obs) for aid, obs in step.observations.items()},
+            "actions": {aid: EvalRunner._to_serializable(action) for aid, action in step.actions.items()},
+            "rewards": {aid: EvalRunner._to_serializable(reward) for aid, reward in step.rewards.items()},
+            "next_obs": {
+                aid: EvalRunner._serialize_obs(obs) for aid, obs in step.next_observations.items()
+            },
+            "done": dict(step.done),
+            "collisions": list(step.collisions),
+        }
+
+    @staticmethod
+    def _serialize_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
+        serial: Dict[str, Any] = {}
+        for key, value in obs.items():
+            if isinstance(value, dict):
+                serial[key] = {sub_k: EvalRunner._to_serializable(sub_v) for sub_k, sub_v in value.items()}
+            else:
+                serial[key] = EvalRunner._to_serializable(value)
+        return serial
+
+    @staticmethod
+    def _to_serializable(value: Any) -> Any:
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating, np.integer)):
+            return value.item()
+        return value
+
+
+__all__ = ["EvalRunner"]

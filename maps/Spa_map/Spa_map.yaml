@@ -1,0 +1,9 @@
+image: Spa_map.png
+resolution: 0.09267
+origin:
+- -76.27387694462932
+- -147.33397683885576
+- 0.0
+occupied_thresh: 0.45
+free_thresh: 0.196
+negate: 0

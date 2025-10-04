@@ -31,12 +31,8 @@ from f110x.policies.simple_heuristic import simple_heuristic
 from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
-from f110x.trainers.base import Trainer
-from f110x.trainers.ppo_guided import PPOTrainer
-from f110x.trainers.rec_ppo_trainer import RecurrentPPOTrainer
-from f110x.trainers.td3_trainer import TD3Trainer
-from f110x.trainers.dqn_trainer import DQNTrainer
-from f110x.trainers.sac_trainer import SACTrainer
+from f110x.trainer.base import Trainer
+from f110x.trainer import registry as trainer_registry
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +603,7 @@ def _build_algo_ppo(
     ppo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
     controller = PPOAgent(ppo_cfg)
-    trainer = PPOTrainer(agent_id, controller)
+    trainer = trainer_registry.create_trainer("ppo", agent_id, controller, config=ppo_cfg)
     # PPOAgent already scales actions to environment bounds internally.
     action_wrapper = None
     return AgentBundle(
@@ -650,7 +646,7 @@ def _build_algo_td3(
     td3_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
     controller = TD3Agent(td3_cfg)
-    trainer = TD3Trainer(agent_id, controller)
+    trainer = trainer_registry.create_trainer("td3", agent_id, controller, config=td3_cfg)
     # TD3Agent actions are already emitted in environment units, so skip rescaling wrapper.
     action_wrapper = None
     return AgentBundle(
@@ -693,7 +689,7 @@ def _build_algo_sac(
     sac_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
     controller = SACAgent(sac_cfg)
-    trainer = SACTrainer(agent_id, controller)
+    trainer = trainer_registry.create_trainer("sac", agent_id, controller, config=sac_cfg)
     # SACAgent outputs environment-scaled actions directly; avoid double scaling.
     action_wrapper = None
     return AgentBundle(
@@ -737,7 +733,7 @@ def _build_algo_rec_ppo(
 
     controller = RecurrentPPOAgent(rec_cfg)
     controller.reset_hidden_state()
-    trainer = RecurrentPPOTrainer(agent_id, controller)
+    trainer = trainer_registry.create_trainer("rec_ppo", agent_id, controller, config=rec_cfg)
     # Recurrent PPO emits environment-scaled actions directly.
     action_wrapper = None
     return AgentBundle(
@@ -808,7 +804,7 @@ def _build_algo_dqn(
     dqn_cfg["obs_dim"] = int(obs_vector.size)
 
     controller = DQNAgent(dqn_cfg)
-    trainer = DQNTrainer(agent_id, controller)
+    trainer = trainer_registry.create_trainer("dqn", agent_id, controller, config=dqn_cfg)
     if action_mode == "delta":
         action_wrapper = DeltaDiscreteActionWrapper(
             dqn_cfg.get("action_deltas", dqn_cfg["action_set"]),

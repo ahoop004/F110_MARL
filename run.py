@@ -17,21 +17,25 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
-from f110x.utils.config_manifest import load_scenario_manifest, ScenarioConfigError
+from f110x.trainer import registry as trainer_registry
+from f110x.utils.config import load_config
 
 
 BASE_DIR = Path(__file__).resolve().parent
 
 
-DEFAULT_SCENARIOS: Dict[str, Path] = {
-    "dqn": Path("scenarios/gaplock_dqn.yaml"),
+def _discover_algo_presets() -> Dict[str, Path]:
+    presets: Dict[str, Path] = {}
+    scenarios_dir = BASE_DIR / "scenarios"
+    registered = trainer_registry.registered_trainers()
+    for algo in sorted(registered):
+        candidate = scenarios_dir / f"{algo}.yaml"
+        if candidate.exists():
+            presets[algo] = candidate
+    return presets
 
 
-}
-
-DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {
-    algo: (path, "") for algo, path in DEFAULT_SCENARIOS.items()
-}
+ALGO_PRESETS: Dict[str, Path] = _discover_algo_presets()
 
 
 @dataclass(frozen=True)
@@ -51,12 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run experiments/main.py repeatedly with a chosen algorithm config.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--algo",
-        choices=sorted(DEFAULT_CONFIGS.keys()),
-        default="dqn",
-        help="Selects the default experiment profile (algo→experiment mapping).",
     )
     parser.add_argument(
         "--config",
@@ -138,56 +136,31 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_config(
-    algo: str,
     override: Optional[Path],
     experiment: Optional[str],
     parser: argparse.ArgumentParser,
 ) -> Tuple[Path, Optional[str]]:
-    if override is not None:
-        cfg_path = override
-        default_exp = None
-    else:
-        cfg_path, default_exp = DEFAULT_CONFIGS[algo]
+    if override is None:
+        parser.error("No config path provided. Supply --config or use a scenario manifest.")
 
-    cfg_path = cfg_path.expanduser()
+    cfg_path = override.expanduser()
     if not cfg_path.is_absolute():
         cfg_path = (BASE_DIR / cfg_path).resolve()
     else:
         cfg_path = cfg_path.resolve()
 
-    if not cfg_path.exists():
-        parser.error(f"Config file not found: {cfg_path}")
-
     try:
-        doc = yaml.safe_load(cfg_path.read_text()) or {}
-    except Exception as exc:  # pragma: no cover - defensive
-        parser.error(f"Failed to parse config {cfg_path}: {exc}")
+        _, resolved_path, resolved_experiment = load_config(
+            cfg_path,
+            default_path=cfg_path,
+            experiment=experiment,
+        )
+    except FileNotFoundError:
+        parser.error(f"Config file not found: {cfg_path}")
+    except (KeyError, RuntimeError) as exc:
+        parser.error(str(exc))
 
-    if not isinstance(doc, dict):
-        parser.error(f"Configuration {cfg_path} must have a mapping as its root object")
-
-    experiments_section = doc.get("experiments")
-    selected_exp = experiment or default_exp
-    if isinstance(experiments_section, dict):
-        if not selected_exp:
-            selected_exp = doc.get("default_experiment")
-        if not selected_exp:
-            parser.error(
-                f"Config {cfg_path} defines multiple experiments; please supply --experiment"
-            )
-        if selected_exp not in experiments_section:
-            parser.error(
-                f"Experiment '{selected_exp}' not found in {cfg_path}. Available: {sorted(experiments_section)}"
-            )
-    else:
-        if experiment:
-            print(
-                f"[run.py] Warning: --experiment provided but config {cfg_path} has no experiments section; ignoring.",
-                file=sys.stderr,
-            )
-        selected_exp = None
-
-    return cfg_path, selected_exp
+    return resolved_path.resolve(), resolved_experiment
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -214,7 +187,7 @@ def _prune_option(args: List[str], option: str) -> List[str]:
 
 
 def _format_wandb_labels(
-    algo: str,
+    algo: Optional[str],
     cfg_path: Path,
     experiment: Optional[str],
     run_idx: int,
@@ -225,7 +198,7 @@ def _format_wandb_labels(
 ) -> Dict[str, str]:
     context = {
         "prefix": prefix,
-        "algo": algo,
+        "algo": algo or "",
         "config": cfg_path.name,
         "config_stem": cfg_path.stem,
         "experiment": experiment or "",
@@ -259,7 +232,6 @@ def _format_wandb_labels(
 
 def _args_to_base_spec(args: argparse.Namespace) -> Dict[str, Any]:
     return {
-        "algo": args.algo,
         "config": args.config,
         "scenario": args.scenario,
         "experiment": args.experiment,
@@ -403,10 +375,21 @@ def _prepare_spec_runs(
     spec_index: int,
     total_specs: int,
 ) -> Tuple[List[RunRequest], str, int]:
-    algo = spec.get("algo")
-    if not algo:
-        parser.error("Each run specification must define an 'algo'")
-    algo = str(algo)
+    algo_raw = spec.get("algo")
+    algo: Optional[str]
+    if algo_raw is not None:
+        algo = str(algo_raw).strip()
+        if not algo:
+            algo = None
+    else:
+        algo = None
+
+    if algo is not None:
+        registered = trainer_registry.registered_trainers()
+        if algo.lower() not in registered:
+            parser.error(
+                f"Algorithm '{algo}' has not been registered. Available: {sorted(registered)}"
+            )
 
     config_override = spec.get("config")
     if isinstance(config_override, Path):
@@ -442,9 +425,14 @@ def _prepare_spec_runs(
         spec_experiment = str(spec_experiment).strip() or None
 
     if scenario_path is None and cfg_override_path is None:
-        default_scenario = DEFAULT_SCENARIOS.get(algo)
-        if default_scenario is not None:
-            scenario_path = default_scenario
+        if algo is not None:
+            default_scenario = ALGO_PRESETS.get(algo.lower())
+            if default_scenario is not None:
+                scenario_path = default_scenario
+        if scenario_path is None:
+            parser.error(
+                "Each run specification must supply a scenario or config path when --algo is unavailable."
+            )
 
     if scenario_path is not None:
         cfg_path, experiment_name = _resolve_scenario_manifest(
@@ -452,7 +440,7 @@ def _prepare_spec_runs(
             scenario_path,
         )
     else:
-        cfg_path, experiment_name = resolve_config(algo, cfg_override_path, spec_experiment, parser)
+        cfg_path, experiment_name = resolve_config(cfg_override_path, spec_experiment, parser)
 
     forwarded_args = _prune_option(forwarded_args, "--config")
     forwarded_args = _prune_option(forwarded_args, "--experiment")
@@ -506,7 +494,7 @@ def _prepare_spec_runs(
 
     base_env_overrides = _prepare_env_overrides(spec, parser)
 
-    label = spec.get("label") or spec.get("name") or algo
+    label = spec.get("label") or spec.get("name") or algo or cfg_path.stem
     # map_display already set in branch above
     experiment_display = experiment_name or "(default)"
     print(
@@ -602,10 +590,14 @@ def _resolve_scenario_manifest(
     if not scenario_path.exists():
         parser.error(f"Scenario manifest not found: {scenario_path}")
     try:
-        cfg = load_scenario_manifest(scenario_path)
-    except ScenarioConfigError as exc:
-        parser.error(f"Failed to load scenario '{scenario_path}': {exc}")
+        cfg, _, _ = load_config(
+            scenario_path,
+            default_path=scenario_path,
+            experiment=None,
+        )
     except FileNotFoundError as exc:
+        parser.error(str(exc))
+    except RuntimeError as exc:
         parser.error(str(exc))
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w", encoding="utf-8")
