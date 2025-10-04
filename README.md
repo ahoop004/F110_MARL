@@ -39,8 +39,19 @@ Multi-agent reinforcement learning stack for F1TENTH-style racing. The project w
 
 ## Reward Strategies
 
-- Configure `reward.mode` in the experiment YAML to choose between `gaplock`, `progress`, `fastest_lap`, or `composite` strategies.
-- Gaplock rewards sparse pursuit outcomes (defender crashes vs. ego collisions) with optional scaling.
+- Configure `reward.task` in scenario manifests to choose between `gaplock`, `progress`, `fastest_lap`, or `composite`. Legacy `reward.mode` entries are still accepted but automatically migrated to the new task registry.
+- Task options now live under `reward.params` (e.g. `progress_weight`, `heading_penalty`). Historical sections such as `reward.progress` or top-level keys are migrated automatically, but updating manifests keeps diffs clean.
+- Gaplock rewards sparse pursuit outcomes (defender crashes vs. ego collisions) with optional scaling and roster-aware target resolution.
 - Progress shaping uses the loaded centerline to pay out forward motion and penalise lateral/heading error.
-- Fastest-lap mode incentivises lap completions with optional best-lap bonuses and per-step penalties.
-- Composite mode blends multiple strategies with configurable weights; inspect `reward.components` for examples.
+- Fastest-lap task incentivises lap completions with optional best-lap bonuses and per-step penalties.
+- Composite tasks blend multiple strategies via `reward.components`, with each component specifying a `task`, optional `params`, and a `weight`.
+
+```yaml
+reward:
+  task: progress
+  params:
+    progress_weight: 1.0
+    lateral_penalty: 0.05
+```
+
+If you are still on legacy manifests, `reward.mode` and task-specific sections (e.g. `reward.progress`) continue to load, and the runtime will emit `wrapper.migration_notes` while it normalises the configuration.

@@ -151,7 +151,7 @@ class ConsoleSink(LogSink):
         if episode is not None and total is not None and total > 0:
             header = f"[TRAIN {episode:03d}/{total}]"
 
-        mode = metrics.get("train/reward_mode")
+        mode = metrics.get("train/reward_task") or metrics.get("train/reward_mode")
         cause = metrics.get("train/cause")
         steps = self._coerce_int(metrics.get("train/steps"))
         collisions = self._coerce_int(metrics.get("train/collisions_total"))

@@ -17,6 +17,13 @@
 
 ## High-Priority · MARL Enablement
 
+### Reward Task Refactor
+
+- [x] Extract task-specific reward orchestration into `src/f110x/tasks/reward/` (one module per scenario/task).
+- [x] Remove global `reward.mode` branching in favor of task registry wiring.
+- [x] Update `build_reward_wrapper` / runners to resolve rewards via the task registry, including config migration helpers.
+- [x] Document the new task-centric reward pipeline and provide migration notes for existing configs.
+
 ### Multi-Agent Roster & Training
 
 - [x] Update experiment configs to roster two attackers plus one defender (agent counts, start pose options, roster entries).
@@ -65,7 +72,7 @@
 ## Secondary · Configuration & Reward
 
 - [ ] Polish scenario manifests (remove redundant overrides, ensure consistent `algo`/`config_ref` usage).
-- [ ] Make sure scenario `reward.mode` takes effect without an explicit curriculum (adjust defaults or seed a matching stage).
+- [ ] Provide scenario-level reward task selectors once the registry lands; strip obsolete `reward.mode` entries.
 - [ ] Audit manifests for redundant keys/wrappers (drop duplicate `env.map` aliases, remove unused heuristic pipelines).
 - [ ] Update tests & tooling to consume scenarios (`tests/resources/test_env_config.yaml`, sweep configs, docs examples).
 - [ ] Document the scenario workflow (adding maps/agents, override keys, migration tips).

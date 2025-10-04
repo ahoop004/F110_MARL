@@ -142,7 +142,7 @@ class EpisodeRollout:
     """Aggregated metrics for a single environment episode."""
 
     episode_index: int
-    reward_mode: str
+    reward_task: str
     steps: int
     returns: Dict[str, float]
     reward_breakdown: Dict[str, Dict[str, float]]
@@ -161,6 +161,12 @@ class EpisodeRollout:
     @property
     def cause(self) -> str:
         return ",".join(self.causes) if self.causes else "unknown"
+
+    @property
+    def reward_mode(self) -> str:
+        """Alias kept for backward compatibility with legacy callers."""
+
+        return self.reward_task
 
 
 def build_trajectory_buffers(
@@ -451,7 +457,13 @@ def run_episode(
 
     rollout = EpisodeRollout(
         episode_index=episode_index,
-        reward_mode=str(getattr(reward_wrapper, "mode", "unknown")),
+        reward_task=str(
+            getattr(
+                reward_wrapper,
+                "task_id",
+                getattr(reward_wrapper, "mode", "unknown"),
+            )
+        ),
         steps=steps,
         returns=returns,
         reward_breakdown=reward_breakdown,

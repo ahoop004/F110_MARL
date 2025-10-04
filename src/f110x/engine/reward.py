@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from f110x.envs import F110ParallelEnv
+from f110x.tasks.reward import reward_task_registry
 from f110x.utils.map_loader import MapData
 from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 
@@ -18,7 +19,7 @@ def build_curriculum_schedule(raw_curriculum: Iterable[Dict[str, Any]]) -> Curri
     for stage in raw_curriculum:
         if not isinstance(stage, dict):
             continue
-        mode = stage.get("mode")
+        mode = stage.get("task") or stage.get("mode")
         if mode is None:
             continue
         upper = stage.get("until", stage.get("episodes"))
@@ -38,22 +39,30 @@ def resolve_reward_mode(
     *,
     default_sequence: Optional[List[Tuple[int, str]]] = None,
 ) -> str:
-    """Resolve the reward mode for the given episode index."""
+    """Resolve the canonical reward task for the given episode index."""
 
     if curriculum:
         for threshold, mode in curriculum:
             if threshold is None or episode_idx < threshold:
-                return mode
-        return curriculum[-1][1]
+                resolved = mode
+                break
+        else:
+            resolved = curriculum[-1][1]
+    else:
+        defaults = default_sequence or [
+            (1000, "basic"),
+            (2000, "pursuit"),
+        ]
+        resolved = defaults[-1][1] if defaults else "gaplock"
+        for threshold, mode in defaults:
+            if episode_idx < threshold:
+                resolved = mode
+                break
 
-    defaults = default_sequence or [
-        (1000, "basic"),
-        (2000, "pursuit"),
-    ]
-    for threshold, mode in defaults:
-        if episode_idx < threshold:
-            return mode
-    return defaults[-1][1] if defaults else "basic"
+    try:
+        return reward_task_registry.normalize(resolved, default="gaplock")
+    except KeyError as exc:
+        raise ValueError(f"Unknown reward task '{resolved}' in curriculum") from exc
 
 
 def build_reward_wrapper(
@@ -68,8 +77,9 @@ def build_reward_wrapper(
     """Construct a reward wrapper instance for the given episode."""
 
     wrapper_cfg = dict(reward_cfg)
-    mode = resolve_reward_mode(curriculum, episode_idx)
-    wrapper_cfg["mode"] = mode
+    task_id = resolve_reward_mode(curriculum, episode_idx)
+    wrapper_cfg["task"] = task_id
+    wrapper_cfg["mode"] = task_id  # Retain legacy field for migration tooling
 
     runtime_context = RewardRuntimeContext(env=env, map_data=map_data, roster=roster)
     wrapper = RewardWrapper(config=wrapper_cfg, context=runtime_context)

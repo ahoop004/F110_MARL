@@ -24,8 +24,8 @@ scenario:
       - spawn_2
       - spawn_3
   reward:
-    mode: progress
-    progress:
+    task: progress
+    params:
       progress_weight: 1.0
       speed_weight: 0.0
       lateral_penalty: 0.05

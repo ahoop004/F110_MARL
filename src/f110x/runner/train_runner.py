@@ -244,6 +244,7 @@ class TrainRunner:
                 "episode": episode_idx + 1,
                 "steps": rollout.steps,
                 "cause": rollout.cause,
+                "reward_task": rollout.reward_task,
                 "reward_mode": rollout.reward_mode,
                 "returns": returns,
                 "reward_breakdown": reward_breakdown,
@@ -280,6 +281,7 @@ class TrainRunner:
                 "train/collisions_total": float(collisions_total),
                 "train/idle_truncated": rollout.idle_triggered,
                 "train/cause": rollout.cause,
+                "train/reward_task": rollout.reward_task,
                 "train/reward_mode": rollout.reward_mode,
             }
             if success is not None:
