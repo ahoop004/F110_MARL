@@ -29,11 +29,7 @@ DEFAULT_SCENARIOS: Dict[str, Path] = {
     "rec_ppo": Path("configs/scenarios/gaplock_rec_ppo.yaml"),
     "td3": Path("configs/scenarios/gaplock_td3.yaml"),
     "sac": Path("configs/scenarios/gaplock_sac.yaml"),
-    "dqn_starved": Path("configs/scenarios/gaplock_dqn_starved.yaml"),
-    "ppo_starved": Path("configs/scenarios/gaplock_ppo_starved.yaml"),
-    "td3_starved": Path("configs/scenarios/gaplock_td3_starved.yaml"),
-    "sac_starved": Path("configs/scenarios/gaplock_sac_starved.yaml"),
-    "gaplock_multi_independent": Path("configs/scenarios/gaplock_multi_independent.yaml"),
+
 }
 
 DEFAULT_CONFIGS: Dict[str, Tuple[Path, str]] = {

@@ -6,6 +6,8 @@
 - [x] Implement manifest loader and CLI support (`--scenario`, `F110_CONFIG`/`F110_EXPERIMENT`).
 - [x] Convert legacy experiments into scenario manifests (gaplock, starved, multi-agent variants).
 - [ ] Polish scenario manifests (remove redundant overrides, ensure consistent `algo`/`config_ref` usage).
+- [ ] Make sure scenario `reward.mode` takes effect without an explicit curriculum (adjust `_resolve_reward_mode` defaults or seed a matching curriculum stage).
+- [ ] Audit manifests for redundant keys/wrappers (e.g., drop duplicate `env.map` aliases and remove unused heuristic observation pipelines).
 - [ ] Update tests & tooling to consume scenarios (`tests/resources/test_env_config.yaml`, sweep configs, docs examples).
 - [ ] Document the scenario workflow (adding maps/agents, available override keys, migration tips).
 
