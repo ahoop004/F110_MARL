@@ -24,11 +24,8 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 DEFAULT_SCENARIOS: Dict[str, Path] = {
-    "dqn": Path("configs/scenarios/gaplock_dqn.yaml"),
-    "ppo": Path("configs/scenarios/gaplock_ppo.yaml"),
-    "rec_ppo": Path("configs/scenarios/gaplock_rec_ppo.yaml"),
-    "td3": Path("configs/scenarios/gaplock_td3.yaml"),
-    "sac": Path("configs/scenarios/gaplock_sac.yaml"),
+    "dqn": Path("scenarios/gaplock_dqn.yaml"),
+
 
 }
 

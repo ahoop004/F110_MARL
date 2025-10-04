@@ -21,7 +21,7 @@ from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 from f110x.trainers.base import Transition, Trainer
 
 
-DEFAULT_CONFIG_PATH = Path("configs/scenarios/gaplock_dqn.yaml")
+DEFAULT_CONFIG_PATH = Path("scenarios/gaplock_dqn.yaml")
 ENV_CONFIG_KEY = "F110_CONFIG"
 ENV_EXPERIMENT_KEY = "F110_EXPERIMENT"
 

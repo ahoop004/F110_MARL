@@ -1,0 +1,97 @@
+scenario:
+  name: 4_gap
+  env:
+    seed: 42
+    n_agents: 4
+    max_steps: 10000
+    timestep: 0.01
+    render_interval: 0
+    map_dir: maps
+    map_yaml: shanghai/Shanghai_map.yaml
+    map: shanghai/Shanghai_map.yaml
+    map_ext: .png
+    centerline_autoload: true
+    centerline_render: true
+    centerline_features: true
+    render_mode: human
+    update: 2
+  reward:
+    mode: progress
+    progress:
+      progress_weight: 1.0
+      speed_weight: 0.0
+      lateral_penalty: 0.05
+      heading_penalty: 0.02
+  main:
+    wandb:
+      enabled: true
+      project: marl-f110
+      entity: ahoop004-old-dominion-university
+      group: dqn
+      tags:
+      - dqn
+    mode: train_eval
+    save_eval_rollouts: true
+    eval_rollout_dir: eval_rollouts
+    train_episodes: 100
+    eval_episodes: 1
+    checkpoint: checkpoints/dqn_gaplock.pt
+  algorithms:
+    dqn:
+      device: cpu
+      lr: 0.0004
+      gamma: 0.99
+      batch_size: 512
+      buffer_size: 100000
+      target_update_interval: 500
+      epsilon_start: 1.0
+      epsilon_end: 0.1
+      epsilon_decay_rate: 0.9995
+      hidden_dims:
+      - 256
+      - 256
+      prioritized_replay: true
+      per_alpha: 0.6
+      per_beta_start: 0.4
+      per_beta_increment: 5.0e-05
+      per_min_priority: 0.001
+      per_epsilon: 1.0e-06
+      action_mode: rate
+      steering_rate: 0.5
+      accel_rate: 2.0
+      brake_rate: 4.0
+      rate_initial_speed: 0.0
+      train_episodes: 100
+      eval_episodes: 1
+      save_dir: checkpoints
+      checkpoint_name: dqn_gaplock.pt
+  agents:
+    car_0:
+      slot: 0
+      role: attacker
+      wrappers:
+      - factory: obs
+        params:
+          max_scan: 30.0
+          normalize: true
+          target_role: defender
+      algo: dqn
+      config_ref: dqn
+      agent_id: car_0
+    car_1:
+      algo: follow_gap
+      slot: 1
+      role: defender
+      params:
+        max_speed: 18.0
+        min_speed: 2.0
+        steering_gain: 0.95
+        bubble_radius: 4
+        steer_smooth: 0.0
+      agent_id: car_1
+      wrappers:
+      - factory: obs
+        params:
+          max_scan: 30.0
+          normalize: true
+          target_role: defender

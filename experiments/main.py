@@ -14,11 +14,8 @@ _ALGO_OVERRIDE: Optional[str] = None
 _EXP_OVERRIDE: Optional[str] = None
 
 _DEFAULT_CONFIGS: Dict[str, Tuple[str, str]] = {
-    "dqn": ("configs/experiments.yaml", "gaplock_dqn"),
-    "ppo": ("configs/experiments.yaml", "gaplock_ppo"),
-    "rec_ppo": ("configs/experiments.yaml", "gaplock_rec_ppo"),
-    "td3": ("configs/experiments.yaml", "gaplock_td3"),
-    "sac": ("configs/experiments.yaml", "gaplock_sac"),
+    "dqn": ("scenarios/gaplock_dqn.yaml", "gaplock_dqn"),
+
 }
 
 argv = list(sys.argv)

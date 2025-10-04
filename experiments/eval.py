@@ -20,7 +20,7 @@ from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.wrappers.reward import RewardRuntimeContext, RewardWrapper
 
 
-DEFAULT_CONFIG_PATH = Path("configs/scenarios/gaplock_dqn.yaml")
+DEFAULT_CONFIG_PATH = Path("scenarios/gaplock_dqn.yaml")
 ENV_CONFIG_KEY = "F110_CONFIG"
 ENV_EXPERIMENT_KEY = "F110_EXPERIMENT"
 
