@@ -12,6 +12,7 @@ from f110x.utils.builders import AgentBundle, AgentTeam
 from f110x.utils.config_models import ExperimentConfig
 from f110x.utils.map_loader import MapData
 from f110x.utils.start_pose import StartPoseOption
+from f110x.utils.logger import Logger
 
 
 @dataclass
@@ -34,6 +35,7 @@ class RunnerContext:
     trainable_ids: List[str] = field(default_factory=list)
     primary_agent_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    logger: Logger = field(default_factory=Logger)
 
     # Accessors -----------------------------------------------------------------
 

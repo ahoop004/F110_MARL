@@ -18,6 +18,7 @@ from f110x.engine.rollout import (
 from f110x.runner.context import RunnerContext
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
+from f110x.utils.logger import Logger
 from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.utils.start_pose import reset_with_start_poses
 
@@ -35,6 +36,7 @@ class TrainRunner:
     trainer_map: Dict[str, Trainer] = field(init=False)
     _primary_bundle: AgentBundle = field(init=False)
     _primary_trainer: Optional[Trainer] = field(init=False, default=None)
+    _logger: Logger = field(init=False)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -46,6 +48,7 @@ class TrainRunner:
 
         self.trainer_map = dict(self.context.trainer_map)
         self._configure_output_paths()
+        self._logger = self.context.logger
 
     # ------------------------------------------------------------------
     # Public surface
@@ -149,6 +152,19 @@ class TrainRunner:
         update_after = max(1, int(self.context.update_after or 1))
         _ = update_start  # kept for compatibility with legacy callers
 
+        logger = self._logger
+        total_episodes = int(episodes)
+        logger.start({
+            "mode": "train",
+            "primary_agent": primary_id,
+            "train_total_episodes": total_episodes,
+        })
+        logger.update_context(
+            mode="train",
+            primary_agent=primary_id,
+            train_total_episodes=total_episodes,
+        )
+
         for episode_idx in range(int(episodes)):
             def reset_env():
                 return reset_with_start_poses(
@@ -188,9 +204,14 @@ class TrainRunner:
                         )
 
             if rollout.idle_triggered:
-                print(
-                    f"[INFO] Idle stop at episode {episode_idx + 1} after {rollout.steps} steps "
-                    f"(threshold={idle_patience_steps}, speed<{idle_speed_threshold})"
+                logger.info(
+                    "Idle stop triggered",
+                    extra={
+                        "episode": episode_idx + 1,
+                        "steps": rollout.steps,
+                        "idle_patience_steps": idle_patience_steps,
+                        "idle_speed_threshold": idle_speed_threshold,
+                    },
                 )
 
             epsilon_val = self._resolve_primary_epsilon()
@@ -241,6 +262,37 @@ class TrainRunner:
                     episode_record[f"collision_step_{aid}"] = int(step_val)
                 episode_record[f"avg_speed_{aid}"] = float(rollout.average_speeds.get(aid, 0.0))
 
+            metrics: Dict[str, Any] = {
+                "train/episode": float(episode_idx + 1),
+                "train/total_episodes": float(total_episodes),
+                "train/steps": float(rollout.steps),
+                "train/collisions_total": float(collisions_total),
+                "train/success": success,
+                "train/idle_truncated": rollout.idle_triggered,
+                "train/cause": rollout.cause,
+                "train/reward_mode": rollout.reward_mode,
+            }
+            if primary_id:
+                metrics["train/primary_agent"] = primary_id
+            metrics["train/primary_return"] = float(returns.get(primary_id, 0.0))
+            if epsilon_val is not None:
+                metrics["train/epsilon"] = float(epsilon_val)
+            metrics["train/attacker_crashed"] = attacker_crashed
+            metrics["train/defender_crashed"] = defender_crashed
+            if defender_survival_steps is not None:
+                metrics["train/defender_survival_steps"] = float(defender_survival_steps)
+            for aid, value in returns.items():
+                metrics[f"train/return_{aid}"] = float(value)
+            for aid, count in rollout.collisions.items():
+                metrics[f"train/collision_count_{aid}"] = float(count)
+            for aid, speed in rollout.average_speeds.items():
+                metrics[f"train/avg_speed_{aid}"] = float(speed)
+            for aid, step_val in rollout.collision_steps.items():
+                if step_val >= 0:
+                    metrics[f"train/collision_step_{aid}"] = float(step_val)
+
+            logger.log_metrics("train", metrics, step=episode_idx + 1)
+
             results.append(episode_record)
 
             if update_callback:
@@ -262,18 +314,14 @@ class TrainRunner:
             if new_best_avg is not None:
                 saved = self._save_primary_model()
                 if saved:
-                    print(
-                        f"[INFO] New best model at episode {episode_idx + 1} "
-                        f"(avg_return={new_best_avg:.2f}) → {self.best_model_path}"
+                    logger.info(
+                        "New best model checkpoint",
+                        extra={
+                            "episode": episode_idx + 1,
+                            "avg_return": float(new_best_avg),
+                            "path": str(self.best_model_path),
+                        },
                     )
-
-            success_token = "success" if success else "no-success"
-            eps_fragment = f" epsilon={epsilon_val:.3f}" if epsilon_val is not None else ""
-            print(
-                f"[EP {episode_idx + 1:03d}/{episodes}] mode={rollout.reward_mode} "
-                f"steps={rollout.steps} cause={rollout.cause} {success_token} "
-                f"return_{primary_id}={returns.get(primary_id, 0.0):.2f}{eps_fragment}"
-            )
 
         for trainer_id, trainer in trainer_map.items():
             buffer = trajectory_buffers.get(trainer_id)

@@ -29,14 +29,18 @@
 - [x] Phase 5 – CLI Integration & Migration
   - [x] Refactor `experiments/main.py` to keep only CLI parsing, seeding, and mode dispatch; runners handle execution.
   - [x] Update `experiments/train.py`/`experiments/eval.py` to delegate into the new runner modules (maintaining backwards-compatible CLI flags/env vars until removed).
-- [x] Rework `run.py` to source presets from the trainer registry instead of `_DEFAULT_CONFIGS`, and stream scenarios through `utils/config.load_config`.
-- [x] Confirm CLI and YAML manifest compatibility end-to-end.
-- [ ] Ensure `run.py` flattens scenario manifests when supplied via `--config`/grid specs so `experiments/main.py` receives legacy-style configs for overrides.
-- [ ] Populate or remap algorithm preset files (e.g. `scenarios/ppo.yaml`, `scenarios/dqn.yaml`) so trainer registry discovery aligns with shipped scenarios.
+  - [x] Rework `run.py` to source presets from the trainer registry instead of `_DEFAULT_CONFIGS`, and stream scenarios through `utils/config.load_config`.
+  - [x] Confirm CLI and YAML manifest compatibility end-to-end.
+  - [x] Ensure `run.py` flattens scenario manifests when supplied via `--config`/grid specs so `experiments/main.py` receives legacy-style configs for overrides.
+  - [x] Populate or remap algorithm preset files (e.g. `scenarios/ppo.yaml`, `scenarios/dqn.yaml`) so trainer registry discovery aligns with shipped scenarios.
 
-- [ ] Logging & Monitoring Refresh
-  - [ ] Build `utils/logger.py` that redefines output formatting (structured console summaries, CSV fallbacks, W&B adapter) instead of mirroring current print statements.
-  - [ ] Standardise metric keys (`train/return_*`, `eval/return_*`, curriculum state, collision stats) and thread them through engine/runner hooks.
+- [x] Logging & Monitoring Refresh
+  - [x] Build `utils/logger.py` as the unified façade for console summaries and W&B pushes (structured events, pluggable sinks, lifecycle hooks).
+  - [x] Swap `runner/train_runner.py`/`runner/eval_runner.py` onto the new logger API so prints and `wandb.log` calls flow through a single path.
+  - [x] Define the console emission cadence + field set (rewards, collisions, curriculum state, timings) and match those keys to W&B metrics.
+  - [x] Standardise metric keys (`train/return_*`, `eval/return_*`, curriculum state, collision stats) and thread them through engine/runner hooks.
+  - [x] Document W&B configuration expectations (project/entity inputs, run-id resume behaviour, summary vs step metrics) for the logger adapter (see `experiments/main.py`).
+  - [x] Remove legacy logging paths once runners adopt the unified façade (direct prints, ad-hoc W&B usage, stray CSV writers).
 
 - [ ] Cleanup & Testing
   - [x] Delete legacy helpers once shims point to the new modules and the import-time `CTX = create_training_context()` side effect is removed.

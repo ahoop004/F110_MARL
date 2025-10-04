@@ -13,6 +13,7 @@ from f110x.utils.config import (
     load_config,
 )
 from f110x.utils.config_models import ExperimentConfig
+from f110x.utils.logger import Logger
 
 
 DEFAULT_CONFIG_PATH = Path("scenarios/gaplock_dqn.yaml")
@@ -45,6 +46,7 @@ def create_evaluation_session(
     env_config_key: str = DEFAULT_ENV_CONFIG_KEY,
     env_experiment_key: str = DEFAULT_ENV_EXPERIMENT_KEY,
     checkpoint: Optional[Path | str] = None,
+    logger: Optional[Logger] = None,
 ) -> EvaluationSession:
     """Load configuration and assemble an :class:`EvaluationSession`."""
 
@@ -55,7 +57,12 @@ def create_evaluation_session(
         env_config_key=env_config_key,
         env_experiment_key=env_experiment_key,
     )
-    session = build_evaluation_session(cfg, config_path=resolved_path, experiment=resolved_experiment)
+    session = build_evaluation_session(
+        cfg,
+        config_path=resolved_path,
+        experiment=resolved_experiment,
+        logger=logger,
+    )
     if auto_load:
         session.auto_load(checkpoint)
     return session
@@ -66,10 +73,11 @@ def build_evaluation_session(
     *,
     config_path: Path,
     experiment: Optional[str],
+    logger: Optional[Logger] = None,
 ) -> EvaluationSession:
     """Compose an evaluation runner for the supplied configuration."""
 
-    runner_ctx = build_runner_context(config)
+    runner_ctx = build_runner_context(config, logger=logger)
     runner = EvalRunner(runner_ctx)
     return EvaluationSession(
         runner=runner,

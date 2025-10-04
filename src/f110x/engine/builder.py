@@ -8,6 +8,7 @@ from f110x.engine.reward import CurriculumSchedule, build_curriculum_schedule
 from f110x.runner.context import RunnerContext
 from f110x.utils.builders import AgentBundle, AgentTeam, build_agents, build_env
 from f110x.utils.config_models import ExperimentConfig
+from f110x.utils.logger import Logger
 
 
 def _select_primary_bundle(
@@ -31,6 +32,7 @@ def _select_primary_bundle(
 def build_runner_context(
     cfg: ExperimentConfig,
     *,
+    logger: Optional[Logger] = None,
     prefer_algorithms: Sequence[str] = ("ppo", "rec_ppo"),
     ensure_trainable: bool = True,
 ) -> RunnerContext:
@@ -95,6 +97,7 @@ def build_runner_context(
         metadata={
             "preferred_primary_algorithms": list(prefer_algorithms),
         },
+        logger=logger or Logger(),
     )
 
     return ctx

@@ -13,6 +13,7 @@ from f110x.utils.config import (
     load_config,
 )
 from f110x.utils.config_models import ExperimentConfig
+from f110x.utils.logger import Logger
 
 
 DEFAULT_CONFIG_PATH = Path("scenarios/gaplock_dqn.yaml")
@@ -54,6 +55,7 @@ def create_training_session(
     experiment: str | None = None,
     env_config_key: str = DEFAULT_ENV_CONFIG_KEY,
     env_experiment_key: str = DEFAULT_ENV_EXPERIMENT_KEY,
+    logger: Optional[Logger] = None,
 ) -> TrainingSession:
     """Load configuration and assemble a :class:`TrainingSession`."""
 
@@ -64,7 +66,12 @@ def create_training_session(
         env_config_key=env_config_key,
         env_experiment_key=env_experiment_key,
     )
-    return build_training_session(cfg, config_path=resolved_path, experiment=resolved_experiment)
+    return build_training_session(
+        cfg,
+        config_path=resolved_path,
+        experiment=resolved_experiment,
+        logger=logger,
+    )
 
 
 def build_training_session(
@@ -72,10 +79,11 @@ def build_training_session(
     *,
     config_path: Path,
     experiment: Optional[str],
+    logger: Optional[Logger] = None,
 ) -> TrainingSession:
     """Compose a training runner for the supplied configuration."""
 
-    runner_ctx = build_runner_context(config)
+    runner_ctx = build_runner_context(config, logger=logger)
     runner = TrainRunner(runner_ctx)
     return TrainingSession(
         runner=runner,

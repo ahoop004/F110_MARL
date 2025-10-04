@@ -13,6 +13,7 @@ from f110x.engine.rollout import IdleTerminationTracker, collect_trajectory, run
 from f110x.runner.context import RunnerContext
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
+from f110x.utils.logger import Logger
 from f110x.utils.output import resolve_output_dir, resolve_output_file
 from f110x.utils.start_pose import reset_with_start_poses
 
@@ -28,12 +29,14 @@ class EvalRunner:
     rollout_dir: Optional[Path] = field(init=False, default=None)
     save_rollouts_default: bool = field(init=False, default=False)
     _primary_bundle: Optional[AgentBundle] = field(init=False, default=None)
+    _logger: Logger = field(init=False)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour captured in class docstring
         self._ensure_primary_agent()
         self.trainer_map = dict(self.context.trainer_map)
         self._primary_bundle = self._resolve_primary_bundle()
         self._configure_paths()
+        self._logger = self.context.logger
 
     # ------------------------------------------------------------------
     # Public surface
@@ -82,19 +85,32 @@ class EvalRunner:
         candidate = self._resolve_checkpoint_path(checkpoint_path)
         if candidate is None:
             return None
+        logger = self._logger
         if not candidate.exists():
-            print(f"[WARN] No checkpoint found at {candidate}; skipping load")
+            logger.warning(
+                "Checkpoint unavailable",
+                extra={"path": str(candidate)},
+            )
             return None
         controller = bundle.controller
         load_fn = getattr(controller, "load", None)
         if not callable(load_fn):
-            print(
-                f"[WARN] Controller for agent '{bundle.agent_id}' does not support load(); "
-                f"skipping checkpoint {candidate}"
+            logger.warning(
+                "Controller does not implement load()",
+                extra={
+                    "agent_id": bundle.agent_id,
+                    "path": str(candidate),
+                },
             )
             return None
         load_fn(str(candidate))
-        print(f"[INFO] Loaded checkpoint from {candidate}")
+        logger.info(
+            "Loaded evaluation checkpoint",
+            extra={
+                "agent_id": bundle.agent_id,
+                "path": str(candidate),
+            },
+        )
         return candidate
 
     def run(
@@ -119,6 +135,21 @@ class EvalRunner:
         attacker_id = team.roles.get("attacker", primary_id)
         defender_id = team.roles.get("defender")
         agent_ids = list(env.possible_agents)
+
+        logger = self._logger
+        total_episodes = int(episodes)
+        logger.start(
+            {
+                "mode": "eval",
+                "primary_agent": primary_id,
+                "eval_total_episodes": total_episodes,
+            }
+        )
+        logger.update_context(
+            mode="eval",
+            primary_agent=primary_id,
+            eval_total_episodes=total_episodes,
+        )
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         idle_tracker = IdleTerminationTracker(0.0, 0)
@@ -193,15 +224,6 @@ class EvalRunner:
             defender_crash_step = collision_steps.get(defender_id)
             attacker_crash_step = collision_steps.get(attacker_id)
 
-            return_fragment = (
-                f" return_{primary_id}={returns.get(primary_id, 0.0):.2f}" if primary_id else ""
-            )
-            print(
-                f"[EVAL {ep_index + 1:03d}/{episodes}] steps={rollout.steps} cause={rollout.cause} "
-                f"collisions={collision_total} defender_crash={defender_crashed} "
-                f"attacker_crash={attacker_crashed}{return_fragment}"
-            )
-
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
                 "steps": rollout.steps,
@@ -239,12 +261,42 @@ class EvalRunner:
             if attacker_crash_step is not None:
                 record["attacker_crash_step"] = int(attacker_crash_step)
 
+            defender_survival_steps_value = record.get("defender_survival_steps")
+
             if trace_buffer is not None and rollout_dir_path is not None:
                 transformed = collect_trajectory(trace_buffer, transform=self._trace_transform)
                 rollout_path = rollout_dir_path / f"episode_{ep_index + 1:03d}.pkl"
                 with rollout_path.open("wb") as handle:
                     pickle.dump({"trajectory": transformed, "metrics": record}, handle)
                 record["rollout_path"] = str(rollout_path)
+
+            metrics: Dict[str, Any] = {
+                "eval/episode": float(ep_index + 1),
+                "eval/total_episodes": float(total_episodes),
+                "eval/steps": float(rollout.steps),
+                "eval/cause": rollout.cause,
+                "eval/collisions_total": float(collision_total),
+                "eval/defender_crashed": defender_crashed,
+                "eval/attacker_crashed": attacker_crashed,
+            }
+            if primary_id:
+                metrics["eval/primary_agent"] = primary_id
+            metrics["eval/primary_return"] = float(returns.get(primary_id, 0.0))
+            for aid, value in returns.items():
+                metrics[f"eval/return_{aid}"] = float(value)
+            for aid, count in rollout.collisions.items():
+                metrics[f"eval/collision_count_{aid}"] = float(count)
+            for aid, speed in rollout.average_speeds.items():
+                metrics[f"eval/avg_speed_{aid}"] = float(speed)
+            for aid, step_val in collision_steps.items():
+                if step_val is not None:
+                    metrics[f"eval/collision_step_{aid}"] = float(step_val)
+            for aid, count in lap_counts.items():
+                metrics[f"eval/lap_count_{aid}"] = float(count)
+            if defender_survival_steps_value is not None:
+                metrics["eval/defender_survival_steps"] = float(defender_survival_steps_value)
+
+            logger.log_metrics("eval", metrics, step=ep_index + 1)
 
             results.append(record)
 

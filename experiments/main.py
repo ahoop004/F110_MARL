@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 import random
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
@@ -132,6 +132,7 @@ except ImportError:  # optional dependency
 
 import train as train_module
 import eval as eval_module
+from f110x.utils.logger import ConsoleSink, Logger, WandbSink
 
 
 def _deep_update(base: Dict, updates: Dict) -> Dict:
@@ -216,55 +217,6 @@ def _wandb_init(cfg, mode):
 
     return run
 
-
-def _log_train_results(run, results, ppo_id=None, gap_id=None):
-    if run is None:
-        return
-
-    for idx, record in enumerate(results, 1):
-        episode = idx
-        payload: Dict[str, Any] = {}
-
-        if isinstance(record, dict):
-            episode = int(record.get("episode", idx))
-            returns = record.get("returns")
-            if isinstance(returns, dict):
-                for aid, value in returns.items():
-                    payload[f"train/return_{aid}"] = float(value)
-
-            for key, value in record.items():
-                if not key.startswith("return_"):
-                    continue
-                if isinstance(value, (int, float)):
-                    payload[f"train/{key}"] = float(value)
-
-        if payload:
-            payload["train/episode"] = float(episode)
-            run.log(payload, step=episode)
-
-
-def _log_eval_results(run, results):
-    if run is None:
-        return
-
-    for res in results:
-        episode = int(res.get("episode", 0) or 0)
-        payload: Dict[str, Any] = {}
-
-        returns = res.get("returns")
-        if isinstance(returns, dict):
-            for aid, value in returns.items():
-                payload[f"eval/return_{aid}"] = float(value)
-
-        for key, value in res.items():
-            if key.startswith("return_") and isinstance(value, (int, float)):
-                payload[f"eval/{key}"] = float(value)
-
-        if payload:
-            payload["eval/episode"] = float(episode)
-            run.log(payload, step=episode)
-
-
 def main():
     cfg_env = os.environ.get("F110_CONFIG")
 
@@ -299,6 +251,8 @@ def main():
         print("[ERROR] Configuration root must be a mapping", file=sys.stderr)
         sys.exit(2)
 
+    pending_logs: List[Tuple[str, str, Dict[str, Any]]] = []
+
     experiments_section = cfg_doc.get("experiments") if isinstance(cfg_doc.get("experiments"), dict) else None
     if experiments_section is not None:
         if not cfg_experiment:
@@ -331,12 +285,12 @@ def main():
             sys.exit(2)
         env_cfg["map"] = map_choice
         env_cfg["map_yaml"] = map_choice if Path(map_choice).suffix else f"{map_choice}.yaml"
-        print(f"[INFO] Using map override '{map_choice}'")
+        pending_logs.append(("info", "Using map override", {"map": map_choice}))
         config_dirty = True
     run_seed = _apply_run_seed(cfg)
     if run_seed is not None:
         config_dirty = True
-        print(f"[INFO] Using RUN_SEED={run_seed}")
+        pending_logs.append(("info", "Using RUN_SEED", {"seed": run_seed}))
         _seed_everything(run_seed)
 
     main_cfg = cfg.setdefault("main", {})
@@ -361,24 +315,31 @@ def main():
         tmp_cfg_path = Path(tmp_file.name)
         cfg_path = tmp_cfg_path
 
-    def update_logger(metrics: Dict[str, Any]):
-        if wandb_run is None or not metrics:
-            return
+    # Console sink provides structured CLI output; Wandb sink respects cfg['main']['wandb']
+    # (project/entity/run-id) and logs against the standard train/episode and eval/episode metrics.
+    sinks = [ConsoleSink()]
+    if wandb_run is not None:
+        sinks.append(WandbSink(wandb_run))
 
-        safe_payload: Dict[str, Any] = {}
-        for key, value in metrics.items():
-            if isinstance(value, (int, float)):
-                safe_payload[key] = float(value)
-            else:
-                safe_payload[key] = value
-
-        if safe_payload:
-            wandb_run.log(safe_payload)
-
-    update_cb = update_logger if wandb_run is not None else None
+    logger = Logger(sinks)
+    logger.start({
+        "mode": mode,
+        "config_path": str(cfg_path),
+        "experiment": cfg_experiment,
+    })
+    for level, message, extra in pending_logs:
+        if level == "info":
+            logger.info(message, extra=extra)
+        else:
+            logger.warning(message, extra=extra)
+    pending_logs.clear()
 
     if mode == "train":
-        train_session = train_module.create_training_session(cfg_path, experiment=cfg_experiment)
+        train_session = train_module.create_training_session(
+            cfg_path,
+            experiment=cfg_experiment,
+            logger=logger,
+        )
         if _RENDER_FLAG:
             train_session.enable_render()
         fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
@@ -390,23 +351,20 @@ def main():
         results = train_module.run_training(
             train_session,
             episodes=episodes,
-            update_callback=update_cb,
         )
-        gap_id = (
-            train_session.runner.opponent_agent_ids[0]
-            if train_session.runner.opponent_agent_ids
-            else None
-        )
-        _log_train_results(wandb_run, results, train_session.runner.primary_agent_id, gap_id)
         final_path = train_session.save_final_model()
         if final_path is not None:
-            print(f"[INFO] Saved final model to {final_path}")
+            logger.info(
+                "Saved final model",
+                extra={"path": str(final_path)},
+            )
 
     elif mode == "eval":
         eval_session = eval_module.create_evaluation_session(
             cfg_path,
             auto_load=True,
             experiment=cfg_experiment,
+            logger=logger,
         )
         if _RENDER_FLAG:
             eval_session.enable_render()
@@ -422,10 +380,13 @@ def main():
             force_render=_RENDER_FLAG,
             auto_load=False,
         )
-        _log_eval_results(wandb_run, results)
 
     elif mode == "train_eval":
-        train_session = train_module.create_training_session(cfg_path, experiment=cfg_experiment)
+        train_session = train_module.create_training_session(
+            cfg_path,
+            experiment=cfg_experiment,
+            logger=logger,
+        )
         if _RENDER_FLAG:
             train_session.enable_render()
         fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
@@ -437,22 +398,19 @@ def main():
         train_results = train_module.run_training(
             train_session,
             episodes=train_episodes,
-            update_callback=update_cb,
         )
-        gap_id = (
-            train_session.runner.opponent_agent_ids[0]
-            if train_session.runner.opponent_agent_ids
-            else None
-        )
-        _log_train_results(wandb_run, train_results, train_session.runner.primary_agent_id, gap_id)
         final_path = train_session.save_final_model()
         if final_path is not None:
-            print(f"[INFO] Saved final model to {final_path}")
+            logger.info(
+                "Saved final model",
+                extra={"path": str(final_path)},
+            )
 
         eval_session = eval_module.create_evaluation_session(
             cfg_path,
             auto_load=True,
             experiment=cfg_experiment,
+            logger=logger,
         )
         if _RENDER_FLAG:
             eval_session.enable_render()
@@ -468,13 +426,11 @@ def main():
             force_render=_RENDER_FLAG,
             auto_load=False,
         )
-        _log_eval_results(wandb_run, eval_results)
 
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Expected train/eval/train_eval.")
 
-    if wandb_run is not None:
-        wandb_run.finish()
+    logger.stop()
 
     if tmp_cfg_path is not None and tmp_cfg_path.exists():
         tmp_cfg_path.unlink()

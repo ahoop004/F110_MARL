@@ -22,16 +22,50 @@ from f110x.utils.config import load_config
 
 
 BASE_DIR = Path(__file__).resolve().parent
+_TEMP_CONFIG_PATHS: List[Path] = []
+
+
+def _materialize_config(cfg: Any) -> Path:
+    """Persist a normalized config document to a temporary YAML file."""
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w", encoding="utf-8")
+    with tmp:
+        yaml.safe_dump(cfg.raw, tmp)
+    tmp_path = Path(tmp.name)
+    _TEMP_CONFIG_PATHS.append(tmp_path)
+    return tmp_path
 
 
 def _discover_algo_presets() -> Dict[str, Path]:
     presets: Dict[str, Path] = {}
     scenarios_dir = BASE_DIR / "scenarios"
-    registered = trainer_registry.registered_trainers()
-    for algo in sorted(registered):
-        candidate = scenarios_dir / f"{algo}.yaml"
-        if candidate.exists():
-            presets[algo] = candidate
+    if not scenarios_dir.exists():
+        return presets
+
+    for path in sorted(scenarios_dir.glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+
+        if not isinstance(doc, dict):
+            continue
+
+        scenario_block = doc.get("scenario")
+        if isinstance(scenario_block, dict):
+            source = scenario_block
+        else:
+            source = doc
+
+        algorithms = source.get("algorithms")
+        if not isinstance(algorithms, dict):
+            continue
+
+        for algo_name in algorithms.keys():
+            key = str(algo_name).strip().lower()
+            if not key or key in presets:
+                continue
+            presets[key] = path
     return presets
 
 
@@ -150,7 +184,7 @@ def resolve_config(
         cfg_path = cfg_path.resolve()
 
     try:
-        _, resolved_path, resolved_experiment = load_config(
+        cfg, resolved_path, resolved_experiment = load_config(
             cfg_path,
             default_path=cfg_path,
             experiment=experiment,
@@ -160,7 +194,24 @@ def resolve_config(
     except (KeyError, RuntimeError) as exc:
         parser.error(str(exc))
 
-    return resolved_path.resolve(), resolved_experiment
+    resolved_path = resolved_path.resolve()
+
+    is_manifest = False
+    try:
+        with resolved_path.open("r", encoding="utf-8") as original:
+            doc = yaml.safe_load(original) or {}
+        if isinstance(doc, dict):
+            if "scenario" in doc:
+                is_manifest = True
+            elif "algorithms" in doc and "experiments" not in doc:
+                is_manifest = True
+    except Exception:
+        is_manifest = False
+
+    if is_manifest:
+        resolved_path = _materialize_config(cfg)
+
+    return resolved_path, resolved_experiment
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -494,7 +545,16 @@ def _prepare_spec_runs(
 
     base_env_overrides = _prepare_env_overrides(spec, parser)
 
-    label = spec.get("label") or spec.get("name") or algo or cfg_path.stem
+    label = spec.get("label") or spec.get("name")
+    if not label:
+        if algo:
+            label = algo
+        elif scenario_path is not None:
+            label = Path(scenario_path).stem
+        elif cfg_override_path is not None:
+            label = Path(cfg_override_path).stem
+        else:
+            label = cfg_path.stem
     # map_display already set in branch above
     experiment_display = experiment_name or "(default)"
     print(
@@ -578,10 +638,6 @@ def run_once(
     result = subprocess.run(cmd, env=env)
     return result.returncode
 
-
-_TEMP_CONFIG_PATHS: List[Path] = []
-
-
 def _resolve_scenario_manifest(
     parser: argparse.ArgumentParser,
     scenario_path: Path,
@@ -600,11 +656,7 @@ def _resolve_scenario_manifest(
     except RuntimeError as exc:
         parser.error(str(exc))
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml", mode="w", encoding="utf-8")
-    with tmp:
-        yaml.safe_dump(cfg.raw, tmp)
-    tmp_path = Path(tmp.name)
-    _TEMP_CONFIG_PATHS.append(tmp_path)
+    tmp_path = _materialize_config(cfg)
     return tmp_path, None
 
 
