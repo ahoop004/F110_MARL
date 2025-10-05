@@ -308,6 +308,8 @@ class DQNConfigSchema(BaseSchema):
     epsilon_start: float = 0.9
     epsilon_end: float = 0.05
     epsilon_decay: int = 20_000
+    learning_starts: int = 1_000
+    max_grad_norm: float = 0.0
     hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
     prioritized_replay: bool = True
     per_alpha: float = 0.6

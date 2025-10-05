@@ -39,6 +39,11 @@ class DQNAgent:
         self.gamma = float(cfg.get("gamma", 0.99))
         self.batch_size = int(cfg.get("batch_size", 64))
         self.target_update_interval = int(cfg.get("target_update_interval", 500))
+        self.learning_starts = max(
+            self.batch_size,
+            int(cfg.get("learning_starts", 1000)),
+        )
+        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
 
         self.epsilon_start = float(cfg.get("epsilon_start", 0.9))
         self.epsilon_end = float(cfg.get("epsilon_end", 0.05))
@@ -52,6 +57,7 @@ class DQNAgent:
         self._episode_done = False
 
         buffer_size = int(cfg.get("buffer_size", 50000))
+        self.learning_starts = min(self.learning_starts, buffer_size)
         prioritized = bool(cfg.get("prioritized_replay", True))
         if prioritized:
             per_args = dict(
@@ -72,6 +78,7 @@ class DQNAgent:
         self._use_per = prioritized
 
         self.step_count = 0
+        self._updates = 0
 
     # -------------------- Interaction --------------------
 
@@ -132,6 +139,10 @@ class DQNAgent:
     def update(self) -> Optional[Dict[str, Any]]:
         if len(self.buffer) < self.batch_size:
             return None
+        if len(self.buffer) < self.learning_starts:
+            return None
+        if self.step_count < self.learning_starts:
+            return None
 
         batch = self.buffer.sample(self.batch_size)
         obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
@@ -171,16 +182,29 @@ class DQNAgent:
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        if self.max_grad_norm > 0.0:
+            clip_grad_norm_(self.q_net.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
 
-        if self.step_count % self.target_update_interval == 0:
+        self._updates += 1
+        if self.target_update_interval > 0 and self._updates % self.target_update_interval == 0:
             self.target_q_net.load_state_dict(self.q_net.state_dict())
 
         if self._use_per and indices is not None:
             td_error_np = td_errors.detach().cpu().numpy()
             self.buffer.update_priorities(np.asarray(indices), td_error_np)
 
-
+        td_mean = float(td_errors.detach().mean().cpu().item())
+        td_abs_mean = float(td_errors.detach().abs().mean().cpu().item())
+        stats: Dict[str, Any] = {
+            "loss": float(loss.item()),
+            "td_error_mean": td_mean,
+            "td_error_abs": td_abs_mean,
+            "epsilon": float(self.epsilon()),
+        }
+        if self._use_per and weights is not None:
+            stats["is_weight_mean"] = float(weights_t.detach().mean().cpu().item())
+        return stats
 
     def _advance_episode(self) -> None:
         self.episode_count += 1
