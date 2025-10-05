@@ -153,6 +153,7 @@ class EvalRunner:
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         idle_tracker = IdleTerminationTracker(0.0, 0)
+        reward_sharing_cfg = self.context.reward_cfg.get("shared_reward")
 
         def reward_factory(ep_index: int):
             return build_reward_wrapper(
@@ -209,6 +210,7 @@ class EvalRunner:
                 agent_ids=agent_ids,
                 render_condition=render_condition,
                 trace_buffer=trace_buffer,
+                reward_sharing=reward_sharing_cfg,
             )
 
             returns = dict(rollout.returns)

@@ -117,6 +117,7 @@ class TrainRunner:
         idle_speed_threshold = float(reward_cfg.get("idle_speed_threshold", 0.4))
         idle_patience_steps = int(reward_cfg.get("idle_patience_steps", 200))
         idle_tracker = IdleTerminationTracker(idle_speed_threshold, idle_patience_steps)
+        reward_sharing_cfg = reward_cfg.get("shared_reward")
 
         trajectory_buffers, off_policy_ids = build_trajectory_buffers(team, trainer_map)
 
@@ -190,6 +191,7 @@ class TrainRunner:
                 agent_ids=agent_ids,
                 render_condition=should_render,
                 on_offpolicy_flush=on_offpolicy_flush,
+                reward_sharing=reward_sharing_cfg,
             )
 
             returns = dict(rollout.returns)

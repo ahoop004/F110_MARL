@@ -233,6 +233,7 @@ def run_episode(
     render_condition: Optional[Callable[[int, int], bool]] = None,
     on_offpolicy_flush: Optional[Callable[[str, Trainer, TrajectoryBuffer], None]] = None,
     trace_buffer: Optional[List[EpisodeTraceStep]] = None,
+    reward_sharing: Optional[Mapping[str, Any]] = None,
 ) -> EpisodeRollout:
     """Execute a single environment episode and gather rollout statistics."""
 
@@ -274,6 +275,33 @@ def run_episode(
     components_extractor = getattr(reward_wrapper, "get_last_components", None)
     reward_breakdown: Dict[str, Dict[str, float]] = {agent_id: {} for agent_id in agent_order}
 
+    if reward_sharing and not isinstance(reward_sharing, Mapping):
+        # Support simple truthy flags for sharing behaviour.
+        reward_share_cfg: Dict[str, Any] = {"enabled": bool(reward_sharing)}
+    else:
+        reward_share_cfg = dict(reward_sharing or {})
+
+    reward_share_enabled = bool(reward_share_cfg.get("enabled", True)) and bool(reward_share_cfg)
+    reward_share_mode = str(reward_share_cfg.get("mode", reward_share_cfg.get("aggregation", "mean"))).lower()
+    reward_share_scope = str(reward_share_cfg.get("scope", reward_share_cfg.get("target", "all"))).lower()
+    reward_share_agents_cfg = reward_share_cfg.get("agents")
+    if isinstance(reward_share_agents_cfg, (list, tuple, set)):
+        reward_share_agents = {str(agent) for agent in reward_share_agents_cfg}
+    elif isinstance(reward_share_agents_cfg, str):
+        reward_share_agents = {reward_share_agents_cfg}
+    else:
+        reward_share_agents = None
+
+    if reward_share_agents is None:
+        if reward_share_scope in {"trainable", "trainables", "learners"}:
+            reward_share_agents = {str(agent_id) for agent_id, trainer in trainer_map.items() if trainer is not None}
+        elif reward_share_scope in {"team", "all", "everyone", "agents"}:
+            reward_share_agents = set(agent_order)
+        else:
+            reward_share_agents = set(agent_order)
+    else:
+        reward_share_agents = {str(agent_id) for agent_id in reward_share_agents}
+
     idle_tracker.reset()
     steps = 0
     terms: Dict[str, bool] = {}
@@ -301,6 +329,7 @@ def run_episode(
             if "truncated" not in agent_info:
                 agent_info["truncated"] = bool(truncs.get(agent_id, False))
 
+        step_component_snapshots: Dict[str, Dict[str, float]] = {}
         for idx, agent_id in enumerate(agent_order):
             base_reward = rewards.get(agent_id, 0.0)
             if next_obs.get(agent_id) is not None:
@@ -313,8 +342,8 @@ def run_episode(
                     all_obs=next_obs,
                     step_index=steps,
                 )
-            totals_array[idx] += float(base_reward)
-            shaped_rewards[idx] = float(base_reward)
+            shaped_value = float(base_reward)
+            shaped_rewards[idx] = shaped_value
 
             if callable(components_extractor):
                 try:
@@ -322,9 +351,38 @@ def run_episode(
                 except TypeError:
                     components = None
                 if components:
-                    agent_breakdown = reward_breakdown.setdefault(agent_id, {})
-                    for name, value in components.items():
-                        agent_breakdown[name] = agent_breakdown.get(name, 0.0) + float(value)
+                    step_component_snapshots[agent_id] = dict(components)
+
+        if reward_share_enabled and reward_share_agents:
+            share_mask = np.array([agent_id in reward_share_agents for agent_id in agent_order], dtype=bool)
+            eligible_rewards = shaped_rewards[share_mask]
+            if eligible_rewards.size:
+                if reward_share_mode in {"sum", "total"}:
+                    shared_value = float(eligible_rewards.sum())
+                elif reward_share_mode in {"max", "maximum"}:
+                    shared_value = float(eligible_rewards.max())
+                elif reward_share_mode in {"min", "minimum"}:
+                    shared_value = float(eligible_rewards.min())
+                else:
+                    shared_value = float(eligible_rewards.mean())
+
+                for idx, agent_id in enumerate(agent_order):
+                    if not share_mask[idx]:
+                        continue
+                    delta = shared_value - shaped_rewards[idx]
+                    if not np.isclose(delta, 0.0):
+                        snapshot = step_component_snapshots.setdefault(agent_id, {})
+                        snapshot["shared_reward"] = snapshot.get("shared_reward", 0.0) + float(delta)
+                    shaped_rewards[idx] = shared_value
+
+        for idx, agent_id in enumerate(agent_order):
+            totals_array[idx] += float(shaped_rewards[idx])
+            if agent_id in step_component_snapshots:
+                snapshot = step_component_snapshots[agent_id]
+                snapshot["total"] = float(shaped_rewards[idx])
+                agent_breakdown = reward_breakdown.setdefault(agent_id, {})
+                for name, value in snapshot.items():
+                    agent_breakdown[name] = agent_breakdown.get(name, 0.0) + float(value)
 
         for idx, agent_id in enumerate(agent_order):
             collided = bool(next_obs.get(agent_id, {}).get("collision", False))

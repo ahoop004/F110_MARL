@@ -558,6 +558,7 @@ class AgentBuildContext:
     roster: RosterLayout
     map_data: MapData
     sample_obs: Optional[Dict[str, Any]] = None
+    shared_algorithms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def ensure_sample(self) -> Dict[str, Any]:
         if self.sample_obs is None:
@@ -822,9 +823,32 @@ def _build_algo_dqn(
             )
         rate_initial = None
 
-    dqn_cfg["obs_dim"] = int(obs_vector.size)
+    obs_dim = int(obs_vector.size)
+    dqn_cfg["obs_dim"] = obs_dim
 
-    controller = DQNAgent(dqn_cfg)
+    shared_policy_key = dqn_cfg.get("shared_policy") or dqn_cfg.get("shared_policy_id")
+    controller: DQNAgent
+    if shared_policy_key:
+        shared_store = ctx.shared_algorithms.setdefault("dqn", {})
+        policy_id = str(shared_policy_key)
+        shared_entry = shared_store.get(policy_id)
+        if shared_entry is None:
+            controller = DQNAgent(dqn_cfg)
+            shared_store[policy_id] = {
+                "agent": controller,
+                "obs_dim": controller.obs_dim,
+                "config": dict(dqn_cfg),
+            }
+        else:
+            controller = shared_entry["agent"]
+            stored_obs_dim = int(shared_entry.get("obs_dim", controller.obs_dim))
+            if stored_obs_dim != obs_dim:
+                raise ValueError(
+                    f"Shared DQN policy '{policy_id}' expects obs_dim={stored_obs_dim}, received {obs_dim} for agent '{agent_id}'"
+                )
+    else:
+        controller = DQNAgent(dqn_cfg)
+
     trainer = trainer_registry.create_trainer("dqn", agent_id, controller, config=dqn_cfg)
     if action_mode == "delta":
         action_wrapper = DeltaDiscreteActionWrapper(

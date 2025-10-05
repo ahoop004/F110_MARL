@@ -1,0 +1,120 @@
+scenario:
+  name: shanghai_shared_dqn_progress
+  env:
+    seed: 42
+    n_agents: 4
+    max_steps: 25000
+    lidar_beams: 108
+    map_dir: maps
+    map_yaml: shanghai/Shanghai_map.yaml
+    render_mode: null
+    target_laps: 2
+    centerline_render: false
+    centerline_features: true
+    spawn_points:
+      - spawn_1
+      - spawn_2
+      - spawn_3
+      - spawn_4
+  reward:
+    task: progress
+    idle_speed_threshold: 0.2
+    idle_patience_steps: 240
+    params:
+      progress_weight: 4.0
+      speed_weight: 0.05
+      lateral_penalty: 0.005
+      heading_penalty: 0.005
+      collision_penalty: -3.0
+      truncation_penalty: -0.5
+      reverse_penalty: 0.5
+    shared_reward:
+      enabled: true
+      mode: mean
+      scope: trainable
+  main:
+    mode: train_eval
+    train_episodes: 500
+    eval_episodes: 2
+    checkpoint: checkpoints/shanghai_progress/shanghai_shared_dqn_progress.pt
+    wandb:
+      enabled: true
+      project: marl-f110
+      entity: ahoop004-old-dominion-university
+      group: shanghai-shared-dqn
+      tags:
+        - shanghai
+        - dqn
+        - shared
+  algorithms:
+    dqn:
+      device: cpu
+      lr: 0.0005
+      gamma: 0.99
+      batch_size: 512
+      buffer_size: 200000
+      target_update_interval: 500
+      epsilon_start: 0.9
+      epsilon_end: 0.05
+      epsilon_decay: 250
+      learning_starts: 2048
+      max_grad_norm: 10.0
+      hidden_dims:
+        - 256
+        - 128
+      prioritized_replay: true
+      per_alpha: 0.6
+      per_beta_start: 0.4
+      per_beta_increment: 5.0e-05
+      per_min_priority: 0.001
+      per_epsilon: 1.0e-06
+      updates_per_step: 1
+      action_mode: rate
+      steering_rate: 0.45
+      accel_rate: 3.0
+      brake_rate: 2.5
+      rate_initial_speed: 1.0
+      shared_policy: shanghai_progress_shared
+      save_dir: checkpoints/shanghai_progress
+      checkpoint_name: shanghai_shared_dqn_progress.pt
+  agents:
+    car_0:
+      wrappers: &car_obs_wrappers
+        - factory: obs
+          params:
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 108
+                  max_range: 30.0
+                  normalize: true
+              - id: ego_pose
+                type: ego_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  include_speed: true
+                  normalize: 12.0
+              - id: collision
+                type: collision
+              - id: centerline
+                type: centerline
+                params:
+                  angle_mode: sin_cos
+                  lateral_scale: 30.0
+                  longitudinal_scale: 30.0
+      algo: dqn
+    car_1:
+      wrappers: *car_obs_wrappers
+      algo: dqn
+    car_2:
+      wrappers: *car_obs_wrappers
+      algo: dqn
+    car_3:
+      wrappers: *car_obs_wrappers
+      algo: dqn
