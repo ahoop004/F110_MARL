@@ -23,8 +23,7 @@ class DQNTrainer(Trainer):
         self._agent = agent
 
     def select_action(self, obs: Any, *, deterministic: bool = False) -> Any:
-        del deterministic  # DQN implementation handles exploration internally
-        return self._agent.act(obs)
+        return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
         done = transition.terminated or transition.truncated

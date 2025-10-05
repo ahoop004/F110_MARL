@@ -37,6 +37,13 @@
 - [ ] Emit per-agent training/eval telemetry (returns, collision counts, checkpoint ownership) for clear progress tracking.
   - [x] Forward per-agent metrics through logger sinks (`train/*`, `eval/*`).
   - [ ] Attach checkpoint ownership metadata and multi-agent progress summaries to logs.
+- [ ] Document MARL DQN design options for upcoming experiments:
+  - Shared parameter networks with agent-ID conditioning.
+  - Team-wide replay buffers with agent-tagged samples.
+  - Correlated exploration schedules and shared epsilon decay.
+  - Centralised critics with mixers (VDN, QMIX, QTRAN/QPLEX).
+  - Role-aware heads and curriculum conditioning (ROMA, IDQL).
+  - Distributional/dueling heads for stabilising sparse reward runs.
 
 ## Scenario Smoke Tests · Shanghai Fastlap
 

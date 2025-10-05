@@ -18,10 +18,11 @@ scenario:
     task: progress
     params:
       progress_weight: 1.5
-      speed_weight: 0.01
-      lateral_penalty: 0.05
-      heading_penalty: 0.02
-      collision_penalty: 1.5
+      speed_weight: 0.1
+      lateral_penalty: 0.01
+      heading_penalty: 0.01
+      collision_penalty: -1.5
+      truncation_penalty: -1.5
   main:
     mode: train_eval
     train_episodes: 100
@@ -35,9 +36,9 @@ scenario:
       batch_size: 512
       buffer_size: 200000
       target_update_interval: 500
-      epsilon_start: 1.0
+      epsilon_start: 0.998
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.9992
+      epsilon_decay_rate: 0.991
       hidden_dims:
         - 256
         - 256
