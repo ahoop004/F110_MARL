@@ -34,7 +34,7 @@ scenario:
     eval_episodes: 2
     checkpoint: checkpoints/shanghai_progress/shanghai_dqn_progress.pt
     wandb:
-      enabled: true
+      enabled: false
       project: marl-f110     
       entity: ahoop004-old-dominion-university   
       group: shanghai-dqn     
@@ -51,7 +51,8 @@ scenario:
       target_update_interval: 500
       epsilon_start: 0.9
       epsilon_end: 0.05
-      epsilon_decay: 250
+      epsilon_decay_rate: 0.9995
+      # epsilon_decay: 250
       learning_starts: 2048
       max_grad_norm: 10.0
       hidden_dims:
