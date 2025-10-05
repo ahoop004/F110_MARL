@@ -77,7 +77,12 @@ def build_evaluation_session(
 ) -> EvaluationSession:
     """Compose an evaluation runner for the supplied configuration."""
 
-    runner_ctx = build_runner_context(config, logger=logger)
+    runner_ctx = build_runner_context(
+        config,
+        logger=logger,
+        ensure_trainable=False,
+        prefer_algorithms=("centerline", "ppo", "rec_ppo", "dqn"),
+    )
     runner = EvalRunner(runner_ctx)
     return EvaluationSession(
         runner=runner,

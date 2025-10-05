@@ -93,9 +93,7 @@ def adjust_start_poses(
     map_data: MapData | None = None,
 ) -> np.ndarray:
     if poses.shape[0] < 2:
-        if map_data is not None:
-            return _project_to_track(poses.copy(), map_data)
-        return poses
+        return poses.copy()
 
     adjusted = poses.copy()
     leader = adjusted[leader_index]

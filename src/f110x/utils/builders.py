@@ -28,6 +28,7 @@ from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.ppo.rec_ppo import RecurrentPPOAgent
 from f110x.policies.random_policy import random_policy
 from f110x.policies.simple_heuristic import simple_heuristic
+from f110x.policies.centerline_pursuit import CenterlinePursuitPolicy
 from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
@@ -921,9 +922,23 @@ def _build_algo_centerline(
     roster: RosterLayout,
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
-    controller = FunctionPolicy(simple_heuristic, name="centerline")
-    if ctx.map_data.centerline is not None:
-        setattr(controller, "centerline", ctx.map_data.centerline)
+    centerline_points = ctx.map_data.centerline
+    params = dict(assignment.spec.params)
+
+    if centerline_points is not None:
+        allowed_keys = {
+            "lookahead_distance",
+            "base_speed",
+            "min_speed",
+            "max_speed",
+            "heading_gain",
+            "lateral_gain",
+            "turn_slowdown",
+        }
+        kwargs = {key: params[key] for key in allowed_keys if key in params}
+        controller = CenterlinePursuitPolicy(centerline=centerline_points, **kwargs)
+    else:
+        controller = FunctionPolicy(simple_heuristic, name="centerline")
     return AgentBundle(
         assignment=assignment,
         algo="centerline",
@@ -931,8 +946,8 @@ def _build_algo_centerline(
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
         metadata={
-            "note": "Placeholder centerline heuristic",
-            "centerline": ctx.map_data.centerline,
+            "note": "Centerline pursuit heuristic" if centerline_points is not None else "Placeholder centerline heuristic",
+            "centerline": centerline_points,
         },
     )
 

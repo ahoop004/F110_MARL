@@ -7,6 +7,7 @@ scenario:
     lidar_beams: 108
     map_dir: maps
     map_yaml: shanghai/Shanghai_map.yaml
+    target_laps: 2
     centerline_render: false
     centerline_features: true
     spawn_points:
@@ -17,31 +18,31 @@ scenario:
   reward:
     task: progress
     params:
-      progress_weight: 1.5
-      speed_weight: 0.1
+      progress_weight: 3.5
+      speed_weight: 0.01
       lateral_penalty: 0.01
       heading_penalty: 0.01
-      collision_penalty: -1.5
+      collision_penalty: -5.5
       truncation_penalty: -1.5
   main:
     mode: train_eval
-    train_episodes: 100
+    train_episodes: 500
     eval_episodes: 2
     checkpoint: checkpoints/shanghai_progress/shanghai_dqn_progress.pt
   algorithms:
     dqn:
       device: cpu
-      lr: 0.0003
-      gamma: 0.99
+      lr: 0.001
+      gamma: 0.995
       batch_size: 512
       buffer_size: 200000
-      target_update_interval: 500
+      target_update_interval: 10
       epsilon_start: 0.998
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.991
+      epsilon_decay_rate: 0.995
       hidden_dims:
         - 256
-        - 256
+        - 128
       prioritized_replay: true
       per_alpha: 0.6
       per_beta_start: 0.4
@@ -70,9 +71,6 @@ scenario:
                   normalize: true
               - id: ego_pose
                 type: ego_pose
-                params:
-                  normalize_xy: 30.0
-                  angle_mode: sin_cos
               - id: collision
                 type: collision
       algo: dqn
