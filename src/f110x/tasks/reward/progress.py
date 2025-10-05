@@ -17,6 +17,8 @@ PROGRESS_PARAM_KEYS = (
     "speed_weight",
     "lateral_penalty",
     "heading_penalty",
+    "collision_penalty",
+    "truncation_penalty",
 )
 
 PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
@@ -24,6 +26,8 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "speed_weight": 0.0,
     "lateral_penalty": 0.0,
     "heading_penalty": 0.0,
+    "collision_penalty": 0.0,
+    "truncation_penalty": 0.0,
 }
 
 
@@ -38,18 +42,26 @@ class ProgressRewardStrategy(RewardStrategy):
         speed_weight: float = 0.0,
         lateral_penalty: float = 0.0,
         heading_penalty: float = 0.0,
+        collision_penalty: float = 0.0,
+        truncation_penalty: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
         self.speed_weight = float(speed_weight)
         self.lateral_penalty = float(lateral_penalty)
         self.heading_penalty = float(heading_penalty)
+        self.collision_penalty = float(collision_penalty)
+        self.truncation_penalty = float(truncation_penalty)
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
+        self._collision_applied: Dict[str, bool] = {}
+        self._truncation_applied: Dict[str, bool] = {}
 
     def reset(self, episode_index: int) -> None:
         self._last_index.clear()
         self._last_progress.clear()
+        self._collision_applied.clear()
+        self._truncation_applied.clear()
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         if self.centerline is None or self.centerline.size == 0:
@@ -112,6 +124,29 @@ class ProgressRewardStrategy(RewardStrategy):
             if penalty:
                 reward += penalty
                 components["heading_penalty"] = penalty
+
+        if self.collision_penalty:
+            collision_flag = bool(step.obs.get("collision", False))
+            if not collision_flag and step.info and "collision" in step.info:
+                collision_flag = bool(step.info.get("collision", False))
+            if collision_flag and not self._collision_applied.get(step.agent_id, False):
+                reward += self.collision_penalty
+                components["collision_penalty"] = (
+                    components.get("collision_penalty", 0.0) + self.collision_penalty
+                )
+                self._collision_applied[step.agent_id] = True
+
+        if (
+            self.truncation_penalty
+            and step.info
+            and bool(step.info.get("truncated", False))
+            and not self._truncation_applied.get(step.agent_id, False)
+        ):
+            reward += self.truncation_penalty
+            components["truncation_penalty"] = (
+                components.get("truncation_penalty", 0.0) + self.truncation_penalty
+            )
+            self._truncation_applied[step.agent_id] = True
 
         return reward, components
 

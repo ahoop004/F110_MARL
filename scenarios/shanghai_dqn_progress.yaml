@@ -17,10 +17,11 @@ scenario:
   reward:
     task: progress
     params:
-      progress_weight: 1.0
-      speed_weight: 0.0
+      progress_weight: 1.5
+      speed_weight: 0.01
       lateral_penalty: 0.05
       heading_penalty: 0.02
+      collision_penalty: 1.5
   main:
     mode: train_eval
     train_episodes: 100
@@ -51,8 +52,8 @@ scenario:
       accel_rate: 3.0
       brake_rate: 2.5
       rate_initial_speed: 1.0
-      save_dir: checkpoints/shanghai__progress
-      checkpoint_name: dqn__progress.pt
+      save_dir: checkpoints/shanghai_progress
+      checkpoint_name: shanghai_dqn_progress.pt
   agents:
     car_0:
       wrappers: &car_obs_wrappers
