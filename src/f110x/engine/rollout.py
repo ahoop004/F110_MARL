@@ -330,9 +330,10 @@ def run_episode(
             collided = bool(next_obs.get(agent_id, {}).get("collision", False))
             if collided:
                 step_collision_mask[idx] = True
-                collision_counts_array[idx] += 1
-                if collision_step_array[idx] < 0:
-                    collision_step_array[idx] = steps
+                if not collision_flags[idx]:
+                    collision_counts_array[idx] += 1
+                    if collision_step_array[idx] < 0:
+                        collision_step_array[idx] = steps
                 collision_flags[idx] = True
             agent_info = infos.setdefault(agent_id, {})
             existing_collision = bool(agent_info.get("collision", False))
