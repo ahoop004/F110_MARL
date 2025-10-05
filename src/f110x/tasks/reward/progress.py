@@ -21,6 +21,7 @@ PROGRESS_PARAM_KEYS = (
     "truncation_penalty",
     "reverse_penalty",
     "idle_penalty",
+    "idle_penalty_steps",
 )
 
 PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
@@ -32,6 +33,7 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "truncation_penalty": 0.0,
     "reverse_penalty": 0.0,
     "idle_penalty": 0.0,
+    "idle_penalty_steps": 5,
 }
 
 
@@ -50,6 +52,7 @@ class ProgressRewardStrategy(RewardStrategy):
         truncation_penalty: float = 0.0,
         reverse_penalty: float = 0.0,
         idle_penalty: float = 0.0,
+        idle_penalty_steps: int = 5,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
@@ -60,6 +63,7 @@ class ProgressRewardStrategy(RewardStrategy):
         self.truncation_penalty = float(truncation_penalty)
         self.reverse_penalty = float(reverse_penalty)
         self.idle_penalty = float(idle_penalty)
+        self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
         self._collision_applied: Dict[str, bool] = {}
@@ -147,7 +151,6 @@ class ProgressRewardStrategy(RewardStrategy):
                 )
 
         if self.idle_penalty:
-            prev_speed = self._last_speed.get(step.agent_id, float("inf"))
             speed = float(speed)
             if speed < 0.1:
                 idle_count = self._idle_counter.get(step.agent_id, 0) + 1
@@ -155,8 +158,9 @@ class ProgressRewardStrategy(RewardStrategy):
                 idle_count = 0
             self._idle_counter[step.agent_id] = idle_count
             self._last_speed[step.agent_id] = speed
-            if idle_count >= 5:
-                idle_term = -self.idle_penalty * idle_count
+            threshold = self.idle_penalty_steps if self.idle_penalty_steps > 0 else 1
+            if idle_count >= threshold:
+                idle_term = -self.idle_penalty
                 reward += idle_term
                 components["idle_penalty"] = components.get("idle_penalty", 0.0) + idle_term
 
