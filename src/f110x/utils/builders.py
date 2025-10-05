@@ -409,10 +409,6 @@ class ObservationAdapter:
                 return resolved
 
         fallback = roster.first_other(agent_id)
-        if fallback is None:
-            raise ValueError(
-                f"Observation adapter '{self.name}' could not identify a target for agent '{agent_id}'"
-            )
         return fallback
 
 
@@ -487,6 +483,9 @@ def _build_obs_wrapper(
         params.setdefault("centerline_features", True)
     else:
         params.setdefault("centerline_features", False)
+
+    if target_agent is not None:
+        params.setdefault("legacy_target_agent", str(target_agent))
 
     obs_wrapper = ObsWrapper(**params)
     return ObservationAdapter(

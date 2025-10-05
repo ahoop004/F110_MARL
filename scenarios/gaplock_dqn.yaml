@@ -83,7 +83,27 @@ scenario:
         params:
           max_scan: 30.0
           normalize: true
-          target_role: defender
+          components:
+          - id: lidar
+            type: lidar
+            params:
+              max_range: 30.0
+              normalize: true
+          - id: ego_pose
+            type: ego_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin
+          - id: ego_collision
+            type: collision
+          - id: target_pose
+            type: target_pose
+            target:
+              agent: car_2
+          - id: target_collision
+            type: collision
+            target:
+              agent: car_2
       algo: dqn
       config_ref: dqn
       agent_id: car_0
@@ -96,7 +116,27 @@ scenario:
         params:
           max_scan: 30.0
           normalize: true
-          target_role: defender
+          components:
+          - id: lidar
+            type: lidar
+            params:
+              max_range: 30.0
+              normalize: true
+          - id: ego_pose
+            type: ego_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin
+          - id: ego_collision
+            type: collision
+          - id: target_pose
+            type: target_pose
+            target:
+              agent: car_2
+          - id: target_collision
+            type: collision
+            target:
+              agent: car_2
       algo: dqn
       config_ref: dqn
       agent_id: car_1
@@ -117,4 +157,9 @@ scenario:
         params:
           max_scan: 30.0
           normalize: true
-          target_role: attacker
+          components:
+          - id: lidar
+            type: lidar
+            params:
+              max_range: 30.0
+              normalize: true

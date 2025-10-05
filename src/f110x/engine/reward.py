@@ -77,7 +77,11 @@ def build_reward_wrapper(
     """Construct a reward wrapper instance for the given episode."""
 
     wrapper_cfg = dict(reward_cfg)
-    task_id = resolve_reward_mode(curriculum, episode_idx)
+
+    default_task = wrapper_cfg.get("task") or wrapper_cfg.get("mode") or "gaplock"
+    default_sequence = [(0, str(default_task))]
+
+    task_id = resolve_reward_mode(curriculum, episode_idx, default_sequence=default_sequence)
     wrapper_cfg["task"] = task_id
     wrapper_cfg["mode"] = task_id  # Retain legacy field for migration tooling
 

@@ -340,24 +340,29 @@ def main():
             experiment=cfg_experiment,
             logger=logger,
         )
-        if _RENDER_FLAG:
-            train_session.enable_render()
-        fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
-        episodes = train_module.resolve_train_episodes(
-            train_session,
-            override=_EP_OVERRIDE,
-            fallback=fallback_train,
-        )
-        results = train_module.run_training(
-            train_session,
-            episodes=episodes,
-        )
-        final_path = train_session.save_final_model()
-        if final_path is not None:
-            logger.info(
-                "Saved final model",
-                extra={"path": str(final_path)},
+        train_env = getattr(train_session.runner, "env", None)
+        try:
+            if _RENDER_FLAG:
+                train_session.enable_render()
+            fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+            episodes = train_module.resolve_train_episodes(
+                train_session,
+                override=_EP_OVERRIDE,
+                fallback=fallback_train,
             )
+            results = train_module.run_training(
+                train_session,
+                episodes=episodes,
+            )
+            final_path = train_session.save_final_model()
+            if final_path is not None:
+                logger.info(
+                    "Saved final model",
+                    extra={"path": str(final_path)},
+                )
+        finally:
+            if train_env is not None:
+                train_env.close()
 
     elif mode == "eval":
         eval_session = eval_module.create_evaluation_session(
@@ -366,20 +371,25 @@ def main():
             experiment=cfg_experiment,
             logger=logger,
         )
-        if _RENDER_FLAG:
-            eval_session.enable_render()
-        fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
-        episodes = eval_module.resolve_eval_episodes(
-            eval_session,
-            override=_EVAL_EP_OVERRIDE,
-            fallback=fallback_eval,
-        )
-        results = eval_module.run_evaluation(
-            eval_session,
-            episodes=episodes,
-            force_render=_RENDER_FLAG,
-            auto_load=False,
-        )
+        eval_env = getattr(eval_session.runner, "env", None)
+        try:
+            if _RENDER_FLAG:
+                eval_session.enable_render()
+            fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+            episodes = eval_module.resolve_eval_episodes(
+                eval_session,
+                override=_EVAL_EP_OVERRIDE,
+                fallback=fallback_eval,
+            )
+            results = eval_module.run_evaluation(
+                eval_session,
+                episodes=episodes,
+                force_render=_RENDER_FLAG,
+                auto_load=False,
+            )
+        finally:
+            if eval_env is not None:
+                eval_env.close()
 
     elif mode == "train_eval":
         train_session = train_module.create_training_session(
@@ -387,24 +397,29 @@ def main():
             experiment=cfg_experiment,
             logger=logger,
         )
-        if _RENDER_FLAG:
-            train_session.enable_render()
-        fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
-        train_episodes = train_module.resolve_train_episodes(
-            train_session,
-            override=_EP_OVERRIDE,
-            fallback=fallback_train,
-        )
-        train_results = train_module.run_training(
-            train_session,
-            episodes=train_episodes,
-        )
-        final_path = train_session.save_final_model()
-        if final_path is not None:
-            logger.info(
-                "Saved final model",
-                extra={"path": str(final_path)},
+        train_env = getattr(train_session.runner, "env", None)
+        try:
+            if _RENDER_FLAG:
+                train_session.enable_render()
+            fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+            train_episodes = train_module.resolve_train_episodes(
+                train_session,
+                override=_EP_OVERRIDE,
+                fallback=fallback_train,
             )
+            train_results = train_module.run_training(
+                train_session,
+                episodes=train_episodes,
+            )
+            final_path = train_session.save_final_model()
+            if final_path is not None:
+                logger.info(
+                    "Saved final model",
+                    extra={"path": str(final_path)},
+                )
+        finally:
+            if train_env is not None:
+                train_env.close()
 
         eval_session = eval_module.create_evaluation_session(
             cfg_path,
@@ -412,20 +427,25 @@ def main():
             experiment=cfg_experiment,
             logger=logger,
         )
-        if _RENDER_FLAG:
-            eval_session.enable_render()
-        fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
-        eval_episodes = eval_module.resolve_eval_episodes(
-            eval_session,
-            override=_EVAL_EP_OVERRIDE,
-            fallback=fallback_eval,
-        )
-        eval_results = eval_module.run_evaluation(
-            eval_session,
-            episodes=eval_episodes,
-            force_render=_RENDER_FLAG,
-            auto_load=False,
-        )
+        eval_env = getattr(eval_session.runner, "env", None)
+        try:
+            if _RENDER_FLAG:
+                eval_session.enable_render()
+            fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+            eval_episodes = eval_module.resolve_eval_episodes(
+                eval_session,
+                override=_EVAL_EP_OVERRIDE,
+                fallback=fallback_eval,
+            )
+            eval_results = eval_module.run_evaluation(
+                eval_session,
+                episodes=eval_episodes,
+                force_render=_RENDER_FLAG,
+                auto_load=False,
+            )
+        finally:
+            if eval_env is not None:
+                eval_env.close()
 
     else:
         raise ValueError(f"Unsupported mode '{mode}'. Expected train/eval/train_eval.")

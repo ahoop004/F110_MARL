@@ -12,6 +12,8 @@ FASTEST_LAP_PARAM_KEYS = (
     "step_penalty",
     "lap_bonus",
     "best_bonus",
+    "collision_penalty",
+    "truncation_penalty",
 )
 
 
@@ -24,10 +26,14 @@ class FastestLapRewardStrategy(RewardStrategy):
         step_penalty: float = 0.0,
         lap_bonus: float = 1.0,
         best_bonus: float = 0.5,
+        collision_penalty: float = 0.0,
+        truncation_penalty: float = 0.0,
     ) -> None:
         self.step_penalty = float(step_penalty)
         self.lap_bonus = float(lap_bonus)
         self.best_bonus = float(best_bonus)
+        self.collision_penalty = float(collision_penalty)
+        self.truncation_penalty = float(truncation_penalty)
         self._lap_count: Dict[str, int] = {}
         self._lap_start_time: Dict[str, float] = {}
         self._best_time: Dict[str, Optional[float]] = {}
@@ -80,6 +86,22 @@ class FastestLapRewardStrategy(RewardStrategy):
                 self._best_time[step.agent_id] = best_time
         else:
             self._lap_count[step.agent_id] = current_count
+
+        collision_flag = False
+        if isinstance(step.obs, dict):
+            collision_flag = bool(step.obs.get("collision", False))
+        if not collision_flag and step.info and "collision" in step.info:
+            collision_flag = bool(step.info.get("collision", False))
+
+        if self.collision_penalty and collision_flag:
+            reward += self.collision_penalty
+            components["collision_penalty"] = components.get("collision_penalty", 0.0) + self.collision_penalty
+
+        if self.truncation_penalty and step.info and bool(step.info.get("truncated", False)):
+            reward += self.truncation_penalty
+            components["truncation_penalty"] = (
+                components.get("truncation_penalty", 0.0) + self.truncation_penalty
+            )
 
         return reward, components
 

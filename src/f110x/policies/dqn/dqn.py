@@ -50,6 +50,7 @@ class DQNAgent:
                 raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
         self.episode_count = 0
         self._epsilon_value = self._initial_epsilon()
+        self._episode_done = False
 
         buffer_size = int(cfg.get("buffer_size", 50000))
         prioritized = bool(cfg.get("prioritized_replay", True))
@@ -120,12 +121,12 @@ class DQNAgent:
         action_vec = action_arr if action_arr is not None else self.action_set[action_idx]
         self.buffer.add(obs, action_vec, reward, next_obs, done, info)
         self.step_count += 1
-        if self.epsilon_decay_rate:
-            next_eps = self._epsilon_value * self.epsilon_decay_rate
-            self._epsilon_value = max(self.epsilon_end, next_eps)
-
-        if done:
+        if done and not self._episode_done:
             self._advance_episode()
+            self._episode_done = True
+        elif not done and self._episode_done:
+            # First transition of a new episode; allow the next terminal to trigger decay.
+            self._episode_done = False
 
     # -------------------- Learning --------------------
 
@@ -180,35 +181,14 @@ class DQNAgent:
             td_error_np = td_errors.detach().cpu().numpy()
             self.buffer.update_priorities(np.asarray(indices), td_error_np)
 
-        # metrics: Dict[str, Any] = {
-        #     "loss": float(loss.detach().cpu().item()),
-        #     "epsilon": float(self.epsilon()),
-        #     "q_mean": float(q_values_np.mean()),
-        #     "q_std": float(q_values_np.std()),
-        #     "chosen_q_mean": float(chosen_q_np.mean()),
-        #     "chosen_q_std": float(chosen_q_np.std()),
-        #     "target_q_mean": float(target_np.mean()),
-        #     "target_q_std": float(target_np.std()),
-        #     "td_error_mean": float(td_error_np.mean()),
-        #     "td_error_std": float(td_error_np.std()),
-        #     "action_index_mean": float(action_indices_np.mean()),
-        #     "action_index_std": float(action_indices_np.std()),
-        # }
-        # if weights is not None:
-        #     weights_np = np.asarray(weights, dtype=np.float32)
-        #     metrics["per_beta"] = float(self.buffer.beta)
-        #     metrics["per_weight_mean"] = float(weights_np.mean())
-        #     metrics["per_weight_max"] = float(weights_np.max())
 
-        # if wandb is not None:
-        #     metrics["action_index_histogram"] = wandb.Histogram(action_indices_np.astype(np.int64))
-        #     metrics["q_histogram"] = wandb.Histogram(q_values_np.flatten())
-
-        # return metrics
 
     def _advance_episode(self) -> None:
         self.episode_count += 1
-        if not self.epsilon_decay_rate:
+        if self.epsilon_decay_rate:
+            next_eps = self._epsilon_value * self.epsilon_decay_rate
+            self._epsilon_value = max(self.epsilon_end, next_eps)
+        else:
             self._epsilon_value = self._epsilon_from_counts()
 
     # -------------------- Persistence --------------------
@@ -239,6 +219,7 @@ class DQNAgent:
             self.action_set = np.asarray(ckpt["action_set"], dtype=np.float32)
             self.n_actions = self.action_set.shape[0]
             self.act_dim = self.action_set.shape[1]
+        self._episode_done = False
         self.q_net.to(self.device)
         self.target_q_net.to(self.device)
 

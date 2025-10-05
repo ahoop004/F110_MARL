@@ -294,6 +294,13 @@ def run_episode(
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         steps += 1
 
+        for agent_id in agent_order:
+            agent_info = infos.setdefault(agent_id, {})
+            if "terminated" not in agent_info:
+                agent_info["terminated"] = bool(terms.get(agent_id, False))
+            if "truncated" not in agent_info:
+                agent_info["truncated"] = bool(truncs.get(agent_id, False))
+
         for idx, agent_id in enumerate(agent_order):
             base_reward = rewards.get(agent_id, 0.0)
             if next_obs.get(agent_id) is not None:
@@ -327,6 +334,9 @@ def run_episode(
                 if collision_step_array[idx] < 0:
                     collision_step_array[idx] = steps
                 collision_flags[idx] = True
+            agent_info = infos.setdefault(agent_id, {})
+            existing_collision = bool(agent_info.get("collision", False))
+            agent_info["collision"] = existing_collision or collided
 
         for agent_id, trainer in trainer_map.items():
             buffer = trajectory_buffers.get(agent_id)

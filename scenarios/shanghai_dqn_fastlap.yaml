@@ -1,0 +1,96 @@
+scenario:
+  name: shanghai_dqn_fastlap
+  env:
+    seed: 42
+    n_agents: 4
+    max_steps: 25000
+    lidar_beams: 108
+    map_dir: maps
+    map_yaml: shanghai/Shanghai_map.yaml
+    centerline_render: false
+    centerline_features: true
+    spawn_points:
+      - spawn_1
+      - spawn_2
+      - spawn_3
+      - spawn_4
+  reward:
+    task: fastest_lap
+    params:
+      step_penalty: 0.0
+      lap_bonus: 1.0
+      best_bonus: 0.5
+  main:
+    mode: train_eval
+    train_episodes: 100
+    eval_episodes: 2
+    checkpoint: checkpoints/shanghai_fastlap/dqn_fastlap.pt
+  algorithms:
+    dqn:
+      device: cpu
+      lr: 0.0003
+      gamma: 0.99
+      batch_size: 512
+      buffer_size: 200000
+      target_update_interval: 500
+      epsilon_start: 1.0
+      epsilon_end: 0.05
+      epsilon_decay_rate: 0.9992
+      hidden_dims:
+        - 256
+        - 256
+      prioritized_replay: true
+      per_alpha: 0.6
+      per_beta_start: 0.4
+      per_beta_increment: 5.0e-05
+      per_min_priority: 0.001
+      per_epsilon: 1.0e-06
+      action_mode: rate
+      steering_rate: 0.45
+      accel_rate: 3.0
+      brake_rate: 2.5
+      rate_initial_speed: 1.0
+      save_dir: checkpoints/shanghai_fastlap
+      checkpoint_name: dqn_fastlap.pt
+  agents:
+    car_0:
+      wrappers: &car_obs_wrappers
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 108
+                  max_range: 30.0
+                  normalize: true
+              - id: ego_pose
+                type: ego_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  include_speed: true
+                  normalize: 12.0
+              - id: lap
+                type: lap
+                params:
+                  normalize_time: 120.0
+              - id: collision
+                type: collision
+              - id: centerline
+                type: centerline
+      algo: dqn
+    car_1:
+      wrappers: *car_obs_wrappers
+      algo: dqn
+    car_2:
+      wrappers: *car_obs_wrappers
+      algo: dqn
+    car_3:
+      wrappers: *car_obs_wrappers
+      algo: dqn
