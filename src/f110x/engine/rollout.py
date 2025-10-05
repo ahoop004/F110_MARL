@@ -354,8 +354,14 @@ def run_episode(
                     step_component_snapshots[agent_id] = dict(components)
 
         if reward_share_enabled and reward_share_agents:
-            share_mask = np.array([agent_id in reward_share_agents for agent_id in agent_order], dtype=bool)
-            eligible_rewards = shaped_rewards[share_mask]
+            active_mask = np.array(
+                [
+                    (agent_id in reward_share_agents) and (not done_map.get(agent_id, False))
+                    for agent_id in agent_order
+                ],
+                dtype=bool,
+            )
+            eligible_rewards = shaped_rewards[active_mask]
             if eligible_rewards.size:
                 if reward_share_mode in {"sum", "total"}:
                     shared_value = float(eligible_rewards.sum())
@@ -367,7 +373,7 @@ def run_episode(
                     shared_value = float(eligible_rewards.mean())
 
                 for idx, agent_id in enumerate(agent_order):
-                    if not share_mask[idx]:
+                    if not active_mask[idx]:
                         continue
                     delta = shared_value - shaped_rewards[idx]
                     if not np.isclose(delta, 0.0):
