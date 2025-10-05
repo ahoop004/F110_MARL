@@ -19,6 +19,13 @@ PROGRESS_PARAM_KEYS = (
     "heading_penalty",
 )
 
+PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
+    "progress_weight": 1.0,
+    "speed_weight": 0.0,
+    "lateral_penalty": 0.0,
+    "heading_penalty": 0.0,
+}
+
 
 class ProgressRewardStrategy(RewardStrategy):
     name = "progress"
@@ -114,8 +121,11 @@ def _build_progress_strategy(
     config: RewardTaskConfig,
     registry: RewardTaskRegistry,
 ) -> RewardStrategy:
-    params = dict(config.get("params", {}))
-    params.pop("centerline", None)  # runtime-provided
+    raw_params = dict(PROGRESS_PARAM_DEFAULTS)
+    raw_params.update(config.get("params", {}))
+    raw_params.pop("centerline", None)  # provided by the runtime context
+
+    params = {key: raw_params.get(key, PROGRESS_PARAM_DEFAULTS[key]) for key in PROGRESS_PARAM_KEYS}
     centerline = getattr(context.map_data, "centerline", None)
     return ProgressRewardStrategy(centerline=centerline, **params)
 
@@ -130,4 +140,4 @@ register_reward_task(
 )
 
 
-__all__ = ["ProgressRewardStrategy", "PROGRESS_PARAM_KEYS"]
+__all__ = ["ProgressRewardStrategy", "PROGRESS_PARAM_KEYS", "PROGRESS_PARAM_DEFAULTS"]
