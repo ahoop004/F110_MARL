@@ -7,6 +7,7 @@ scenario:
     lidar_beams: 108
     map_dir: maps
     map_yaml: shanghai/Shanghai_map.yaml
+    render_mode: null
     target_laps: 2
     centerline_render: false
     centerline_features: true

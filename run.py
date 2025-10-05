@@ -17,6 +17,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
+# Force pyglet/GL to stay headless when no display is available (HPC, CI, etc.).
+os.environ.setdefault("PYGLET_HEADLESS", "1")
+if "DISPLAY" not in os.environ:
+    os.environ.setdefault("PYGLET_HEADLESS", "true")
+
 from f110x.trainer import registry as trainer_registry
 from f110x.utils.config import load_config
 
