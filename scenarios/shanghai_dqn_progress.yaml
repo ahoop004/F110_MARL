@@ -30,6 +30,14 @@ scenario:
     train_episodes: 500
     eval_episodes: 2
     checkpoint: checkpoints/shanghai_progress/shanghai_dqn_progress.pt
+    wandb:
+      enabled: true
+      project: marl-f110      # replace with your project
+      entity: ahoop004-old-dominion-university    # optional; omit if not using teams
+      group: shanghai-dqn     # optional grouping for sweeps
+      tags:                   # optional list of extra tags
+        - shanghai
+        - dqn
   algorithms:
     dqn:
       device: cpu
