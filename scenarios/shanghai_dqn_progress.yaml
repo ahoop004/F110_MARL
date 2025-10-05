@@ -18,13 +18,15 @@ scenario:
       - spawn_4
   reward:
     task: progress
+    idle_speed_threshold: 0.2
+    idle_patience_steps: 240
     params:
-      progress_weight: 3.5
-      speed_weight: 0.01
-      lateral_penalty: 0.01
-      heading_penalty: 0.01
-      collision_penalty: -5.5
-      truncation_penalty: -1.5
+      progress_weight: 4.0
+      speed_weight: 0.05
+      lateral_penalty: 0.005
+      heading_penalty: 0.005
+      collision_penalty: -3.0
+      truncation_penalty: -0.5
   main:
     mode: train_eval
     train_episodes: 500
@@ -41,14 +43,14 @@ scenario:
   algorithms:
     dqn:
       device: cpu
-      lr: 0.001
-      gamma: 0.995
+      lr: 0.0005
+      gamma: 0.99
       batch_size: 512
       buffer_size: 200000
-      target_update_interval: 10
-      epsilon_start: 0.998
+      target_update_interval: 500
+      epsilon_start: 0.9
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.995
+      epsilon_decay: 250
       hidden_dims:
         - 256
         - 128
@@ -58,6 +60,7 @@ scenario:
       per_beta_increment: 5.0e-05
       per_min_priority: 0.001
       per_epsilon: 1.0e-06
+      updates_per_step: 2
       action_mode: rate
       steering_rate: 0.45
       accel_rate: 3.0
@@ -80,8 +83,18 @@ scenario:
                   normalize: true
               - id: ego_pose
                 type: ego_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  include_speed: true
+                  normalize: 12.0
               - id: collision
                 type: collision
+              - id: centerline
+                type: centerline
       algo: dqn
     car_1:
       wrappers: *car_obs_wrappers
