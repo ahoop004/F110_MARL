@@ -223,6 +223,7 @@ class DQNAgent:
                 "target_q_net": self.target_q_net.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "step_count": self.step_count,
+                "updates": self._updates,
                 "episode_count": self.episode_count,
                 "epsilon_value": self._epsilon_value,
                 "action_set": self.action_set,
@@ -236,6 +237,7 @@ class DQNAgent:
         self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.step_count = int(ckpt.get("step_count", 0))
+        self._updates = int(ckpt.get("updates", 0))
         self.episode_count = int(ckpt.get("episode_count", 0))
         self._epsilon_value = float(ckpt.get("epsilon_value", self._initial_epsilon()))
         if "action_set" in ckpt:

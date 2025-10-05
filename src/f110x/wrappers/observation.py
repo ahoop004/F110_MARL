@@ -58,7 +58,6 @@ class ObsWrapper:
         self.centerline_points = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.centerline_features_enabled = bool(centerline_features) and self.centerline_points is not None
         self.centerline_normalize = bool(centerline_normalize)
-        self._centerline_zero = np.zeros(4, dtype=np.float32)
         self._centerline_last_index: Dict[str, Optional[int]] = {}
 
         self._default_target_agent = legacy_target_agent
@@ -252,13 +251,65 @@ class ObsWrapper:
         return builder(obs, ego_id, spec, target_id)
 
     # ------------------------------------------------------------------
-    def _prepare_centerline_features(self, ego_id: str, ego_obs: Dict[str, Any]) -> np.ndarray:
+    def _centerline_feature_plan(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        include_lateral = bool(params.get("include_lateral", True))
+        include_longitudinal = bool(params.get("include_longitudinal", True))
+        include_progress = bool(params.get("include_progress", True))
+        include_heading_raw = bool(params.get("include_heading_raw", False))
+
+        raw_mode = params.get("angle_mode", "raw")
+        heading_mode = str(raw_mode).lower() if raw_mode is not None else "raw"
+        if heading_mode in {"none", "off", "false"}:
+            heading_mode = "none"
+
+        if heading_mode == "sin_cos":
+            heading_dim = 2
+        elif heading_mode in {"sin", "cos"}:
+            heading_dim = 1
+        elif heading_mode == "none":
+            heading_dim = 0
+        else:
+            heading_mode = "raw"
+            heading_dim = 1
+            include_heading_raw = False  # raw already present
+
+        if heading_mode == "none":
+            include_heading_raw = False
+
+        size = 0
+        if include_lateral:
+            size += 1
+        if include_longitudinal:
+            size += 1
+        size += heading_dim
+        if include_heading_raw:
+            size += 1
+        if include_progress:
+            size += 1
+
+        return {
+            "include_lateral": include_lateral,
+            "include_longitudinal": include_longitudinal,
+            "include_progress": include_progress,
+            "include_heading_raw": include_heading_raw,
+            "heading_mode": heading_mode,
+            "size": size,
+        }
+
+    def _prepare_centerline_features(
+        self,
+        ego_id: str,
+        ego_obs: Dict[str, Any],
+        params: Dict[str, Any],
+    ) -> np.ndarray:
+        plan = self._centerline_feature_plan(params)
+        size = max(plan["size"], 1)
         if self.centerline_points is None or self.centerline_points.size == 0:
-            return self._centerline_zero.copy()
+            return np.zeros(size, dtype=np.float32)
 
         pose = to_numpy(ego_obs.get("pose", ()), flatten=True)
         if pose.size < 3:
-            return self._centerline_zero.copy()
+            return np.zeros(size, dtype=np.float32)
 
         x, y, theta = map(float, pose[:3])
         last_index = self._centerline_last_index.get(ego_id)
@@ -271,23 +322,63 @@ class ObsWrapper:
                 last_index=last_index,
             )
         except ValueError:
-            return self._centerline_zero.copy()
+            return np.zeros(size, dtype=np.float32)
 
         self._centerline_last_index[ego_id] = projection.index
 
-        features = np.array(
-            [
-                projection.lateral_error,
-                projection.longitudinal_error,
-                projection.heading_error,
-                projection.progress,
-            ],
-            dtype=np.float32,
-        )
-        if self.centerline_normalize and self.max_scan > 0.0:
-            features[0] /= self.max_scan
-            features[1] /= self.max_scan
-        return features
+        features: List[float] = []
+
+        if plan["include_lateral"]:
+            lateral = float(projection.lateral_error)
+            lateral_scale = params.get("lateral_scale")
+            if lateral_scale is None and self.centerline_normalize and self.max_scan > 0.0:
+                lateral_scale = self.max_scan
+            if lateral_scale:
+                scale = float(lateral_scale)
+                if scale != 0.0:
+                    lateral /= scale
+            features.append(lateral)
+
+        if plan["include_longitudinal"]:
+            longitudinal = float(projection.longitudinal_error)
+            longitudinal_scale = params.get("longitudinal_scale")
+            if longitudinal_scale is None and self.centerline_normalize and self.max_scan > 0.0:
+                longitudinal_scale = self.max_scan
+            if longitudinal_scale:
+                scale = float(longitudinal_scale)
+                if scale != 0.0:
+                    longitudinal /= scale
+            features.append(longitudinal)
+
+        heading_value = float(projection.heading_error)
+        heading_mode = plan["heading_mode"]
+        if heading_mode == "sin_cos":
+            features.extend([float(np.sin(heading_value)), float(np.cos(heading_value))])
+        elif heading_mode == "sin":
+            features.append(float(np.sin(heading_value)))
+        elif heading_mode == "cos":
+            features.append(float(np.cos(heading_value)))
+        elif heading_mode == "raw":
+            features.append(heading_value)
+
+        if plan["include_heading_raw"]:
+            features.append(heading_value)
+
+        if plan["include_progress"]:
+            progress_val = float(projection.progress)
+            progress_scale = params.get("progress_scale")
+            if progress_scale:
+                scale = float(progress_scale)
+                if scale != 0.0:
+                    progress_val /= scale
+            features.append(progress_val)
+
+        result = np.asarray(features, dtype=np.float32)
+        if result.size < size:
+            padded = np.zeros(size, dtype=np.float32)
+            padded[: result.size] = result
+            return padded
+        return result
 
     # ------------------------------------------------------------------
     # Component builders
@@ -532,11 +623,11 @@ class ObsWrapper:
         self,
         obs: Dict[str, Dict[str, Any]],
         ego_id: str,
-        _: ComponentSpec,
+        spec: ComponentSpec,
         __: Optional[str],
     ) -> np.ndarray:
         ego_obs = obs.get(ego_id, {})
-        return self._prepare_centerline_features(ego_id, ego_obs)
+        return self._prepare_centerline_features(ego_id, ego_obs, spec.params)
 
 
 __all__ = ["ObsWrapper"]

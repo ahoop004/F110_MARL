@@ -27,6 +27,7 @@ scenario:
       heading_penalty: 0.005
       collision_penalty: -3.0
       truncation_penalty: -0.5
+      reverse_penalty: 0.5
   main:
     mode: train_eval
     train_episodes: 500
@@ -51,6 +52,8 @@ scenario:
       epsilon_start: 0.9
       epsilon_end: 0.05
       epsilon_decay: 250
+      learning_starts: 2048
+      max_grad_norm: 10.0
       hidden_dims:
         - 256
         - 128
@@ -95,6 +98,10 @@ scenario:
                 type: collision
               - id: centerline
                 type: centerline
+                params:
+                  angle_mode: sin_cos
+                  lateral_scale: 30.0
+                  longitudinal_scale: 30.0
       algo: dqn
     car_1:
       wrappers: *car_obs_wrappers
