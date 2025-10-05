@@ -20,6 +20,7 @@ PROGRESS_PARAM_KEYS = (
     "collision_penalty",
     "truncation_penalty",
     "reverse_penalty",
+    "idle_penalty",
 )
 
 PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
@@ -30,6 +31,7 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "collision_penalty": 0.0,
     "truncation_penalty": 0.0,
     "reverse_penalty": 0.0,
+    "idle_penalty": 0.0,
 }
 
 
@@ -47,6 +49,7 @@ class ProgressRewardStrategy(RewardStrategy):
         collision_penalty: float = 0.0,
         truncation_penalty: float = 0.0,
         reverse_penalty: float = 0.0,
+        idle_penalty: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
@@ -56,16 +59,21 @@ class ProgressRewardStrategy(RewardStrategy):
         self.collision_penalty = float(collision_penalty)
         self.truncation_penalty = float(truncation_penalty)
         self.reverse_penalty = float(reverse_penalty)
+        self.idle_penalty = float(idle_penalty)
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
         self._collision_applied: Dict[str, bool] = {}
         self._truncation_applied: Dict[str, bool] = {}
+        self._idle_counter: Dict[str, int] = {}
+        self._last_speed: Dict[str, float] = {}
 
     def reset(self, episode_index: int) -> None:
         self._last_index.clear()
         self._last_progress.clear()
         self._collision_applied.clear()
         self._truncation_applied.clear()
+        self._idle_counter.clear()
+        self._last_speed.clear()
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         if self.centerline is None or self.centerline.size == 0:
@@ -109,9 +117,10 @@ class ProgressRewardStrategy(RewardStrategy):
             reward += progress_term
             components["progress"] = progress_term
 
+        velocity = np.asarray(step.obs.get("velocity", (0.0, 0.0)), dtype=np.float32)
+        speed = float(np.linalg.norm(velocity))
+
         if self.speed_weight:
-            velocity = np.asarray(step.obs.get("velocity", (0.0, 0.0)), dtype=np.float32)
-            speed = float(np.linalg.norm(velocity))
             speed_term = self.speed_weight * speed * step.timestep
             if speed_term:
                 reward += speed_term
@@ -136,6 +145,20 @@ class ProgressRewardStrategy(RewardStrategy):
                 components["reverse_penalty"] = (
                     components.get("reverse_penalty", 0.0) + reverse_term
                 )
+
+        if self.idle_penalty:
+            prev_speed = self._last_speed.get(step.agent_id, float("inf"))
+            speed = float(speed)
+            if speed < 0.1:
+                idle_count = self._idle_counter.get(step.agent_id, 0) + 1
+            else:
+                idle_count = 0
+            self._idle_counter[step.agent_id] = idle_count
+            self._last_speed[step.agent_id] = speed
+            if idle_count >= 5:
+                idle_term = -self.idle_penalty * idle_count
+                reward += idle_term
+                components["idle_penalty"] = components.get("idle_penalty", 0.0) + idle_term
 
         if self.collision_penalty:
             collision_flag = bool(step.obs.get("collision", False))
