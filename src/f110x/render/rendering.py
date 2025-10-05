@@ -10,8 +10,14 @@ import pyglet
 
 if _PYGLET_HEADLESS:
     pyglet.options["headless"] = True
-    pyglet.options.setdefault("shadow_window", False)
-    pyglet.options.setdefault("debug_gl", False)
+    try:
+        pyglet.options["shadow_window"] = False
+    except Exception:
+        pass
+    try:
+        pyglet.options["debug_gl"] = False
+    except Exception:
+        pass
 
 _PYGLET_IMPORT_ERROR = None
 
