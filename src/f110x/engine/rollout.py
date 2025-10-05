@@ -322,12 +322,32 @@ def run_episode(
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         steps += 1
 
-        for agent_id in agent_order:
+        idle_triggered = False
+
+        for idx, agent_id in enumerate(agent_order):
             agent_info = infos.setdefault(agent_id, {})
             if "terminated" not in agent_info:
                 agent_info["terminated"] = bool(terms.get(agent_id, False))
             if "truncated" not in agent_info:
                 agent_info["truncated"] = bool(truncs.get(agent_id, False))
+
+            velocity = next_obs.get(agent_id, {}).get("velocity")
+            if velocity is None:
+                continue
+            speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
+            if np.isnan(speed):
+                speed = 0.0
+            step_speed_values[idx] = speed
+            step_speed_present[idx] = True
+            speed_sums_array[idx] += speed
+            speed_counts_array[idx] += 1
+
+        if idle_tracker.observe(step_speed_values, step_speed_present):
+            idle_triggered = True
+            for agent_id in agent_order:
+                truncs[agent_id] = True
+                agent_info = infos.setdefault(agent_id, {})
+                agent_info["truncated"] = True
 
         step_component_snapshots: Dict[str, Dict[str, float]] = {}
         for idx, agent_id in enumerate(agent_order):
@@ -457,18 +477,6 @@ def run_episode(
 
         obs = next_obs
 
-        for idx, agent_id in enumerate(agent_order):
-            velocity = next_obs.get(agent_id, {}).get("velocity")
-            if velocity is None:
-                continue
-            speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
-            if np.isnan(speed):
-                speed = 0.0
-            step_speed_values[idx] = speed
-            step_speed_present[idx] = True
-            speed_sums_array[idx] += speed
-            speed_counts_array[idx] += 1
-
         if trace_buffer is not None:
             step_collisions = [agent_id for agent_id in agent_order if step_collision_mask[id_to_index[agent_id]]]
             trace_buffer.append(
@@ -483,9 +491,8 @@ def run_episode(
                 )
             )
 
-        if idle_tracker.observe(step_speed_values, step_speed_present):
+        if idle_triggered:
             for agent_id in env.possible_agents:
-                truncs[agent_id] = True
                 done_map[agent_id] = True
             causes.append("idle")
             break
