@@ -93,3 +93,50 @@ class DeltaDiscreteActionWrapper:
                 updated[self._speed_index] = max(0.0, self._stop_threshold)
         self._state[agent_id] = updated
         return updated.copy()
+
+
+class ActionRepeatWrapper:
+    """Cache transformed actions and re-emit them for multiple env steps."""
+
+    def __init__(
+        self,
+        inner: Optional[Any],
+        repeat: int,
+    ) -> None:
+        if repeat <= 0:
+            raise ValueError("action repeat must be positive")
+        self.inner = inner
+        self.repeat = int(repeat)
+        self._cached: Dict[str, np.ndarray] = {}
+        self._remaining: Dict[str, int] = {}
+
+    def transform(self, agent_id: str, action: Any) -> np.ndarray:
+        remaining = self._remaining.get(agent_id, 0)
+        if remaining <= 0:
+            transformed = self._transform_inner(agent_id, action)
+            self._cached[agent_id] = transformed
+            self._remaining[agent_id] = self.repeat - 1
+            return transformed.copy()
+
+        self._remaining[agent_id] = remaining - 1
+        cached = self._cached.get(agent_id)
+        if cached is None:
+            transformed = self._transform_inner(agent_id, action)
+            self._cached[agent_id] = transformed
+            self._remaining[agent_id] = self.repeat - 1
+            return transformed.copy()
+        return cached.copy()
+
+    def reset(self, agent_id: str, *args: Any, **kwargs: Any) -> None:
+        self._cached.pop(agent_id, None)
+        self._remaining.pop(agent_id, None)
+        if self.inner is not None:
+            reset_fn = getattr(self.inner, "reset", None)
+            if callable(reset_fn):
+                reset_fn(agent_id, *args, **kwargs)
+
+    def _transform_inner(self, agent_id: str, action: Any) -> np.ndarray:
+        if self.inner is None:
+            return to_numpy(action).copy()
+        transformed = self.inner.transform(agent_id, action)
+        return to_numpy(transformed)

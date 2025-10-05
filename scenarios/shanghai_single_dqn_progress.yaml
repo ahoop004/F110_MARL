@@ -1,0 +1,108 @@
+scenario:
+  name: shanghai_single_dqn_progress
+  env:
+    seed: 42
+    n_agents: 1
+    max_steps: 25000
+    lidar_beams: 108
+    map_dir: maps
+    map_yaml: shanghai/Shanghai_map.yaml
+    render_mode: null
+    target_laps: 2
+    centerline_render: true
+    centerline_features: true
+    spawn_points:
+      - spawn_1
+  reward:
+    task: progress
+    idle_speed_threshold: 0.2
+    idle_patience_steps: 240
+    params:
+      progress_weight: 4.0
+      speed_weight: 0.05
+      lateral_penalty: 0.008
+      heading_penalty: 0.008
+      collision_penalty: -3.0
+      truncation_penalty: -1.5
+      reverse_penalty: 0.5
+      waypoint_bonus: 0.2
+  main:
+    mode: train_eval
+    train_episodes: 500
+    eval_episodes: 2
+    checkpoint: checkpoints/shanghai_progress/shanghai_single_dqn_progress.pt
+    wandb:
+      enabled: true
+      project: marl-f110
+      entity: ahoop004-old-dominion-university
+      group: shanghai-single-dqn
+      tags:
+        - shanghai
+        - dqn
+  algorithms:
+    dqn:
+      device: cpu
+      lr: 0.0005
+      gamma: 0.99
+      batch_size: 512
+      buffer_size: 200000
+      target_update_interval: 500
+      epsilon_start: 0.9
+      epsilon_end: 0.05
+      epsilon_decay: 250
+      learning_starts: 2048
+      max_grad_norm: 10.0
+      hidden_dims:
+        - 128
+        - 64
+      prioritized_replay: true
+      per_alpha: 0.6
+      per_beta_start: 0.4
+      per_beta_increment: 5.0e-05
+      per_min_priority: 0.001
+      per_epsilon: 1.0e-06
+      updates_per_step: 2
+      action_repeat: 5
+      action_mode: rate
+      steering_rate: 0.45
+      accel_rate: 3.0
+      brake_rate: 2.5
+      rate_initial_speed: 0.0
+      save_dir: checkpoints/shanghai_progress
+      checkpoint_name: shanghai_single_dqn_progress.pt
+  agents:
+    car_0:
+      wrappers:
+        - factory: obs
+          params:
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 108
+                  max_range: 30.0
+                  normalize: true
+              - id: ego_pose
+                type: ego_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  include_speed: true
+                  normalize: 12.0
+              - id: collision
+                type: collision
+              - id: centerline
+                type: centerline
+                params:
+                  angle_mode: sin_cos
+                  lateral_scale: 30.0
+                  longitudinal_scale: 30.0
+                  include_waypoint: true
+                  waypoint_mode: relative
+                  waypoint_lookahead: 5
+                  waypoint_scale: 30.0
+      algo: dqn

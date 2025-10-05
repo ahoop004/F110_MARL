@@ -60,6 +60,7 @@ CAR_LEARNER = tuple(c / 255.0 for c in (183, 193, 222))
 CAR_OTHER   = tuple(c / 255.0 for c in ( 99,  52,  94))
 MAP_COLOR   = tuple(c / 255.0 for c in (255, 193,  50))
 CENTERLINE_COLOR = tuple(c / 255.0 for c in (102, 255, 102))
+CENTERLINE_POINT_COLOR = tuple(c / 255.0 for c in (255, 255, 255))
 LIDAR_COLOR_HIT = (1.0, 0.0, 0.0)
 LIDAR_COLOR_MAX = tuple(c / 255.0 for c in (180, 180, 180))
 
@@ -107,6 +108,7 @@ else:
             self.map_vlist = None
             self._map_vertex_count = 0
             self._centerline_vlist = None
+            self._centerline_points_vlist = None
 
             # per-agent drawables and cached state
             self.cars_vlist = {}       # aid -> vertex_list (GL_QUADS)
@@ -238,6 +240,12 @@ else:
                 except Exception:
                     pass
                 self._centerline_vlist = None
+            if self._centerline_points_vlist is not None:
+                try:
+                    self._centerline_points_vlist.delete()
+                except Exception:
+                    pass
+                self._centerline_points_vlist = None
 
             if centerline_points is None:
                 return
@@ -260,6 +268,18 @@ else:
                 )
             except Exception:
                 self._centerline_vlist = None
+
+            try:
+                self._centerline_points_vlist = self.shader.vertex_list(
+                    points_np.shape[0],
+                    pyglet.gl.GL_POINTS,
+                    batch=self.batch,
+                    group=self.shader_group,
+                    position=('f', verts),
+                    color=('f', list(CENTERLINE_POINT_COLOR) * points_np.shape[0]),
+                )
+            except Exception:
+                self._centerline_points_vlist = None
 
         def reset_state(self):
             for v in self.cars_vlist.values():
@@ -284,6 +304,12 @@ else:
                 except Exception:
                     pass
                 self._centerline_vlist = None
+            if self._centerline_points_vlist is not None:
+                try:
+                    self._centerline_points_vlist.delete()
+                except Exception:
+                    pass
+                self._centerline_points_vlist = None
 
         # ---------- Window / Camera ----------
 

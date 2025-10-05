@@ -19,6 +19,7 @@ from f110x.utils.map_loader import MapData, MapLoader
 from f110x.utils.start_pose import StartPoseOption, parse_start_pose_options
 from f110x.wrappers.observation import ObsWrapper
 from f110x.wrappers.action import (
+    ActionRepeatWrapper,
     DiscreteActionWrapper,
     DeltaDiscreteActionWrapper,
 )
@@ -868,6 +869,11 @@ def _build_algo_dqn(
         )
     else:
         action_wrapper = DiscreteActionWrapper(dqn_cfg["action_set"])
+
+    repeat_steps = int(dqn_cfg.get("action_repeat", 1) or 1)
+    if repeat_steps > 1:
+        action_wrapper = ActionRepeatWrapper(action_wrapper, repeat_steps)
+        dqn_cfg["action_repeat"] = repeat_steps
     return AgentBundle(
         assignment=assignment,
         algo="dqn",

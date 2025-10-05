@@ -22,6 +22,8 @@ PROGRESS_PARAM_KEYS = (
     "reverse_penalty",
     "idle_penalty",
     "idle_penalty_steps",
+    "waypoint_bonus",
+    "waypoint_progress_step",
 )
 
 PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
@@ -34,6 +36,8 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "reverse_penalty": 0.0,
     "idle_penalty": 0.0,
     "idle_penalty_steps": 5,
+    "waypoint_bonus": 0.0,
+    "waypoint_progress_step": 0.0,
 }
 
 
@@ -53,6 +57,8 @@ class ProgressRewardStrategy(RewardStrategy):
         reverse_penalty: float = 0.0,
         idle_penalty: float = 0.0,
         idle_penalty_steps: int = 5,
+        waypoint_bonus: float = 0.0,
+        waypoint_progress_step: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
@@ -64,12 +70,19 @@ class ProgressRewardStrategy(RewardStrategy):
         self.reverse_penalty = float(reverse_penalty)
         self.idle_penalty = float(idle_penalty)
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
+        self.waypoint_bonus = float(waypoint_bonus)
+        waypoint_progress_step = float(waypoint_progress_step)
+        if waypoint_progress_step <= 0.0 and self.centerline is not None and self.centerline.shape[0] > 1:
+            waypoint_progress_step = 1.0 / float(self.centerline.shape[0] - 1)
+        self._waypoint_step = waypoint_progress_step if waypoint_progress_step > 0.0 else 0.0
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
         self._collision_applied: Dict[str, bool] = {}
         self._truncation_applied: Dict[str, bool] = {}
         self._idle_counter: Dict[str, int] = {}
         self._last_speed: Dict[str, float] = {}
+        self._cumulative_progress: Dict[str, float] = {}
+        self._next_waypoint_progress: Dict[str, float] = {}
 
     def reset(self, episode_index: int) -> None:
         self._last_index.clear()
@@ -78,6 +91,8 @@ class ProgressRewardStrategy(RewardStrategy):
         self._truncation_applied.clear()
         self._idle_counter.clear()
         self._last_speed.clear()
+        self._cumulative_progress.clear()
+        self._next_waypoint_progress.clear()
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         if self.centerline is None or self.centerline.size == 0:
@@ -120,6 +135,23 @@ class ProgressRewardStrategy(RewardStrategy):
             progress_term = self.progress_weight * delta
             reward += progress_term
             components["progress"] = progress_term
+
+        if self.waypoint_bonus and self._waypoint_step > 0.0:
+            prev_cumulative = self._cumulative_progress.get(step.agent_id, 0.0)
+            increment = delta if delta > 0.0 else 0.0
+            cumulative = prev_cumulative + increment
+            self._cumulative_progress[step.agent_id] = cumulative
+
+            next_threshold = self._next_waypoint_progress.get(step.agent_id, self._waypoint_step)
+            bonuses = 0
+            while cumulative >= next_threshold:
+                bonuses += 1
+                next_threshold += self._waypoint_step
+            if bonuses:
+                waypoint_reward = self.waypoint_bonus * bonuses
+                reward += waypoint_reward
+                components["waypoint_bonus"] = components.get("waypoint_bonus", 0.0) + waypoint_reward
+            self._next_waypoint_progress[step.agent_id] = next_threshold
 
         velocity = np.asarray(step.obs.get("velocity", (0.0, 0.0)), dtype=np.float32)
         speed = float(np.linalg.norm(velocity))

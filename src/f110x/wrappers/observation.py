@@ -262,6 +262,12 @@ class ObsWrapper:
         if heading_mode in {"none", "off", "false"}:
             heading_mode = "none"
 
+        include_waypoint = bool(params.get("include_waypoint", False))
+        waypoint_mode = str(params.get("waypoint_mode", "relative")).lower()
+        if waypoint_mode not in {"relative", "absolute"}:
+            waypoint_mode = "relative"
+        waypoint_dim = 2 if include_waypoint else 0
+
         if heading_mode == "sin_cos":
             heading_dim = 2
         elif heading_mode in {"sin", "cos"}:
@@ -286,6 +292,7 @@ class ObsWrapper:
             size += 1
         if include_progress:
             size += 1
+        size += waypoint_dim
 
         return {
             "include_lateral": include_lateral,
@@ -293,6 +300,10 @@ class ObsWrapper:
             "include_progress": include_progress,
             "include_heading_raw": include_heading_raw,
             "heading_mode": heading_mode,
+            "include_waypoint": include_waypoint,
+            "waypoint_mode": waypoint_mode,
+            "waypoint_lookahead": int(max(1, int(params.get("waypoint_lookahead", 1)))) if include_waypoint else 0,
+            "waypoint_scale": float(params.get("waypoint_scale", self.max_scan)) if include_waypoint else 1.0,
             "size": size,
         }
 
@@ -372,6 +383,33 @@ class ObsWrapper:
                 if scale != 0.0:
                     progress_val /= scale
             features.append(progress_val)
+
+        if plan["include_waypoint"]:
+            points = self.centerline_points[:, :2]
+            next_index = projection.index + plan["waypoint_lookahead"]
+            if points.size == 0:
+                waypoint_values = (0.0, 0.0)
+            else:
+                next_index = next_index % points.shape[0]
+                target_point = points[next_index]
+                if plan["waypoint_mode"] == "absolute":
+                    wx, wy = float(target_point[0]), float(target_point[1])
+                else:
+                    wx = float(target_point[0] - x)
+                    wy = float(target_point[1] - y)
+                    waypoint_scale = plan.get("waypoint_scale", 0.0)
+                    if waypoint_scale:
+                        scale = float(waypoint_scale)
+                        if scale != 0.0:
+                            wx /= scale
+                            wy /= scale
+                if plan["waypoint_mode"] == "absolute" and plan.get("waypoint_scale"):
+                    scale = float(plan["waypoint_scale"])
+                    if scale != 0.0:
+                        wx /= scale
+                        wy /= scale
+                waypoint_values = (wx, wy)
+            features.extend(waypoint_values)
 
         result = np.asarray(features, dtype=np.float32)
         if result.size < size:
