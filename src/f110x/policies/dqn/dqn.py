@@ -5,8 +5,7 @@ from typing import Any, Dict, Iterable, Optional
 
 import numpy as np
 import torch
-from torch import nn
-import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 
 # try:  # optional dependency for richer logging
 #     import wandb  # type: ignore

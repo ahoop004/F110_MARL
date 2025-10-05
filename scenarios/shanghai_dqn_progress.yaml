@@ -34,10 +34,10 @@ scenario:
     checkpoint: checkpoints/shanghai_progress/shanghai_dqn_progress.pt
     wandb:
       enabled: true
-      project: marl-f110      # replace with your project
-      entity: ahoop004-old-dominion-university    # optional; omit if not using teams
-      group: shanghai-dqn     # optional grouping for sweeps
-      tags:                   # optional list of extra tags
+      project: marl-f110     
+      entity: ahoop004-old-dominion-university   
+      group: shanghai-dqn     
+      tags:                   
         - shanghai
         - dqn
   algorithms:

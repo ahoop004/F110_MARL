@@ -19,6 +19,7 @@ PROGRESS_PARAM_KEYS = (
     "heading_penalty",
     "collision_penalty",
     "truncation_penalty",
+    "reverse_penalty",
 )
 
 PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
@@ -28,6 +29,7 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "heading_penalty": 0.0,
     "collision_penalty": 0.0,
     "truncation_penalty": 0.0,
+    "reverse_penalty": 0.0,
 }
 
 
@@ -44,6 +46,7 @@ class ProgressRewardStrategy(RewardStrategy):
         heading_penalty: float = 0.0,
         collision_penalty: float = 0.0,
         truncation_penalty: float = 0.0,
+        reverse_penalty: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
@@ -52,6 +55,7 @@ class ProgressRewardStrategy(RewardStrategy):
         self.heading_penalty = float(heading_penalty)
         self.collision_penalty = float(collision_penalty)
         self.truncation_penalty = float(truncation_penalty)
+        self.reverse_penalty = float(reverse_penalty)
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
         self._collision_applied: Dict[str, bool] = {}
@@ -124,6 +128,14 @@ class ProgressRewardStrategy(RewardStrategy):
             if penalty:
                 reward += penalty
                 components["heading_penalty"] = penalty
+
+        if self.reverse_penalty and delta < 0.0:
+            reverse_term = -self.reverse_penalty * abs(delta)
+            if reverse_term:
+                reward += reverse_term
+                components["reverse_penalty"] = (
+                    components.get("reverse_penalty", 0.0) + reverse_term
+                )
 
         if self.collision_penalty:
             collision_flag = bool(step.obs.get("collision", False))
