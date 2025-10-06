@@ -11,6 +11,8 @@ scenario:
     target_laps: 2
     centerline_render: true
     centerline_features: true
+    centerline_render_connect: false
+    centerline_render_spacing: 5.0
     spawn_points:
       - spawn_1
   reward:
@@ -26,14 +28,11 @@ scenario:
       truncation_penalty: -5.5
       reverse_penalty: 0.5
       waypoint_bonus: 0.5
-      waypoint_progress_step: 0.2
+      waypoint_spacing: 5.0
       idle_penalty: 0.4
       idle_penalty_steps: 40
       lap_completion_bonus: 15.0
-      milestone_progress:
-        - 0.1
-        - 0.25
-        - 0.5
+      milestone_spacing: 5.0
       milestone_bonus: 3.0
   main:
     mode: train_eval
@@ -107,11 +106,15 @@ scenario:
               - id: centerline
                 type: centerline
                 params:
-                  angle_mode: sin_cos
-                  lateral_scale: 30.0
-                  longitudinal_scale: 30.0
+                  angle_mode: none
+                  include_lateral: false
+                  include_longitudinal: false
+                  include_progress: false
                   include_waypoint: true
                   waypoint_mode: relative
-                  waypoint_lookahead: 5
                   waypoint_scale: 30.0
+                  waypoint_spacing: 5.0
+                  waypoint_spacing_count: 1
+                  waypoint_include_distance: true
+                  waypoint_distance_scale: 1.0
       algo: dqn

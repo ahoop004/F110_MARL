@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
 from f110x.wrappers.common import downsample_lidar, to_numpy
-from f110x.utils.centerline import CenterlineProjection, project_to_centerline
+from f110x.utils.centerline import (
+    CenterlineProjection,
+    progress_from_spacing,
+    project_to_centerline,
+)
 
 
 ComponentBuilder = Callable[
@@ -266,7 +270,83 @@ class ObsWrapper:
         waypoint_mode = str(params.get("waypoint_mode", "relative")).lower()
         if waypoint_mode not in {"relative", "absolute"}:
             waypoint_mode = "relative"
-        waypoint_dim = 2 if include_waypoint else 0
+
+        waypoint_offsets: Tuple[float, ...] = ()
+        waypoint_dim = 0
+        waypoint_include_position = bool(params.get("waypoint_include_position", True))
+        waypoint_include_distance = bool(params.get("waypoint_include_distance", False))
+        per_waypoint_dim = 0
+        if waypoint_include_position:
+            per_waypoint_dim += 2
+        if waypoint_include_distance:
+            per_waypoint_dim += 1
+        waypoint_distance_scale = params.get("waypoint_distance_scale")
+        if waypoint_distance_scale is not None:
+            try:
+                waypoint_distance_scale = float(waypoint_distance_scale)
+            except (TypeError, ValueError):
+                waypoint_distance_scale = None
+        waypoint_count_limit_raw = params.get("waypoint_spacing_count")
+        if waypoint_count_limit_raw is None:
+            waypoint_count_limit_raw = params.get("waypoint_count")
+        try:
+            waypoint_count_limit = None if waypoint_count_limit_raw is None else int(waypoint_count_limit_raw)
+        except (TypeError, ValueError):
+            waypoint_count_limit = None
+        if waypoint_count_limit is not None and waypoint_count_limit <= 0:
+            waypoint_count_limit = None
+        if include_waypoint:
+            offsets: List[float] = []
+            raw_offsets = params.get("waypoint_progress")
+            if raw_offsets is not None:
+                if isinstance(raw_offsets, (float, int)):
+                    raw_offsets = [raw_offsets]
+                for value in raw_offsets:
+                    try:
+                        numeric = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    offsets.append(numeric)
+            step_value = params.get("waypoint_progress_step")
+            try:
+                step_numeric = float(step_value)
+            except (TypeError, ValueError):
+                step_numeric = 0.0
+            if step_numeric > 0.0:
+                offsets.append(step_numeric)
+
+            spacing_value = params.get("waypoint_spacing")
+            try:
+                spacing_numeric = float(spacing_value)
+            except (TypeError, ValueError):
+                spacing_numeric = 0.0
+            if spacing_numeric > 0.0 and self.centerline_points is not None:
+                spacing_offsets = progress_from_spacing(self.centerline_points, spacing_numeric)
+                if spacing_offsets:
+                    offsets.extend(spacing_offsets)
+
+            normalized: List[float] = []
+            for value in offsets:
+                if not np.isfinite(value):
+                    continue
+                if value <= 0.0:
+                    continue
+                frac = float(value % 1.0)
+                if frac <= 0.0:
+                    continue
+                normalized.append(frac)
+            if normalized:
+                unique = tuple(sorted(set(normalized)))
+                if waypoint_count_limit is not None and waypoint_count_limit < len(unique):
+                    unique = unique[:waypoint_count_limit]
+                waypoint_offsets = unique
+                pair_count = len(waypoint_offsets)
+                waypoint_dim = per_waypoint_dim * pair_count if per_waypoint_dim > 0 else 0
+            else:
+                pair_count = 1
+                waypoint_dim = per_waypoint_dim if per_waypoint_dim > 0 else 0
+        else:
+            pair_count = 0
 
         if heading_mode == "sin_cos":
             heading_dim = 2
@@ -304,6 +384,11 @@ class ObsWrapper:
             "waypoint_mode": waypoint_mode,
             "waypoint_lookahead": int(max(1, int(params.get("waypoint_lookahead", 1)))) if include_waypoint else 0,
             "waypoint_scale": float(params.get("waypoint_scale", self.max_scan)) if include_waypoint else 1.0,
+            "waypoint_progress_offsets": waypoint_offsets,
+            "waypoint_feature_dim": per_waypoint_dim,
+            "waypoint_include_position": waypoint_include_position,
+            "waypoint_include_distance": waypoint_include_distance,
+            "waypoint_distance_scale": waypoint_distance_scale,
             "size": size,
         }
 
@@ -386,30 +471,64 @@ class ObsWrapper:
 
         if plan["include_waypoint"]:
             points = self.centerline_points[:, :2]
-            next_index = projection.index + plan["waypoint_lookahead"]
-            if points.size == 0:
-                waypoint_values = (0.0, 0.0)
-            else:
-                next_index = next_index % points.shape[0]
-                target_point = points[next_index]
-                if plan["waypoint_mode"] == "absolute":
-                    wx, wy = float(target_point[0]), float(target_point[1])
-                else:
-                    wx = float(target_point[0] - x)
-                    wy = float(target_point[1] - y)
-                    waypoint_scale = plan.get("waypoint_scale", 0.0)
-                    if waypoint_scale:
-                        scale = float(waypoint_scale)
+            offsets: Tuple[float, ...] = plan.get("waypoint_progress_offsets", ())
+            pair_count = len(offsets) if offsets else 1
+            per_waypoint_dim = int(plan.get("waypoint_feature_dim", 2))
+
+            def encode_point(point_xy: np.ndarray) -> Tuple[float, ...]:
+                payload: List[float] = []
+                raw_dx = float(point_xy[0] - x)
+                raw_dy = float(point_xy[1] - y)
+                waypoint_scale = plan.get("waypoint_scale", 0.0)
+                if plan.get("waypoint_include_position", True) and per_waypoint_dim:
+                    if plan["waypoint_mode"] == "absolute":
+                        wx = float(point_xy[0])
+                        wy = float(point_xy[1])
+                        if waypoint_scale:
+                            scale = float(waypoint_scale)
+                            if scale != 0.0:
+                                wx /= scale
+                                wy /= scale
+                    else:
+                        wx = raw_dx
+                        wy = raw_dy
+                        if waypoint_scale:
+                            scale = float(waypoint_scale)
+                            if scale != 0.0:
+                                wx /= scale
+                                wy /= scale
+                    payload.extend([wx, wy])
+                if plan.get("waypoint_include_distance", False):
+                    dist = float(np.hypot(raw_dx, raw_dy))
+                    distance_scale = plan.get("waypoint_distance_scale")
+                    if distance_scale is None:
+                        distance_scale = plan.get("waypoint_scale")
+                    if distance_scale:
+                        scale = float(distance_scale)
                         if scale != 0.0:
-                            wx /= scale
-                            wy /= scale
-                if plan["waypoint_mode"] == "absolute" and plan.get("waypoint_scale"):
-                    scale = float(plan["waypoint_scale"])
-                    if scale != 0.0:
-                        wx /= scale
-                        wy /= scale
-                waypoint_values = (wx, wy)
-            features.extend(waypoint_values)
+                            dist /= scale
+                    payload.append(dist)
+                return tuple(payload)
+
+            if points.size == 0:
+                zero_count = per_waypoint_dim * pair_count
+                if zero_count > 0:
+                    features.extend([0.0] * zero_count)
+            else:
+                total_points = points.shape[0]
+                if offsets:
+                    denom = max(total_points - 1, 1)
+                    base_progress = float(projection.progress)
+                    for offset in offsets:
+                        target_progress = (base_progress + float(offset)) % 1.0
+                        scaled = target_progress * denom
+                        target_index = int(np.floor(scaled + 0.5)) % total_points
+                        target_point = points[target_index]
+                        features.extend(encode_point(target_point))
+                else:
+                    next_index = (projection.index + plan["waypoint_lookahead"]) % total_points
+                    target_point = points[next_index]
+                    features.extend(encode_point(target_point))
 
         result = np.asarray(features, dtype=np.float32)
         if result.size < size:

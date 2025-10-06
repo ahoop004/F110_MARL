@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -82,3 +82,72 @@ def project_to_centerline(
         progress=float(progress),
     )
 
+
+def centerline_arc_length(centerline: np.ndarray) -> float:
+    """Return the total arc length of a polyline centerline."""
+
+    if centerline is None or centerline.ndim != 2 or centerline.shape[0] < 2:
+        return 0.0
+
+    points = centerline[:, :2].astype(np.float32, copy=False)
+    diffs = np.diff(points, axis=0)
+    if diffs.size == 0:
+        return 0.0
+    segment_lengths = np.linalg.norm(diffs, axis=1)
+    return float(segment_lengths.sum())
+
+
+def progress_from_spacing(
+    centerline: np.ndarray,
+    spacing: float,
+    *,
+    start_offset: float = 0.0,
+) -> Tuple[float, ...]:
+    """Compute progress fractions for evenly spaced distances along the track.
+
+    Args:
+        centerline: Waypoint array with at least 2 rows.
+        spacing: Desired spacing in metres (must be > 0).
+        start_offset: Optional initial offset before the first waypoint (metres).
+
+    Returns:
+        Tuple of monotonically increasing fractions in (0, 1) representing the
+        requested spacing along the lap. Values at 0 or 1 are omitted.
+    """
+
+    try:
+        spacing_val = float(spacing)
+    except (TypeError, ValueError):
+        return ()
+    if spacing_val <= 0.0:
+        return ()
+
+    total_length = centerline_arc_length(centerline)
+    if total_length <= 0.0:
+        return ()
+
+    try:
+        offset_val = float(start_offset)
+    except (TypeError, ValueError):
+        offset_val = 0.0
+    offset_val = max(float(offset_val), 0.0)
+
+    cumulative = offset_val + spacing_val
+    stops: List[float] = []
+    while cumulative < total_length:
+        progress = cumulative / total_length
+        if 0.0 < progress < 1.0:
+            stops.append(float(progress))
+        cumulative += spacing_val
+
+    if not stops:
+        return ()
+    # Deduplicate while preserving order.
+    seen = set()
+    unique: List[float] = []
+    for value in stops:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return tuple(unique)

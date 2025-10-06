@@ -6,7 +6,11 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
-from f110x.utils.centerline import project_to_centerline
+from f110x.utils.centerline import (
+    centerline_arc_length,
+    progress_from_spacing,
+    project_to_centerline,
+)
 
 from .base import RewardRuntimeContext, RewardStep, RewardStrategy
 from .registry import RewardTaskConfig, RewardTaskRegistry, RewardTaskSpec, register_reward_task
@@ -24,8 +28,10 @@ PROGRESS_PARAM_KEYS = (
     "idle_penalty_steps",
     "waypoint_bonus",
     "waypoint_progress_step",
+    "waypoint_spacing",
     "lap_completion_bonus",
     "milestone_progress",
+    "milestone_spacing",
     "milestone_bonus",
 )
 
@@ -41,8 +47,10 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, Any] = {
     "idle_penalty_steps": 5,
     "waypoint_bonus": 0.0,
     "waypoint_progress_step": 0.0,
+    "waypoint_spacing": 0.0,
     "lap_completion_bonus": 0.0,
     "milestone_progress": (),
+    "milestone_spacing": 0.0,
     "milestone_bonus": 0.0,
 }
 
@@ -65,8 +73,10 @@ class ProgressRewardStrategy(RewardStrategy):
         idle_penalty_steps: int = 5,
         waypoint_bonus: float = 0.0,
         waypoint_progress_step: float = 0.0,
+        waypoint_spacing: float = 0.0,
         lap_completion_bonus: float = 0.0,
         milestone_progress: Optional[Iterable[float]] = None,
+        milestone_spacing: float = 0.0,
         milestone_bonus: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
@@ -80,11 +90,24 @@ class ProgressRewardStrategy(RewardStrategy):
         self.idle_penalty = float(idle_penalty)
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self.waypoint_bonus = float(waypoint_bonus)
+        self.waypoint_spacing = float(waypoint_spacing)
         self.lap_completion_bonus = float(lap_completion_bonus)
+        self.milestone_spacing = float(milestone_spacing)
         self.milestone_bonus = float(milestone_bonus)
         waypoint_progress_step = float(waypoint_progress_step)
-        if waypoint_progress_step <= 0.0 and self.centerline is not None and self.centerline.shape[0] > 1:
-            waypoint_progress_step = 1.0 / float(self.centerline.shape[0] - 1)
+        if (
+            waypoint_progress_step <= 0.0
+            and self.centerline is not None
+            and self.centerline.shape[0] > 1
+        ):
+            if self.waypoint_spacing > 0.0:
+                total_length = centerline_arc_length(self.centerline)
+                if total_length > 0.0:
+                    derived_step = self.waypoint_spacing / total_length
+                    if derived_step < 1.0:
+                        waypoint_progress_step = derived_step
+            if waypoint_progress_step <= 0.0:
+                waypoint_progress_step = 1.0 / float(self.centerline.shape[0] - 1)
         self._waypoint_step = waypoint_progress_step if waypoint_progress_step > 0.0 else 0.0
         if milestone_progress is None:
             milestone_iter: Iterable[float] = ()
@@ -100,6 +123,10 @@ class ProgressRewardStrategy(RewardStrategy):
                 continue
             if 0.0 < numeric < 1.0:
                 processed.append(numeric)
+        if self.milestone_spacing > 0.0 and self.centerline is not None:
+            spacing_targets = progress_from_spacing(self.centerline, self.milestone_spacing)
+            if spacing_targets:
+                processed.extend(spacing_targets)
         milestone_targets = tuple(sorted(set(processed)))
         self._milestone_targets = milestone_targets
         self._last_index: Dict[str, Optional[int]] = {}

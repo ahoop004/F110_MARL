@@ -13,6 +13,7 @@ from f110x.render import EnvRenderer
 from f110x.envs.start_pose_state import StartPoseState
 from f110x.envs.collision import build_terminations
 from f110x.envs.state_buffer import StateBuffers
+from f110x.utils.centerline import progress_from_spacing
 
 
 # others
@@ -65,6 +66,20 @@ class F110ParallelEnv(ParallelEnv):
         self.centerline_features_enabled = self._centerline_feature_requested
         self.centerline_points: Optional[np.ndarray] = None
         self.centerline_path: Optional[Path] = None
+        self.centerline_render_progress = self._normalize_progress_fractions(
+            merged.get("centerline_render_progress")
+        )
+        spacing_value = merged.get("centerline_render_spacing")
+        try:
+            self.centerline_render_spacing = max(float(spacing_value), 0.0)
+        except (TypeError, ValueError):
+            self.centerline_render_spacing = 0.0
+        raw_connect = merged.get("centerline_render_connect")
+        if raw_connect is None:
+            self.centerline_render_connect = not bool(self.centerline_render_progress)
+        else:
+            self.centerline_render_connect = bool(raw_connect)
+        self._render_centerline_points: Optional[np.ndarray] = None
 
         self.seed: int = int(merged.get("seed", 42))
         self.max_steps: int = int(merged.get("max_steps", 5000))
@@ -199,7 +214,7 @@ class F110ParallelEnv(ParallelEnv):
             lidar_dist=self.lidar_dist,
             num_beams=self._lidar_beam_count,
         )
-        
+
         self.sim.set_map(str(self.yaml_path), self.map_ext)
         
         meta = merged.get("map_meta")
@@ -306,7 +321,10 @@ class F110ParallelEnv(ParallelEnv):
         if self.renderer is not None:
             self.renderer.reset_state()
             if self.centerline_render_enabled:
-                self.renderer.update_centerline(self.centerline_points)
+                self.renderer.update_centerline(
+                    self._render_centerline_points,
+                    connect=self.centerline_render_connect,
+                )
             else:
                 self.renderer.update_centerline(None)
     # Case 1: Explicit override via options
@@ -406,7 +424,8 @@ class F110ParallelEnv(ParallelEnv):
                 map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
-                centerline_points=self.centerline_points if self.centerline_render_enabled else None,
+                centerline_points=self._render_centerline_points if self.centerline_render_enabled else None,
+                centerline_connect=self.centerline_render_connect,
             )
 
     def update_params(self, params, index=-1):
@@ -431,7 +450,8 @@ class F110ParallelEnv(ParallelEnv):
                 self.map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
-                centerline_points=self.centerline_points if self.centerline_render_enabled else None,
+                centerline_points=self._render_centerline_points if self.centerline_render_enabled else None,
+                centerline_connect=self.centerline_render_connect,
             )
 
         if self.render_obs:
@@ -451,6 +471,62 @@ class F110ParallelEnv(ParallelEnv):
             frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3).copy()
             return frame
 
+    @staticmethod
+    def _normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:
+        if raw is None:
+            return ()
+        if isinstance(raw, (float, int)):
+            candidates: List[Any] = [raw]
+        elif isinstance(raw, str):
+            candidates = [raw]
+        else:
+            try:
+                candidates = list(raw)  # type: ignore[arg-type]
+            except TypeError:
+                candidates = [raw]
+
+        fractions: List[float] = []
+        for value in candidates:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(numeric):
+                continue
+            frac = numeric % 1.0
+            if frac <= 0.0:
+                continue
+            fractions.append(frac)
+        if not fractions:
+            return ()
+        return tuple(sorted(set(fractions)))
+
+    def _build_render_centerline_points(self) -> Optional[np.ndarray]:
+        base = self.centerline_points
+        if base is None:
+            return None
+        if base.ndim != 2 or base.shape[0] == 0:
+            return base
+        fractions: List[float] = list(self.centerline_render_progress)
+        if self.centerline_render_spacing > 0.0:
+            spacing_fracs = progress_from_spacing(base, self.centerline_render_spacing)
+            if spacing_fracs:
+                fractions.extend(spacing_fracs)
+        if not fractions:
+            return base
+        unique = sorted(set(frac for frac in fractions if 0.0 < frac < 1.0))
+        if not unique:
+            return base
+        denom = max(base.shape[0] - 1, 1)
+        indices = set()
+        for frac in unique:
+            idx = int(round(frac * denom)) % base.shape[0]
+            indices.add(idx)
+        if not indices:
+            return base
+        ordered = sorted(indices)
+        return base[ordered]
+
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
         if centerline is not None:
             array = np.asarray(centerline, dtype=np.float32)
@@ -460,9 +536,13 @@ class F110ParallelEnv(ParallelEnv):
         self.centerline_points = array
         self.centerline_path = path.resolve() if path is not None else None
         self.centerline_features_enabled = self._centerline_feature_requested and array is not None
+        self._render_centerline_points = self._build_render_centerline_points()
         if self.renderer is not None:
             if self.centerline_render_enabled:
-                self.renderer.update_centerline(self.centerline_points)
+                self.renderer.update_centerline(
+                    self._render_centerline_points,
+                    connect=self.centerline_render_connect,
+                )
             else:
                 self.renderer.update_centerline(None)
     

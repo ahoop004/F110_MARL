@@ -147,6 +147,7 @@ else:
             map_meta=None,
             map_image_path=None,
             centerline_points: Optional[np.ndarray] = None,
+            centerline_connect: bool = True,
         ):
             """
             Update map geometry.
@@ -231,9 +232,14 @@ else:
             self._map_vertex_count = N
             self.map_points = pts
 
-            self.update_centerline(centerline_points)
+            self.update_centerline(centerline_points, connect=centerline_connect)
 
-        def update_centerline(self, centerline_points: Optional[np.ndarray]) -> None:
+        def update_centerline(
+            self,
+            centerline_points: Optional[np.ndarray],
+            *,
+            connect: bool = True,
+        ) -> None:
             if self._centerline_vlist is not None:
                 try:
                     self._centerline_vlist.delete()
@@ -255,20 +261,19 @@ else:
                 return
 
             verts = (points_np[:, :2] * self.render_scale).astype(np.float32, copy=False).ravel().tolist()
-            colors = list(CENTERLINE_COLOR) * points_np.shape[0]
-
-            try:
-                self._centerline_vlist = self.shader.vertex_list(
-                    points_np.shape[0],
-                    pyglet.gl.GL_LINE_STRIP,
-                    batch=self.batch,
-                    group=self.shader_group,
-                    position=('f', verts),
-                    color=('f', colors),
-                )
-            except Exception:
-                self._centerline_vlist = None
-
+            if connect:
+                colors = list(CENTERLINE_COLOR) * points_np.shape[0]
+                try:
+                    self._centerline_vlist = self.shader.vertex_list(
+                        points_np.shape[0],
+                        pyglet.gl.GL_LINE_STRIP,
+                        batch=self.batch,
+                        group=self.shader_group,
+                        position=('f', verts),
+                        color=('f', colors),
+                    )
+                except Exception:
+                    self._centerline_vlist = None
             try:
                 self._centerline_points_vlist = self.shader.vertex_list(
                     points_np.shape[0],
