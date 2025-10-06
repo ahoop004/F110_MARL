@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
+import warnings
 
 import numpy as np
 import torch
@@ -22,6 +23,9 @@ class DQNAgent:
         self.device = resolve_device([cfg.get("device")])
 
         self.obs_dim = int(cfg["obs_dim"])
+        self.action_mode = str(cfg.get("action_mode", "absolute")).lower()
+        self._requires_action_index = self.action_mode in {"delta", "rate"}
+        self._warned_action_index_fallback = False
         action_set = np.asarray(cfg.get("action_set"), dtype=np.float32)
         if action_set.ndim != 2:
             raise ValueError("DQN requires `action_set` as a list of action vectors")
@@ -262,6 +266,18 @@ class DQNAgent:
     def _action_to_index(self, action: Iterable[float], info: Optional[Dict[str, Any]] = None) -> int:
         if info and "action_index" in info:
             return int(info["action_index"])
+        if self._requires_action_index:
+            raise RuntimeError(
+                "DQNAgent requires 'action_index' metadata when using a ``rate`` or ``delta`` action mode"
+            )
         action_arr = np.asarray(action, dtype=np.float32)
         diffs = np.linalg.norm(self.action_set - action_arr, axis=1)
+        if not self._warned_action_index_fallback:
+            warnings.warn(
+                "Falling back to nearest-action lookup because no 'action_index' metadata was provided; "
+                "ensure discrete action indices are recorded alongside transitions.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._warned_action_index_fallback = True
         return int(np.argmin(diffs))

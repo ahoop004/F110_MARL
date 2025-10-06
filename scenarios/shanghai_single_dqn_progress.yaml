@@ -18,14 +18,23 @@ scenario:
     idle_speed_threshold: 0.1
     idle_patience_steps: 240
     params:
-      progress_weight: 4.0
+      progress_weight: 5.0
       speed_weight: 0.05
-      lateral_penalty: 0.001
-      heading_penalty: 0.001
+      lateral_penalty: 0.008
+      heading_penalty: 0.008
       collision_penalty: -3.0
       truncation_penalty: -5.5
       reverse_penalty: 0.5
-      waypoint_bonus: 0.2
+      waypoint_bonus: 0.5
+      waypoint_progress_step: 0.2
+      idle_penalty: 0.4
+      idle_penalty_steps: 40
+      lap_completion_bonus: 15.0
+      milestone_progress:
+        - 0.1
+        - 0.25
+        - 0.5
+      milestone_bonus: 3.0
   main:
     mode: train_eval
     train_episodes: 500
@@ -46,12 +55,12 @@ scenario:
       gamma: 0.99
       batch_size: 512
       buffer_size: 200000
-      target_update_interval: 10
+      target_update_interval: 20
       epsilon_start: 0.9
       epsilon_end: 0.05
       epsilon_decay: 450
       learning_starts: 2048
-      max_grad_norm: 10.0
+      max_grad_norm: 5.0
       hidden_dims:
         - 128
         - 128
@@ -62,12 +71,12 @@ scenario:
       per_min_priority: 0.001
       per_epsilon: 1.0e-06
       updates_per_step: 2
-      action_repeat: 5
+      action_repeat: 2
       action_mode: rate
       steering_rate: 0.45
       accel_rate: 4.0
       brake_rate: 3.5
-      rate_initial_speed: 0.0
+      rate_initial_speed: 1.0
       save_dir: checkpoints/shanghai_progress
       checkpoint_name: shanghai_single_dqn_progress.pt
   agents:
@@ -80,7 +89,7 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 108
+                  beams: 54
                   max_range: 30.0
                   normalize: true
               - id: ego_pose

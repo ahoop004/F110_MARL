@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
@@ -24,9 +24,12 @@ PROGRESS_PARAM_KEYS = (
     "idle_penalty_steps",
     "waypoint_bonus",
     "waypoint_progress_step",
+    "lap_completion_bonus",
+    "milestone_progress",
+    "milestone_bonus",
 )
 
-PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
+PROGRESS_PARAM_DEFAULTS: Dict[str, Any] = {
     "progress_weight": 1.0,
     "speed_weight": 0.0,
     "lateral_penalty": 0.0,
@@ -38,6 +41,9 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, float] = {
     "idle_penalty_steps": 5,
     "waypoint_bonus": 0.0,
     "waypoint_progress_step": 0.0,
+    "lap_completion_bonus": 0.0,
+    "milestone_progress": (),
+    "milestone_bonus": 0.0,
 }
 
 
@@ -59,6 +65,9 @@ class ProgressRewardStrategy(RewardStrategy):
         idle_penalty_steps: int = 5,
         waypoint_bonus: float = 0.0,
         waypoint_progress_step: float = 0.0,
+        lap_completion_bonus: float = 0.0,
+        milestone_progress: Optional[Iterable[float]] = None,
+        milestone_bonus: float = 0.0,
     ) -> None:
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
@@ -71,10 +80,28 @@ class ProgressRewardStrategy(RewardStrategy):
         self.idle_penalty = float(idle_penalty)
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self.waypoint_bonus = float(waypoint_bonus)
+        self.lap_completion_bonus = float(lap_completion_bonus)
+        self.milestone_bonus = float(milestone_bonus)
         waypoint_progress_step = float(waypoint_progress_step)
         if waypoint_progress_step <= 0.0 and self.centerline is not None and self.centerline.shape[0] > 1:
             waypoint_progress_step = 1.0 / float(self.centerline.shape[0] - 1)
         self._waypoint_step = waypoint_progress_step if waypoint_progress_step > 0.0 else 0.0
+        if milestone_progress is None:
+            milestone_iter: Iterable[float] = ()
+        elif isinstance(milestone_progress, (float, int)):
+            milestone_iter = (float(milestone_progress),)
+        else:
+            milestone_iter = milestone_progress
+        processed = []
+        for value in milestone_iter:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if 0.0 < numeric < 1.0:
+                processed.append(numeric)
+        milestone_targets = tuple(sorted(set(processed)))
+        self._milestone_targets = milestone_targets
         self._last_index: Dict[str, Optional[int]] = {}
         self._last_progress: Dict[str, float] = {}
         self._collision_applied: Dict[str, bool] = {}
@@ -83,6 +110,9 @@ class ProgressRewardStrategy(RewardStrategy):
         self._last_speed: Dict[str, float] = {}
         self._cumulative_progress: Dict[str, float] = {}
         self._next_waypoint_progress: Dict[str, float] = {}
+        self._lap_progress: Dict[str, float] = {}
+        self._laps_rewarded: Dict[str, int] = {}
+        self._milestone_state: Dict[str, Tuple[int, int]] = {}
 
     def reset(self, episode_index: int) -> None:
         self._last_index.clear()
@@ -93,6 +123,9 @@ class ProgressRewardStrategy(RewardStrategy):
         self._last_speed.clear()
         self._cumulative_progress.clear()
         self._next_waypoint_progress.clear()
+        self._lap_progress.clear()
+        self._laps_rewarded.clear()
+        self._milestone_state.clear()
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         if self.centerline is None or self.centerline.size == 0:
@@ -136,9 +169,45 @@ class ProgressRewardStrategy(RewardStrategy):
             reward += progress_term
             components["progress"] = progress_term
 
+        increment = delta if delta > 0.0 else 0.0
+        lap_progress = self._lap_progress.get(step.agent_id, 0.0) + increment
+        self._lap_progress[step.agent_id] = lap_progress
+
+        if self.lap_completion_bonus:
+            laps_rewarded = self._laps_rewarded.get(step.agent_id, 0)
+            lap_reward = 0.0
+            next_threshold = float(laps_rewarded + 1)
+            while lap_progress >= next_threshold:
+                lap_reward += self.lap_completion_bonus
+                laps_rewarded += 1
+                next_threshold = float(laps_rewarded + 1)
+            if lap_reward:
+                reward += lap_reward
+                components["lap_completion_bonus"] = (
+                    components.get("lap_completion_bonus", 0.0) + lap_reward
+                )
+            self._laps_rewarded[step.agent_id] = laps_rewarded
+
+        if self.milestone_bonus and self._milestone_targets:
+            total_laps = int(np.floor(lap_progress))
+            lap_fraction = lap_progress - float(total_laps)
+            prev_lap, milestone_idx = self._milestone_state.get(step.agent_id, (total_laps, 0))
+            if total_laps > prev_lap:
+                milestone_idx = 0
+            milestone_reward = 0.0
+            targets = self._milestone_targets
+            while milestone_idx < len(targets) and lap_fraction >= targets[milestone_idx]:
+                milestone_reward += self.milestone_bonus
+                milestone_idx += 1
+            if milestone_reward:
+                reward += milestone_reward
+                components["milestone_bonus"] = (
+                    components.get("milestone_bonus", 0.0) + milestone_reward
+                )
+            self._milestone_state[step.agent_id] = (total_laps, milestone_idx)
+
         if self.waypoint_bonus and self._waypoint_step > 0.0:
             prev_cumulative = self._cumulative_progress.get(step.agent_id, 0.0)
-            increment = delta if delta > 0.0 else 0.0
             cumulative = prev_cumulative + increment
             self._cumulative_progress[step.agent_id] = cumulative
 
