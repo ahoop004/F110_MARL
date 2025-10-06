@@ -1067,12 +1067,22 @@ class AgentTeam:
         bundle = self.by_id[agent_id]
         return bundle.obs_pipeline.transform(raw_obs, agent_id, self.roster)
 
-    def action(self, agent_id: str, action: Any) -> Any:
+    def action(self, agent_id: str, action: Any, *, return_info: bool = False) -> Any:
         bundle = self.by_id[agent_id]
         wrapper = bundle.action_wrapper
+        meta = None
         if wrapper is None:
-            return action
-        return wrapper.transform(agent_id, action)
+            transformed = action
+        else:
+            transform_with_info = getattr(wrapper, "transform_with_info", None)
+            if callable(transform_with_info):
+                transformed, meta = transform_with_info(agent_id, action)
+            else:
+                transformed = wrapper.transform(agent_id, action)
+
+        if return_info:
+            return transformed, meta
+        return transformed
 
     def reset_actions(self) -> None:
         for bundle in self.agents:

@@ -423,11 +423,25 @@ class EvalRunner:
                 observation = team.observation(agent_id, obs)
                 processed_obs[agent_id] = np.asarray(observation, dtype=np.float32)
                 action_raw = bundle.trainer.select_action(observation, deterministic=deterministic)
-                actions[agent_id] = team.action(agent_id, action_raw)
-                if np.isscalar(action_raw) or (
+                action_value, wrapper_meta = team.action(agent_id, action_raw, return_info=True)
+                actions[agent_id] = action_value
+
+                meta_index: Optional[int] = None
+                if wrapper_meta and "action_index" in wrapper_meta:
+                    try:
+                        meta_index = int(wrapper_meta["action_index"])
+                    except (TypeError, ValueError):
+                        meta_index = None
+                elif np.isscalar(action_raw) or (
                     isinstance(action_raw, np.ndarray) and action_raw.ndim == 0
                 ):
-                    controller_infos[agent_id] = {"action_index": int(np.asarray(action_raw).item())}
+                    try:
+                        meta_index = int(np.asarray(action_raw).item())
+                    except (TypeError, ValueError):
+                        meta_index = None
+
+                if meta_index is not None:
+                    controller_infos[agent_id] = {"action_index": meta_index}
             elif hasattr(controller, "get_action"):
                 action_space = team.env.action_space(agent_id)
                 action = controller.get_action(action_space, obs[agent_id])

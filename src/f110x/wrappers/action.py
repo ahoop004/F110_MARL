@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -109,27 +109,19 @@ class ActionRepeatWrapper:
         self.repeat = int(repeat)
         self._cached: Dict[str, np.ndarray] = {}
         self._remaining: Dict[str, int] = {}
+        self._last_meta: Dict[str, Optional[Dict[str, Any]]] = {}
 
     def transform(self, agent_id: str, action: Any) -> np.ndarray:
-        remaining = self._remaining.get(agent_id, 0)
-        if remaining <= 0:
-            transformed = self._transform_inner(agent_id, action)
-            self._cached[agent_id] = transformed
-            self._remaining[agent_id] = self.repeat - 1
-            return transformed.copy()
+        transformed, _ = self._apply(agent_id, action, capture_meta=False)
+        return transformed
 
-        self._remaining[agent_id] = remaining - 1
-        cached = self._cached.get(agent_id)
-        if cached is None:
-            transformed = self._transform_inner(agent_id, action)
-            self._cached[agent_id] = transformed
-            self._remaining[agent_id] = self.repeat - 1
-            return transformed.copy()
-        return cached.copy()
+    def transform_with_info(self, agent_id: str, action: Any) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
+        return self._apply(agent_id, action, capture_meta=True)
 
     def reset(self, agent_id: str, *args: Any, **kwargs: Any) -> None:
         self._cached.pop(agent_id, None)
         self._remaining.pop(agent_id, None)
+        self._last_meta.pop(agent_id, None)
         if self.inner is not None:
             reset_fn = getattr(self.inner, "reset", None)
             if callable(reset_fn):
@@ -140,3 +132,62 @@ class ActionRepeatWrapper:
             return to_numpy(action).copy()
         transformed = self.inner.transform(agent_id, action)
         return to_numpy(transformed)
+
+    def _apply(
+        self,
+        agent_id: str,
+        action: Any,
+        *,
+        capture_meta: bool,
+    ) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
+        remaining = self._remaining.get(agent_id, 0)
+        if remaining <= 0:
+            transformed, meta = self._invoke_inner(agent_id, action)
+            info = self._prepare_meta(meta, action)
+            self._cached[agent_id] = transformed
+            self._remaining[agent_id] = self.repeat - 1
+            self._last_meta[agent_id] = info.copy() if info is not None else None
+        else:
+            self._remaining[agent_id] = remaining - 1
+            cached = self._cached.get(agent_id)
+            if cached is None:
+                transformed, meta = self._invoke_inner(agent_id, action)
+                info = self._prepare_meta(meta, action)
+                self._cached[agent_id] = transformed
+                self._remaining[agent_id] = self.repeat - 1
+                self._last_meta[agent_id] = info.copy() if info is not None else None
+            else:
+                transformed = cached
+                last_meta = self._last_meta.get(agent_id)
+                info = last_meta.copy() if last_meta is not None else None
+
+        if capture_meta:
+            info_copy = info.copy() if info is not None else None
+            return transformed.copy(), info_copy
+        return transformed.copy(), None
+
+    def _invoke_inner(self, agent_id: str, action: Any) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
+        if self.inner is None:
+            return to_numpy(action).copy(), None
+
+        transform_with_info = getattr(self.inner, "transform_with_info", None)
+        if callable(transform_with_info):
+            transformed, meta = transform_with_info(agent_id, action)
+            return to_numpy(transformed), meta
+
+        transformed = self.inner.transform(agent_id, action)
+        return to_numpy(transformed), None
+
+    def _prepare_meta(self, meta: Optional[Dict[str, Any]], raw_action: Any) -> Optional[Dict[str, Any]]:
+        info = dict(meta) if meta is not None else {}
+        if "action_index" not in info:
+            if np.isscalar(raw_action) or (
+                isinstance(raw_action, np.ndarray) and raw_action.ndim == 0
+            ):
+                try:
+                    info["action_index"] = int(np.asarray(raw_action).item())
+                except (TypeError, ValueError):
+                    pass
+        if not info:
+            return None
+        return info
