@@ -37,16 +37,16 @@ scenario:
       relative_reward:
         weights:
           front: 0.0
-          front_right: 0.015
-          right: 0.01
+          front_right: 0.15
+          right: 0.1
           back_right: 0.015
           back: -0.01
           back_left: 0.015
-          left: 0.01
-          front_left: 0.015
-        preferred_radius: 0.55
-        inner_tolerance: 0.15
-        outer_tolerance: 0.15
+          left: 0.1
+          front_left: 0.15
+        preferred_radius: 0.50
+        inner_tolerance: 0.2
+        outer_tolerance: 0.2
         # falloff: linear
         # scale: 1.0
   main:
