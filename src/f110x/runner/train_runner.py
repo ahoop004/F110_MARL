@@ -110,7 +110,7 @@ class TrainRunner:
         best_tracker = BestReturnTracker(recent_window)
 
         reward_cfg = self.context.reward_cfg
-        truncation_penalty = float(reward_cfg.get("truncation_penalty", 0.0))
+        truncation_penalty = self._resolve_reward_value(reward_cfg, "truncation_penalty")
         idle_speed_threshold = float(reward_cfg.get("idle_speed_threshold", 0.4))
         idle_patience_steps = int(reward_cfg.get("idle_patience_steps", 200))
         idle_tracker = IdleTerminationTracker(idle_speed_threshold, idle_patience_steps)
@@ -182,12 +182,15 @@ class TrainRunner:
 
             if truncation_penalty:
                 for agent_id, truncated in rollout.truncations.items():
-                    if truncated:
-                        returns[agent_id] = returns.get(agent_id, 0.0) + truncation_penalty
-                        agent_breakdown = reward_breakdown.setdefault(agent_id, {})
-                        agent_breakdown["truncation_penalty"] = (
-                            agent_breakdown.get("truncation_penalty", 0.0) + truncation_penalty
-                        )
+                    if not truncated:
+                        continue
+                    agent_breakdown = reward_breakdown.setdefault(agent_id, {})
+                    if "truncation_penalty" in agent_breakdown:
+                        continue
+                    returns[agent_id] = returns.get(agent_id, 0.0) + truncation_penalty
+                    agent_breakdown["truncation_penalty"] = (
+                        agent_breakdown.get("truncation_penalty", 0.0) + truncation_penalty
+                    )
 
             if rollout.idle_triggered:
                 logger.info(
@@ -422,6 +425,28 @@ class TrainRunner:
         cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value))
         cleaned = cleaned.strip("-")
         return cleaned or None
+
+    @staticmethod
+    def _resolve_reward_value(cfg: Dict[str, Any], key: str) -> float:
+        """Resolve reward configuration values, honouring nested params."""
+
+        raw = cfg.get(key)
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+
+        params = cfg.get("params")
+        if isinstance(params, dict):
+            raw = params.get(key)
+            if raw is not None:
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    pass
+
+        return 0.0
 
 
 __all__ = ["TrainRunner", "TrainerUpdateHook"]

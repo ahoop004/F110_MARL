@@ -33,7 +33,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self,
         *,
         target_crash_reward: float = 10.0,
-        self_collision_penalty: float = -1.0,
+        self_collision_penalty: float = -10.0,
         truncation_penalty: float = 0.0,
         success_once: bool = True,
         reward_horizon: Optional[float] = None,
