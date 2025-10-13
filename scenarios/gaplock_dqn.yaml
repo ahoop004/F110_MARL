@@ -73,7 +73,7 @@ scenario:
       target_update_interval: 500
       epsilon_start: .9980
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.999
+      epsilon_decay_rate: 0.998
       hidden_dims:
       - 256
       - 256

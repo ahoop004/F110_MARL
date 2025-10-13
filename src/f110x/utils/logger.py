@@ -1,13 +1,25 @@
 """Unified logging utilities for console summaries and W&B emission."""
 from __future__ import annotations
 
-import math
-import os
-import shutil
-import sys
+import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional, Sequence
+from datetime import datetime
+from typing import Any, Deque, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+
+try:  # pragma: no cover - optional dependency
+    from rich.align import Align
+    from rich.console import Console, Group
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    _HAS_RICH = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_RICH = False
+
+Number = Optional[float]
 
 
 class LogSink(ABC):
@@ -105,456 +117,339 @@ class Logger:
             sink.stop()
 
 
-class ConsoleSink(LogSink):
-    """Structured console summaries for training and evaluation metrics."""
+def _format_number(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-    def __init__(self) -> None:
-        self._context: Dict[str, Any] = {}
-        self._use_live_panel = bool(os.environ.get("F110_LIVE_CONSOLE", "1") != "0" and sys.stdout.isatty())
-        self._train_state: Dict[str, Any] = {}
-        self._eval_state: Dict[str, Any] = {}
-        self._event_buffer: Deque[str] = deque(maxlen=8)
-        self._clear_sequence = "\x1b[2J\x1b[H"
-        self._started = False
 
-    # ------------------------------------------------------------------
-    # LogSink interface
-    # ------------------------------------------------------------------
-    def start(self, context: Mapping[str, Any]) -> None:
-        self._context = dict(context)
-        first_start = not self._started
-        self._started = True
-        if self._use_live_panel:
-            if first_start:
-                self._train_state.clear()
-                self._eval_state.clear()
-                self._event_buffer.clear()
-            self._render_panel()
+def _format_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    return None
 
-    def stop(self) -> None:
-        # Console output has no persistent resources.
-        self._context.clear()
-        self._started = False
 
-    def log_metrics(
-        self,
-        phase: str,
-        metrics: Mapping[str, Any],
-        *,
-        step: Optional[float] = None,
-    ) -> None:
-        if phase == "train":
-            if self._use_live_panel:
-                self._update_phase_state("train", metrics, step)
-                self._render_panel()
-            else:
-                self._log_train(metrics, step)
-        elif phase == "eval":
-            if self._use_live_panel:
-                self._update_phase_state("eval", metrics, step)
-                self._render_panel()
-            else:
-                self._log_eval(metrics, step)
-
-    def log_event(
-        self,
-        level: str,
-        message: str,
-        extra: Optional[Mapping[str, Any]] = None,
-    ) -> None:
-        prefix = level.upper()
-        extras = ""
-        if extra:
-            extras = " " + self._format_keyvals(extra)
-        line = f"[{prefix}] {message}{extras}"
-        if self._use_live_panel:
-            self._event_buffer.append(line)
-            self._render_panel()
-        else:
-            print(line)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _render_panel(self) -> None:
-        if not self._use_live_panel:
-            return
-
-        lines = self._compose_panel_lines()
-        panel_lines = self._wrap_in_box(lines)
-
-        sys.stdout.write(self._clear_sequence)
-        for text in panel_lines:
-            sys.stdout.write(text + "\n")
-        sys.stdout.flush()
-
-    def _compose_panel_lines(self) -> List[str]:
-        lines: List[str] = []
-
-        if self._train_state:
-            lines.extend(self._format_phase_section("TRAINING", self._train_state))
-        if self._eval_state:
-            if lines:
-                lines.append("")
-            lines.extend(self._format_phase_section("EVALUATION", self._eval_state))
-
-        if self._event_buffer:
-            if lines:
-                lines.append("")
-            lines.append("Recent Events:")
-            for event in list(self._event_buffer)[-6:]:
-                lines.append(f"  {event}")
-
-        if not lines:
-            lines.append("Waiting for metrics...")
-
-        return lines
-
-    def _format_phase_section(self, title: str, state: Mapping[str, Any]) -> List[str]:
-        lines = [title]
-
-        episode = state.get("episode")
-        total = state.get("total")
-        steps = state.get("steps")
-        collisions = state.get("collisions_total")
-
-        summary_parts = []
-        if episode is not None and total is not None:
-            summary_parts.append(f"Episode {episode:03d}/{total:03d}")
-        elif episode is not None:
-            summary_parts.append(f"Episode {episode:03d}")
-        if steps is not None:
-            summary_parts.append(f"Steps {steps}")
-        if collisions is not None:
-            summary_parts.append(f"Collisions {collisions}")
-        if summary_parts:
-            lines.append("  " + "  ".join(summary_parts))
-
-        detail_parts = []
-        cause = state.get("cause")
-        if cause:
-            detail_parts.append(f"Cause: {cause}")
-        mode = state.get("mode")
-        if mode:
-            detail_parts.append(f"Mode: {mode}")
-        success = state.get("success")
-        if isinstance(success, bool):
-            detail_parts.append(f"Success: {'yes' if success else 'no'}")
-        epsilon = state.get("epsilon")
-        if epsilon is not None and self._is_number(epsilon):
-            detail_parts.append(f"Epsilon: {float(epsilon):.3f}")
-        defender_flag = state.get("defender_crashed")
-        if isinstance(defender_flag, bool):
-            detail_parts.append(f"Defender crash: {'yes' if defender_flag else 'no'}")
-        attacker_flag = state.get("attacker_crashed")
-        if isinstance(attacker_flag, bool):
-            detail_parts.append(f"Attacker crash: {'yes' if attacker_flag else 'no'}")
-        if detail_parts:
-            lines.append("  " + "  ".join(detail_parts))
-
-        primary_agent = state.get("primary_agent")
-        primary_return = state.get("primary_return")
-        if primary_agent and self._is_number(primary_return):
-            lines.append(
-                f"  Primary {primary_agent}: return {float(primary_return):.2f}"
-            )
-
-        idle_truncated = state.get("idle_truncated")
-        if isinstance(idle_truncated, bool):
-            lines.append(f"  Idle truncated: {'yes' if idle_truncated else 'no'}")
-
-        agents = state.get("agents") or {}
-        if agents:
-            lines.append("")
-            lines.extend(self._format_agent_table(agents))
-
-        return lines
-
-    def _format_agent_table(self, agents: Mapping[str, Any]) -> List[str]:
-        header = f"{'Agent':<10} {'Return':>10} {'AvgRet':>10} {'Coll':>6} {'AvgSpd':>8}"
-        lines = [header, "-" * len(header)]
-
-        for agent_id in sorted(agents):
-            entry = agents[agent_id]
-            last_return = entry.get("last_return")
-            avg_return = entry.get("avg_return")
-            collisions = entry.get("last_collisions")
-            avg_speed = entry.get("last_speed")
-
-            return_str = f"{float(last_return):.2f}" if self._is_number(last_return) else "-"
-            avg_return_str = (
-                f"{float(avg_return):.2f}" if self._is_number(avg_return) else "-"
-            )
-            collisions_str = (
-                f"{int(collisions)}" if self._is_number(collisions) else "-"
-            )
-            avg_speed_str = (
-                f"{float(avg_speed):.2f}" if self._is_number(avg_speed) else "-"
-            )
-
-            row = (
-                f"{agent_id:<10} {return_str:>10} {avg_return_str:>10} "
-                f"{collisions_str:>6} {avg_speed_str:>8}"
-            )
-            lines.append(row)
-
-        return lines
-
-    def _wrap_in_box(self, lines: List[str]) -> List[str]:
-        term_size = shutil.get_terminal_size(fallback=(100, 24))
-        columns = term_size.columns if term_size.columns > 0 else 100
-        width = max(60, min(columns, 120))
-        inner_width = max(10, width - 2)
-
-        wrapped: List[str] = []
-        top = "+" + "-" * inner_width + "+"
-        bottom = "+" + "-" * inner_width + "+"
-        wrapped.append(top)
-
-        for line in lines:
-            truncated = line[:inner_width]
-            padding = " " * max(inner_width - len(truncated), 0)
-            wrapped.append(f"|{truncated}{padding}|")
-
-        wrapped.append(bottom)
-        return wrapped
-
-    def _update_phase_state(
-        self,
-        phase: str,
-        metrics: Mapping[str, Any],
-        step: Optional[float],
-    ) -> None:
-        state = self._train_state if phase == "train" else self._eval_state
-
-        episode_key = f"{phase}/episode"
-        total_key = f"{phase}/total_episodes"
-        steps_key = f"{phase}/steps"
-        collisions_key = f"{phase}/collisions_total"
-
-        episode_val = metrics.get(episode_key, step)
-        episode = self._coerce_int(episode_val)
-        total = self._coerce_int(metrics.get(total_key))
-        steps_val = self._coerce_int(metrics.get(steps_key))
-        collisions_val = self._coerce_int(metrics.get(collisions_key))
-
-        state["episode"] = episode
-        state["total"] = total
-        state["steps"] = steps_val
-        state["collisions_total"] = collisions_val
-        state["cause"] = metrics.get(f"{phase}/cause")
-        state["mode"] = metrics.get(f"{phase}/reward_task") or metrics.get(
-            f"{phase}/reward_mode"
-        )
-
-        success_key = f"{phase}/success"
-        if success_key in metrics:
-            state["success"] = bool(metrics.get(success_key))
-
-        if phase == "train":
-            epsilon_val = metrics.get("train/epsilon")
-            if self._is_number(epsilon_val):
-                state["epsilon"] = float(epsilon_val)
-            idle_flag = metrics.get("train/idle_truncated")
-            if isinstance(idle_flag, bool):
-                state["idle_truncated"] = idle_flag
-
-        defender_key = f"{phase}/defender_crashed"
-        if defender_key in metrics:
-            state["defender_crashed"] = bool(metrics.get(defender_key))
-
-        attacker_key = f"{phase}/attacker_crashed"
-        if attacker_key in metrics:
-            state["attacker_crashed"] = bool(metrics.get(attacker_key))
-
-        primary_agent = metrics.get(f"{phase}/primary_agent")
-        if primary_agent:
-            state["primary_agent"] = primary_agent
-        primary_return = metrics.get(f"{phase}/primary_return")
-        if self._is_number(primary_return):
-            state["primary_return"] = float(primary_return)
-
-        agents: Dict[str, Any] = state.setdefault("agents", {})
-        self._update_agent_metrics(agents, metrics, phase, episode)
-
-    def _update_agent_metrics(
-        self,
-        agents: Dict[str, Any],
-        metrics: Mapping[str, Any],
-        phase: str,
-        episode: Optional[int],
-    ) -> None:
-        return_prefix = f"{phase}/return_"
-        collisions_prefix = f"{phase}/collision_count_"
-        speed_prefix = f"{phase}/avg_speed_"
-
-        for key, value in metrics.items():
-            if key.startswith(return_prefix):
-                agent_id = key[len(return_prefix) :]
-                self._record_agent_return(agents, agent_id, value, episode)
-            elif key.startswith(collisions_prefix):
-                agent_id = key[len(collisions_prefix) :]
-                self._record_agent_collision(agents, agent_id, value)
-            elif key.startswith(speed_prefix):
-                agent_id = key[len(speed_prefix) :]
-                self._record_agent_speed(agents, agent_id, value)
-
-    def _agent_entry(self, agents: Dict[str, Any], agent_id: str) -> Dict[str, Any]:
-        if agent_id not in agents:
-            agents[agent_id] = {
-                "episodes": 0,
-                "return_sum": 0.0,
-                "last_episode": None,
-                "last_return": None,
-                "avg_return": None,
-                "last_collisions": None,
-                "last_speed": None,
-            }
-        return agents[agent_id]
-
-    def _record_agent_return(
-        self,
-        agents: Dict[str, Any],
-        agent_id: str,
-        value: Any,
-        episode: Optional[int],
-    ) -> None:
-        if not self._is_number(value):
-            return
-        entry = self._agent_entry(agents, agent_id)
-        numeric = float(value)
-        entry["last_return"] = numeric
-
-        if episode is None:
-            return
-        last_episode = entry.get("last_episode")
-        if last_episode == episode:
-            return
-
-        entry["episodes"] = int(entry.get("episodes", 0)) + 1
-        entry["return_sum"] = float(entry.get("return_sum", 0.0)) + numeric
-        entry["last_episode"] = episode
-        count = entry["episodes"]
-        if count > 0:
-            entry["avg_return"] = entry["return_sum"] / count
-
-    def _record_agent_collision(
-        self, agents: Dict[str, Any], agent_id: str, value: Any
-    ) -> None:
-        if not self._is_number(value):
-            return
-        entry = self._agent_entry(agents, agent_id)
-        entry["last_collisions"] = float(value)
-
-    def _record_agent_speed(
-        self, agents: Dict[str, Any], agent_id: str, value: Any
-    ) -> None:
-        if not self._is_number(value):
-            return
-        entry = self._agent_entry(agents, agent_id)
-        entry["last_speed"] = float(value)
-
-    def _log_train(self, metrics: Mapping[str, Any], step: Optional[float]) -> None:
-        episode = self._coerce_int(metrics.get("train/episode", step))
-        total = self._coerce_int(metrics.get("train/total_episodes"))
-        header = f"[TRAIN {episode:03d}]" if episode is not None else "[TRAIN]"
-        if episode is not None and total is not None and total > 0:
-            header = f"[TRAIN {episode:03d}/{total}]"
-
-        mode = metrics.get("train/reward_task") or metrics.get("train/reward_mode")
-        cause = metrics.get("train/cause")
-        steps = self._coerce_int(metrics.get("train/steps"))
-        collisions = self._coerce_int(metrics.get("train/collisions_total"))
-        success = metrics.get("train/success")
-        epsilon = metrics.get("train/epsilon")
-        primary_agent = metrics.get("train/primary_agent")
-        primary_return = metrics.get("train/primary_return")
-
-        fragments = []
-        if mode:
-            fragments.append(f"mode={mode}")
-        if cause:
-            fragments.append(f"cause={cause}")
-        if steps is not None:
-            fragments.append(f"steps={steps}")
-        if collisions is not None:
-            fragments.append(f"collisions={collisions}")
-        if isinstance(success, bool):
-            fragments.append(f"success={'yes' if success else 'no'}")
-        if primary_agent and self._is_number(primary_return):
-            fragments.append(
-                f"return[{primary_agent}]={float(primary_return):.2f}"
-            )
-        elif self._is_number(primary_return):
-            fragments.append(f"return={float(primary_return):.2f}")
-        if self._is_number(epsilon):
-            fragments.append(f"epsilon={float(epsilon):.3f}")
-
-        print(f"{header} {' '.join(fragments)}".rstrip())
-
-    def _log_eval(self, metrics: Mapping[str, Any], step: Optional[float]) -> None:
-        episode = self._coerce_int(metrics.get("eval/episode", step))
-        total = self._coerce_int(metrics.get("eval/total_episodes"))
-        header = f"[EVAL {episode:03d}]" if episode is not None else "[EVAL]"
-        if episode is not None and total is not None and total > 0:
-            header = f"[EVAL {episode:03d}/{total}]"
-
-        cause = metrics.get("eval/cause")
-        steps = self._coerce_int(metrics.get("eval/steps"))
-        collisions = self._coerce_int(metrics.get("eval/collisions_total"))
-        defender = metrics.get("eval/defender_crashed")
-        attacker = metrics.get("eval/attacker_crashed")
-        primary_agent = metrics.get("eval/primary_agent")
-        primary_return = metrics.get("eval/primary_return")
-
-        fragments = []
-        if cause:
-            fragments.append(f"cause={cause}")
-        if steps is not None:
-            fragments.append(f"steps={steps}")
-        if collisions is not None:
-            fragments.append(f"collisions={collisions}")
-        if isinstance(defender, bool):
-            fragments.append(f"defender_crash={'yes' if defender else 'no'}")
-        if isinstance(attacker, bool):
-            fragments.append(f"attacker_crash={'yes' if attacker else 'no'}")
-        if primary_agent and self._is_number(primary_return):
-            fragments.append(
-                f"return[{primary_agent}]={float(primary_return):.2f}"
-            )
-        elif self._is_number(primary_return):
-            fragments.append(f"return={float(primary_return):.2f}")
-
-        print(f"{header} {' '.join(fragments)}".rstrip())
-
-    @staticmethod
-    def _format_keyvals(pairs: Mapping[str, Any]) -> str:
-        fragments = []
-        for key, value in pairs.items():
-            if isinstance(value, float):
-                fragments.append(f"{key}={value:.3f}")
-            else:
-                fragments.append(f"{key}={value}")
-        return " ".join(fragments)
-
-    @staticmethod
-    def _coerce_int(value: Any) -> Optional[int]:
+def _format_int(value: Any) -> Optional[int]:
+    try:
         if value is None:
             return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _is_number(value: Any) -> bool:
-        if value is None:
-            return False
         if isinstance(value, bool):
-            return False
-        if isinstance(value, (int, float)):
-            return not (isinstance(value, float) and (math.isnan(value) or math.isinf(value)))
-        return False
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+if _HAS_RICH:
+
+    class ConsoleSink(LogSink):
+        """Lean console dashboard rendered with ``rich``."""
+
+        def __init__(
+            self,
+            *,
+            refresh_per_second: float = 4.0,
+            event_history: int = 5,
+        ) -> None:
+            self._refresh_rate = refresh_per_second
+            self._event_history = int(event_history)
+            self._console = Console()
+            self._live: Optional[Live] = None
+            self._context: Dict[str, Any] = {}
+            self._phase_state: Dict[str, Dict[str, Any]] = {"train": {}, "eval": {}}
+            self._events: Deque[Tuple[str, str]] = deque(maxlen=self._event_history)
+
+        # ------------------------------------------------------------------
+        # LogSink interface
+        # ------------------------------------------------------------------
+        def start(self, context: Mapping[str, Any]) -> None:
+            self._context.update(context)
+            if self._live is None:
+                self._live = Live(
+                    self._render(),
+                    console=self._console,
+                    refresh_per_second=self._refresh_rate,
+                    auto_refresh=False,
+                )
+                self._live.start()
+            else:
+                self._refresh()
+
+        def stop(self) -> None:
+            if self._live is not None:
+                self._live.stop()
+                self._live = None
+            self._context.clear()
+            self._phase_state = {"train": {}, "eval": {}}
+            self._events.clear()
+
+        def log_metrics(
+            self,
+            phase: str,
+            metrics: Mapping[str, Any],
+            *,
+            step: Optional[float] = None,
+        ) -> None:
+            tracked = self._phase_state.get(phase)
+            if tracked is None:
+                return
+
+            episode = _format_int(metrics.get(f"{phase}/episode", step))
+            total = _format_int(metrics.get(f"{phase}/total_episodes"))
+            steps = _format_int(metrics.get(f"{phase}/steps"))
+            collisions = _format_int(metrics.get(f"{phase}/collisions_total"))
+            mode = metrics.get(f"{phase}/reward_task") or metrics.get(f"{phase}/reward_mode")
+            cause = metrics.get(f"{phase}/cause")
+            success = _format_bool(metrics.get(f"{phase}/success"))
+            idle = _format_bool(metrics.get(f"{phase}/idle_truncated"))
+            epsilon = _format_number(metrics.get("train/epsilon")) if phase == "train" else None
+            primary_agent = metrics.get(f"{phase}/primary_agent")
+            primary_return = _format_number(metrics.get(f"{phase}/primary_return"))
+            defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
+            attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
+
+            tracked.update(
+                {
+                    "episode": episode,
+                    "total": total,
+                    "steps": steps,
+                    "collisions": collisions,
+                    "mode": mode,
+                    "cause": cause,
+                    "success": success,
+                    "idle": idle,
+                    "epsilon": epsilon,
+                    "primary_agent": primary_agent,
+                    "primary_return": primary_return,
+                    "defender_crash": defender_crash,
+                    "attacker_crash": attacker_crash,
+                }
+            )
+
+            agents = tracked.setdefault("agents", {})
+            return_prefix = f"{phase}/return_"
+            collision_prefix = f"{phase}/collision_count_"
+            speed_prefix = f"{phase}/avg_speed_"
+            for key, value in metrics.items():
+                if key.startswith(return_prefix):
+                    agent_id = key[len(return_prefix) :]
+                    agents.setdefault(agent_id, {})["return"] = _format_number(value)
+                elif key.startswith(collision_prefix):
+                    agent_id = key[len(collision_prefix) :]
+                    agents.setdefault(agent_id, {})["collisions"] = _format_number(value)
+                elif key.startswith(speed_prefix):
+                    agent_id = key[len(speed_prefix) :]
+                    agents.setdefault(agent_id, {})["speed"] = _format_number(value)
+
+            self._refresh()
+
+        def log_event(
+            self,
+            level: str,
+            message: str,
+            extra: Optional[Mapping[str, Any]] = None,
+        ) -> None:
+            fragments = [message]
+            if extra:
+                extras = ", ".join(f"{key}={extra[key]}" for key in sorted(extra))
+                if extras:
+                    fragments.append(f"({extras})")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            entry = f"[{timestamp}] [{level.upper()}] {' '.join(fragments)}"
+            self._events.append(entry)
+            self._refresh()
+
+        # ------------------------------------------------------------------
+        # Helpers
+        # ------------------------------------------------------------------
+        def _refresh(self) -> None:
+            if self._live is not None:
+                self._live.update(self._render(), refresh=True)
+
+        def _render(self) -> Group:
+            sections = []
+            for phase, state in (("train", self._phase_state["train"]), ("eval", self._phase_state["eval"])):
+                if state:
+                    panel = self._render_phase(phase.upper(), state)
+                    sections.append(panel)
+
+            if self._events:
+                sections.append(self._render_events())
+
+            if not sections:
+                sections.append(Panel("Waiting for telemetry…", title="F110"))
+
+            return Group(*sections)
+
+        def _render_phase(self, title: str, state: Mapping[str, Any]) -> Panel:
+            summary_lines = []
+            episode = state.get("episode")
+            total = state.get("total")
+            if episode is not None:
+                if total:
+                    summary_lines.append(f"Episode {episode}/{total}")
+                else:
+                    summary_lines.append(f"Episode {episode}")
+            elif total:
+                summary_lines.append(f"Total episodes: {total}")
+
+            steps = state.get("steps")
+            collisions = state.get("collisions")
+            metrics_line_parts = []
+            if steps is not None:
+                metrics_line_parts.append(f"Steps {steps}")
+            if collisions is not None:
+                metrics_line_parts.append(f"Collisions {collisions}")
+            if metrics_line_parts:
+                summary_lines.append("  ".join(metrics_line_parts))
+
+            mode = state.get("mode")
+            cause = state.get("cause")
+            if mode:
+                summary_lines.append(f"Mode: {mode}")
+            if cause:
+                summary_lines.append(f"Cause: {cause}")
+
+            success = state.get("success")
+            if success is not None:
+                summary_lines.append(f"Success: {'yes' if success else 'no'}")
+
+            idle = state.get("idle")
+            if idle is not None:
+                summary_lines.append(f"Idle truncated: {'yes' if idle else 'no'}")
+
+            epsilon = state.get("epsilon")
+            if epsilon is not None:
+                summary_lines.append(f"Epsilon: {epsilon:.3f}")
+
+            defender_crash = state.get("defender_crash")
+            attacker_crash = state.get("attacker_crash")
+            crash_bits = []
+            if defender_crash is not None:
+                crash_bits.append(f"Defender crash: {'yes' if defender_crash else 'no'}")
+            if attacker_crash is not None:
+                crash_bits.append(f"Attacker crash: {'yes' if attacker_crash else 'no'}")
+            if crash_bits:
+                summary_lines.append("  ".join(crash_bits))
+
+            primary_agent = state.get("primary_agent")
+            primary_return = state.get("primary_return")
+            if primary_agent and primary_return is not None:
+                summary_lines.append(f"{primary_agent} return: {primary_return:.2f}")
+
+            summary_text = Text("\n".join(summary_lines) if summary_lines else "No telemetry yet.")
+
+            agents_table = None
+            agents = state.get("agents") or {}
+            if agents:
+                agents_table = Table(expand=True)
+                agents_table.add_column("Agent", justify="left")
+                agents_table.add_column("Return", justify="right")
+                agents_table.add_column("Coll", justify="right")
+                agents_table.add_column("AvgSpd", justify="right")
+                for agent_id in sorted(agents):
+                    entry = agents[agent_id]
+                    ret = entry.get("return")
+                    collisions_val = entry.get("collisions")
+                    speed = entry.get("speed")
+                    agents_table.add_row(
+                        agent_id,
+                        f"{ret:.2f}" if ret is not None else "—",
+                        f"{collisions_val:.0f}" if collisions_val is not None else "—",
+                        f"{speed:.2f}" if speed is not None else "—",
+                    )
+
+            if agents_table is not None:
+                content = Group(Align.left(summary_text), Align.left(agents_table))
+            else:
+                content = Align.left(summary_text)
+
+            return Panel(content, title=title, border_style="cyan")
+
+        def _render_events(self) -> Panel:
+            events_table = Table.grid(padding=0)
+            for entry in reversed(self._events):
+                events_table.add_row(Text(entry))
+            return Panel(events_table, title="Recent Events", border_style="magenta")
+
+
+else:
+
+    class ConsoleSink(LogSink):
+        """Fallback console sink using standard :mod:`logging` output."""
+
+        _LEVEL_MAP = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warn": logging.WARNING,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+            "critical": logging.CRITICAL,
+        }
+
+        def __init__(
+            self,
+            *,
+            logger_name: str = "f110.console",
+            level: int = logging.INFO,
+            handler: Optional[logging.Handler] = None,
+        ) -> None:
+            self._logger = logging.getLogger(logger_name)
+            self._logger.propagate = False
+            self._level = level
+            self._formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
+            self._handler_owned = handler is None
+            self._handler: Optional[logging.Handler] = None
+            if handler is not None:
+                handler.setLevel(level)
+                if handler.formatter is None:
+                    handler.setFormatter(self._formatter)
+                self._logger.addHandler(handler)
+                self._handler = handler
+            self._logger.setLevel(level)
+
+        def start(self, context: Mapping[str, Any]) -> None:
+            if self._handler is None and self._handler_owned:
+                handler = logging.StreamHandler()
+                handler.setFormatter(self._formatter)
+                handler.setLevel(self._level)
+                self._logger.addHandler(handler)
+                self._handler = handler
+            if context:
+                formatted = ", ".join(f"{key}={context[key]}" for key in sorted(context))
+                self._logger.log(self._level, "Logger context: %s", formatted)
+
+        def stop(self) -> None:
+            if self._handler and self._handler_owned:
+                self._logger.removeHandler(self._handler)
+                self._handler.close()
+                self._handler = None
+
+        def log_metrics(
+            self,
+            phase: str,
+            metrics: Mapping[str, Any],
+            *,
+            step: Optional[float] = None,
+        ) -> None:
+            if not metrics:
+                return
+            prefix = f"{phase.upper()} step={step}" if step is not None else phase.upper()
+            filtered = {key: metrics[key] for key in sorted(metrics)}
+            self._logger.log(self._level, "%s %s", prefix, filtered)
+
+        def log_event(
+            self,
+            level: str,
+            message: str,
+            extra: Optional[Mapping[str, Any]] = None,
+        ) -> None:
+            level_no = self._LEVEL_MAP.get(level.lower(), self._level)
+            if extra:
+                formatted = ", ".join(f"{key}={value}" for key, value in sorted(extra.items()))
+                message = f"{message} ({formatted})"
+            self._logger.log(level_no, message)
 
 
 class WandbSink(LogSink):
