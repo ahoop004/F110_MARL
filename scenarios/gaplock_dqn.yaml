@@ -16,7 +16,7 @@ scenario:
     centerline_autoload: true
     centerline_render: true
     centerline_features: true
-    render_mode: human
+    # render_mode: human
     update: 2
     terminate_on_any_done: true
     spawn_points:
@@ -73,7 +73,7 @@ scenario:
       target_update_interval: 500
       epsilon_start: .9980
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.998
+      epsilon_decay_rate: 0.995
       hidden_dims:
       - 256
       - 256
@@ -117,6 +117,9 @@ scenario:
             type: collision
           - id: target_pose
             type: target_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin_cos
             target:
               agent: car_0
           - id: target_collision
