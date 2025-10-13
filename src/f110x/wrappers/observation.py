@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -13,16 +13,24 @@ from f110x.utils.centerline import (
 )
 
 
-ComponentBuilder = Callable[
-    [
-        "ObsWrapper",
-        Dict[str, Dict[str, Any]],
-        str,
-        "ComponentSpec",
-        Optional[str],
-    ],
-    np.ndarray,
+ComponentFn = Callable[
+    ["ObsWrapper", Dict[str, Dict[str, Any]], str, "ComponentSpec", Optional[str]],
+    Optional[np.ndarray],
 ]
+
+COMPONENT_REGISTRY: Dict[str, ComponentFn] = {}
+
+
+def register_observation_component(name: str) -> Callable[[ComponentFn], ComponentFn]:
+    """Decorator to register an observation component factory."""
+
+    key = name.strip().lower()
+
+    def decorator(func: ComponentFn) -> ComponentFn:
+        COMPONENT_REGISTRY[key] = func
+        return func
+
+    return decorator
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,7 @@ class ObsWrapper:
         centerline_features: bool = False,
         centerline_normalize: bool = True,
         legacy_target_agent: Optional[str] = None,
+        component_registry: Optional[Mapping[str, ComponentFn]] = None,
     ):
         self.max_scan = float(max_scan)
         self.normalize = bool(normalize)
@@ -67,18 +76,7 @@ class ObsWrapper:
         self._default_target_agent = legacy_target_agent
         self._component_specs: List[ComponentSpec] = []
 
-        self._component_builders: Dict[str, ComponentBuilder] = {
-            "lidar": self._component_lidar,
-            "ego_pose": self._component_ego_pose,
-            "pose": self._component_pose,
-            "velocity": self._component_velocity,
-            "collision": self._component_collision,
-            "lap": self._component_lap,
-            "target_pose": self._component_target_pose,
-            "relative_pose": self._component_relative_pose,
-            "distance": self._component_distance,
-            "centerline": self._component_centerline,
-        }
+        self._component_registry: Mapping[str, ComponentFn] = component_registry or COMPONENT_REGISTRY
 
         self._compile_components(components)
 
@@ -153,8 +151,8 @@ class ObsWrapper:
         else:
             raise TypeError(f"Unsupported observation component definition: {type(entry)!r}")
 
-        if component_type not in self._component_builders:
-            available = ", ".join(sorted(self._component_builders))
+        if component_type not in self._component_registry:
+            available = ", ".join(sorted(self._component_registry))
             raise KeyError(f"Unknown observation component '{component_type}'. Available: {available}")
 
         return ComponentSpec(
@@ -236,7 +234,7 @@ class ObsWrapper:
         spec: ComponentSpec,
         target_id: Optional[str],
     ) -> Optional[np.ndarray]:
-        builder = self._component_builders.get(spec.type)
+        builder = self._component_registry.get(spec.type)
         if builder is None:
             return None
 
@@ -252,7 +250,7 @@ class ObsWrapper:
         elif target_id is not None and target_id not in obs:
             raise KeyError(f"Target observation for agent '{target_id}' missing")
 
-        return builder(obs, ego_id, spec, target_id)
+        return builder(self, obs, ego_id, spec, target_id)
 
     # ------------------------------------------------------------------
     def _centerline_feature_plan(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -539,252 +537,300 @@ class ObsWrapper:
 
     # ------------------------------------------------------------------
     # Component builders
-    # ------------------------------------------------------------------
-    def _component_lidar(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        _: Optional[str],
-    ) -> np.ndarray:
-        ego_obs = obs[ego_id]
-        scan = ego_obs.get("scans")
-        if scan is None:
-            scan = ego_obs.get("lidar")
-        if scan is None:
-            raise KeyError("Observation is missing 'scans'/'lidar' entry for lidar component")
+    # Component builders are registered via module-level registry.
 
-        beams = spec.params.get("beams")
-        beams_val = int(beams) if beams is not None else self.lidar_beams
-        lidar = downsample_lidar(scan, beams_val)
 
-        max_range = float(spec.params.get("max_range", self.max_scan))
-        if spec.params.get("normalize", self.normalize) and max_range > 0.0:
-            lidar = lidar / max_range
+def _require_agent_obs(
+    obs: Mapping[str, Dict[str, Any]],
+    agent_id: str,
+    *,
+    context: str,
+) -> Dict[str, Any]:
+    agent_obs = obs.get(agent_id)
+    if agent_obs is None:
+        raise KeyError(f"{context} missing for agent '{agent_id}'")
+    return agent_obs
 
-        clip_val = spec.params.get("clip")
-        if clip_val is not None:
-            lidar = np.clip(lidar, 0.0, float(clip_val))
 
-        return lidar.astype(np.float32, copy=False)
+def _build_pose_features(
+    wrapper: ObsWrapper,
+    obs: Mapping[str, Dict[str, Any]],
+    agent_id: str,
+    spec: ComponentSpec,
+    *,
+    treat_as_ego: bool,
+) -> np.ndarray:
+    agent_obs = _require_agent_obs(obs, agent_id, context="Pose observation")
+    pose = to_numpy(agent_obs.get("pose", ()), flatten=True)
+    if pose.size < 3:
+        raise ValueError(f"Pose observation for '{agent_id}' must contain at least 3 values")
 
-    def _component_ego_pose(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        _: Optional[str],
-    ) -> np.ndarray:
-        return self._component_pose(obs, ego_id, spec, None)
+    x, y, theta = map(float, pose[:3])
+    params = spec.params
+    pieces: List[float] = []
 
-    def _component_pose(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        agent_id = target_id or ego_id
-        agent_obs = obs.get(agent_id)
-        if agent_obs is None:
-            raise KeyError(f"Observation is missing pose for agent '{agent_id}'")
+    normalize_xy = params.get("normalize_xy")
+    if normalize_xy is None and (treat_as_ego or spec.type == "ego_pose"):
+        normalize_xy = wrapper.max_scan
+    if normalize_xy:
+        scale = float(normalize_xy)
+        if scale != 0.0:
+            x /= scale
+            y /= scale
 
-        pose = to_numpy(agent_obs.get("pose", ()), flatten=True)
-        if pose.size < 3:
-            raise ValueError(f"Pose observation for '{agent_id}' must contain at least 3 values")
+    if params.get("include_xy", True):
+        pieces.extend([x, y])
 
-        x, y, theta = map(float, pose[:3])
-        pieces: List[float] = []
+    angle_mode = params.get("angle_mode", "raw")
+    if angle_mode == "sin":
+        pieces.append(float(np.sin(theta)))
+    elif angle_mode == "sin_cos":
+        pieces.extend([float(np.sin(theta)), float(np.cos(theta))])
+    elif angle_mode == "cos":
+        pieces.append(float(np.cos(theta)))
+    elif angle_mode == "raw":
+        pieces.append(theta)
+    elif angle_mode is None:
+        pass
+    else:
+        raise ValueError(f"Unsupported angle_mode '{angle_mode}' for pose component")
 
-        normalize_xy = spec.params.get("normalize_xy")
-        if normalize_xy is None and spec.type == "ego_pose":
-            normalize_xy = self.max_scan
-        if normalize_xy:
-            scale = float(normalize_xy)
+    if params.get("include_theta", False) and angle_mode != "raw":
+        pieces.append(theta)
+
+    return np.array(pieces, dtype=np.float32)
+
+
+@register_observation_component("lidar")
+def component_lidar(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    _: Optional[str],
+) -> np.ndarray:
+    ego_obs = _require_agent_obs(obs, ego_id, context="Observation")
+    scan = ego_obs.get("scans")
+    if scan is None:
+        scan = ego_obs.get("lidar")
+    if scan is None:
+        raise KeyError("Observation is missing 'scans'/'lidar' entry for lidar component")
+
+    beams = spec.params.get("beams")
+    beams_val = int(beams) if beams is not None else wrapper.lidar_beams
+    lidar = downsample_lidar(scan, beams_val)
+
+    max_range = float(spec.params.get("max_range", wrapper.max_scan))
+    if spec.params.get("normalize", wrapper.normalize) and max_range > 0.0:
+        lidar = lidar / max_range
+
+    clip_val = spec.params.get("clip")
+    if clip_val is not None:
+        lidar = np.clip(lidar, 0.0, float(clip_val))
+
+    return lidar.astype(np.float32, copy=False)
+
+
+@register_observation_component("ego_pose")
+def component_ego_pose(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    _: Optional[str],
+) -> np.ndarray:
+    return _build_pose_features(wrapper, obs, ego_id, spec, treat_as_ego=True)
+
+
+@register_observation_component("pose")
+def component_pose(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    agent_id = target_id or ego_id
+    return _build_pose_features(wrapper, obs, agent_id, spec, treat_as_ego=False)
+
+
+@register_observation_component("target_pose")
+def component_target_pose(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    if target_id is None:
+        raise ValueError("target_pose component requires a target agent")
+    return _build_pose_features(wrapper, obs, target_id, spec, treat_as_ego=False)
+
+
+@register_observation_component("velocity")
+def component_velocity(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    agent_id = target_id or ego_id
+    agent_obs = _require_agent_obs(obs, agent_id, context="Velocity observation")
+    velocity = agent_obs.get("velocity")
+    if velocity is None:
+        raise KeyError(f"Velocity data missing for agent '{agent_id}'")
+
+    arr = to_numpy(velocity, flatten=True)
+    if arr.size < 2:
+        raise ValueError(f"Velocity for '{agent_id}' must contain at least two elements")
+
+    vx, vy = float(arr[0]), float(arr[1])
+
+    normalize = spec.params.get("normalize")
+    if normalize:
+        scale = float(normalize)
+        if scale != 0.0:
+            vx /= scale
+            vy /= scale
+
+    values = [vx, vy]
+    if spec.params.get("include_speed"):
+        speed = float(np.linalg.norm([vx, vy]))
+        speed_scale = spec.params.get("speed_scale")
+        if speed_scale:
+            scale = float(speed_scale)
             if scale != 0.0:
-                x /= scale
-                y /= scale
+                speed /= scale
+        values.append(speed)
 
-        if spec.params.get("include_xy", True):
-            pieces.extend([x, y])
-
-        angle_mode = spec.params.get("angle_mode", "raw")
-        if angle_mode == "sin":
-            pieces.append(float(np.sin(theta)))
-        elif angle_mode == "sin_cos":
-            pieces.extend([float(np.sin(theta)), float(np.cos(theta))])
-        elif angle_mode == "cos":
-            pieces.append(float(np.cos(theta)))
-        elif angle_mode == "raw":
-            pieces.append(theta)
-        elif angle_mode is None:
-            pass
-        else:
-            raise ValueError(f"Unsupported angle_mode '{angle_mode}' for pose component")
-
-        if spec.params.get("include_theta", False) and angle_mode != "raw":
-            pieces.append(theta)
-
-        return np.array(pieces, dtype=np.float32)
-
-    def _component_velocity(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        agent_id = target_id or ego_id
-        agent_obs = obs.get(agent_id, {})
-        velocity = agent_obs.get("velocity")
-        if velocity is None:
-            raise KeyError(f"Velocity data missing for agent '{agent_id}'")
-
-        arr = to_numpy(velocity, flatten=True)
-        if arr.size < 2:
-            raise ValueError(f"Velocity for '{agent_id}' must contain at least two elements")
-
-        vx, vy = float(arr[0]), float(arr[1])
-        pieces: List[float] = [vx, vy]
-
-        if spec.params.get("include_speed"):
-            pieces.append(float(np.linalg.norm([vx, vy])))
-
-        normalize = spec.params.get("normalize")
-        if normalize:
-            scale = float(normalize)
-            if scale != 0.0:
-                pieces = [value / scale for value in pieces]
-
-        return np.asarray(pieces, dtype=np.float32)
-
-    def _component_collision(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        _: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        agent_id = target_id or ego_id
-        agent_obs = obs.get(agent_id, {})
-        value = float(agent_obs.get("collision", agent_obs.get("target_collision", 0.0)))
-        return np.array([value], dtype=np.float32)
-
-    def _component_lap(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        agent_id = target_id or ego_id
-        agent_obs = obs.get(agent_id, {})
-        payload = agent_obs.get("lap")
-        if payload is None:
-            raise KeyError(f"Lap information missing for agent '{agent_id}'")
-
-        arr = to_numpy(payload, flatten=True)
-        if arr.size < 2:
-            raise ValueError("Lap component expects at least count and time")
-
-        values = [float(arr[0]), float(arr[1])]
-        normalize_time = spec.params.get("normalize_time")
-        if normalize_time:
-            scale = float(normalize_time)
-            if scale != 0:
-                values[1] /= scale
-
-        return np.asarray(values, dtype=np.float32)
-
-    def _component_target_pose(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        if target_id is None:
-            raise ValueError("target_pose component requires a target agent")
-        return self._component_pose(obs, ego_id, spec, target_id)
-
-    def _component_relative_pose(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        if target_id is None:
-            raise ValueError("relative_pose component requires a target agent")
-
-        ego_pose = to_numpy(obs[ego_id].get("pose", ()), flatten=True)
-        target_pose = to_numpy(obs[target_id].get("pose", ()), flatten=True)
-        if ego_pose.size < 3 or target_pose.size < 3:
-            raise ValueError("relative_pose requires pose entries with at least three values")
-
-        dx = float(target_pose[0] - ego_pose[0])
-        dy = float(target_pose[1] - ego_pose[1])
-        dtheta = float(target_pose[2] - ego_pose[2])
-
-        normalize_xy = spec.params.get("normalize_xy")
-        if normalize_xy:
-            scale = float(normalize_xy)
-            if scale != 0.0:
-                dx /= scale
-                dy /= scale
-
-        angle_mode = spec.params.get("angle_mode", "raw")
-        if angle_mode == "sin":
-            angle_terms = [float(np.sin(dtheta))]
-        elif angle_mode == "sin_cos":
-            angle_terms = [float(np.sin(dtheta)), float(np.cos(dtheta))]
-        elif angle_mode == "raw":
-            angle_terms = [dtheta]
-        elif angle_mode is None:
-            angle_terms = []
-        else:
-            raise ValueError(f"Unsupported angle_mode '{angle_mode}' for relative_pose component")
-
-        pieces = [dx, dy]
-        pieces.extend(angle_terms)
-        return np.asarray(pieces, dtype=np.float32)
-
-    def _component_distance(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        target_id: Optional[str],
-    ) -> np.ndarray:
-        if target_id is None:
-            raise ValueError("distance component requires a target agent")
-
-        ego_pose = to_numpy(obs[ego_id].get("pose", ()), flatten=True)
-        target_pose = to_numpy(obs[target_id].get("pose", ()), flatten=True)
-        if ego_pose.size < 2 or target_pose.size < 2:
-            raise ValueError("distance component requires pose entries with x/y")
-
-        dx = float(target_pose[0] - ego_pose[0])
-        dy = float(target_pose[1] - ego_pose[1])
-        dist = float(np.linalg.norm([dx, dy]))
-
-        normalize = spec.params.get("normalize")
-        if normalize:
-            scale = float(normalize)
-            if scale != 0.0:
-                dist /= scale
-
-        return np.array([dist], dtype=np.float32)
-
-    def _component_centerline(
-        self,
-        obs: Dict[str, Dict[str, Any]],
-        ego_id: str,
-        spec: ComponentSpec,
-        __: Optional[str],
-    ) -> np.ndarray:
-        ego_obs = obs.get(ego_id, {})
-        return self._prepare_centerline_features(ego_id, ego_obs, spec.params)
+    return np.asarray(values, dtype=np.float32)
 
 
-__all__ = ["ObsWrapper"]
+@register_observation_component("collision")
+def component_collision(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    _: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    agent_id = target_id or ego_id
+    agent_obs = obs.get(agent_id, {})
+    value = float(agent_obs.get("collision", agent_obs.get("target_collision", 0.0)))
+    return np.array([value], dtype=np.float32)
+
+
+@register_observation_component("lap")
+def component_lap(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    agent_id = target_id or ego_id
+    agent_obs = obs.get(agent_id, {})
+    payload = agent_obs.get("lap")
+    if payload is None:
+        raise KeyError(f"Lap information missing for agent '{agent_id}'")
+
+    arr = to_numpy(payload, flatten=True)
+    if arr.size < 2:
+        raise ValueError("Lap component expects at least count and time")
+
+    values = [float(arr[0]), float(arr[1])]
+    normalize_time = spec.params.get("normalize_time")
+    if normalize_time:
+        scale = float(normalize_time)
+        if scale != 0.0:
+            values[1] /= scale
+
+    return np.asarray(values, dtype=np.float32)
+
+
+@register_observation_component("relative_pose")
+def component_relative_pose(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    if target_id is None:
+        raise ValueError("relative_pose component requires a target agent")
+
+    ego_pose = to_numpy(obs[ego_id].get("pose", ()), flatten=True)
+    target_pose = to_numpy(obs[target_id].get("pose", ()), flatten=True)
+    if ego_pose.size < 3 or target_pose.size < 3:
+        raise ValueError("relative_pose requires pose entries with at least three values")
+
+    dx = float(target_pose[0] - ego_pose[0])
+    dy = float(target_pose[1] - ego_pose[1])
+    dtheta = float(target_pose[2] - ego_pose[2])
+
+    normalize_xy = spec.params.get("normalize_xy")
+    if normalize_xy:
+        scale = float(normalize_xy)
+        if scale != 0.0:
+            dx /= scale
+            dy /= scale
+
+    angle_mode = spec.params.get("angle_mode", "raw")
+    if angle_mode == "sin":
+        angle_terms = [float(np.sin(dtheta))]
+    elif angle_mode == "sin_cos":
+        angle_terms = [float(np.sin(dtheta)), float(np.cos(dtheta))]
+    elif angle_mode == "raw":
+        angle_terms = [dtheta]
+    elif angle_mode is None:
+        angle_terms = []
+    else:
+        raise ValueError(f"Unsupported angle_mode '{angle_mode}' for relative_pose component")
+
+    pieces = [dx, dy]
+    pieces.extend(angle_terms)
+    return np.asarray(pieces, dtype=np.float32)
+
+
+@register_observation_component("distance")
+def component_distance(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    if target_id is None:
+        raise ValueError("distance component requires a target agent")
+
+    ego_pose = to_numpy(obs[ego_id].get("pose", ()), flatten=True)
+    target_pose = to_numpy(obs[target_id].get("pose", ()), flatten=True)
+    if ego_pose.size < 2 or target_pose.size < 2:
+        raise ValueError("distance component requires pose entries with x/y")
+
+    dx = float(target_pose[0] - ego_pose[0])
+    dy = float(target_pose[1] - ego_pose[1])
+    dist = float(np.linalg.norm([dx, dy]))
+
+    normalize = spec.params.get("normalize")
+    if normalize:
+        scale = float(normalize)
+        if scale != 0.0:
+            dist /= scale
+
+    return np.array([dist], dtype=np.float32)
+
+
+@register_observation_component("centerline")
+def component_centerline(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    _: Optional[str],
+) -> np.ndarray:
+    ego_obs = obs.get(ego_id, {})
+    return wrapper._prepare_centerline_features(ego_id, ego_obs, spec.params)
+
+__all__ = ["COMPONENT_REGISTRY", "ObsWrapper", "register_observation_component"]

@@ -10,11 +10,9 @@
 
 ## High-Priority · Observation Pipeline & Telemetry
 
-- [x] Introduce a component registry in `ObsWrapper` covering raw sensors (lidar, pose) and derived blocks (relative pose, distances).
-- [x] Update wrapper builders/config schema to parse component lists and remove role-based targeting semantics.
 - [ ] Ensure the environment exposes a consistent telemetry bundle (pose, velocity, lap, collision, time) for every agent and document availability.
 - [ ] Migrate all scenarios/configs to the new component schema and provide conversion helpers for legacy configs.
-  - [x] Update first-party scenario manifests (`gaplock_dqn`, `shanghai_dqn_fastlap`) to use component lists.
+  - [ ] Update first-party scenario manifests (`gaplock_dqn`, `shanghai_dqn_fastlap`) to use component lists.
   - [ ] Ship a conversion helper or CLI to translate legacy wrapper definitions.
 - [ ] Add validation helpers/tests that assert component vectors match expected dimensions for each agent.
 - [ ] Update heuristics (e.g., follow-gap) and trainers that assume legacy observation layouts.
@@ -47,12 +45,7 @@
 
 ## Scenario Smoke Tests · Shanghai Fastlap
 
-- [x] Validate Shanghai map assets and the 108-beam lidar profile needed for the scenario.
-- [x] Author the `shanghai_dqn_fastlap` scenario YAML with spawn ordering, map selection, and runner wiring.
-  - [x] Configure four independent DQN agents using the observation component schema (per-agent lidar, ego pose, relative/target features).
-  - [x] Reuse the Shanghai bundle spawn annotations as default start poses and confirm component outputs line up with trainer expectations.
 - [ ] Implement time-trial reward and termination hooks (progress bonus, collision retire, all-finished exit).
-  - [x] Provide `fastest_lap` reward strategy with lap/leaderboard bonuses.
   - [ ] Add termination wiring for all-finished exit and defender collision retire.
 - [ ] Add an integration test that runs a short headless evaluation with four agents to confirm the scenario boots end-to-end.
 - [ ] Capture a README/docs snippet describing configuration knobs and expected outputs for the fastlap test.
@@ -78,7 +71,7 @@
   - [ ] Wire the schedule into the reward wrapper factory and add tests.
     - [x] Pass `reward_curriculum` through `build_runner_context` and `build_reward_wrapper`.
     - [ ] Add unit tests covering curriculum stage transitions and fallbacks.
-  - [ ] Document recommended usage in README/configs.
+    - [ ] Document recommended usage in README/configs.
 - [ ] Centerline projection diagnostics and tooling.
   - [ ] CLI or notebook to visualise projection errors on recorded trajectories.
   - [ ] Sanity-check script for waypoint spacing/continuity per map.
@@ -86,12 +79,6 @@
 - [ ] Evaluation metrics expansion.
   - [ ] Log per-episode progress, fastest lap time, and centerline error statistics.
   - [ ] Surface metrics in eval summaries and W&B reporting.
-- [ ] Generalise reward building blocks.
-  - [x] Break common reward primitives (progress, collision penalty, waypoint bonus, idle penalty) into reusable components.
-  - [x] Move shared per-agent state/curriculum plumbing into `reward/base` mixins or helpers.
-  - [x] Define a shared reward knob schema/preset catalog so strategies can opt into standard features.
-  - [x] Extend reward scaling utilities into an opt-in pipeline (decay, clip, smoothing, weighting).
-  - [x] Have runners emit normalised reward events (lap completion, crashes, idle) so tasks subscribe instead of reimplementing detection.
 
 ## Experiment Templates & Baselines
 
@@ -107,13 +94,13 @@
 
 ## Code Cleanup · Refactors
 
-- [x] Extract shared rollout scaffolding from `TrainRunner`/`EvalRunner` into reusable helpers to remove duplication.
 - [ ] Break `F110ParallelEnv.__init__` into dedicated configuration helpers (rendering, map IO, vehicle params) for clarity and reuse.
-- [ ] Replace the per-agent dict state in `ProgressRewardStrategy` with an explicit state dataclass to cut repeated lookups.
-- [x] Extend replay buffers to store discrete `action_index` values so DQN can avoid storing full action vectors and argmin fallbacks.
 - [ ] Consolidate scenario manifests (e.g., Shanghai progress/gaplock) via YAML anchors or base manifests to eliminate repeated blocks.
-- [ ] Collapse per-algorithm builder boilerplate in `src/f110x/utils/builders.py` into a shared helper or registry-driven factory.
-- [ ] Extract shared PPO buffer/GAE logic into a base policy class so `src/f110x/policies/ppo/ppo.py` and `src/f110x/policies/ppo/rec_ppo.py` only cover network specifics.
-- [ ] Move observation component implementations into a registry with reusable pose/normalisation helpers to shrink `src/f110x/wrappers/observation.py`.
 - [ ] Introduce common config-parsing helpers (or a validation library) to reduce the manual coercion code in `src/f110x/utils/config_models.py`.
-- [ ] Replace the bespoke console panel in `src/f110x/utils/logger.py` with a maintained TUI/logging library to trim custom rendering code.
+
+## Recently Completed
+
+- Introduced the ObsWrapper component registry and updated builder plumbing to use it throughout scenarios.
+- Migrated training loop scaffolding to shared helpers and added discrete-action replay optimisations.
+- Refined progress reward state handling with an explicit dataclass and registry-driven reward utilities.
+- Consolidated PPO implementations around a shared rollout/GAE base and added the Rich-powered console sink for cleaner telemetry.

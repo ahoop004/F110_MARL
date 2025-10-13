@@ -11,40 +11,14 @@ from torch.distributions import Normal
 #     wandb = None
 
 from f110x.policies.ppo.net import Actor, Critic
+from f110x.policies.ppo.base import BasePPOAgent
 from f110x.utils.torch_io import resolve_device, safe_load
 
 
-class PPOAgent:
+class PPOAgent(BasePPOAgent):
     def __init__(self, cfg):
-        self.obs_dim = cfg["obs_dim"]
-        self.act_dim = cfg["act_dim"]
-
-        # Hyperparameters
-        self.gamma = float(cfg.get("gamma", 0.99))
-        self.lam = float(cfg.get("lam", 0.95))
-        self.clip_eps = float(cfg.get("clip_eps", 0.2))
-        self.update_epochs = int(cfg.get("update_epochs", 10))
-        self.minibatch_size = int(cfg.get("minibatch_size", 64))
-        base_ent_coef = float(cfg.get("ent_coef", 0.0))
-        schedule = cfg.get("ent_coef_schedule")
-        if schedule:
-            self.ent_coef_initial = float(schedule.get("start", base_ent_coef))
-            self.ent_coef = self.ent_coef_initial
-            self.ent_coef_final = float(schedule.get("final", base_ent_coef))
-            self.ent_coef_decay_start = int(schedule.get("decay_start", 0))
-            self.ent_coef_decay_episodes = max(int(schedule.get("decay_episodes", 0)), 0)
-        else:
-            self.ent_coef_initial = base_ent_coef
-            self.ent_coef = base_ent_coef
-            self.ent_coef_final = base_ent_coef
-            self.ent_coef_decay_start = 0
-            self.ent_coef_decay_episodes = 0
-
-        self._episode_idx = 0
-        self._episodes_since_update = 0
-        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
-
-        self.device = resolve_device([cfg.get("device")])
+        device = resolve_device([cfg.get("device")])
+        super().__init__(cfg, device)
 
         action_low = cfg.get("action_low")
         action_high = cfg.get("action_high")
@@ -71,18 +45,7 @@ class PPOAgent:
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=float(cfg.get("actor_lr", 3e-4)))
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=float(cfg.get("critic_lr", 1e-3)))
 
-        self.reset_buffer()
-
     # ------------------- Buffer -------------------
-
-    def reset_buffer(self):
-        self.obs_buf, self.act_buf = [], []
-        self.rew_buf, self.done_buf = [], []
-        self.logp_buf, self.val_buf = [], []
-        self.raw_act_buf = []
-        self._pending_bootstrap: Optional[float] = None
-        self._episode_bootstrap: List[float] = []
-        self._episode_boundaries: List[int] = [0]
 
     # ------------------- Acting -------------------
 
@@ -124,99 +87,17 @@ class PPOAgent:
         return scaled.detach().cpu().numpy()
 
     def store(self, obs, act, rew, done):
-        self.rew_buf.append(float(rew))
-        self.done_buf.append(bool(done))
-        if done:
-            self._episodes_since_update += 1
-            bootstrap = float(self._pending_bootstrap or 0.0)
-            self._episode_bootstrap.append(bootstrap)
-            self._pending_bootstrap = None
-            self._episode_boundaries.append(len(self.rew_buf))
+        self.store_transition(rew, done)
 
-    def record_final_value(self, obs):
+    def _estimate_value(self, obs):
         obs_np = np.asarray(obs, dtype=np.float32)
         if not np.isfinite(obs_np).all():
             obs_np = np.nan_to_num(obs_np, copy=False)
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         val = self.critic(obs_t).squeeze(-1)
-        self._pending_bootstrap = float(val.item())
+        return float(val.item())
 
     # ------------------- GAE -------------------
-
-    def finish_path(self):
-        T = min(len(self.rew_buf), len(self.obs_buf), len(self.val_buf))
-        if T == 0:
-            self.adv_buf = np.zeros(0, dtype=np.float32)
-            self.ret_buf = np.zeros(0, dtype=np.float32)
-            return
-
-        if len(self.done_buf) < T:
-            raise ValueError(
-                f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}"
-            )
-
-        rewards = np.asarray(self.rew_buf[:T], dtype=np.float32)
-        values = np.asarray(self.val_buf, dtype=np.float32)
-        if values.shape[0] < T:
-            pad_val = values[-1] if values.size else 0.0
-            values = np.concatenate(
-                [values, np.full(T - values.shape[0], pad_val, dtype=np.float32)],
-                axis=0,
-            )
-        else:
-            values = values[:T]
-        dones = np.asarray(self.done_buf[:T], dtype=np.float32)
-
-        # Normalise and deduplicate episode boundaries against available rollouts
-        normalised_boundaries: List[int] = []
-        seen = set()
-        for boundary in self._episode_boundaries:
-            b = min(max(int(boundary), 0), T)
-            if b not in seen:
-                normalised_boundaries.append(b)
-                seen.add(b)
-        if not normalised_boundaries or normalised_boundaries[0] != 0:
-            normalised_boundaries.insert(0, 0)
-        if normalised_boundaries[-1] != T:
-            normalised_boundaries.append(T)
-        self._episode_boundaries = normalised_boundaries
-        while len(self._episode_bootstrap) < len(self._episode_boundaries) - 1:
-            if self._pending_bootstrap is not None:
-                self._episode_bootstrap.append(self._pending_bootstrap)
-                self._pending_bootstrap = None
-            else:
-                self._episode_bootstrap.append(0.0)
-        self._episode_bootstrap = self._episode_bootstrap[: len(self._episode_boundaries) - 1]
-
-        adv = np.zeros(T, dtype=np.float32)
-        ret = np.zeros(T, dtype=np.float32)
-
-        for idx in range(len(self._episode_boundaries) - 1):
-            start = self._episode_boundaries[idx]
-            end = self._episode_boundaries[idx + 1]
-            if end <= start:
-                continue
-            bootstrap_v = self._episode_bootstrap[idx]
-            gae = 0.0
-            for t in reversed(range(start, end)):
-                mask = 1.0 - dones[t]
-                next_value = bootstrap_v if t == end - 1 else values[t + 1]
-                delta = rewards[t] + self.gamma * next_value * mask - values[t]
-                gae = delta + self.gamma * self.lam * mask * gae
-                adv[t] = gae
-            ret[start:end] = adv[start:end] + values[start:end]
-
-        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-        self.adv_buf = adv
-        self.ret_buf = ret
-        self.obs_buf = self.obs_buf[:T]
-        self.act_buf = self.act_buf[:T]
-        self.raw_act_buf = self.raw_act_buf[:T]
-        self.logp_buf = self.logp_buf[:T]
-        self.val_buf = list(values)
-        self.rew_buf = self.rew_buf[:T]
-        self.done_buf = self.done_buf[:T]
-
 
     # ------------------- Update -------------------
 
@@ -229,18 +110,10 @@ class PPOAgent:
             return None
 
         episodes_progress = self._episodes_since_update or 1
-        if self.ent_coef_decay_episodes > 0:
-            self._episode_idx += episodes_progress
-            if self._episode_idx >= self.ent_coef_decay_start:
-                progress = self._episode_idx - self.ent_coef_decay_start
-                frac = min(max(progress, 0) / max(self.ent_coef_decay_episodes, 1), 1.0)
-                self.ent_coef = (
-                    self.ent_coef_initial * (1.0 - frac)
-                    + self.ent_coef_final * frac
-                )
+        self.apply_entropy_decay(episodes_progress)
         self._episodes_since_update = 0
 
-        self.finish_path()
+        self.finish_path(normalize_advantage=True)
 
         # Convert buffers -> tensors
         obs = torch.as_tensor(np.asarray(self.obs_buf), dtype=torch.float32, device=self.device)

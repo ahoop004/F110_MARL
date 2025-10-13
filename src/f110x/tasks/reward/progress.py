@@ -70,8 +70,10 @@ PROGRESS_PARAM_DEFAULTS: Dict[str, Any] = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class ProgressAgentState:
+    """Mutable per-agent cache used by :class:`ProgressRewardStrategy`."""
+
     last_index: Optional[int] = None
     last_progress: float = 0.0
     has_progress: bool = False
@@ -85,6 +87,40 @@ class ProgressAgentState:
     truncation_applied: bool = False
     idle_counter: int = 0
     last_speed: float = 0.0
+
+    def advance_progress(self, progress: float) -> float:
+        """Return delta progress since last call (wrapping around lap)."""
+
+        progress = float(progress)
+        if not self.has_progress:
+            self.has_progress = True
+            self.last_progress = progress
+            return 0.0
+
+        delta = progress - self.last_progress
+        if delta < -0.5:
+            delta += 1.0
+        self.last_progress = progress
+        return delta
+
+    def accumulate_forward_progress(self, delta: float) -> float:
+        """Track lap & cumulative progress for positive deltas only."""
+
+        if delta <= 0.0:
+            return 0.0
+        self.lap_progress += delta
+        self.cumulative_progress += delta
+        return delta
+
+    def register_idle(self, speed: float, threshold: float) -> int:
+        """Update idle counter based on instantaneous speed."""
+
+        self.last_speed = speed
+        if speed < threshold:
+            self.idle_counter += 1
+        else:
+            self.idle_counter = 0
+        return self.idle_counter
 
 
 class ProgressRewardStrategy(PerAgentStateMixin, RewardStrategy):
@@ -187,25 +223,14 @@ class ProgressRewardStrategy(PerAgentStateMixin, RewardStrategy):
             return 0.0, {}
 
         state.last_index = projection.index
-
-        prev_progress = state.last_progress if state.has_progress else None
-        progress = float(projection.progress)
-        if prev_progress is None:
-            delta = 0.0
-        else:
-            delta = progress - prev_progress
-            if delta < -0.5:
-                delta += 1.0
-        state.last_progress = progress
-        state.has_progress = True
+        delta = state.advance_progress(projection.progress)
 
         acc = RewardAccumulator()
 
         if delta:
             apply_progress(acc, delta, self.progress_weight)
 
-        increment = delta if delta > 0.0 else 0.0
-        state.lap_progress += increment
+        increment = state.accumulate_forward_progress(delta)
         state.laps_rewarded = apply_lap_completion_bonus(
             acc,
             lap_progress=state.lap_progress,
@@ -223,7 +248,6 @@ class ProgressRewardStrategy(PerAgentStateMixin, RewardStrategy):
             )
 
         if self.waypoint_bonus and self._waypoint_step > 0.0:
-            state.cumulative_progress += increment
             state.next_waypoint_progress = apply_waypoint_bonus(
                 acc,
                 cumulative_progress=state.cumulative_progress,
@@ -248,14 +272,10 @@ class ProgressRewardStrategy(PerAgentStateMixin, RewardStrategy):
             apply_reverse_penalty(acc, delta, self.reverse_penalty)
 
         if self.idle_penalty:
-            if speed < 0.1:
-                state.idle_counter += 1
-            else:
-                state.idle_counter = 0
-            state.last_speed = speed
+            counter = state.register_idle(speed, threshold=0.1)
             apply_idle_penalty(
                 acc,
-                idle_counter=state.idle_counter,
+                idle_counter=counter,
                 threshold=self.idle_penalty_steps,
                 penalty=self.idle_penalty,
             )

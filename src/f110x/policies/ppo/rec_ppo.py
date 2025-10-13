@@ -11,6 +11,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Normal
 
+from f110x.policies.ppo.base import BasePPOAgent
+
 
 def _build_mlp(input_dim: int, hidden_dims: Iterable[int], output_dim: int) -> nn.Sequential:
     layers: List[nn.Module] = []
@@ -29,37 +31,11 @@ def _to_tensor_list(arrays: Sequence[np.ndarray]) -> np.ndarray:
     return np.asarray(arrays, dtype=np.float32)
 
 
-class RecurrentPPOAgent:
+class RecurrentPPOAgent(BasePPOAgent):
     def __init__(self, cfg: Dict[str, Any]):
-        self.obs_dim = int(cfg["obs_dim"])
-        self.act_dim = int(cfg["act_dim"])
-
-        self.gamma = float(cfg.get("gamma", 0.99))
-        self.lam = float(cfg.get("lam", 0.95))
-        self.clip_eps = float(cfg.get("clip_eps", 0.2))
-        self.update_epochs = int(cfg.get("update_epochs", 10))
+        device = torch.device(cfg.get("device", "cpu"))
+        super().__init__(cfg, device)
         self.sequence_batch_size = int(cfg.get("sequence_batch_size", cfg.get("minibatch_size", 1)) or 1)
-        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
-
-        base_ent_coef = float(cfg.get("ent_coef", 0.0))
-        schedule = cfg.get("ent_coef_schedule")
-        if schedule:
-            self.ent_coef_initial = float(schedule.get("start", base_ent_coef))
-            self.ent_coef = self.ent_coef_initial
-            self.ent_coef_final = float(schedule.get("final", base_ent_coef))
-            self.ent_coef_decay_start = int(schedule.get("decay_start", 0))
-            self.ent_coef_decay_episodes = max(int(schedule.get("decay_episodes", 0)), 0)
-        else:
-            self.ent_coef_initial = base_ent_coef
-            self.ent_coef = base_ent_coef
-            self.ent_coef_final = base_ent_coef
-            self.ent_coef_decay_start = 0
-            self.ent_coef_decay_episodes = 0
-
-        self._episode_idx = 0
-        self._episodes_since_update = 0
-
-        self.device = torch.device(cfg.get("device", "cpu"))
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -133,6 +109,9 @@ class RecurrentPPOAgent:
     def reset_hidden_state(self) -> None:
         self.actor_hidden = None
         self.critic_hidden = None
+
+    def on_episode_end(self) -> None:
+        self.reset_hidden_state()
 
     def _init_hidden(self, batch_size: int) -> "HiddenState":
         shape = (self.num_layers, batch_size, self.hidden_size)
@@ -226,103 +205,21 @@ class RecurrentPPOAgent:
         return scaled.squeeze(0).detach().cpu().numpy().astype(np.float32)
 
     def store(self, obs: np.ndarray, act: Any, rew: float, done: bool) -> None:
-        self.rew_buf.append(float(rew))
-        self.done_buf.append(bool(done))
-        if done:
-            self._episode_boundaries.append(len(self.rew_buf))
-            bootstrap = float(self._pending_bootstrap or 0.0)
-            self._episode_bootstrap.append(bootstrap)
-            self._pending_bootstrap = None
-            self._episodes_since_update += 1
-            self.reset_hidden_state()
+        self.store_transition(rew, done)
 
-    def record_final_value(self, obs: Any) -> None:
+    def _estimate_value(self, obs: Any) -> float:
         obs_np = np.asarray(obs, dtype=np.float32)
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
         critic_hidden_backup = self._clone_hidden(self.critic_hidden)
         value, _ = self._critic_forward_step(obs_t, hidden_override=critic_hidden_backup)
-        self._pending_bootstrap = float(value.item())
+        return float(value.item())
 
     # ------------------------------------------------------------------
     # Advantage calculation & optimisation
     # ------------------------------------------------------------------
 
     def finish_path(self) -> None:
-        T = min(len(self.rew_buf), len(self.obs_buf), len(self.val_buf))
-        if T == 0:
-            self.adv_buf = np.zeros(0, dtype=np.float32)
-            self.ret_buf = np.zeros(0, dtype=np.float32)
-            return
-
-        if len(self.done_buf) < T:
-            raise ValueError(f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}")
-
-        rewards = np.asarray(self.rew_buf[:T], dtype=np.float32)
-        values = np.asarray(self.val_buf, dtype=np.float32)
-        if values.shape[0] < T:
-            pad_val = values[-1] if values.size else 0.0
-            values = np.concatenate(
-                [values, np.full(T - values.shape[0], pad_val, dtype=np.float32)],
-                axis=0,
-            )
-        else:
-            values = values[:T]
-        dones = np.asarray(self.done_buf[:T], dtype=np.float32)
-
-        # Normalise episode boundaries and bootstrap list
-        normalised_boundaries: List[int] = []
-        seen = set()
-        for boundary in self._episode_boundaries:
-            b = min(max(int(boundary), 0), T)
-            if b not in seen:
-                normalised_boundaries.append(b)
-                seen.add(b)
-        if not normalised_boundaries or normalised_boundaries[0] != 0:
-            normalised_boundaries.insert(0, 0)
-        if normalised_boundaries[-1] != T:
-            normalised_boundaries.append(T)
-        self._episode_boundaries = normalised_boundaries
-        while len(self._episode_bootstrap) < len(self._episode_boundaries) - 1:
-            if self._pending_bootstrap is not None:
-                self._episode_bootstrap.append(self._pending_bootstrap)
-                self._pending_bootstrap = None
-            else:
-                self._episode_bootstrap.append(0.0)
-        self._episode_bootstrap = self._episode_bootstrap[: len(self._episode_boundaries) - 1]
-
-        adv = np.zeros(T, dtype=np.float32)
-        ret = np.zeros(T, dtype=np.float32)
-
-        if len(self._episode_boundaries) < 2:
-            self._episode_boundaries = [0, T]
-
-        for idx in range(len(self._episode_boundaries) - 1):
-            start = self._episode_boundaries[idx]
-            end = self._episode_boundaries[idx + 1]
-            if end <= start:
-                continue
-            bootstrap_v = self._episode_bootstrap[idx] if idx < len(self._episode_bootstrap) else 0.0
-            seg_rewards = rewards[start:end]
-            seg_values = values[start:end]
-            seg_dones = dones[start:end]
-            gae = 0.0
-            for offset in reversed(range(end - start)):
-                mask = 1.0 - seg_dones[offset]
-                next_value = bootstrap_v if offset == end - start - 1 else seg_values[offset + 1]
-                delta = seg_rewards[offset] + self.gamma * next_value * mask - seg_values[offset]
-                gae = delta + self.gamma * self.lam * mask * gae
-                adv[start + offset] = gae
-            ret[start:end] = adv[start:end] + seg_values
-
-        self.adv_buf = adv
-        self.ret_buf = ret
-        self.obs_buf = self.obs_buf[:T]
-        self.act_buf = self.act_buf[:T]
-        self.raw_act_buf = self.raw_act_buf[:T]
-        self.logp_buf = self.logp_buf[:T]
-        self.val_buf = list(values)
-        self.rew_buf = self.rew_buf[:T]
-        self.done_buf = self.done_buf[:T]
+        super().finish_path(normalize_advantage=False)
 
     def _ensure_episode_boundaries(self) -> None:
         if not self._episode_boundaries:
@@ -412,15 +309,8 @@ class RecurrentPPOAgent:
             return None
 
         # Entropy schedule bookkeeping
-        if self.ent_coef_decay_episodes > 0:
-            self._episode_idx += max(self._episodes_since_update, len(episodes))
-            if self._episode_idx >= self.ent_coef_decay_start:
-                progress = self._episode_idx - self.ent_coef_decay_start
-                frac = min(max(progress, 0) / max(self.ent_coef_decay_episodes, 1), 1.0)
-                self.ent_coef = (
-                    self.ent_coef_initial * (1.0 - frac)
-                    + self.ent_coef_final * frac
-                )
+        decay_count = max(self._episodes_since_update, len(episodes))
+        self.apply_entropy_decay(decay_count)
         self._episodes_since_update = 0
 
         sequence_batch = max(1, self.sequence_batch_size)
@@ -521,7 +411,7 @@ class RecurrentPPOAgent:
                 "value_head": self.value_head.state_dict(),
                 "actor_opt": self.actor_opt.state_dict(),
                 "critic_opt": self.critic_opt.state_dict(),
-                "episode_idx": self._episode_idx,
+                "entropy_episode_idx": self.entropy.episode_idx,
             },
             path,
         )
@@ -538,26 +428,8 @@ class RecurrentPPOAgent:
         self.value_head.load_state_dict(ckpt["value_head"])
         self.actor_opt.load_state_dict(ckpt["actor_opt"])
         self.critic_opt.load_state_dict(ckpt["critic_opt"])
-        self._episode_idx = int(ckpt.get("episode_idx", self._episode_idx))
+        episode_idx = ckpt.get("entropy_episode_idx", ckpt.get("episode_idx", 0))
+        self.entropy.episode_idx = int(episode_idx)
         self.reset_hidden_state()
-
-    # ------------------------------------------------------------------
-    # Buffer utilities
-    # ------------------------------------------------------------------
-
-    def reset_buffer(self) -> None:
-        self.obs_buf: List[np.ndarray] = []
-        self.act_buf: List[np.ndarray] = []
-        self.raw_act_buf: List[np.ndarray] = []
-        self.logp_buf: List[float] = []
-        self.val_buf: List[float] = []
-        self.rew_buf: List[float] = []
-        self.done_buf: List[bool] = []
-        self.adv_buf: np.ndarray = np.zeros(0, dtype=np.float32)
-        self.ret_buf: np.ndarray = np.zeros(0, dtype=np.float32)
-        self._episode_boundaries: List[int] = [0]
-        self._episode_bootstrap: List[float] = []
-        self._pending_bootstrap = None
-
 
 HiddenState = Optional[torch.Tensor] | Tuple[torch.Tensor, torch.Tensor]

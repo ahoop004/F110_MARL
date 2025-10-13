@@ -30,23 +30,23 @@ scenario:
     params:
       # reward_horizon: 500.0
       target_crash_reward: 10.0
-      self_collision_penalty: -10.0
+      self_collision_penalty: -1.0
       reward_weight: null
       reward_decay: null
       reward_smoothing: null
       relative_reward:
         weights:
           front: 0.0
-          front_right: 0.01
-          right: 0.0
-          back_right: 0.01
-          back: 0.0
-          back_left: 0.01
-          left: 0.0
-          front_left: 0.01
+          front_right: 0.015
+          right: 0.01
+          back_right: 0.015
+          back: -0.01
+          back_left: 0.015
+          left: 0.01
+          front_left: 0.015
         preferred_radius: 0.55
-        inner_tolerance: 0.55
-        outer_tolerance: 0.50
+        inner_tolerance: 0.15
+        outer_tolerance: 0.15
         # falloff: linear
         # scale: 1.0
   main:
