@@ -71,8 +71,8 @@ scenario:
       batch_size: 512
       buffer_size: 200000
       target_update_interval: 500
-      epsilon_start: 1.0
-      epsilon_end: 0.1
+      epsilon_start: .9980
+      epsilon_end: 0.05
       epsilon_decay_rate: 0.999
       hidden_dims:
       - 256

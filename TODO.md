@@ -112,3 +112,8 @@
 - [ ] Replace the per-agent dict state in `ProgressRewardStrategy` with an explicit state dataclass to cut repeated lookups.
 - [x] Extend replay buffers to store discrete `action_index` values so DQN can avoid storing full action vectors and argmin fallbacks.
 - [ ] Consolidate scenario manifests (e.g., Shanghai progress/gaplock) via YAML anchors or base manifests to eliminate repeated blocks.
+- [ ] Collapse per-algorithm builder boilerplate in `src/f110x/utils/builders.py` into a shared helper or registry-driven factory.
+- [ ] Extract shared PPO buffer/GAE logic into a base policy class so `src/f110x/policies/ppo/ppo.py` and `src/f110x/policies/ppo/rec_ppo.py` only cover network specifics.
+- [ ] Move observation component implementations into a registry with reusable pose/normalisation helpers to shrink `src/f110x/wrappers/observation.py`.
+- [ ] Introduce common config-parsing helpers (or a validation library) to reduce the manual coercion code in `src/f110x/utils/config_models.py`.
+- [ ] Replace the bespoke console panel in `src/f110x/utils/logger.py` with a maintained TUI/logging library to trim custom rendering code.

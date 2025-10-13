@@ -596,46 +596,79 @@ def _is_trainable(spec: AgentSpecConfig, default: bool) -> bool:
     return bool(spec.trainable)
 
 
+def _build_continuous_algo(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+    *,
+    algo_key: str,
+    controller_factory: Callable[[Dict[str, Any]], Any],
+    trainer_key: Optional[str] = None,
+    post_init: Optional[Callable[[Any], None]] = None,
+    action_wrapper_factory: Optional[Callable[[spaces.Box, Dict[str, Any]], Any]] = None,
+    trainable_default: bool = True,
+) -> AgentBundle:
+    """Shared builder for algorithms that require Box action spaces."""
+
+    agent_id = assignment.agent_id
+    action_space = ctx.env.action_space(agent_id)
+    if not isinstance(action_space, spaces.Box):
+        raise TypeError(
+            f"{algo_key} builder requires a continuous Box action space; "
+            f"received {type(action_space)!r} for agent '{agent_id}'"
+        )
+
+    if not pipeline:
+        raise ValueError(
+            f"{algo_key} agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
+        )
+
+    sample_obs = ctx.ensure_sample()
+    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
+    algo_cfg = _resolve_algorithm_config(ctx, assignment.spec)
+    algo_cfg["obs_dim"] = int(obs_vector.size)
+    algo_cfg["act_dim"] = int(action_space.shape[0])
+    algo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
+    algo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
+
+    controller = controller_factory(algo_cfg)
+    if post_init is not None:
+        post_init(controller)
+
+    trainer_name = trainer_key or algo_key
+    trainer = trainer_registry.create_trainer(trainer_name, agent_id, controller, config=algo_cfg)
+
+    action_wrapper = None
+    if action_wrapper_factory is not None:
+        action_wrapper = action_wrapper_factory(action_space, algo_cfg)
+
+    return AgentBundle(
+        assignment=assignment,
+        algo=algo_key,
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=trainable_default),
+        metadata={"config": algo_cfg},
+        trainer=trainer,
+        action_wrapper=action_wrapper,
+    )
+
+
 def _build_algo_ppo(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
-    agent_id = assignment.agent_id
-    action_space = ctx.env.action_space(agent_id)
-    if not isinstance(action_space, spaces.Box):
-        raise TypeError(
-            "PPO builder currently requires a continuous Box action space; "
-            f"received {type(action_space)!r} for agent '{agent_id}'"
-        )
-
-    if not pipeline:
-        raise ValueError(
-            f"PPO agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
-        )
-
-    sample_obs = ctx.ensure_sample()
-    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
-    ppo_cfg = _resolve_algorithm_config(ctx, assignment.spec)
-    ppo_cfg["obs_dim"] = int(obs_vector.size)
-    ppo_cfg["act_dim"] = int(action_space.shape[0])
-    ppo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
-    ppo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
-
-    controller = PPOAgent(ppo_cfg)
-    trainer = trainer_registry.create_trainer("ppo", agent_id, controller, config=ppo_cfg)
-    # PPOAgent already scales actions to environment bounds internally.
-    action_wrapper = None
-    return AgentBundle(
-        assignment=assignment,
-        algo="ppo",
-        controller=controller,
-        obs_pipeline=pipeline,
-        trainable=_is_trainable(assignment.spec, default=True),
-        metadata={"config": ppo_cfg},
-        trainer=trainer,
-        action_wrapper=action_wrapper,
+    return _build_continuous_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_key="ppo",
+        controller_factory=PPOAgent,
+        trainer_key="ppo",
     )
 
 
@@ -645,40 +678,14 @@ def _build_algo_td3(
     roster: RosterLayout,
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
-    agent_id = assignment.agent_id
-    action_space = ctx.env.action_space(agent_id)
-    if not isinstance(action_space, spaces.Box):
-        raise TypeError(
-            "TD3 builder requires a continuous Box action space; "
-            f"received {type(action_space)!r} for agent '{agent_id}'"
-        )
-
-    if not pipeline:
-        raise ValueError(
-            f"TD3 agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
-        )
-
-    sample_obs = ctx.ensure_sample()
-    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
-    td3_cfg = _resolve_algorithm_config(ctx, assignment.spec)
-    td3_cfg["obs_dim"] = int(obs_vector.size)
-    td3_cfg["act_dim"] = int(action_space.shape[0])
-    td3_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
-    td3_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
-
-    controller = TD3Agent(td3_cfg)
-    trainer = trainer_registry.create_trainer("td3", agent_id, controller, config=td3_cfg)
-    # TD3Agent actions are already emitted in environment units, so skip rescaling wrapper.
-    action_wrapper = None
-    return AgentBundle(
-        assignment=assignment,
-        algo="td3",
-        controller=controller,
-        obs_pipeline=pipeline,
-        trainable=_is_trainable(assignment.spec, default=True),
-        metadata={"config": td3_cfg},
-        trainer=trainer,
-        action_wrapper=action_wrapper,
+    return _build_continuous_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_key="td3",
+        controller_factory=TD3Agent,
+        trainer_key="td3",
     )
 
 
@@ -688,40 +695,14 @@ def _build_algo_sac(
     roster: RosterLayout,
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
-    agent_id = assignment.agent_id
-    action_space = ctx.env.action_space(agent_id)
-    if not isinstance(action_space, spaces.Box):
-        raise TypeError(
-            "SAC builder requires a continuous Box action space; "
-            f"received {type(action_space)!r} for agent '{agent_id}'"
-        )
-
-    if not pipeline:
-        raise ValueError(
-            f"SAC agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
-        )
-
-    sample_obs = ctx.ensure_sample()
-    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
-    sac_cfg = _resolve_algorithm_config(ctx, assignment.spec)
-    sac_cfg["obs_dim"] = int(obs_vector.size)
-    sac_cfg["act_dim"] = int(action_space.shape[0])
-    sac_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
-    sac_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
-
-    controller = SACAgent(sac_cfg)
-    trainer = trainer_registry.create_trainer("sac", agent_id, controller, config=sac_cfg)
-    # SACAgent outputs environment-scaled actions directly; avoid double scaling.
-    action_wrapper = None
-    return AgentBundle(
-        assignment=assignment,
-        algo="sac",
-        controller=controller,
-        obs_pipeline=pipeline,
-        trainable=_is_trainable(assignment.spec, default=True),
-        metadata={"config": sac_cfg},
-        trainer=trainer,
-        action_wrapper=action_wrapper,
+    return _build_continuous_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_key="sac",
+        controller_factory=SACAgent,
+        trainer_key="sac",
     )
 
 
@@ -731,41 +712,15 @@ def _build_algo_rec_ppo(
     roster: RosterLayout,
     pipeline: ObservationPipeline,
 ) -> AgentBundle:
-    agent_id = assignment.agent_id
-    action_space = ctx.env.action_space(agent_id)
-    if not isinstance(action_space, spaces.Box):
-        raise TypeError(
-            "Recurrent PPO builder requires a continuous Box action space; "
-            f"received {type(action_space)!r} for agent '{agent_id}'"
-        )
-
-    if not pipeline:
-        raise ValueError(
-            f"Recurrent PPO agent '{agent_id}' requires at least one observation wrapper to define obs_dim"
-        )
-
-    sample_obs = ctx.ensure_sample()
-    obs_vector = pipeline.to_vector(sample_obs, agent_id, roster)
-    rec_cfg = _resolve_algorithm_config(ctx, assignment.spec)
-    rec_cfg["obs_dim"] = int(obs_vector.size)
-    rec_cfg["act_dim"] = int(action_space.shape[0])
-    rec_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
-    rec_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
-
-    controller = RecurrentPPOAgent(rec_cfg)
-    controller.reset_hidden_state()
-    trainer = trainer_registry.create_trainer("rec_ppo", agent_id, controller, config=rec_cfg)
-    # Recurrent PPO emits environment-scaled actions directly.
-    action_wrapper = None
-    return AgentBundle(
-        assignment=assignment,
-        algo="rec_ppo",
-        controller=controller,
-        obs_pipeline=pipeline,
-        trainable=_is_trainable(assignment.spec, default=True),
-        metadata={"config": rec_cfg},
-        trainer=trainer,
-        action_wrapper=action_wrapper,
+    return _build_continuous_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_key="rec_ppo",
+        controller_factory=RecurrentPPOAgent,
+        trainer_key="rec_ppo",
+        post_init=lambda controller: getattr(controller, "reset_hidden_state", lambda: None)(),
     )
 
 
