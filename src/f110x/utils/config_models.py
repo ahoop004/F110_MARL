@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Mapping
+from typing import Any, Dict, List, Optional, Mapping, Sequence
 
 from f110x.utils.config_schema import (
     EnvSchema,
@@ -12,6 +12,36 @@ from f110x.utils.config_schema import (
     TD3ConfigSchema,
     SACConfigSchema,
 )
+
+
+def _coerce_mapping(value: Any, *, name: str) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"{name} must be a mapping")
+
+
+def _coerce_sequence(value: Any, *, name: str) -> List[Any]:
+    if value is None:
+        return []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return list(value)
+    raise TypeError(f"{name} must be a sequence")
+
+
+def _normalize_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _normalize_string_list(value: Any, *, name: str) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return [str(value)]
 
 @dataclass
 class AgentWrapperSpec:
@@ -30,12 +60,8 @@ class AgentWrapperSpec:
         factory = data.get("factory") or data.get("name") or data.get("type")
         if not factory:
             raise ValueError("Wrapper spec requires a 'factory'/'name' key")
-        params = data.get("params", {})
-        if params is None:
-            params = {}
-        if not isinstance(params, dict):
-            raise TypeError("Wrapper params must be a mapping")
-        return cls(factory=str(factory), params=dict(params))
+        params = _coerce_mapping(data.get("params"), name="Wrapper params")
+        return cls(factory=str(factory), params=params)
 
 
 @dataclass
@@ -58,27 +84,11 @@ class AgentSpecConfig:
         if not isinstance(data, dict):
             raise TypeError(f"Agent spec must be a mapping, received {type(data)!r}")
 
-        wrappers_raw = data.get("wrappers", [])
-        if wrappers_raw is None:
-            wrappers = []
-        elif isinstance(wrappers_raw, list):
-            wrappers = [AgentWrapperSpec.from_dict(wrapper) for wrapper in wrappers_raw]
-        else:
-            raise TypeError("Agent 'wrappers' must be a list")
+        wrappers = [AgentWrapperSpec.from_dict(wrapper) for wrapper in _coerce_sequence(data.get("wrappers"), name="Agent 'wrappers'")]
 
-        params = data.get("params", {})
-        if params is None:
-            params = {}
-        if not isinstance(params, dict):
-            raise TypeError("Agent params must be a mapping")
+        params = _coerce_mapping(data.get("params"), name="Agent params")
 
-        target_roles = data.get("target_roles")
-        if target_roles is None:
-            target_roles_list: List[str] = []
-        elif isinstance(target_roles, (list, tuple)):
-            target_roles_list = [str(item) for item in target_roles]
-        else:
-            target_roles_list = [str(target_roles)]
+        target_roles_list = _normalize_string_list(data.get("target_roles"), name="Agent target_roles")
 
         slot = data.get("slot")
         if slot is None:
@@ -90,27 +100,14 @@ class AgentSpecConfig:
         if trainable is not None:
             trainable = bool(trainable)
 
-        metadata = data.get("metadata", {})
-        if metadata is None:
-            metadata = {}
-        if not isinstance(metadata, dict):
-            raise TypeError("Agent metadata must be a mapping")
+        metadata = _coerce_mapping(data.get("metadata"), name="Agent metadata")
 
         algo = data.get("algo")
         if not algo:
             raise ValueError("Agent spec requires an 'algo' key")
-
-        agent_id = data.get("agent_id")
-        if agent_id is not None:
-            agent_id = str(agent_id)
-
-        role = data.get("role")
-        if role is not None:
-            role = str(role)
-
-        config_ref = data.get("config_ref")
-        if config_ref is not None:
-            config_ref = str(config_ref)
+        agent_id = _normalize_string(data.get("agent_id"))
+        role = _normalize_string(data.get("role"))
+        config_ref = _normalize_string(data.get("config_ref"))
 
         return cls(
             algo=str(algo),
@@ -142,8 +139,9 @@ class AgentRosterConfig:
         else:
             raise TypeError("Agents config must be a list or mapping containing a 'roster' key")
 
+        roster_list = _coerce_sequence(roster_raw, name="Agent roster")
         roster: List[AgentSpecConfig] = []
-        for entry in roster_raw:
+        for entry in roster_list:
             roster.append(AgentSpecConfig.from_dict(entry))
         return cls(roster=roster)
 

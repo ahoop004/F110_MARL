@@ -1,0 +1,386 @@
+anchors:
+  env_common: &env_common
+    seed: 42
+    map_dir: maps
+    map_yaml: shanghai/Shanghai_map.yaml
+    centerline_features: true
+
+  env_four_car: &env_four_car
+    <<: *env_common
+    n_agents: 4
+    max_steps: 25000
+    render_mode: null
+    lidar_beams: 108
+    spawn_points:
+      - spawn_1
+      - spawn_2
+      - spawn_3
+      - spawn_4
+
+  env_single_car: &env_single_car
+    <<: *env_common
+    n_agents: 1
+    max_steps: 250000
+    lidar_beams: 54
+    render_mode: null
+    centerline_render: true
+    centerline_render_connect: false
+    centerline_render_spacing: 2.0
+    terminate_on_any_done: true
+    spawn_points:
+      - spawn_1
+
+  dqn_rate_base: &dqn_rate_base
+    device: cpu
+    batch_size: 512
+    buffer_size: 200000
+    target_update_interval: 500
+    prioritized_replay: true
+    per_alpha: 0.6
+    per_beta_start: 0.4
+    per_beta_increment: 5.0e-05
+    per_min_priority: 0.001
+    per_epsilon: 1.0e-06
+    action_mode: rate
+    steering_rate: 0.45
+    accel_rate: 3.0
+    brake_rate: 2.5
+    rate_initial_speed: 1.0
+
+  wrappers_progress: &wrappers_progress
+    - factory: obs
+      params:
+        normalize: true
+        components:
+          - id: lidar
+            type: lidar
+            params:
+              beams: 108
+              max_range: 30.0
+              normalize: true
+          - id: ego_pose
+            type: ego_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin_cos
+          - id: ego_velocity
+            type: velocity
+            params:
+              include_speed: true
+              normalize: 12.0
+          - id: collision
+            type: collision
+          - id: centerline
+            type: centerline
+            params:
+              angle_mode: sin_cos
+              lateral_scale: 30.0
+              longitudinal_scale: 30.0
+
+  wrappers_fastlap: &wrappers_fastlap
+    - factory: obs
+      params:
+        max_scan: 30.0
+        normalize: true
+        components:
+          - id: lidar
+            type: lidar
+            params:
+              beams: 108
+              max_range: 30.0
+              normalize: true
+          - id: ego_pose
+            type: ego_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin_cos
+          - id: ego_velocity
+            type: velocity
+            params:
+              include_speed: true
+              normalize: 12.0
+          - id: lap
+            type: lap
+            params:
+              normalize_time: 120.0
+          - id: collision
+            type: collision
+          - id: centerline
+            type: centerline
+
+  wrappers_single: &wrappers_single
+    - factory: obs
+      params:
+        normalize: true
+        components:
+          - id: lidar
+            type: lidar
+            params:
+              beams: 54
+              max_range: 30.0
+              normalize: true
+          - id: ego_pose
+            type: ego_pose
+            params:
+              normalize_xy: 30.0
+              angle_mode: sin_cos
+          - id: ego_velocity
+            type: velocity
+            params:
+              include_speed: true
+              normalize: 12.0
+          - id: collision
+            type: collision
+          - id: centerline
+            type: centerline
+            params:
+              angle_mode: none
+              include_lateral: false
+              include_longitudinal: false
+              include_progress: false
+              include_waypoint: true
+              waypoint_mode: relative
+              waypoint_scale: 30.0
+              waypoint_spacing: 2.0
+              waypoint_spacing_count: 1
+              waypoint_include_distance: true
+              waypoint_distance_scale: 1.0
+
+  agents_four_car: &agents_four_car
+    car_0:
+      wrappers: *wrappers_progress
+      algo: dqn
+    car_1:
+      wrappers: *wrappers_progress
+      algo: dqn
+    car_2:
+      wrappers: *wrappers_progress
+      algo: dqn
+    car_3:
+      wrappers: *wrappers_progress
+      algo: dqn
+
+  main_train_eval: &main_train_eval
+    mode: train_eval
+    train_episodes: 500
+    eval_episodes: 2
+
+default_experiment: fastlap
+
+experiments:
+  fastlap:
+    scenario:
+      name: shanghai_dqn_fastlap
+      env:
+        <<: *env_four_car
+        max_steps: 25000
+        lidar_beams: 108
+        centerline_render: false
+      reward:
+        task: fastest_lap
+        params:
+          step_penalty: 0.0
+          lap_bonus: 1.0
+          best_bonus: 0.5
+      main:
+        <<: *main_train_eval
+        train_episodes: 100
+        checkpoint: checkpoints/shanghai_fastlap/dqn_fastlap.pt
+      algorithms:
+        dqn:
+          <<: *dqn_rate_base
+          lr: 0.0003
+          gamma: 0.99
+          epsilon_start: 1.0
+          epsilon_end: 0.05
+          epsilon_decay_rate: 0.9992
+          hidden_dims: [256, 256]
+          save_dir: checkpoints/shanghai_fastlap
+          checkpoint_name: dqn_fastlap.pt
+      agents:
+        car_0:
+          wrappers: *wrappers_fastlap
+          algo: dqn
+        car_1:
+          wrappers: *wrappers_fastlap
+          algo: dqn
+        car_2:
+          wrappers: *wrappers_fastlap
+          algo: dqn
+        car_3:
+          wrappers: *wrappers_fastlap
+          algo: dqn
+
+  progress:
+    scenario:
+      name: shanghai_dqn_progress
+      env:
+        <<: *env_four_car
+        target_laps: 2
+        centerline_render: false
+      reward:
+        task: progress
+        idle_speed_threshold: 0.2
+        idle_patience_steps: 240
+        features:
+          - progress_navigation
+          - collision_penalty
+        params:
+          progress_weight: 4.0
+          speed_weight: 0.05
+          lateral_penalty: 0.005
+          heading_penalty: 0.005
+          collision_penalty: -3.0
+          truncation_penalty: -0.5
+          reverse_penalty: 0.5
+      main:
+        <<: *main_train_eval
+        checkpoint: checkpoints/shanghai_progress/shanghai_dqn_progress.pt
+        wandb:
+          enabled: false
+          project: marl-f110
+          entity: ahoop004-old-dominion-university
+          group: shanghai-dqn
+          tags:
+            - shanghai
+            - dqn
+      algorithms:
+        dqn:
+          <<: *dqn_rate_base
+          lr: 0.0005
+          gamma: 0.99
+          epsilon_start: 0.9
+          epsilon_end: 0.05
+          epsilon_decay_rate: 0.9995
+          learning_starts: 2048
+          max_grad_norm: 10.0
+          hidden_dims: [256, 128]
+          updates_per_step: 2
+          save_dir: checkpoints/shanghai_progress
+          checkpoint_name: shanghai_dqn_progress.pt
+      agents: *agents_four_car
+
+  shared_progress:
+    scenario:
+      name: shanghai_shared_dqn_progress
+      env:
+        <<: *env_four_car
+        target_laps: 2
+        centerline_render: false
+      reward:
+        task: progress
+        idle_speed_threshold: 0.2
+        idle_patience_steps: 240
+        features:
+          - progress_navigation
+          - collision_penalty
+          - idle_guard
+        params:
+          progress_weight: 4.0
+          speed_weight: 0.05
+          lateral_penalty: 0.005
+          heading_penalty: 0.005
+          collision_penalty: -3.0
+          truncation_penalty: -0.5
+          reverse_penalty: 0.5
+          idle_penalty: 0.01
+        shared_reward:
+          enabled: true
+          mode: mean
+          scope: trainable
+      main:
+        <<: *main_train_eval
+        checkpoint: checkpoints/shanghai_progress/shanghai_shared_dqn_progress.pt
+        train_episodes: 500
+        wandb:
+          enabled: true
+          project: marl-f110
+          entity: ahoop004-old-dominion-university
+          group: shanghai-shared-dqn
+          tags:
+            - shanghai
+            - dqn
+            - shared
+      algorithms:
+        dqn:
+          <<: *dqn_rate_base
+          lr: 0.0005
+          gamma: 0.99
+          epsilon_start: 0.9
+          epsilon_end: 0.05
+          epsilon_decay_rate: 0.9998
+          learning_starts: 2048
+          max_grad_norm: 10.0
+          hidden_dims: [256, 128]
+          updates_per_step: 1
+          shared_policy: shanghai_progress_shared
+          save_dir: checkpoints/shanghai_progress
+          checkpoint_name: shanghai_shared_dqn_progress.pt
+      agents: *agents_four_car
+
+  single_progress:
+    scenario:
+      name: shanghai_single_dqn_progress
+      env:
+        <<: *env_single_car
+        target_laps: 2
+      reward:
+        task: progress
+        idle_speed_threshold: 0.1
+        idle_patience_steps: 240
+        features:
+          - progress_navigation
+          - collision_penalty
+          - waypoint_bonus
+          - milestone_bonus
+        params:
+          progress_weight: 5.0
+          speed_weight: 0.15
+          lateral_penalty: 0.008
+          heading_penalty: 0.008
+          collision_penalty: -3.0
+          truncation_penalty: -5.5
+          reverse_penalty: 0.5
+          waypoint_bonus: 0.5
+          waypoint_spacing: 5.0
+          idle_penalty: 0.4
+          idle_penalty_steps: 40
+          lap_completion_bonus: 15.0
+          milestone_spacing: 2.0
+          milestone_bonus: 3.0
+      main:
+        mode: train_eval
+        train_episodes: 1000
+        eval_episodes: 2
+        checkpoint: checkpoints/shanghai_progress/shanghai_single_dqn_progress.pt
+        wandb:
+          enabled: true
+          project: marl-f110
+          entity: ahoop004-old-dominion-university
+          group: shanghai-single-dqn
+          tags:
+            - shanghai
+            - dqn
+      algorithms:
+        dqn:
+          <<: *dqn_rate_base
+          lr: 0.0005
+          gamma: 0.999
+          epsilon_start: 0.9
+          epsilon_end: 0.05
+          epsilon_decay: 850
+          learning_starts: 4096
+          max_grad_norm: 5.0
+          hidden_dims: [128, 128]
+          updates_per_step: 2
+          action_repeat: 2
+          steering_rate: 0.55
+          accel_rate: 5.5
+          brake_rate: 4.5
+          rate_initial_speed: 2.5
+          save_dir: checkpoints/shanghai_progress
+          checkpoint_name: shanghai_single_dqn_progress.pt
+      agents:
+        car_0:
+          wrappers: *wrappers_single
+          algo: dqn
