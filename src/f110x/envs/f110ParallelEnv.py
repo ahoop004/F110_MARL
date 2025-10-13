@@ -159,13 +159,21 @@ class F110ParallelEnv(ParallelEnv):
         mode = (self.render_mode or "").lower()
         self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
 
-        render_cfg = cfg.get("centerline_render")
-        features_cfg = cfg.get("centerline_features")
-        autoload_cfg = cfg.get("centerline_autoload")
+        render_user_override = bool(cfg.pop("_centerline_render_user_override", False))
+        feature_user_override = bool(cfg.pop("_centerline_features_user_override", False))
+        autoload_user_override = bool(cfg.pop("_centerline_autoload_user_override", False))
 
-        self._centerline_render_auto = render_cfg is None
-        self._centerline_feature_auto = features_cfg is None
-        self._centerline_autoload_auto = autoload_cfg is None
+        render_cfg_value = cfg.get("centerline_render")
+        features_cfg_value = cfg.get("centerline_features")
+        autoload_cfg_value = cfg.get("centerline_autoload")
+
+        render_cfg = render_cfg_value if render_user_override else None
+        features_cfg = features_cfg_value if feature_user_override else None
+        autoload_cfg = autoload_cfg_value if autoload_user_override else None
+
+        self._centerline_render_auto = not render_user_override
+        self._centerline_feature_auto = not feature_user_override
+        self._centerline_autoload_auto = not autoload_user_override
 
         self.centerline_render_enabled = bool(render_cfg) if render_cfg is not None else False
         self._centerline_feature_requested = bool(features_cfg) if features_cfg is not None else False

@@ -85,6 +85,7 @@ class AgentSpecConfig:
         if not isinstance(data, dict):
             raise TypeError(f"Agent spec must be a mapping, received {type(data)!r}")
 
+
         wrappers = [AgentWrapperSpec.from_dict(wrapper) for wrapper in _coerce_sequence(data.get("wrappers"), name="Agent 'wrappers'")]
 
         target_roles_list = _normalize_string_list(data.get("target_roles"), name="Agent target_roles")
@@ -104,7 +105,7 @@ class AgentSpecConfig:
         reward_cfg = _coerce_mapping(data.get("reward"), name="Agent reward config")
 
         algo_section = data.get("algorithm")
-        params = {}
+        params: Dict[str, Any] = {}
         config_ref = data.get("config_ref")
 
         algo = data.get("algo")
@@ -113,17 +114,41 @@ class AgentSpecConfig:
                 raise TypeError("Agent 'algorithm' section must be a mapping")
             algo_map = dict(algo_section)
             algo_params = _coerce_mapping(algo_map.get("params"), name="Agent algorithm params")
+            extra_params = {
+                key: value
+                for key, value in algo_map.items()
+                if key not in {"name", "algo", "type", "params", "config_ref"}
+            }
             if algo_params:
                 params.update(algo_params)
+            if extra_params:
+                params.update(extra_params)
             candidate_name = algo_map.get("name") or algo_map.get("algo") or algo_map.get("type")
             if candidate_name:
                 algo = candidate_name
-            elif not algo and "architecture" in params:
-                algo = params.get("architecture")
             if "config_ref" in algo_map:
                 config_ref = algo_map.get("config_ref")
 
         params.update(_coerce_mapping(data.get("params"), name="Agent params"))
+
+        def _flatten_nested(block: Dict[str, Any]) -> Dict[str, Any]:
+            result = dict(block)
+            for key in list(block.keys()):
+                value = block[key]
+                if isinstance(value, Mapping):
+                    nested_params = value.get("params") if isinstance(value.get("params"), Mapping) else None
+                    if nested_params:
+                        for inner_key, inner_value in nested_params.items():
+                            result.setdefault(inner_key, inner_value)
+                        if len(value.keys()) == 1 or set(value.keys()) == {"params"}:
+                            result.pop(key, None)
+            return result
+
+        params = _flatten_nested(params)
+
+        arch = params.pop("architecture", None)
+        if not algo and arch:
+            algo = arch
 
         if not algo:
             raise ValueError("Agent spec requires an algorithm identifier ('algo' or algorithm.name)")
@@ -385,6 +410,14 @@ class ExperimentConfig:
         if not isinstance(raw_doc, dict):
             raise TypeError("Configuration root must be a mapping")
 
+        if "scenario" in raw_doc and isinstance(raw_doc["scenario"], Mapping):
+            scenario_block = dict(raw_doc["scenario"] or {})
+            if "meta" in raw_doc and "meta" not in scenario_block:
+                scenario_block["meta"] = raw_doc["meta"]
+            data = scenario_block
+        else:
+            data = raw_doc
+
         if "experiments" in raw_doc:
             experiments = raw_doc.get("experiments") or {}
             if not isinstance(experiments, dict):
@@ -402,7 +435,7 @@ class ExperimentConfig:
             if isinstance(data["main"], dict):
                 data["main"].setdefault("experiment_name", selected)
         else:
-            data = raw_doc
+            data = dict(data)
 
         return cls.from_dict(data)
 

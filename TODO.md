@@ -12,7 +12,7 @@
 - [x] Auto-toggle centerline features/rendering based on whether any agent uses centerline inputs.
 - [ ] Add a random spawn toggle that samples start poses from map annotations.
   - [ ] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
-- [ ] Move task/reward/algorithm configuration under each agent declaration.
+- [x] Move task/reward/algorithm configuration under each agent declaration.
 - [ ] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
 
 ##  Observation Pipeline & Telemetry

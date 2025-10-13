@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from gymnasium import spaces
@@ -49,6 +49,13 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env_cfg_dict = cfg.env.to_kwargs()
     map_data = loader.load(env_cfg_dict)
     env_cfg = dict(env_cfg_dict)
+
+    raw_env_cfg = cfg.raw.get("env", {})
+    if not isinstance(raw_env_cfg, Mapping):
+        raw_env_cfg = {}
+    env_cfg["_centerline_render_user_override"] = "centerline_render" in raw_env_cfg
+    env_cfg["_centerline_features_user_override"] = "centerline_features" in raw_env_cfg
+    env_cfg["_centerline_autoload_user_override"] = "centerline_autoload" in raw_env_cfg
 
     _apply_spawn_point_config(env_cfg, map_data)
     env_cfg["map_meta"] = map_data.metadata

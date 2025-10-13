@@ -59,11 +59,8 @@ def load_scenario_manifest(path: Path | str) -> ExperimentConfig:
     for index, (agent_name, agent_cfg) in enumerate(agents_block.items()):
         if not isinstance(agent_cfg, Mapping):
             raise ScenarioConfigError(f"Agent '{agent_name}' configuration must be a mapping")
-        spec = dict(agent_cfg)
-        spec.setdefault("slot", index)
+        spec = _normalise_agent_spec(agent_name, agent_cfg)
         spec.setdefault("agent_id", agent_name)
-        if "algo" not in spec:
-            raise ScenarioConfigError(f"Agent '{agent_name}' must declare an 'algo'")
         roster_payload.append(spec)
 
     if roster_payload:
@@ -86,6 +83,88 @@ def _apply_section(updater, payload: Optional[Mapping[str, Any]], raw: Dict[str,
         raise ScenarioConfigError(f"Scenario '{key}' section must be a mapping")
     updater(dict(payload))
     raw[key] = dict(payload)
+
+
+def _normalise_agent_spec(agent_name: str, agent_cfg: Mapping[str, Any]) -> Dict[str, Any]:
+    spec = dict(agent_cfg)
+
+    reward_cfg = spec.get("reward")
+    if reward_cfg is not None and not isinstance(reward_cfg, Mapping):
+        raise ScenarioConfigError(f"Agent '{agent_name}' reward section must be a mapping")
+
+    params: Dict[str, Any] = {}
+    if "params" in spec:
+        params.update(_coerce_mapping(spec["params"], name=f"Agent '{agent_name}' params"))
+
+    algo_section = spec.pop("algorithm", None)
+    algo_name = spec.get("algo")
+    config_ref = spec.get("config_ref")
+
+    if algo_section is not None:
+        if not isinstance(algo_section, Mapping):
+            raise ScenarioConfigError(f"Agent '{agent_name}' algorithm section must be a mapping")
+        algo_map = dict(algo_section)
+        algo_params = _coerce_mapping(algo_map.get("params"), name=f"Agent '{agent_name}' algorithm params")
+        extra_params = {
+            key: value
+            for key, value in algo_map.items()
+            if key not in {"name", "algo", "type", "params", "config_ref"}
+        }
+        if algo_params:
+            params.update(algo_params)
+        if extra_params:
+            params.update(extra_params)
+        candidate = algo_map.get("name") or algo_map.get("algo") or algo_map.get("type")
+        if candidate:
+            algo_name = candidate
+        if "config_ref" in algo_map:
+            config_ref = algo_map.get("config_ref")
+
+    params = _flatten_params(params)
+
+    architecture = params.pop("architecture", None)
+    if not algo_name and architecture:
+        algo_name = architecture
+
+    if not algo_name:
+        raise ScenarioConfigError(f"Agent '{agent_name}' must declare an 'algo'")
+
+    if params:
+        spec["params"] = params
+    else:
+        spec.pop("params", None)
+
+    if config_ref is not None:
+        spec["config_ref"] = config_ref
+
+    spec["algo"] = algo_name
+
+    if reward_cfg is not None:
+        spec["reward"] = dict(reward_cfg)
+
+    return spec
+
+
+def _coerce_mapping(value: Any, *, name: str) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise ScenarioConfigError(f"{name} must be a mapping")
+
+
+def _flatten_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(params)
+    for key in list(params.keys()):
+        value = params[key]
+        if isinstance(value, Mapping):
+            nested_params = value.get("params")
+            if isinstance(nested_params, Mapping):
+                for inner_key, inner_value in nested_params.items():
+                    result.setdefault(inner_key, inner_value)
+                if set(value.keys()) <= {"params"}:
+                    result.pop(key, None)
+    return result
 
 
 __all__ = ["load_scenario_manifest", "ScenarioConfigError"]
