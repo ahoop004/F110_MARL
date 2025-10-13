@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Tuple, Optional, Any, List
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 import gymnasium as gym
 from gymnasium import spaces
 import yaml
@@ -50,7 +50,7 @@ class F110ParallelEnv(ParallelEnv):
 
     # rendering
     def __init__(self, **kwargs):
-      
+        map_data = kwargs.pop("map_data", None)
         env_config = kwargs.get("env", {})
         merged = {**env_config, **kwargs}
         
@@ -113,7 +113,13 @@ class F110ParallelEnv(ParallelEnv):
             integrator_name = "RK4"
         self.integrator = integrator_name
 
-        self.map_dir = Path(merged.get("map_dir", None))
+        map_dir_value = merged.get("map_dir")
+        if map_dir_value is not None:
+            self.map_dir = Path(map_dir_value)
+        elif map_data is not None:
+            self.map_dir = Path(map_data.yaml_path).parent
+        else:
+            self.map_dir = Path.cwd()
 
         def _normalize_map_id(identifier: Optional[str]) -> Optional[str]:
             if identifier is None:
@@ -123,7 +129,13 @@ class F110ParallelEnv(ParallelEnv):
 
         raw_map_name = merged.get("map", None)
         raw_map_yaml = merged.get("map_yaml", None)
-        self.map_ext = merged.get("map_ext", ".png")
+        map_ext_value = merged.get("map_ext")
+        if map_ext_value is not None:
+            self.map_ext = map_ext_value
+        elif map_data is not None:
+            self.map_ext = map_data.image_path.suffix or ".png"
+        else:
+            self.map_ext = ".png"
 
         self.map_name = _normalize_map_id(raw_map_name)
         self.map_yaml = _normalize_map_id(raw_map_yaml)
@@ -217,13 +229,17 @@ class F110ParallelEnv(ParallelEnv):
         )
 
         self.sim.set_map(str(self.yaml_path), self.map_ext)
-        
         meta = merged.get("map_meta")
+        if meta is None and map_data is not None:
+            meta = dict(map_data.metadata)
+        elif isinstance(meta, Mapping):
+            meta = dict(meta)
         if meta is None:
             with open(self.map_path, "r") as f:
-                meta = yaml.safe_load(f)
-
+                meta = yaml.safe_load(f) or {}
         preloaded_image_path = merged.get("map_image_path")
+        if preloaded_image_path is None and map_data is not None:
+            preloaded_image_path = map_data.image_path
         image_rel = meta.get("image")
         if preloaded_image_path is not None:
             img_path = Path(preloaded_image_path).resolve()
@@ -231,9 +247,16 @@ class F110ParallelEnv(ParallelEnv):
             img_path = (self.map_path.parent / image_rel).resolve()
         else:
             img_filename = merged.get("map_image", None)
-            img_path = (self.map_dir / img_filename).resolve()
+            if img_filename is not None:
+                img_path = (self.map_dir / img_filename).resolve()
+            elif map_data is not None:
+                img_path = Path(map_data.image_path).resolve()
+            else:
+                img_path = self.map_path.with_suffix(self.map_ext)
 
         image_size = merged.get("map_image_size")
+        if image_size is None and map_data is not None:
+            image_size = map_data.image_size
         if image_size is not None:
             width, height = map(int, image_size)
         else:

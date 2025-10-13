@@ -77,7 +77,7 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
         if meta_key in map_data.metadata:
             env_cfg[meta_key] = map_data.metadata[meta_key]
 
-    env = F110ParallelEnv(**env_cfg)
+    env = F110ParallelEnv(map_data=map_data, **env_cfg)
     env.set_centerline(map_data.centerline, path=map_data.centerline_path)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
     return env, map_data, start_pose_options

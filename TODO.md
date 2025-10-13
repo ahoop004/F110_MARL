@@ -3,6 +3,11 @@
 ## Code Cleanup · Refactors
 
 - [ ] Break `F110ParallelEnv.__init__` into dedicated configuration helpers (rendering, map IO, vehicle params) for clarity and reuse.
+- [x] Let `MapLoader` feed preloaded metadata into `F110ParallelEnv` instead of re-reading map files.
+- [ ] Source vehicle parameter defaults from `config_schema` so environment and schema stay in sync.
+- [ ] Pull shared collision handling into a single simulator helper to remove duplicate buffer work.
+- [ ] Make map loading idempotent by caching the `RaceCar.scan_simulator` map per asset.
+- [ ] Centralise centerline renderer updates in a helper shared by `reset` and `set_centerline`.
 
 ##  Observation Pipeline & Telemetry
 
