@@ -298,6 +298,9 @@ class EvalRunner:
                 metrics[f"eval/lap_count_{aid}"] = float(count)
             if defender_survival_steps_value is not None:
                 metrics["eval/defender_survival_steps"] = float(defender_survival_steps_value)
+            for aid, breakdown in rollout.reward_breakdown.items():
+                for name, value in breakdown.items():
+                    metrics[f"eval/reward_component_{aid}/{name}"] = float(value)
 
             logger.log_metrics("eval", metrics, step=ep_index + 1)
 

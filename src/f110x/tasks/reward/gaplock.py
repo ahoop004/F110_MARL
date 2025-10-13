@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
+
 from f110x.utils.reward_utils import ScalingParams, apply_reward_scaling
 
 from .base import RewardRuntimeContext, RewardStep, RewardStrategy
-from .components import RewardAccumulator
+from .components import RewardAccumulator, apply_relative_sector_reward
 from .registry import RewardTaskConfig, RewardTaskRegistry, RewardTaskSpec, register_reward_task
 
 
@@ -18,6 +20,9 @@ GAPLOCK_PARAM_KEYS = (
     "success_once",
     "reward_horizon",
     "reward_clip",
+    "reward_weight",
+    "reward_decay",
+    "reward_smoothing",
 )
 
 
@@ -27,12 +32,16 @@ class GaplockRewardStrategy(RewardStrategy):
     def __init__(
         self,
         *,
-        target_crash_reward: float = 1.0,
+        target_crash_reward: float = 10.0,
         self_collision_penalty: float = -1.0,
         truncation_penalty: float = 0.0,
         success_once: bool = True,
         reward_horizon: Optional[float] = None,
         reward_clip: Optional[float] = None,
+        reward_weight: Optional[float] = None,
+        reward_decay: Optional[float] = None,
+        reward_smoothing: Optional[float] = None,
+        relative_reward: Optional[Dict[str, Any]] = None,
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
@@ -42,9 +51,13 @@ class GaplockRewardStrategy(RewardStrategy):
         self.scaling_params = ScalingParams(
             horizon=self._coerce_positive_float(reward_horizon),
             clip=self._coerce_positive_float(reward_clip),
+            weight=self._coerce_positive_float(reward_weight),
+            decay=self._coerce_positive_float(reward_decay),
+            smoothing=self._coerce_positive_float(reward_smoothing),
         )
         self._success_awarded: Dict[str, set[Tuple[str, str]]] = {}
         self._target_resolver = target_resolver
+        self.relative_reward_cfg = self._prepare_relative_reward(relative_reward)
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -114,8 +127,60 @@ class GaplockRewardStrategy(RewardStrategy):
         if truncated and self.truncation_penalty:
             acc.add("truncation_penalty", self.truncation_penalty)
 
+        if self.relative_reward_cfg and target_obs is not None:
+            self._apply_relative_reward(acc, ego_obs, target_obs)
+
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
         return total, components
+
+    def _prepare_relative_reward(self, cfg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not cfg:
+            return None
+        weights_raw = cfg.get("weights", {})
+        if not isinstance(weights_raw, Dict):
+            weights_raw = {}
+        weights = {str(key).lower(): float(value) for key, value in weights_raw.items()}
+        if not any(abs(v) > 0.0 for v in weights.values()):
+            return None
+        return {
+            "weights": weights,
+            "preferred_radius": float(cfg.get("preferred_radius", 0.0)),
+            "inner_tolerance": float(cfg.get("inner_tolerance", 0.0)),
+            "outer_tolerance": float(cfg.get("outer_tolerance", 0.0)),
+            "falloff": str(cfg.get("falloff", "linear")),
+            "scale": float(cfg.get("scale", 1.0)),
+        }
+
+    def _apply_relative_reward(
+        self,
+        acc: RewardAccumulator,
+        ego_obs: Dict[str, Any],
+        target_obs: Dict[str, Any],
+    ) -> None:
+        cfg = self.relative_reward_cfg
+        if not cfg:
+            return
+        ego_pose = ego_obs.get("pose")
+        target_pose = target_obs.get("pose")
+        if ego_pose is None or target_pose is None:
+            return
+        ego_pose = np.asarray(ego_pose, dtype=np.float32)
+        target_pose = np.asarray(target_pose, dtype=np.float32)
+        if ego_pose.size < 3 or target_pose.size < 2:
+            return
+        relative_vector = target_pose[:2] - ego_pose[:2]
+        ego_heading = float(ego_pose[2])
+        apply_relative_sector_reward(
+            acc,
+            relative_vector=relative_vector,
+            ego_heading=ego_heading,
+            weights=cfg["weights"],
+            preferred_radius=cfg["preferred_radius"],
+            inner_tolerance=cfg["inner_tolerance"],
+            outer_tolerance=cfg["outer_tolerance"],
+            falloff=cfg["falloff"],
+            scale=cfg["scale"],
+        )
 
 
 def _normalise_role_members(roster: Any) -> Dict[str, List[str]]:

@@ -44,5 +44,5 @@ __all__ = [
     "register_reward_task",
     "resolve_reward_task",
     "reward_task_registry",
-]
     "REWARD_FEATURE_PRESETS",
+]

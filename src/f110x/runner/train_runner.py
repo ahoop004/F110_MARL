@@ -291,6 +291,9 @@ class TrainRunner:
             for aid, step_val in rollout.collision_steps.items():
                 if step_val >= 0:
                     metrics[f"train/collision_step_{aid}"] = float(step_val)
+            for aid, breakdown in reward_breakdown.items():
+                for name, value in breakdown.items():
+                    metrics[f"train/reward_component_{aid}/{name}"] = float(value)
 
             logger.log_metrics("train", metrics, step=episode_idx + 1)
 

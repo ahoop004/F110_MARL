@@ -20,6 +20,11 @@ scenario:
     task: progress
     idle_speed_threshold: 0.1
     idle_patience_steps: 240
+    features:
+      - progress_navigation
+      - collision_penalty
+      - waypoint_bonus
+      - milestone_bonus
     params:
       progress_weight: 5.0
       speed_weight: 0.15

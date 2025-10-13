@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+import math
+import numpy as np
+
 
 @dataclass
 class RewardAccumulator:
@@ -171,3 +174,97 @@ def apply_event_reward(
 ) -> None:
     if event_flag:
         acc.add(key, reward)
+
+
+_SECTOR_DEGREES = (
+    ("front", -22.5, 22.5),
+    ("front_right", 22.5, 67.5),
+    ("right", 67.5, 112.5),
+    ("back_right", 112.5, 157.5),
+    ("back", 157.5, -157.5),  # wrap-around handled separately
+    ("back_left", -157.5, -112.5),
+    ("left", -112.5, -67.5),
+    ("front_left", -67.5, -22.5),
+)
+
+
+def _wrap_deg(angle: float) -> float:
+    wrapped = (angle + 180.0) % 360.0 - 180.0
+    return wrapped
+
+
+def _classify_sector(angle_deg: float) -> str:
+    angle_deg = _wrap_deg(angle_deg)
+    for name, start, end in _SECTOR_DEGREES:
+        if name == "back":
+            if angle_deg >= 157.5 or angle_deg < -157.5:
+                return name
+        elif start <= angle_deg < end:
+            return name
+    return "front"
+
+
+def _radial_gain(distance: float, preferred: float, inner_tol: float, outer_tol: float, falloff: str) -> float:
+    if preferred <= 0.0:
+        return 1.0
+    inner_tol = max(0.0, inner_tol)
+    outer_tol = max(0.0, outer_tol)
+    lower = max(0.0, preferred - inner_tol)
+    upper = preferred + outer_tol
+    if distance < lower:
+        if inner_tol == 0.0:
+            return 0.0
+        ratio = (distance - (preferred - inner_tol)) / (inner_tol if inner_tol else preferred)
+        ratio = max(0.0, min(1.0, ratio))
+    elif distance > upper:
+        if outer_tol == 0.0:
+            return 0.0
+        ratio = (upper - distance) / outer_tol
+        ratio = max(0.0, min(1.0, ratio))
+    else:
+        ratio = 1.0
+
+    if falloff == "gaussian":
+        sigma = (inner_tol + outer_tol) / 2.0 or 1.0
+        ratio = math.exp(-((distance - preferred) ** 2) / (2.0 * sigma ** 2))
+    elif falloff == "binary":
+        ratio = 1.0 if lower <= distance <= upper else 0.0
+
+    return max(0.0, min(1.0, ratio))
+
+
+def apply_relative_sector_reward(
+    acc: RewardAccumulator,
+    *,
+    relative_vector: np.ndarray,
+    ego_heading: float,
+    weights: Dict[str, float],
+    preferred_radius: float,
+    inner_tolerance: float,
+    outer_tolerance: float,
+    falloff: str = "linear",
+    scale: float = 1.0,
+) -> float:
+    if relative_vector.size < 2:
+        return 0.0
+
+    dx = float(relative_vector[0])
+    dy = float(relative_vector[1])
+    if dx == 0.0 and dy == 0.0:
+        return 0.0
+
+    angle = math.degrees(math.atan2(dy, dx) - ego_heading)
+    sector = _classify_sector(angle)
+    weight = float(weights.get(sector, 0.0))
+    if weight == 0.0:
+        return 0.0
+
+    distance = float(np.linalg.norm(relative_vector))
+    radial_gain = _radial_gain(distance, preferred_radius, inner_tolerance, outer_tolerance, falloff.lower())
+    if radial_gain <= 0.0:
+        return 0.0
+
+    reward = weight * radial_gain * float(scale)
+    if reward:
+        acc.add("relative_position", reward)
+    return reward
