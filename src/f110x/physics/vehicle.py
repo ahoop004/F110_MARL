@@ -205,15 +205,22 @@ class RaceCar(object):
         self.params = params
         self._refresh_param_cache()
     
-    def set_map(self, map_path, map_ext):
+    def set_map(self, map_path: str, map_ext: str):
         """
-        Sets the map for scan simulator
-        
+        Configure the shared scan simulator only if the map asset changed.
+
         Args:
             map_path (str): absolute path to the map yaml file
             map_ext (str): extension of the map image file
         """
+
+        cache_key = (str(map_path), str(map_ext))
+        cached_key = getattr(RaceCar, "_map_cache_key", None)
+        if cached_key == cache_key:
+            return
+
         RaceCar.scan_simulator.set_map(map_path, map_ext)
+        RaceCar._map_cache_key = cache_key
 
     def reset(self, pose):
         """

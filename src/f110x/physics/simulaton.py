@@ -150,33 +150,6 @@ class Simulator(object):
             # index out of bounds, throw error
             raise IndexError('Index given is out of bounds for list of agents.')
 
-    def check_collision(self):
-        """
-        Checks for collision between agents using GJK and agents' body vertices
-
-        Args:
-            None
-
-        Returns:
-            None
-        """
-        for i, agent in enumerate(self.agents):
-            self._pose_buffer[i, 0] = agent.state[0]
-            self._pose_buffer[i, 1] = agent.state[1]
-            self._pose_buffer[i, 2] = agent.state[4]
-            verts = get_vertices(
-                self._pose_buffer[i],
-                self.params['length'],
-                self.params['width'],
-            )
-            self._verts_buffer_f64[i, :, :] = verts
-            self._verts_buffer_f32[i, :, :] = verts
-
-        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
-        np.copyto(self.collisions, np.asarray(col_flags, dtype=np.float32))
-        np.copyto(self.collision_idx, np.asarray(hit_idx, dtype=np.int32))
-
-
     def step(self, control_inputs: np.ndarray) -> dict:
         """
         Advance all agents one physics step and return vectorized observations.
@@ -202,6 +175,8 @@ class Simulator(object):
 
         state_buffer = self._state_buffer
         pose_buffer = self._pose_buffer
+        verts_buffer_f64 = self._verts_buffer_f64
+        verts_buffer_f32 = self._verts_buffer_f32
 
         for i, agent in enumerate(self.agents):
             np.copyto(state_buffer[i], agent.state)
@@ -217,6 +192,14 @@ class Simulator(object):
             pose_buffer[i, 0] = agent.state[0]
             pose_buffer[i, 1] = agent.state[1]
             pose_buffer[i, 2] = agent.state[4]
+
+            verts = get_vertices(
+                pose_buffer[i],
+                self.params['length'],
+                self.params['width'],
+            )
+            verts_buffer_f64[i, :, :] = verts
+            verts_buffer_f32[i, :, :] = verts
 
             self.agent_poses[i, 0] = np.float32(agent.state[0])
             self.agent_poses[i, 1] = np.float32(agent.state[1])
@@ -236,15 +219,7 @@ class Simulator(object):
             np.copyto(self._scan_buffer[i], scan_row)
 
         # --- 2) agent-agent collisions (GJK)
-        for i in range(N):
-            verts = get_vertices(
-                pose_buffer[i],
-                self.params["length"],
-                self.params["width"],
-            )
-            self._verts_buffer_f64[i, :, :] = verts
-            self._verts_buffer_f32[i, :, :] = verts
-        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
+        col_flags, hit_idx = collision_multiple(verts_buffer_f64)
 
         # --- 3) opponent occlusions via LiDAR footprints, etc.
         if N > 1:

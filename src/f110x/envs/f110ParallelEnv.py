@@ -14,6 +14,7 @@ from f110x.envs.start_pose_state import StartPoseState
 from f110x.envs.collision import build_terminations
 from f110x.envs.state_buffer import StateBuffers
 from f110x.utils.centerline import progress_from_spacing
+from f110x.utils.config_schema import _default_vehicle_params
 
 
 # others
@@ -148,28 +149,17 @@ class F110ParallelEnv(ParallelEnv):
         self.map_path = (self.map_dir / f"{self.map_name}").resolve()
         self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
-        defaults = {'mu': 1.0489,
-                    'C_Sf': 4.718,
-                    'C_Sr': 5.4562,
-                    'lf': 0.15875,
-                    'lr': 0.17145,
-                    'h': 0.074,
-                    'm': 3.74,
-                    'I': 0.04712,
-                    's_min': -0.4189,
-                    's_max': 0.4189,
-                    'sv_min': -3.2,
-                    'sv_max': 3.2,
-                    'v_switch': 7.319,
-                    'a_max': 9.51,
-                    'v_min': -5.0,
-                    'v_max': 20.0,
-                    'width': 0.31,
-                    'length': 0.58}
+
+        base_vehicle_params = _default_vehicle_params()
         vehicle_params = merged.get("vehicle_params")
         if vehicle_params is None:
             vehicle_params = merged.get("params")
-        self.params = defaults if vehicle_params is None else {**defaults, **vehicle_params}
+        if vehicle_params is not None:
+            if not isinstance(vehicle_params, Mapping):
+                raise TypeError("env.vehicle_params must be a mapping")
+            overrides = {str(key): float(value) for key, value in vehicle_params.items()}
+            base_vehicle_params.update(overrides)
+        self.params = base_vehicle_params
         
         self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
