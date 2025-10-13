@@ -13,7 +13,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -26,7 +26,7 @@ else:
     os.environ["PYGLET_HEADLESS"] = "false" if _normalized in {"0", "false", "off"} else "true"
 
 from f110x.trainer import registry as trainer_registry
-from f110x.utils.config import load_config
+from f110x.utils.config import is_scenario_document, load_config
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -204,19 +204,12 @@ def resolve_config(
 
     resolved_path = resolved_path.resolve()
 
-    is_manifest = False
     try:
         with resolved_path.open("r", encoding="utf-8") as original:
-            doc = yaml.safe_load(original) or {}
-        if isinstance(doc, dict):
-            if "scenario" in doc:
-                is_manifest = True
-            elif "algorithms" in doc and "experiments" not in doc:
-                is_manifest = True
+            loaded = yaml.safe_load(original) or {}
     except Exception:
-        is_manifest = False
-
-    if is_manifest:
+        loaded = None
+    if isinstance(loaded, Mapping) and is_scenario_document(loaded):
         resolved_path = _materialize_config(cfg)
 
     return resolved_path, resolved_experiment
@@ -247,7 +240,8 @@ def _prune_option(args: List[str], option: str) -> List[str]:
 
 def _format_wandb_labels(
     algo: Optional[str],
-    cfg_path: Path,
+    config_name: str,
+    config_slug_base: str,
     experiment: Optional[str],
     run_idx: int,
     total: int,
@@ -258,15 +252,16 @@ def _format_wandb_labels(
     context = {
         "prefix": prefix,
         "algo": algo or "",
-        "config": cfg_path.name,
-        "config_stem": cfg_path.stem,
+        "config": config_name,
+        "config_stem": Path(config_name).stem,
         "experiment": experiment or "",
         "config_slug": "",
         "run_idx": run_idx,
         "total_runs": total,
     }
 
-    slug = f"{cfg_path.stem}-{experiment}" if experiment else cfg_path.stem
+    slug_base = config_slug_base or context["config_stem"]
+    slug = f"{slug_base}-{experiment}" if experiment else slug_base
     slug = slug.replace("/", "_").replace(" ", "_")
     context["config_slug"] = slug
 
@@ -573,6 +568,16 @@ def _prepare_spec_runs(
     group_template = str(spec.get("wandb_group_template", "{prefix}{config_slug}"))
     name_template = str(spec.get("wandb_name_template", "{group}-r{run_idx:02d}"))
 
+    if scenario_path is not None:
+        slug_source = Path(scenario_path)
+    elif cfg_override_path is not None:
+        slug_source = Path(cfg_override_path)
+    else:
+        slug_source = cfg_path
+    slug_source = Path(slug_source)
+    config_name = slug_source.name
+    config_slug_base = slug_source.stem
+
     requests: List[RunRequest] = []
     for run_idx, seed in enumerate(seeds, start=1):
         env_overrides = dict(base_env_overrides)
@@ -581,7 +586,8 @@ def _prepare_spec_runs(
         try:
             wandb_labels = _format_wandb_labels(
                 algo,
-                cfg_path,
+                config_name,
+                config_slug_base,
                 experiment_name,
                 run_idx,
                 run_count,

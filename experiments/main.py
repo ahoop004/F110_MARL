@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 _RENDER_FLAG = False
 _EP_OVERRIDE: Optional[int] = None
@@ -132,6 +132,7 @@ except ImportError:  # optional dependency
 
 import train as train_module
 import eval as eval_module
+from f110x.utils.config import resolve_active_config_block
 from f110x.utils.logger import ConsoleSink, Logger, WandbSink
 
 
@@ -161,6 +162,20 @@ def _seed_everything(seed: int) -> None:
         pass
 
 
+def _ensure_section(root: Dict[str, Any], key: str) -> Dict[str, Any]:
+    """Ensure ``root[key]`` is a mutable mapping and return it."""
+
+    section = root.get(key)
+    if isinstance(section, dict):
+        return section
+    if isinstance(section, Mapping):
+        section = dict(section)
+    else:
+        section = {}
+    root[key] = section
+    return section
+
+
 def _apply_run_seed(cfg: Dict[str, Any]) -> Optional[int]:
     """Override config seed from RUN_SEED environment variable if provided."""
 
@@ -174,9 +189,9 @@ def _apply_run_seed(cfg: Dict[str, Any]) -> Optional[int]:
         print(f"[WARN] Ignoring invalid RUN_SEED='{run_seed_value}'")
         return None
 
-    env_cfg = cfg.setdefault("env", {})
+    env_cfg = _ensure_section(cfg, "env")
     env_cfg["seed"] = seed
-    cfg.setdefault("main", {})["seed"] = seed
+    _ensure_section(cfg, "main")["seed"] = seed
     return seed
 
 
@@ -187,8 +202,8 @@ def _coerce_positive_int(value: Any, default: int) -> int:
         return default
     return coerced if coerced > 0 else default
 
-def _wandb_init(cfg, mode):
-    wandb_cfg = cfg.get("main", {}).get("wandb", {})
+def _wandb_init(cfg: Dict[str, Any], main_cfg: Dict[str, Any], mode: str):
+    wandb_cfg = main_cfg.get("wandb", {})
     enabled = wandb_cfg if isinstance(wandb_cfg, bool) else wandb_cfg.get("enabled", False)
     if not enabled or wandb is None:
         return None
@@ -277,7 +292,8 @@ def main():
         cfg_experiment = None
 
     config_dirty = False
-    env_cfg = cfg.setdefault("env", {})
+    active_cfg, _ = resolve_active_config_block(cfg)
+    env_cfg = _ensure_section(active_cfg, "env")
     if _MAP_OVERRIDE is not None:
         map_choice = _MAP_OVERRIDE.strip()
         if not map_choice:
@@ -287,20 +303,23 @@ def main():
         env_cfg["map_yaml"] = map_choice if Path(map_choice).suffix else f"{map_choice}.yaml"
         pending_logs.append(("info", "Using map override", {"map": map_choice}))
         config_dirty = True
-    run_seed = _apply_run_seed(cfg)
+    run_seed = _apply_run_seed(active_cfg)
     if run_seed is not None:
         config_dirty = True
         pending_logs.append(("info", "Using RUN_SEED", {"seed": run_seed}))
         _seed_everything(run_seed)
 
-    main_cfg = cfg.setdefault("main", {})
-    mode = main_cfg.get("mode", "train").lower()
-    wandb_run = _wandb_init(cfg, mode)
+    main_cfg = _ensure_section(active_cfg, "main")
+    mode = str(main_cfg.get("mode", "train")).lower()
+    wandb_run = _wandb_init(cfg, main_cfg, mode)
     if wandb_run is not None:
         overrides = wandb_run.config.as_dict()
         if overrides:
             _deep_update(cfg, overrides)
             config_dirty = True
+            active_cfg, _ = resolve_active_config_block(cfg)
+            main_cfg = _ensure_section(active_cfg, "main")
+            mode = str(main_cfg.get("mode", mode)).lower()
 
     tmp_cfg_path: Optional[Path] = None
     if config_dirty:
@@ -344,7 +363,7 @@ def main():
         try:
             if _RENDER_FLAG:
                 train_session.enable_render()
-            fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+            fallback_train = _coerce_positive_int(main_cfg.get("train_episodes"), 10)
             episodes = train_module.resolve_train_episodes(
                 train_session,
                 override=_EP_OVERRIDE,
@@ -375,7 +394,7 @@ def main():
         try:
             if _RENDER_FLAG:
                 eval_session.enable_render()
-            fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+            fallback_eval = _coerce_positive_int(main_cfg.get("eval_episodes"), 5)
             episodes = eval_module.resolve_eval_episodes(
                 eval_session,
                 override=_EVAL_EP_OVERRIDE,
@@ -401,7 +420,7 @@ def main():
         try:
             if _RENDER_FLAG:
                 train_session.enable_render()
-            fallback_train = _coerce_positive_int(cfg.get("main", {}).get("train_episodes"), 10)
+            fallback_train = _coerce_positive_int(main_cfg.get("train_episodes"), 10)
             train_episodes = train_module.resolve_train_episodes(
                 train_session,
                 override=_EP_OVERRIDE,
@@ -431,7 +450,7 @@ def main():
         try:
             if _RENDER_FLAG:
                 eval_session.enable_render()
-            fallback_eval = _coerce_positive_int(cfg.get("main", {}).get("eval_episodes"), 5)
+            fallback_eval = _coerce_positive_int(main_cfg.get("eval_episodes"), 5)
             eval_episodes = eval_module.resolve_eval_episodes(
                 eval_session,
                 override=_EVAL_EP_OVERRIDE,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import yaml
 
@@ -116,10 +116,43 @@ def load_config(
     return cfg, resolved_path, resolved_experiment
 
 
+def is_scenario_document(doc: Mapping[str, Any]) -> bool:
+    """Return True when the provided mapping represents a scenario manifest."""
+
+    if not isinstance(doc, Mapping):
+        return False
+
+    scenario_block = doc.get("scenario")
+    if isinstance(scenario_block, Mapping):
+        return True
+
+    if "algorithms" in doc and "experiments" not in doc:
+        return True
+    return False
+
+
+def resolve_active_config_block(doc: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+    """Return the configuration block that should receive runtime overrides."""
+
+    if not isinstance(doc, dict):
+        raise TypeError("Configuration document must be a mutable mapping")
+
+    scenario_block = doc.get("scenario")
+    if isinstance(scenario_block, Mapping):
+        if not isinstance(scenario_block, dict):
+            scenario_block = dict(scenario_block)
+            doc["scenario"] = scenario_block
+        return scenario_block, True
+
+    return doc, False
+
+
 __all__ = [
     "DEFAULT_ENV_CONFIG_KEY",
     "DEFAULT_ENV_EXPERIMENT_KEY",
+    "is_scenario_document",
     "load_config",
     "resolve_config_path",
+    "resolve_active_config_block",
     "resolve_experiment_name",
 ]
