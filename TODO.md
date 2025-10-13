@@ -14,6 +14,9 @@
   - [ ] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
 - [x] Move task/reward/algorithm configuration under each agent declaration.
 - [x] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
+- [ ] Extract shared policy network utilities (MLP builders, target updates, tanh-squash helpers) and migrate TD3/SAC/PPO to them with multi-agent-ready hooks.
+- [ ] Introduce a multi-agent trainer base that consolidates off-policy adapters while preserving agent-specific extras (e.g. epsilon reporting).
+- [ ] Consolidate config loading/coercion into a single schema path that already understands multi-agent metadata.
 
 ##  Observation Pipeline & Telemetry
 
