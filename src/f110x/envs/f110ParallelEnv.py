@@ -158,9 +158,19 @@ class F110ParallelEnv(ParallelEnv):
         self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
         mode = (self.render_mode or "").lower()
         self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
-        self.centerline_render_enabled = bool(cfg.get("centerline_render", True))
-        self._centerline_feature_requested = bool(cfg.get("centerline_features", True))
+
+        render_cfg = cfg.get("centerline_render")
+        features_cfg = cfg.get("centerline_features")
+        autoload_cfg = cfg.get("centerline_autoload")
+
+        self._centerline_render_auto = render_cfg is None
+        self._centerline_feature_auto = features_cfg is None
+        self._centerline_autoload_auto = autoload_cfg is None
+
+        self.centerline_render_enabled = bool(render_cfg) if render_cfg is not None else False
+        self._centerline_feature_requested = bool(features_cfg) if features_cfg is not None else False
         self.centerline_features_enabled = self._centerline_feature_requested
+
         self.centerline_points: Optional[np.ndarray] = None
         self.centerline_path: Optional[Path] = None
         self.centerline_render_progress = self._normalize_progress_fractions(
@@ -567,6 +577,19 @@ class F110ParallelEnv(ParallelEnv):
             )
         else:
             self.renderer.update_centerline(None)
+
+    def register_centerline_usage(self, *, require_render: bool = False, require_features: bool = False) -> None:
+        changed = False
+        if require_features and self._centerline_feature_auto and not self.centerline_features_enabled:
+            self.centerline_features_enabled = True
+            self._centerline_feature_requested = True
+            changed = True
+        if require_render and self._centerline_render_auto and not self.centerline_render_enabled:
+            self.centerline_render_enabled = True
+            changed = True
+        if changed:
+            self._render_centerline_points = self._build_render_centerline_points()
+            self._update_renderer_centerline()
 
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
         if centerline is not None:

@@ -9,13 +9,8 @@ scenario:
     # vehicle_params:
     #   v_min: -2.0
     #   v_max: 10.0
-    map_dir: maps
-    map_yaml: shanghai/Shanghai_map.yaml
-    map: shanghai/Shanghai_map.yaml
-    map_ext: .png
-    centerline_autoload: true
-    centerline_render: true
-    centerline_features: true
+    map: Shanghai_map
+
     # render_mode: human
     update: 2
     terminate_on_any_done: true
@@ -73,7 +68,7 @@ scenario:
       target_update_interval: 500
       epsilon_start: .9980
       epsilon_end: 0.05
-      epsilon_decay_rate: 0.995
+      epsilon_decay_rate: 0.996
       hidden_dims:
       - 256
       - 256

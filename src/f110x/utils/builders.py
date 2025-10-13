@@ -472,15 +472,32 @@ def _build_obs_wrapper(
     if "lidar_beams" not in params and env_lidar:
         params["lidar_beams"] = int(env_lidar)
 
+    def _requests_centerline(data: Dict[str, Any]) -> bool:
+        components = data.get("components")
+        if isinstance(components, list):
+            for entry in components:
+                if not isinstance(entry, dict):
+                    continue
+                comp_type = str(entry.get("type") or "").lower()
+                comp_id = str(entry.get("id") or "").lower()
+                if comp_type == "centerline" or comp_id == "centerline":
+                    return True
+        if any(key in data for key in ("centerline", "centerline_features")):
+            return True
+        return False
+
+    wrapper_requests_centerline = _requests_centerline(params)
+
     # Centerline-aware features
     centerline_points = ctx.map_data.centerline
     use_centerline = params.pop("use_centerline_features", None)
     if use_centerline is None:
-        use_centerline = ctx.env.centerline_features_enabled
+        use_centerline = ctx.env.centerline_features_enabled or wrapper_requests_centerline
     use_centerline = bool(use_centerline)
     if use_centerline and centerline_points is not None:
         params.setdefault("centerline", centerline_points)
         params.setdefault("centerline_features", True)
+        ctx.env.register_centerline_usage(require_features=True)
     else:
         params.setdefault("centerline_features", False)
 
@@ -922,6 +939,9 @@ def _build_algo_centerline(
         controller = CenterlinePursuitPolicy(centerline=centerline_points, **kwargs)
     else:
         controller = FunctionPolicy(simple_heuristic, name="centerline")
+
+    if centerline_points is not None:
+        ctx.env.register_centerline_usage(require_features=True, require_render=True)
     return AgentBundle(
         assignment=assignment,
         algo="centerline",

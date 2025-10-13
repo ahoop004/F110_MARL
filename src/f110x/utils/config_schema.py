@@ -163,6 +163,7 @@ class EnvSchema(BaseSchema):
     render_interval: int = 0
     update: int = 1
     map_dir: str = "maps"
+    map_bundle: Optional[str] = None
     map_yaml: Optional[str] = None
     map: Optional[str] = None
     map_ext: str = ".png"

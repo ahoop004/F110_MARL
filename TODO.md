@@ -8,6 +8,12 @@
 - [x] Pull shared collision handling into a single simulator helper to remove duplicate buffer work.
 - [x] Make map loading idempotent by caching the `RaceCar.scan_simulator` map per asset.
 - [x] Centralise centerline renderer updates in a helper shared by `reset` and `set_centerline`.
+- [x] Collapse map configuration down to a single bundle identifier and derive paths/exts from it.
+- [x] Auto-toggle centerline features/rendering based on whether any agent uses centerline inputs.
+- [ ] Add a random spawn toggle that samples start poses from map annotations.
+  - [ ] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
+- [ ] Move task/reward/algorithm configuration under each agent declaration.
+- [ ] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
 
 ##  Observation Pipeline & Telemetry
 

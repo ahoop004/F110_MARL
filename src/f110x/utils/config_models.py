@@ -78,6 +78,7 @@ class AgentSpecConfig:
     trainable: Optional[bool] = None
     target_roles: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    reward: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentSpecConfig":
@@ -85,8 +86,6 @@ class AgentSpecConfig:
             raise TypeError(f"Agent spec must be a mapping, received {type(data)!r}")
 
         wrappers = [AgentWrapperSpec.from_dict(wrapper) for wrapper in _coerce_sequence(data.get("wrappers"), name="Agent 'wrappers'")]
-
-        params = _coerce_mapping(data.get("params"), name="Agent params")
 
         target_roles_list = _normalize_string_list(data.get("target_roles"), name="Agent target_roles")
 
@@ -102,12 +101,36 @@ class AgentSpecConfig:
 
         metadata = _coerce_mapping(data.get("metadata"), name="Agent metadata")
 
+        reward_cfg = _coerce_mapping(data.get("reward"), name="Agent reward config")
+
+        algo_section = data.get("algorithm")
+        params = {}
+        config_ref = data.get("config_ref")
+
         algo = data.get("algo")
+        if algo_section is not None:
+            if not isinstance(algo_section, Mapping):
+                raise TypeError("Agent 'algorithm' section must be a mapping")
+            algo_map = dict(algo_section)
+            algo_params = _coerce_mapping(algo_map.get("params"), name="Agent algorithm params")
+            if algo_params:
+                params.update(algo_params)
+            candidate_name = algo_map.get("name") or algo_map.get("algo") or algo_map.get("type")
+            if candidate_name:
+                algo = candidate_name
+            elif not algo and "architecture" in params:
+                algo = params.get("architecture")
+            if "config_ref" in algo_map:
+                config_ref = algo_map.get("config_ref")
+
+        params.update(_coerce_mapping(data.get("params"), name="Agent params"))
+
         if not algo:
-            raise ValueError("Agent spec requires an 'algo' key")
+            raise ValueError("Agent spec requires an algorithm identifier ('algo' or algorithm.name)")
+
         agent_id = _normalize_string(data.get("agent_id"))
         role = _normalize_string(data.get("role"))
-        config_ref = _normalize_string(data.get("config_ref"))
+        config_ref = _normalize_string(config_ref)
 
         return cls(
             algo=str(algo),
@@ -120,6 +143,7 @@ class AgentSpecConfig:
             trainable=trainable,
             target_roles=target_roles_list,
             metadata=dict(metadata),
+            reward=dict(reward_cfg),
         )
 
 
@@ -133,7 +157,16 @@ class AgentRosterConfig:
             return cls([])
 
         if isinstance(data, dict):
-            roster_raw = data.get("roster") or data.get("agents") or []
+            if "roster" in data or "agents" in data:
+                roster_raw = data.get("roster") or data.get("agents") or []
+            else:
+                roster_raw = []
+                for agent_id, spec in data.items():
+                    if not isinstance(spec, Mapping):
+                        raise TypeError("Agent definition must be a mapping")
+                    entry = dict(spec)
+                    entry.setdefault("agent_id", agent_id)
+                    roster_raw.append(entry)
         elif isinstance(data, list):
             roster_raw = data
         else:
@@ -385,6 +418,13 @@ class ExperimentConfig:
         else:
             agents = AgentRosterConfig.legacy_default(data_map)
 
+        reward_section = data_map.get("reward")
+        if not reward_section:
+            for spec in agents.roster:
+                if spec.reward:
+                    reward_section = spec.reward
+                    break
+
         return cls(
             env=EnvConfig.from_dict(data_map.get("env", {})),
             ppo=PPOConfig.from_dict(data_map.get("ppo", {})),
@@ -392,7 +432,7 @@ class ExperimentConfig:
             td3=TD3Config.from_dict(data_map.get("td3", {})),
             sac=SACConfig.from_dict(data_map.get("sac", {})),
             dqn=DQNConfig.from_dict(data_map.get("dqn", {})),
-            reward=RewardConfig.from_dict(data_map.get("reward", {})),
+            reward=RewardConfig.from_dict(reward_section or {}),
             main=MainConfig.from_dict(data_map.get("main", {})),
             agents=agents,
             ppo_agent_idx=int(data_map.get("ppo_agent_idx", 0)),
