@@ -13,7 +13,21 @@ from f110x.utils.centerline import (
     project_to_centerline,
 )
 
-from .base import RewardRuntimeContext, RewardStep, RewardStrategy
+from .base import PerAgentStateMixin, RewardRuntimeContext, RewardStep, RewardStrategy
+from .components import (
+    RewardAccumulator,
+    apply_collision_penalty,
+    apply_heading_penalty,
+    apply_idle_penalty,
+    apply_lap_completion_bonus,
+    apply_lateral_penalty,
+    apply_milestone_bonus,
+    apply_progress,
+    apply_reverse_penalty,
+    apply_speed_bonus,
+    apply_truncation_penalty,
+    apply_waypoint_bonus,
+)
 from .registry import RewardTaskConfig, RewardTaskRegistry, RewardTaskSpec, register_reward_task
 
 
@@ -73,7 +87,7 @@ class ProgressAgentState:
     last_speed: float = 0.0
 
 
-class ProgressRewardStrategy(RewardStrategy):
+class ProgressRewardStrategy(PerAgentStateMixin, RewardStrategy):
     name = "progress"
 
     def __init__(
@@ -97,6 +111,7 @@ class ProgressRewardStrategy(RewardStrategy):
         milestone_spacing: float = 0.0,
         milestone_bonus: float = 0.0,
     ) -> None:
+        PerAgentStateMixin.__init__(self, ProgressAgentState)
         self.centerline = None if centerline is None else np.asarray(centerline, dtype=np.float32)
         self.progress_weight = float(progress_weight)
         self.speed_weight = float(speed_weight)
@@ -147,10 +162,6 @@ class ProgressRewardStrategy(RewardStrategy):
                 processed.extend(spacing_targets)
         milestone_targets = tuple(sorted(set(processed)))
         self._milestone_targets = milestone_targets
-        self._agent_state: Dict[str, ProgressAgentState] = {}
-
-    def reset(self, episode_index: int) -> None:
-        self._agent_state.clear()
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         if self.centerline is None or self.centerline.size == 0:
@@ -163,7 +174,7 @@ class ProgressRewardStrategy(RewardStrategy):
         position = np.asarray(pose[:2], dtype=np.float32)
         heading = float(pose[2])
 
-        state = self._agent_state.setdefault(step.agent_id, ProgressAgentState())
+        state = self.state_for(step.agent_id)
         last_idx = state.last_index
         try:
             projection = project_to_centerline(
@@ -188,129 +199,92 @@ class ProgressRewardStrategy(RewardStrategy):
         state.last_progress = progress
         state.has_progress = True
 
-        reward = 0.0
-        components: Dict[str, float] = {}
+        acc = RewardAccumulator()
 
         if delta:
-            progress_term = self.progress_weight * delta
-            reward += progress_term
-            components["progress"] = progress_term
+            apply_progress(acc, delta, self.progress_weight)
 
         increment = delta if delta > 0.0 else 0.0
         state.lap_progress += increment
-        lap_progress = state.lap_progress
-
-        if self.lap_completion_bonus:
-            lap_reward = 0.0
-            next_threshold = float(state.laps_rewarded + 1)
-            while lap_progress >= next_threshold:
-                lap_reward += self.lap_completion_bonus
-                state.laps_rewarded += 1
-                next_threshold = float(state.laps_rewarded + 1)
-            if lap_reward:
-                reward += lap_reward
-                components["lap_completion_bonus"] = (
-                    components.get("lap_completion_bonus", 0.0) + lap_reward
-                )
+        state.laps_rewarded = apply_lap_completion_bonus(
+            acc,
+            lap_progress=state.lap_progress,
+            laps_rewarded=state.laps_rewarded,
+            bonus=self.lap_completion_bonus,
+        )
 
         if self.milestone_bonus and self._milestone_targets:
-            total_laps = int(np.floor(lap_progress))
-            lap_fraction = lap_progress - float(total_laps)
-            if total_laps > state.milestone_lap:
-                state.milestone_lap = total_laps
-                state.milestone_idx = 0
-            milestone_reward = 0.0
-            targets = self._milestone_targets
-            while state.milestone_idx < len(targets) and lap_fraction >= targets[state.milestone_idx]:
-                milestone_reward += self.milestone_bonus
-                state.milestone_idx += 1
-            if milestone_reward:
-                reward += milestone_reward
-                components["milestone_bonus"] = (
-                    components.get("milestone_bonus", 0.0) + milestone_reward
-                )
+            state.milestone_lap, state.milestone_idx = apply_milestone_bonus(
+                acc,
+                lap_progress=state.lap_progress,
+                milestone_state=(state.milestone_lap, state.milestone_idx),
+                targets=self._milestone_targets,
+                bonus=self.milestone_bonus,
+            )
 
         if self.waypoint_bonus and self._waypoint_step > 0.0:
             state.cumulative_progress += increment
-            cumulative = state.cumulative_progress
-
-            next_threshold = state.next_waypoint_progress or self._waypoint_step
-            bonuses = 0
-            while cumulative >= next_threshold:
-                bonuses += 1
-                next_threshold += self._waypoint_step
-            if bonuses:
-                waypoint_reward = self.waypoint_bonus * bonuses
-                reward += waypoint_reward
-                components["waypoint_bonus"] = components.get("waypoint_bonus", 0.0) + waypoint_reward
-            state.next_waypoint_progress = next_threshold
+            state.next_waypoint_progress = apply_waypoint_bonus(
+                acc,
+                cumulative_progress=state.cumulative_progress,
+                next_threshold=state.next_waypoint_progress,
+                step=self._waypoint_step,
+                bonus=self.waypoint_bonus,
+            )
 
         velocity = np.asarray(step.obs.get("velocity", (0.0, 0.0)), dtype=np.float32)
         speed = float(np.linalg.norm(velocity))
 
         if self.speed_weight:
-            speed_term = self.speed_weight * speed * step.timestep
-            if speed_term:
-                reward += speed_term
-                components["speed"] = speed_term
+            apply_speed_bonus(acc, speed, step.timestep, self.speed_weight)
 
         if self.lateral_penalty:
-            penalty = -abs(projection.lateral_error) * self.lateral_penalty
-            if penalty:
-                reward += penalty
-                components["lateral_penalty"] = penalty
+            apply_lateral_penalty(acc, projection.lateral_error, self.lateral_penalty)
 
         if self.heading_penalty:
-            penalty = -abs(projection.heading_error) * self.heading_penalty
-            if penalty:
-                reward += penalty
-                components["heading_penalty"] = penalty
+            apply_heading_penalty(acc, projection.heading_error, self.heading_penalty)
 
-        if self.reverse_penalty and delta < 0.0:
-            reverse_term = -self.reverse_penalty * abs(delta)
-            if reverse_term:
-                reward += reverse_term
-                components["reverse_penalty"] = (
-                    components.get("reverse_penalty", 0.0) + reverse_term
-                )
+        if self.reverse_penalty:
+            apply_reverse_penalty(acc, delta, self.reverse_penalty)
 
         if self.idle_penalty:
-            speed = float(speed)
             if speed < 0.1:
                 state.idle_counter += 1
             else:
                 state.idle_counter = 0
             state.last_speed = speed
-            threshold = self.idle_penalty_steps if self.idle_penalty_steps > 0 else 1
-            if state.idle_counter >= threshold:
-                idle_term = -self.idle_penalty
-                reward += idle_term
-                components["idle_penalty"] = components.get("idle_penalty", 0.0) + idle_term
+            apply_idle_penalty(
+                acc,
+                idle_counter=state.idle_counter,
+                threshold=self.idle_penalty_steps,
+                penalty=self.idle_penalty,
+            )
 
         if self.collision_penalty:
-            collision_flag = bool(step.obs.get("collision", False))
+            collision_flag = bool(step.events.get("collision")) if step.events else False
+            if not collision_flag:
+                collision_flag = bool(step.obs.get("collision", False))
             if not collision_flag and step.info and "collision" in step.info:
                 collision_flag = bool(step.info.get("collision", False))
-            if collision_flag and not state.collision_applied:
-                reward += self.collision_penalty
-                components["collision_penalty"] = (
-                    components.get("collision_penalty", 0.0) + self.collision_penalty
-                )
-                state.collision_applied = True
-
-        if (
-            self.truncation_penalty
-            and step.info
-            and bool(step.info.get("truncated", False))
-            and not state.truncation_applied
-        ):
-            reward += self.truncation_penalty
-            components["truncation_penalty"] = (
-                components.get("truncation_penalty", 0.0) + self.truncation_penalty
+            state.collision_applied = apply_collision_penalty(
+                acc,
+                collided=collision_flag,
+                already_applied=state.collision_applied,
+                penalty=self.collision_penalty,
             )
-            state.truncation_applied = True
 
-        return reward, components
+        if self.truncation_penalty:
+            truncated_flag = bool(step.events.get("truncated")) if step.events else False
+            if not truncated_flag and step.info:
+                truncated_flag = bool(step.info.get("truncated", False))
+            state.truncation_applied = apply_truncation_penalty(
+                acc,
+                truncated=truncated_flag,
+                already_applied=state.truncation_applied,
+                penalty=self.truncation_penalty,
+            )
+
+        return acc.total, dict(acc.components)
 
 
 def _build_progress_strategy(

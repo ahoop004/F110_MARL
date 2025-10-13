@@ -86,6 +86,12 @@
 - [ ] Evaluation metrics expansion.
   - [ ] Log per-episode progress, fastest lap time, and centerline error statistics.
   - [ ] Surface metrics in eval summaries and W&B reporting.
+- [ ] Generalise reward building blocks.
+  - [x] Break common reward primitives (progress, collision penalty, waypoint bonus, idle penalty) into reusable components.
+  - [x] Move shared per-agent state/curriculum plumbing into `reward/base` mixins or helpers.
+  - [x] Define a shared reward knob schema/preset catalog so strategies can opt into standard features.
+  - [x] Extend reward scaling utilities into an opt-in pipeline (decay, clip, smoothing, weighting).
+  - [x] Have runners emit normalised reward events (lap completion, crashes, idle) so tasks subscribe instead of reimplementing detection.
 
 ## Experiment Templates & Baselines
 
@@ -106,4 +112,3 @@
 - [ ] Replace the per-agent dict state in `ProgressRewardStrategy` with an explicit state dataclass to cut repeated lookups.
 - [x] Extend replay buffers to store discrete `action_index` values so DQN can avoid storing full action vectors and argmin fallbacks.
 - [ ] Consolidate scenario manifests (e.g., Shanghai progress/gaplock) via YAML anchors or base manifests to eliminate repeated blocks.
-

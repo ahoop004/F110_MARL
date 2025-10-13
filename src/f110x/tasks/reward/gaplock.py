@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from f110x.utils.reward_utils import ScalingParams, apply_reward_scaling
 
 from .base import RewardRuntimeContext, RewardStep, RewardStrategy
+from .components import RewardAccumulator
 from .registry import RewardTaskConfig, RewardTaskRegistry, RewardTaskSpec, register_reward_task
 
 
@@ -87,42 +88,34 @@ class GaplockRewardStrategy(RewardStrategy):
         return False
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
-        components: Dict[str, float] = {}
-        shaped = 0.0
+        acc = RewardAccumulator()
 
         env_reward = float(step.env_reward)
         if env_reward:
-            components["env_reward"] = env_reward
+            acc.add("env_reward", env_reward)
 
         ego_obs = step.obs
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
 
         if ego_crashed and self.self_collision_penalty:
-            shaped += self.self_collision_penalty
-            components["self_collision_penalty"] = (
-                components.get("self_collision_penalty", 0.0) + self.self_collision_penalty
-            )
+            acc.add("self_collision_penalty", self.self_collision_penalty)
 
         if target_obs is not None:
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
                 target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
                 if not self.success_once or not self._has_awarded(step.agent_id, target_id):
-                    shaped += self.target_crash_reward
-                    components["success_reward"] = (
-                        components.get("success_reward", 0.0) + self.target_crash_reward
-                    )
+                    acc.add("success_reward", self.target_crash_reward)
 
-        truncated = bool(step.info.get("truncated", False)) if isinstance(step.info, dict) else False
+        truncated = bool(step.events.get("truncated")) if step.events else False
+        if not truncated and isinstance(step.info, dict):
+            truncated = bool(step.info.get("truncated", False))
         if truncated and self.truncation_penalty:
-            shaped += self.truncation_penalty
-            components["truncation_penalty"] = (
-                components.get("truncation_penalty", 0.0) + self.truncation_penalty
-            )
+            acc.add("truncation_penalty", self.truncation_penalty)
 
-        shaped, components = apply_reward_scaling(shaped, components, self.scaling_params)
-        return shaped, components
+        total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
+        return total, components
 
 
 def _normalise_role_members(roster: Any) -> Dict[str, List[str]]:

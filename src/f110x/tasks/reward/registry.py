@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .base import RewardRuntimeContext, RewardStrategy
+from .presets import resolve_reward_presets
 
 
 RewardTaskConfig = Dict[str, Any]
@@ -155,6 +156,18 @@ def migrate_reward_config(
 
     spec = registry.get(canonical_task)
     params = _merge_params(spec, config)
+
+    feature_defs = config.get("features")
+    if feature_defs is not None:
+        if isinstance(feature_defs, (list, tuple, set)):
+            feature_iter = feature_defs
+        else:
+            feature_iter = [feature_defs]
+        preset_params, preset_notes = resolve_reward_presets(feature_iter)
+        merged_params = dict(preset_params)
+        merged_params.update(params)
+        params = merged_params
+        notes.extend(preset_notes)
 
     components: Dict[str, Any] = {}
     raw_components = config.get("components")

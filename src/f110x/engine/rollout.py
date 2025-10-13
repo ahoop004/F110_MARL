@@ -324,6 +324,7 @@ def run_episode(
         steps += 1
 
         idle_triggered = False
+        step_events_map: Dict[str, Dict[str, Any]] = {aid: {} for aid in agent_order}
 
         for idx, agent_id in enumerate(agent_order):
             agent_info = infos.setdefault(agent_id, {})
@@ -331,6 +332,10 @@ def run_episode(
                 agent_info["terminated"] = bool(terms.get(agent_id, False))
             if "truncated" not in agent_info:
                 agent_info["truncated"] = bool(truncs.get(agent_id, False))
+            if terms.get(agent_id, False):
+                step_events_map[agent_id]["terminated"] = True
+            if truncs.get(agent_id, False):
+                step_events_map[agent_id]["truncated"] = True
 
             velocity = next_obs.get(agent_id, {}).get("velocity")
             if velocity is None:
@@ -349,6 +354,9 @@ def run_episode(
                 truncs[agent_id] = True
                 agent_info = infos.setdefault(agent_id, {})
                 agent_info["truncated"] = True
+                event_entry = step_events_map.setdefault(agent_id, {})
+                event_entry["idle_triggered"] = True
+                event_entry["truncated"] = True
 
         step_component_snapshots: Dict[str, Dict[str, float]] = {}
         for idx, agent_id in enumerate(agent_order):
@@ -362,6 +370,7 @@ def run_episode(
                     info=infos.get(agent_id, {}),
                     all_obs=next_obs,
                     step_index=steps,
+                    events=step_events_map.get(agent_id),
                 )
             shaped_value = float(base_reward)
             shaped_rewards[idx] = shaped_value
@@ -420,6 +429,8 @@ def run_episode(
                     if collision_step_array[idx] < 0:
                         collision_step_array[idx] = steps
                 collision_flags[idx] = True
+                event_entry = step_events_map.setdefault(agent_id, {})
+                event_entry["collision"] = True
             agent_info = infos.setdefault(agent_id, {})
             existing_collision = bool(agent_info.get("collision", False))
             agent_info["collision"] = existing_collision or collided
@@ -475,6 +486,8 @@ def run_episode(
             done_flag = bool(terms.get(agent_id, False) or truncs.get(agent_id, False) or collision_flags[idx])
             done_flags[idx] = done_flag
             done_map[agent_id] = done_flag
+            if done_flag:
+                step_events_map.setdefault(agent_id, {})["done"] = True
 
         if terminate_any_done and done_flags.any():
             for agent_id in agent_order:
@@ -482,9 +495,11 @@ def run_episode(
                     truncs[agent_id] = True
                     agent_info = infos.setdefault(agent_id, {})
                     agent_info["truncated"] = True
+                    step_events_map.setdefault(agent_id, {})["truncated"] = True
             done_flags[:] = True
             for agent_id in env.possible_agents:
                 done_map[agent_id] = True
+                step_events_map.setdefault(agent_id, {})["done"] = True
             if "any_done" not in causes:
                 causes.append("any_done")
             break

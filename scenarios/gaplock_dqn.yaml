@@ -41,14 +41,14 @@ scenario:
     mode: train_eval
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
-    train_episodes: 100
+    train_episodes: 1000
     eval_episodes: 1
-    checkpoint: checkpoints/dqn_gaplock.pt
+    checkpoint: checkpoints/dqn_gaplock/dqn_gaplock.pt
   algorithms:
     dqn:
       device: cpu
       lr: 0.0004
-      gamma: 0.99
+      gamma: 0.995
       batch_size: 512
       buffer_size: 200000
       target_update_interval: 500
@@ -69,7 +69,7 @@ scenario:
       accel_rate: 5.0
       brake_rate: 3.0
       rate_initial_speed: 2.0
-      train_episodes: 100
+      train_episodes: 1000
       eval_episodes: 1
       save_dir: checkpoints/dqn_gaplock
       checkpoint_name: dqn_gaplock.pt

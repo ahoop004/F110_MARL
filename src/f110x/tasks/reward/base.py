@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers only
@@ -38,6 +38,7 @@ class RewardStep:
     step_index: int
     current_time: float
     timestep: float
+    events: Dict[str, Any] = field(default_factory=dict)
 
 
 class RewardStrategy:
@@ -52,7 +53,24 @@ class RewardStrategy:
         raise NotImplementedError
 
 
+class PerAgentStateMixin(RewardStrategy):
+    """Mixin that manages per-agent state dictionaries for reward strategies."""
+
+    def __init__(self, state_factory: Callable[[], Any], *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._state_factory: Callable[[], Any] = state_factory
+        self._agent_state: Dict[str, Any] = {}
+
+    def reset(self, episode_index: int) -> None:
+        self._agent_state.clear()
+        super().reset(episode_index)
+
+    def state_for(self, agent_id: str) -> Any:
+        return self._agent_state.setdefault(agent_id, self._state_factory())
+
+
 __all__ = [
+    "PerAgentStateMixin",
     "RewardComponents",
     "RewardComputation",
     "RewardRuntimeContext",

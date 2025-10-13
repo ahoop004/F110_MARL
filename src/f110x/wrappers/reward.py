@@ -58,6 +58,7 @@ class RewardWrapper:
         info: Optional[Dict[str, Any]],
         all_obs: Optional[Dict[str, Dict[str, Any]]] = None,
         step_index: Optional[int] = None,
+        events: Optional[Dict[str, Any]] = None,
     ) -> float:
         agent_obs = obs.get(agent_id)
         if agent_obs is None:
@@ -80,6 +81,7 @@ class RewardWrapper:
             step_index=effective_step,
             current_time=current_time,
             timestep=timestep,
+            events=dict(events or {}),
         )
 
         total_reward, components = self.strategy.compute(step)

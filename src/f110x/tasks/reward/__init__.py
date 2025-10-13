@@ -1,6 +1,7 @@
 """Reward task registry and built-in strategies."""
 
-from .base import RewardRuntimeContext, RewardStep, RewardStrategy
+from .base import PerAgentStateMixin, RewardRuntimeContext, RewardStep, RewardStrategy
+from .components import RewardAccumulator
 from .registry import (
     RewardTaskConfig,
     RewardTaskFactory,
@@ -11,6 +12,7 @@ from .registry import (
     resolve_reward_task,
     reward_task_registry,
 )
+from .presets import REWARD_FEATURE_PRESETS
 
 # Ensure built-in tasks are registered
 from . import composite as _composite  # noqa: F401
@@ -29,6 +31,8 @@ __all__ = [
     "FastestLapRewardStrategy",
     "GaplockRewardStrategy",
     "ProgressRewardStrategy",
+    "PerAgentStateMixin",
+    "RewardAccumulator",
     "RewardRuntimeContext",
     "RewardStep",
     "RewardStrategy",
@@ -41,3 +45,4 @@ __all__ = [
     "resolve_reward_task",
     "reward_task_registry",
 ]
+    "REWARD_FEATURE_PRESETS",
