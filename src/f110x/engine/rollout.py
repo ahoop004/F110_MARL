@@ -303,6 +303,7 @@ def run_episode(
         reward_share_agents = {str(agent_id) for agent_id in reward_share_agents}
 
     idle_tracker.reset()
+    terminate_any_done = bool(getattr(env, "terminate_on_any_done", False))
     steps = 0
     terms: Dict[str, bool] = {}
     truncs: Dict[str, bool] = {}
@@ -474,6 +475,19 @@ def run_episode(
             done_flag = bool(terms.get(agent_id, False) or truncs.get(agent_id, False) or collision_flags[idx])
             done_flags[idx] = done_flag
             done_map[agent_id] = done_flag
+
+        if terminate_any_done and done_flags.any():
+            for agent_id in agent_order:
+                if not terms.get(agent_id, False) and not truncs.get(agent_id, False):
+                    truncs[agent_id] = True
+                    agent_info = infos.setdefault(agent_id, {})
+                    agent_info["truncated"] = True
+            done_flags[:] = True
+            for agent_id in env.possible_agents:
+                done_map[agent_id] = True
+            if "any_done" not in causes:
+                causes.append("any_done")
+            break
 
         obs = next_obs
 

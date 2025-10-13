@@ -4,18 +4,17 @@ from __future__ import annotations
 import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from f110x.engine.reward import build_reward_wrapper
 from f110x.engine.rollout import IdleTerminationTracker, collect_trajectory, run_episode
 from f110x.runner.context import RunnerContext
+from f110x.runner.rollout_helpers import build_rollout_hooks
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
 from f110x.utils.logger import Logger
 from f110x.utils.output import resolve_output_dir, resolve_output_file
-from f110x.utils.start_pose import reset_with_start_poses
 
 
 @dataclass
@@ -155,21 +154,16 @@ class EvalRunner:
         idle_tracker = IdleTerminationTracker(0.0, 0)
         reward_sharing_cfg = self.context.reward_cfg.get("shared_reward")
 
-        def reward_factory(ep_index: int):
-            return build_reward_wrapper(
-                self.context.reward_cfg,
-                env=env,
-                map_data=self.context.map_data,
-                episode_idx=ep_index,
-                curriculum=self.context.curriculum_schedule,
-                roster=team.roster,
-            )
-
-        def compute_actions(obs: Dict[str, Any], done: Dict[str, bool]):
-            return self._compute_actions(team, obs, done, deterministic=True)
-
-        def prepare_next(agent_id: str, next_obs: Dict[str, Any], infos: Dict[str, Any]):
-            return self._prepare_next_observation(agent_id, next_obs, infos)
+        hooks = build_rollout_hooks(
+            self.context,
+            team,
+            env,
+            deterministic=True,
+        )
+        reward_factory = hooks.reward_factory
+        compute_actions = hooks.compute_actions
+        prepare_next = hooks.prepare_next_observation
+        reset_env = hooks.reset_fn
 
         save_rollouts_flag = self.save_rollouts_default if save_rollouts is None else bool(save_rollouts)
         rollout_dir_path = self._ensure_rollout_dir(rollout_dir) if rollout_dir else self.rollout_dir
@@ -180,15 +174,6 @@ class EvalRunner:
 
         for ep_index in range(int(episodes)):
             trace_buffer: Optional[List[Any]] = [] if save_rollouts_flag and rollout_dir_path else None
-
-            def reset_env():
-                return reset_with_start_poses(
-                    env,
-                    self.context.start_pose_options,
-                    back_gap=self.context.start_pose_back_gap,
-                    min_spacing=self.context.start_pose_min_spacing,
-                    map_data=self.context.map_data,
-                )
 
             if render_enabled:
                 def render_condition(_episode: int, _step: int) -> bool:
@@ -398,79 +383,6 @@ class EvalRunner:
             return resolve_output_dir(str(path), self.context.output_root)
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def _compute_actions(
-        self,
-        team: AgentTeam,
-        obs: Dict[str, Any],
-        done: Dict[str, bool],
-        *,
-        deterministic: bool,
-    ) -> Tuple[Dict[str, Any], Dict[str, np.ndarray], Dict[str, Dict[str, Any]]]:
-        actions: Dict[str, Any] = {}
-        processed_obs: Dict[str, np.ndarray] = {}
-        controller_infos: Dict[str, Dict[str, Any]] = {}
-
-        for bundle in team.agents:
-            agent_id = bundle.agent_id
-            if done.get(agent_id, False):
-                continue
-            if agent_id not in obs:
-                continue
-
-            controller = bundle.controller
-            if bundle.trainer is not None:
-                observation = team.observation(agent_id, obs)
-                processed_obs[agent_id] = np.asarray(observation, dtype=np.float32)
-                action_raw = bundle.trainer.select_action(observation, deterministic=deterministic)
-                action_value, wrapper_meta = team.action(agent_id, action_raw, return_info=True)
-                actions[agent_id] = action_value
-
-                meta_index: Optional[int] = None
-                if wrapper_meta and "action_index" in wrapper_meta:
-                    try:
-                        meta_index = int(wrapper_meta["action_index"])
-                    except (TypeError, ValueError):
-                        meta_index = None
-                elif np.isscalar(action_raw) or (
-                    isinstance(action_raw, np.ndarray) and action_raw.ndim == 0
-                ):
-                    try:
-                        meta_index = int(np.asarray(action_raw).item())
-                    except (TypeError, ValueError):
-                        meta_index = None
-
-                if meta_index is not None:
-                    controller_infos[agent_id] = {"action_index": meta_index}
-            elif hasattr(controller, "get_action"):
-                action_space = team.env.action_space(agent_id)
-                action = controller.get_action(action_space, obs[agent_id])
-                actions[agent_id] = team.action(agent_id, action)
-            elif hasattr(controller, "act"):
-                transformed = team.observation(agent_id, obs)
-                action = controller.act(transformed, agent_id)
-                actions[agent_id] = team.action(agent_id, action)
-            else:
-                raise TypeError(
-                    f"Controller for agent '{agent_id}' does not expose a supported act/get_action interface"
-                )
-
-        return actions, processed_obs, controller_infos
-
-    @staticmethod
-    def _prepare_next_observation(
-        agent_id: str,
-        obs: Dict[str, Any],
-        infos: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if agent_id in obs:
-            return obs
-        terminal = infos.get(agent_id, {}).get("terminal_observation")
-        if terminal is not None:
-            patched = dict(obs)
-            patched[agent_id] = terminal
-            return patched
-        return obs
 
     @staticmethod
     def _extract_lap_counts(env, agent_ids: List[str]) -> Dict[str, float]:

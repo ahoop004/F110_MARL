@@ -12,6 +12,7 @@ from .registry import RewardTaskConfig, RewardTaskRegistry, RewardTaskSpec, regi
 
 GAPLOCK_PARAM_KEYS = (
     "target_crash_reward",
+    "self_collision_penalty",
     "truncation_penalty",
     "success_once",
     "reward_horizon",
@@ -26,6 +27,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self,
         *,
         target_crash_reward: float = 1.0,
+        self_collision_penalty: float = -1.0,
         truncation_penalty: float = 0.0,
         success_once: bool = True,
         reward_horizon: Optional[float] = None,
@@ -33,6 +35,7 @@ class GaplockRewardStrategy(RewardStrategy):
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
+        self.self_collision_penalty = float(self_collision_penalty)
         self.truncation_penalty = float(truncation_penalty)
         self.success_once = bool(success_once)
         self.scaling_params = ScalingParams(
@@ -94,6 +97,12 @@ class GaplockRewardStrategy(RewardStrategy):
         ego_obs = step.obs
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
+
+        if ego_crashed and self.self_collision_penalty:
+            shaped += self.self_collision_penalty
+            components["self_collision_penalty"] = (
+                components.get("self_collision_penalty", 0.0) + self.self_collision_penalty
+            )
 
         if target_obs is not None:
             target_crashed = bool(target_obs.get("collision", False))

@@ -2,14 +2,13 @@ scenario:
   name: gaplock_dqn
   env:
     seed: 42
-    n_agents: 3
+    n_agents: 2
     max_steps: 10000
-    timestep: 0.01
-    integrator: RK4
-    render_interval: 0
-    vehicle_params:
-      v_min: -2.0
-      v_max: 10.0
+
+    lidar_beams: 54
+    # vehicle_params:
+    #   v_min: -2.0
+    #   v_max: 10.0
     map_dir: maps
     map_yaml: shanghai/Shanghai_map.yaml
     map: shanghai/Shanghai_map.yaml
@@ -19,17 +18,18 @@ scenario:
     centerline_features: true
     render_mode: human
     update: 2
+    terminate_on_any_done: true
     spawn_points:
       - spawn_1
       - spawn_2
-      - spawn_3
+
   reward:
-    task: progress
+    task: gaplock
     params:
-      progress_weight: 1.0
-      speed_weight: 0.0
-      lateral_penalty: 0.05
-      heading_penalty: 0.02
+      target_crash_reward: 10.0
+      self_collision_penalty: -5.0
+      truncation_penalty: -1.0
+      reward_horizon: 500.0
   main:
     wandb:
       enabled: true
@@ -50,7 +50,7 @@ scenario:
       lr: 0.0004
       gamma: 0.99
       batch_size: 512
-      buffer_size: 100000
+      buffer_size: 200000
       target_update_interval: 500
       epsilon_start: 1.0
       epsilon_end: 0.1
@@ -66,50 +66,16 @@ scenario:
       per_epsilon: 1.0e-06
       action_mode: rate
       steering_rate: 0.5
-      accel_rate: 2.0
-      brake_rate: 4.0
-      rate_initial_speed: 0.0
+      accel_rate: 5.0
+      brake_rate: 3.0
+      rate_initial_speed: 2.0
       train_episodes: 100
       eval_episodes: 1
-      save_dir: checkpoints
+      save_dir: checkpoints/dqn_gaplock
       checkpoint_name: dqn_gaplock.pt
   agents:
-    car_0:
-      slot: 0
-      role: attacker
-      trainable: true
-      wrappers:
-      - factory: obs
-        params:
-          max_scan: 30.0
-          normalize: true
-          components:
-          - id: lidar
-            type: lidar
-            params:
-              max_range: 30.0
-              normalize: true
-          - id: ego_pose
-            type: ego_pose
-            params:
-              normalize_xy: 30.0
-              angle_mode: sin
-          - id: ego_collision
-            type: collision
-          - id: target_pose
-            type: target_pose
-            target:
-              agent: car_2
-          - id: target_collision
-            type: collision
-            target:
-              agent: car_2
-      algo: dqn
-      config_ref: dqn
-      agent_id: car_0
     car_1:
       slot: 1
-      role: attacker
       trainable: true
       wrappers:
       - factory: obs
@@ -132,18 +98,18 @@ scenario:
           - id: target_pose
             type: target_pose
             target:
-              agent: car_2
+              agent: car_0
           - id: target_collision
             type: collision
             target:
-              agent: car_2
+              agent: car_0
       algo: dqn
       config_ref: dqn
       agent_id: car_1
-    car_2:
+    
+    car_0:
       algo: follow_gap
-      slot: 2
-      role: defender
+      slot: 0
       trainable: false
       params:
         max_speed: 18.0
@@ -151,7 +117,7 @@ scenario:
         steering_gain: 0.95
         bubble_radius: 4
         steer_smooth: 0.0
-      agent_id: car_2
+      agent_id: car_0
       wrappers:
       - factory: obs
         params:

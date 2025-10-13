@@ -4,7 +4,7 @@ scenario:
     seed: 42
     n_agents: 1
     max_steps: 250000
-    lidar_beams: 108
+    lidar_beams: 54
     map_dir: maps
     map_yaml: shanghai/Shanghai_map.yaml
     render_mode: null
@@ -12,7 +12,8 @@ scenario:
     centerline_render: true
     centerline_features: true
     centerline_render_connect: false
-    centerline_render_spacing: 5.0
+    centerline_render_spacing: 2.0
+    terminate_on_any_done: true
     spawn_points:
       - spawn_1
   reward:
@@ -21,7 +22,7 @@ scenario:
     idle_patience_steps: 240
     params:
       progress_weight: 5.0
-      speed_weight: 0.05
+      speed_weight: 0.15
       lateral_penalty: 0.008
       heading_penalty: 0.008
       collision_penalty: -3.0
@@ -32,11 +33,11 @@ scenario:
       idle_penalty: 0.4
       idle_penalty_steps: 40
       lap_completion_bonus: 15.0
-      milestone_spacing: 5.0
+      milestone_spacing: 2.0
       milestone_bonus: 3.0
   main:
     mode: train_eval
-    train_episodes: 500
+    train_episodes: 1000
     eval_episodes: 2
     checkpoint: checkpoints/shanghai_progress/shanghai_single_dqn_progress.pt
     wandb:
@@ -51,14 +52,14 @@ scenario:
     dqn:
       device: cpu
       lr: 0.0005
-      gamma: 0.99
+      gamma: 0.999
       batch_size: 512
       buffer_size: 200000
       target_update_interval: 20
       epsilon_start: 0.9
       epsilon_end: 0.05
-      epsilon_decay: 450
-      learning_starts: 2048
+      epsilon_decay: 850
+      learning_starts: 4096
       max_grad_norm: 5.0
       hidden_dims:
         - 128
@@ -72,10 +73,10 @@ scenario:
       updates_per_step: 2
       action_repeat: 2
       action_mode: rate
-      steering_rate: 0.45
-      accel_rate: 4.0
-      brake_rate: 3.5
-      rate_initial_speed: 1.0
+      steering_rate: 0.55
+      accel_rate: 5.5
+      brake_rate: 4.5
+      rate_initial_speed: 2.5
       save_dir: checkpoints/shanghai_progress
       checkpoint_name: shanghai_single_dqn_progress.pt
   agents:
@@ -113,7 +114,7 @@ scenario:
                   include_waypoint: true
                   waypoint_mode: relative
                   waypoint_scale: 30.0
-                  waypoint_spacing: 5.0
+                  waypoint_spacing: 2.0
                   waypoint_spacing_count: 1
                   waypoint_include_distance: true
                   waypoint_distance_scale: 1.0

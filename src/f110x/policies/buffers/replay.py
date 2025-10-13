@@ -26,6 +26,9 @@ class ReplayBuffer:
         obs_shape: Iterable[int],
         action_shape: Iterable[int],
         dtype: np.dtype = np.float32,
+        *,
+        store_actions: bool = True,
+        store_action_indices: bool = False,
     ) -> None:
         if capacity <= 0:
             raise ValueError("ReplayBuffer capacity must be positive")
@@ -34,12 +37,23 @@ class ReplayBuffer:
         self.obs_shape = tuple(obs_shape)
         self.action_shape = tuple(action_shape)
         self.dtype = np.dtype(dtype)
+        self.store_actions = bool(store_actions)
+        self.store_action_indices = bool(store_action_indices)
 
         self._observations = np.zeros((capacity, *self.obs_shape), dtype=self.dtype)
         self._next_observations = np.zeros((capacity, *self.obs_shape), dtype=self.dtype)
-        self._actions = np.zeros((capacity, *self.action_shape), dtype=self.dtype)
         self._rewards = np.zeros((capacity, 1), dtype=np.float32)
         self._dones = np.zeros((capacity, 1), dtype=np.float32)
+
+        if self.store_actions:
+            self._actions = np.zeros((capacity, *self.action_shape), dtype=self.dtype)
+        else:
+            self._actions = None
+
+        if self.store_action_indices:
+            self._action_indices = np.full((capacity,), -1, dtype=np.int64)
+        else:
+            self._action_indices = None
 
         self._infos: list[Optional[Dict[str, Any]]] = [None] * capacity
 
@@ -52,19 +66,31 @@ class ReplayBuffer:
     def add(
         self,
         obs: np.ndarray,
-        action: np.ndarray,
+        action: Optional[np.ndarray],
         reward: float,
         next_obs: np.ndarray,
         done: bool,
         info: Optional[Dict[str, Any]] = None,
+        *,
+        action_index: Optional[int] = None,
     ) -> None:
         idx = self._idx
         self._observations[idx] = np.asarray(obs, dtype=self.dtype)
-        self._actions[idx] = np.asarray(action, dtype=self.dtype)
         self._rewards[idx] = float(reward)
         self._next_observations[idx] = np.asarray(next_obs, dtype=self.dtype)
         self._dones[idx] = float(done)
         self._infos[idx] = info
+
+        if self.store_actions:
+            if action is None:
+                raise ValueError("ReplayBuffer configured to store actions but received None")
+            self._actions[idx] = np.asarray(action, dtype=self.dtype)
+
+        if self.store_action_indices and self._action_indices is not None:
+            if action_index is None:
+                self._action_indices[idx] = -1
+            else:
+                self._action_indices[idx] = int(action_index)
 
         self._idx = (self._idx + 1) % self.capacity
         self._size = min(self._size + 1, self.capacity)
@@ -78,11 +104,14 @@ class ReplayBuffer:
         indices = np.random.randint(0, self._size, size=batch_size)
         batch = {
             "obs": self._observations[indices],
-            "actions": self._actions[indices],
             "rewards": self._rewards[indices],
             "next_obs": self._next_observations[indices],
             "dones": self._dones[indices],
         }
+        if self.store_actions and self._actions is not None:
+            batch["actions"] = self._actions[indices]
+        if self.store_action_indices and self._action_indices is not None:
+            batch["action_indices"] = self._action_indices[indices]
         infos = [self._infos[i] for i in indices]
         if any(info is not None for info in infos):
             batch["infos"] = infos
@@ -103,8 +132,17 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         min_priority: float = 1e-3,
         epsilon: float = 1e-6,
         dtype: np.dtype = np.float32,
+        store_actions: bool = True,
+        store_action_indices: bool = False,
     ) -> None:
-        super().__init__(capacity, obs_shape, action_shape, dtype=dtype)
+        super().__init__(
+            capacity,
+            obs_shape,
+            action_shape,
+            dtype=dtype,
+            store_actions=store_actions,
+            store_action_indices=store_action_indices,
+        )
         if not 0.0 <= alpha <= 1.0:
             raise ValueError("alpha must be in [0, 1]")
         if not 0.0 <= beta <= 1.0:
@@ -120,14 +158,24 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     def add(
         self,
         obs: np.ndarray,
-        action: np.ndarray,
+        action: Optional[np.ndarray],
         reward: float,
         next_obs: np.ndarray,
         done: bool,
         info: Optional[Dict[str, Any]] = None,
+        *,
+        action_index: Optional[int] = None,
     ) -> None:
         idx = self._idx
-        super().add(obs, action, reward, next_obs, done, info)
+        super().add(
+            obs,
+            action,
+            reward,
+            next_obs,
+            done,
+            info,
+            action_index=action_index,
+        )
         priority = max(self._max_priority, self.min_priority)
         self._priorities[idx] = priority
 
@@ -153,11 +201,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         # resample the batch arrays using prioritized indices so we align data and weights
         batch = {
             "obs": self._observations[indices],
-            "actions": self._actions[indices],
             "rewards": self._rewards[indices],
             "next_obs": self._next_observations[indices],
             "dones": self._dones[indices],
         }
+        if self.store_actions and self._actions is not None:
+            batch["actions"] = self._actions[indices]
+        if self.store_action_indices and self._action_indices is not None:
+            batch["action_indices"] = self._action_indices[indices]
         infos = [self._infos[i] for i in indices]
         if any(info is not None for info in infos):
             batch["infos"] = infos

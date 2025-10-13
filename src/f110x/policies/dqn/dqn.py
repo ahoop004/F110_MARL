@@ -75,10 +75,18 @@ class DQNAgent:
                 buffer_size,
                 (self.obs_dim,),
                 (self.act_dim,),
+                store_actions=False,
+                store_action_indices=True,
                 **per_args,
             )
         else:
-            self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
+            self.buffer = ReplayBuffer(
+                buffer_size,
+                (self.obs_dim,),
+                (self.act_dim,),
+                store_actions=False,
+                store_action_indices=True,
+            )
         self._use_per = prioritized
 
         self.step_count = 0
@@ -128,8 +136,19 @@ class DQNAgent:
         else:
             action_idx = action_idx_fallback
         info["action_index"] = action_idx
-        action_vec = action_arr if action_arr is not None else self.action_set[action_idx]
-        self.buffer.add(obs, action_vec, reward, next_obs, done, info)
+        if getattr(self.buffer, "store_actions", True):
+            action_vec = action_arr if action_arr is not None else self.action_set[action_idx]
+        else:
+            action_vec = None
+        self.buffer.add(
+            obs,
+            action_vec,
+            reward,
+            next_obs,
+            done,
+            info,
+            action_index=action_idx,
+        )
         self.step_count += 1
         if done and not self._episode_done:
             self._advance_episode()
@@ -150,7 +169,6 @@ class DQNAgent:
 
         batch = self.buffer.sample(self.batch_size)
         obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
-        actions = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
         rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
@@ -162,14 +180,24 @@ class DQNAgent:
         else:
             weights_t = torch.as_tensor(weights, dtype=torch.float32, device=self.device).squeeze(-1)
 
-        action_indices = []
-        actions_np = actions.detach().cpu().numpy()
-        for act, info in zip(actions_np, infos):
-            if info and "action_index" in info:
-                action_indices.append(int(info["action_index"]))
-            else:
-                action_indices.append(self._action_to_index(act, info))
-        action_indices = torch.as_tensor(action_indices, dtype=torch.long, device=self.device)
+        action_indices_data = batch.get("action_indices")
+        if action_indices_data is not None:
+            action_indices_np = np.asarray(action_indices_data, dtype=np.int64).reshape(-1)
+            if (action_indices_np < 0).any():
+                raise RuntimeError("ReplayBuffer returned invalid action indices for DQN update")
+            action_indices = torch.as_tensor(action_indices_np, dtype=torch.long, device=self.device)
+        else:
+            actions_data = batch.get("actions")
+            if actions_data is None:
+                raise RuntimeError("ReplayBatch missing actions and action indices")
+            actions_np = np.asarray(actions_data, dtype=np.float32)
+            inferred: list[int] = []
+            for act, info in zip(actions_np, infos):
+                if info and "action_index" in info:
+                    inferred.append(int(info["action_index"]))
+                else:
+                    inferred.append(self._action_to_index(act, info))
+            action_indices = torch.as_tensor(inferred, dtype=torch.long, device=self.device)
 
         q_values = self.q_net(obs)
         chosen_q = q_values.gather(1, action_indices.unsqueeze(-1)).squeeze(-1)

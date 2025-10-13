@@ -98,3 +98,12 @@
 - [ ] Bundle run artifacts (config, git SHA, metrics) into a single manifest per training job.
 - [ ] Define resource envelopes for large sweeps (GPU/CPU concurrency, storage layout, retention policy).
 - [ ] Build a submission helper with retry/status tracking and basic monitoring hooks (W&B dashboards, log watchdog).
+
+## Code Cleanup · Refactors
+
+- [x] Extract shared rollout scaffolding from `TrainRunner`/`EvalRunner` into reusable helpers to remove duplication.
+- [ ] Break `F110ParallelEnv.__init__` into dedicated configuration helpers (rendering, map IO, vehicle params) for clarity and reuse.
+- [ ] Replace the per-agent dict state in `ProgressRewardStrategy` with an explicit state dataclass to cut repeated lookups.
+- [x] Extend replay buffers to store discrete `action_index` values so DQN can avoid storing full action vectors and argmin fallbacks.
+- [ ] Consolidate scenario manifests (e.g., Shanghai progress/gaplock) via YAML anchors or base manifests to eliminate repeated blocks.
+

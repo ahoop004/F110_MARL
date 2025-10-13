@@ -4,11 +4,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
-
-from f110x.engine.reward import build_reward_wrapper
 from f110x.engine.rollout import (
     BestReturnTracker,
     IdleTerminationTracker,
@@ -16,11 +13,11 @@ from f110x.engine.rollout import (
     run_episode,
 )
 from f110x.runner.context import RunnerContext
+from f110x.runner.rollout_helpers import build_rollout_hooks
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
 from f110x.utils.logger import Logger
 from f110x.utils.output import resolve_output_dir, resolve_output_file
-from f110x.utils.start_pose import reset_with_start_poses
 
 
 TrainerUpdateHook = Callable[[str, Trainer, Optional[Dict[str, Any]]], None]
@@ -121,27 +118,22 @@ class TrainRunner:
 
         trajectory_buffers, off_policy_ids = build_trajectory_buffers(team, trainer_map)
 
+        hooks = build_rollout_hooks(
+            self.context,
+            team,
+            env,
+            deterministic=False,
+        )
+        reward_factory = hooks.reward_factory
+        compute_actions = hooks.compute_actions
+        prepare_next = hooks.prepare_next_observation
+        reset_env = hooks.reset_fn
+
         def on_offpolicy_flush(agent_id: str, trainer: Trainer, buffer) -> None:
             for _ in range(buffer.updates_per_step):
                 stats = trainer.update()
                 if trainer_update_hook:
                     trainer_update_hook(agent_id, trainer, stats)
-
-        def reward_factory(ep_index: int):
-            return build_reward_wrapper(
-                reward_cfg,
-                env=env,
-                map_data=self.context.map_data,
-                episode_idx=ep_index,
-                curriculum=self.context.curriculum_schedule,
-                roster=team.roster,
-            )
-
-        def compute_actions(obs: Dict[str, Any], done: Dict[str, bool]):
-            return self._compute_actions(team, obs, done, deterministic=False)
-
-        def prepare_next(agent_id: str, next_obs: Dict[str, Any], infos: Dict[str, Any]):
-            return self._prepare_next_observation(agent_id, next_obs, infos)
 
         if self.context.render_interval:
             def should_render(ep_index: int, _step: int) -> bool:
@@ -168,15 +160,6 @@ class TrainRunner:
         )
 
         for episode_idx in range(int(episodes)):
-            def reset_env():
-                return reset_with_start_poses(
-                    env,
-                    self.context.start_pose_options,
-                    back_gap=self.context.start_pose_back_gap,
-                    min_spacing=self.context.start_pose_min_spacing,
-                    map_data=self.context.map_data,
-                )
-
             rollout = run_episode(
                 env=env,
                 team=team,
@@ -403,79 +386,6 @@ class TrainRunner:
         if main_checkpoint:
             resolved = resolve_output_file(main_checkpoint, output_root)
             self.context.cfg.main.schema.checkpoint = str(resolved)
-
-    def _compute_actions(
-        self,
-        team: AgentTeam,
-        obs: Dict[str, Any],
-        done: Dict[str, bool],
-        *,
-        deterministic: bool,
-    ) -> Tuple[Dict[str, Any], Dict[str, np.ndarray], Dict[str, Dict[str, Any]]]:
-        actions: Dict[str, Any] = {}
-        processed_obs: Dict[str, np.ndarray] = {}
-        controller_infos: Dict[str, Dict[str, Any]] = {}
-
-        for bundle in team.agents:
-            agent_id = bundle.agent_id
-            if done.get(agent_id, False):
-                continue
-            if agent_id not in obs:
-                continue
-
-            controller = bundle.controller
-            if bundle.trainer is not None:
-                observation = team.observation(agent_id, obs)
-                processed_obs[agent_id] = np.asarray(observation, dtype=np.float32)
-                action_raw = bundle.trainer.select_action(observation, deterministic=deterministic)
-                action_value, wrapper_meta = team.action(agent_id, action_raw, return_info=True)
-                actions[agent_id] = action_value
-
-                meta_index: Optional[int] = None
-                if wrapper_meta and "action_index" in wrapper_meta:
-                    try:
-                        meta_index = int(wrapper_meta["action_index"])
-                    except (TypeError, ValueError):
-                        meta_index = None
-                elif np.isscalar(action_raw) or (
-                    isinstance(action_raw, np.ndarray) and action_raw.ndim == 0
-                ):
-                    try:
-                        meta_index = int(np.asarray(action_raw).item())
-                    except (TypeError, ValueError):
-                        meta_index = None
-
-                if meta_index is not None:
-                    controller_infos[agent_id] = {"action_index": meta_index}
-            elif hasattr(controller, "get_action"):
-                action_space = team.env.action_space(agent_id)
-                action = controller.get_action(action_space, obs[agent_id])
-                actions[agent_id] = team.action(agent_id, action)
-            elif hasattr(controller, "act"):
-                transformed = team.observation(agent_id, obs)
-                action = controller.act(transformed, agent_id)
-                actions[agent_id] = team.action(agent_id, action)
-            else:
-                raise TypeError(
-                    f"Controller for agent '{agent_id}' does not expose a supported act/get_action interface"
-                )
-
-        return actions, processed_obs, controller_infos
-
-    @staticmethod
-    def _prepare_next_observation(
-        agent_id: str,
-        obs: Dict[str, Any],
-        infos: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if agent_id in obs:
-            return obs
-        terminal = infos.get(agent_id, {}).get("terminal_observation")
-        if terminal is not None:
-            patched = dict(obs)
-            patched[agent_id] = terminal
-            return patched
-        return obs
 
     def _resolve_primary_epsilon(self) -> Optional[float]:
         trainer = self.primary_trainer

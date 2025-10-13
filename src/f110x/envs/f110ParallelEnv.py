@@ -174,6 +174,7 @@ class F110ParallelEnv(ParallelEnv):
         self.terminate_on_collision = {
             aid: default_terminate for aid in self.possible_agents
         }
+        self.terminate_on_any_done = bool(merged.get("terminate_on_any_done", False))
 
         self._agent_sensor_spec: Dict[str, Tuple[str, ...]] = {
             aid: DEFAULT_AGENT_SENSORS for aid in self.possible_agents
