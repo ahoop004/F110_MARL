@@ -13,7 +13,7 @@
 - [ ] Add a random spawn toggle that samples start poses from map annotations.
   - [ ] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
 - [x] Move task/reward/algorithm configuration under each agent declaration.
-- [ ] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
+- [x] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
 
 ##  Observation Pipeline & Telemetry
 

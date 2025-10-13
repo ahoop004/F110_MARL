@@ -1,6 +1,7 @@
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Mapping, Sequence
+import warnings
 
 from f110x.utils.config_schema import (
     EnvSchema,
@@ -458,8 +459,28 @@ class ExperimentConfig:
                     reward_section = spec.reward
                     break
 
+        env_cfg = EnvConfig.from_dict(data_map.get("env", {}))
+
+        roster_size = len(agents.roster)
+        env_raw = data_map.get("env") if isinstance(data_map.get("env"), Mapping) else {}
+        provided_n_agents: Optional[int] = None
+        if isinstance(env_raw, Mapping) and "n_agents" in env_raw:
+            try:
+                provided_n_agents = int(env_raw["n_agents"])
+            except (TypeError, ValueError):
+                provided_n_agents = None
+
+        if roster_size:
+            if provided_n_agents is None:
+                env_cfg.schema.n_agents = roster_size
+            elif provided_n_agents != roster_size:
+                warnings.warn(
+                    f"Environment declares n_agents={provided_n_agents} but {roster_size} agents are configured; keeping explicit n_agents",
+                    UserWarning,
+                )
+
         return cls(
-            env=EnvConfig.from_dict(data_map.get("env", {})),
+            env=env_cfg,
             ppo=PPOConfig.from_dict(data_map.get("ppo", {})),
             rec_ppo=RecPPOConfig.from_dict(data_map.get("rec_ppo", {})),
             td3=TD3Config.from_dict(data_map.get("td3", {})),
