@@ -86,6 +86,7 @@ scenario:
           - id: lidar
             type: lidar
             params:
+              beams: 54
               max_range: 30.0
               normalize: true
           - id: ego_pose
@@ -127,5 +128,6 @@ scenario:
           - id: lidar
             type: lidar
             params:
+              beams: 54
               max_range: 30.0
               normalize: true

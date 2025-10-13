@@ -259,13 +259,29 @@ class DQNAgent:
                 "episode_count": self.episode_count,
                 "epsilon_value": self._epsilon_value,
                 "action_set": self.action_set,
+                "obs_dim": self.obs_dim,
             },
             path,
         )
 
     def load(self, path: str) -> None:
         ckpt = safe_load(path, map_location=self.device)
-        self.q_net.load_state_dict(ckpt["q_net"])
+        stored_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
+        if stored_obs_dim != self.obs_dim:
+            raise RuntimeError(
+                "Checkpoint observation size mismatch for "
+                f"'{path}': checkpoint obs_dim={stored_obs_dim}, "
+                f"expected {self.obs_dim}. "
+                "Ensure the observation wrapper configuration matches the saved model."
+            )
+        try:
+            self.q_net.load_state_dict(ckpt["q_net"])
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Failed to load DQN checkpoint '"
+                f"{path}' due to incompatible network shapes; "
+                "double-check the observation configuration before reusing this checkpoint."
+            ) from exc
         self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.step_count = int(ckpt.get("step_count", 0))

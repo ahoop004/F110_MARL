@@ -468,11 +468,9 @@ def _build_obs_wrapper(
     if target_slot is not None:
         target_slot = int(target_slot)
 
-    algo = assignment.spec.algo.lower()
-    if algo in {"ppo", "rec_ppo", "td3", "sac"} and "lidar_beams" not in params:
-        env_lidar = getattr(ctx.env, "lidar_beams", None)
-        if env_lidar:
-            params["lidar_beams"] = int(env_lidar)
+    env_lidar = getattr(ctx.env, "lidar_beams", None)
+    if "lidar_beams" not in params and env_lidar:
+        params["lidar_beams"] = int(env_lidar)
 
     # Centerline-aware features
     centerline_points = ctx.map_data.centerline
