@@ -55,111 +55,16 @@ class F110ParallelEnv(ParallelEnv):
         env_config = kwargs.get("env", {})
         merged = {**env_config, **kwargs}
         
-        self.render_mode = merged.get("render_mode", "human")
-        self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
-        self.renderer: Optional[EnvRenderer] = None
-        headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
-        self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
-        mode = (self.render_mode or "").lower()
-        self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
-        self.centerline_render_enabled = bool(merged.get("centerline_render", True))
-        self._centerline_feature_requested = bool(merged.get("centerline_features", True))
-        self.centerline_features_enabled = self._centerline_feature_requested
-        self.centerline_points: Optional[np.ndarray] = None
-        self.centerline_path: Optional[Path] = None
-        self.centerline_render_progress = self._normalize_progress_fractions(
-            merged.get("centerline_render_progress")
-        )
-        spacing_value = merged.get("centerline_render_spacing")
-        try:
-            self.centerline_render_spacing = max(float(spacing_value), 0.0)
-        except (TypeError, ValueError):
-            self.centerline_render_spacing = 0.0
-        raw_connect = merged.get("centerline_render_connect")
-        if raw_connect is None:
-            self.centerline_render_connect = not bool(self.centerline_render_progress)
-        else:
-            self.centerline_render_connect = bool(raw_connect)
-        self._render_centerline_points: Optional[np.ndarray] = None
-
-        self.seed: int = int(merged.get("seed", 42))
-        self.max_steps: int = int(merged.get("max_steps", 5000))
-        self.n_agents: int = int(merged.get("n_agents", 2))
-        self._central_state_keys = (
-            "poses_x",
-            "poses_y",
-            "poses_theta",
-            "linear_vels_x",
-            "linear_vels_y",
-            "ang_vels_z",
-            "collisions",
-        )
-        self._central_state_dim = self.n_agents * len(self._central_state_keys)
-        self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
-        self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
-        self.agents = self.possible_agents.copy()
+        self._configure_rendering(merged)
+        self._configure_basic_environment(merged)
    
         self.timestep: float = float(merged.get("timestep", 0.01))
-        integrator_cfg = merged.get("integrator", Integrator.RK4)
-        if isinstance(integrator_cfg, Integrator):
-            integrator_name = integrator_cfg.value
-        else:
-            integrator_name = str(integrator_cfg)
-        integrator_name = integrator_name.strip()
-        if integrator_name.lower() == "rk4":
-            integrator_name = "RK4"
-        elif integrator_name.lower() == "euler":
-            integrator_name = "Euler"
-        else:
-            integrator_name = "RK4"
-        self.integrator = integrator_name
+        self.integrator = self._resolve_integrator(merged)
 
-        map_dir_value = merged.get("map_dir")
-        if map_dir_value is not None:
-            self.map_dir = Path(map_dir_value)
-        elif map_data is not None:
-            self.map_dir = Path(map_data.yaml_path).parent
-        else:
-            self.map_dir = Path.cwd()
-
-        def _normalize_map_id(identifier: Optional[str]) -> Optional[str]:
-            if identifier is None:
-                return None
-            identifier = str(identifier)
-            return identifier if Path(identifier).suffix else f"{identifier}.yaml"
-
-        raw_map_name = merged.get("map", None)
-        raw_map_yaml = merged.get("map_yaml", None)
-        map_ext_value = merged.get("map_ext")
-        if map_ext_value is not None:
-            self.map_ext = map_ext_value
-        elif map_data is not None:
-            self.map_ext = map_data.image_path.suffix or ".png"
-        else:
-            self.map_ext = ".png"
-
-        self.map_name = _normalize_map_id(raw_map_name)
-        self.map_yaml = _normalize_map_id(raw_map_yaml)
-
-        if self.map_name is None and self.map_yaml is not None:
-            self.map_name = self.map_yaml
-        elif self.map_yaml is None and self.map_name is not None:
-            self.map_yaml = self.map_name
-
-        self.map_path = (self.map_dir / f"{self.map_name}").resolve()
-        self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
+        self._configure_map_paths(merged, map_data)
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
-        base_vehicle_params = _default_vehicle_params()
-        vehicle_params = merged.get("vehicle_params")
-        if vehicle_params is None:
-            vehicle_params = merged.get("params")
-        if vehicle_params is not None:
-            if not isinstance(vehicle_params, Mapping):
-                raise TypeError("env.vehicle_params must be a mapping")
-            overrides = {str(key): float(value) for key, value in vehicle_params.items()}
-            base_vehicle_params.update(overrides)
-        self.params = base_vehicle_params
+        self.params = self._configure_vehicle_params(merged)
         
         self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
@@ -219,39 +124,7 @@ class F110ParallelEnv(ParallelEnv):
         )
 
         self.sim.set_map(str(self.yaml_path), self.map_ext)
-        meta = merged.get("map_meta")
-        if meta is None and map_data is not None:
-            meta = dict(map_data.metadata)
-        elif isinstance(meta, Mapping):
-            meta = dict(meta)
-        if meta is None:
-            with open(self.map_path, "r") as f:
-                meta = yaml.safe_load(f) or {}
-        preloaded_image_path = merged.get("map_image_path")
-        if preloaded_image_path is None and map_data is not None:
-            preloaded_image_path = map_data.image_path
-        image_rel = meta.get("image")
-        if preloaded_image_path is not None:
-            img_path = Path(preloaded_image_path).resolve()
-        elif image_rel:
-            img_path = (self.map_path.parent / image_rel).resolve()
-        else:
-            img_filename = merged.get("map_image", None)
-            if img_filename is not None:
-                img_path = (self.map_dir / img_filename).resolve()
-            elif map_data is not None:
-                img_path = Path(map_data.image_path).resolve()
-            else:
-                img_path = self.map_path.with_suffix(self.map_ext)
-
-        image_size = merged.get("map_image_size")
-        if image_size is None and map_data is not None:
-            image_size = map_data.image_size
-        if image_size is not None:
-            width, height = map(int, image_size)
-        else:
-            with Image.open(img_path) as img:
-                width, height = img.size
+        meta, img_path, (width, height) = self._load_map_metadata(merged, map_data)
 
         self.map_meta = meta
         self.map_image_path = img_path
@@ -276,6 +149,156 @@ class F110ParallelEnv(ParallelEnv):
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
         }
+
+    def _configure_rendering(self, cfg: Mapping[str, Any]) -> None:
+        self.render_mode = cfg.get("render_mode", "human")
+        self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
+        self.renderer: Optional[EnvRenderer] = None
+        headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
+        self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
+        mode = (self.render_mode or "").lower()
+        self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
+        self.centerline_render_enabled = bool(cfg.get("centerline_render", True))
+        self._centerline_feature_requested = bool(cfg.get("centerline_features", True))
+        self.centerline_features_enabled = self._centerline_feature_requested
+        self.centerline_points: Optional[np.ndarray] = None
+        self.centerline_path: Optional[Path] = None
+        self.centerline_render_progress = self._normalize_progress_fractions(
+            cfg.get("centerline_render_progress")
+        )
+        spacing_value = cfg.get("centerline_render_spacing")
+        try:
+            self.centerline_render_spacing = max(float(spacing_value), 0.0)
+        except (TypeError, ValueError):
+            self.centerline_render_spacing = 0.0
+        raw_connect = cfg.get("centerline_render_connect")
+        if raw_connect is None:
+            self.centerline_render_connect = not bool(self.centerline_render_progress)
+        else:
+            self.centerline_render_connect = bool(raw_connect)
+        self._render_centerline_points: Optional[np.ndarray] = None
+
+    def _configure_basic_environment(self, cfg: Mapping[str, Any]) -> None:
+        self.seed = int(cfg.get("seed", 42))
+        self.max_steps = int(cfg.get("max_steps", 5000))
+        self.n_agents = int(cfg.get("n_agents", 2))
+        self._central_state_keys = (
+            "poses_x",
+            "poses_y",
+            "poses_theta",
+            "linear_vels_x",
+            "linear_vels_y",
+            "ang_vels_z",
+            "collisions",
+        )
+        self._central_state_dim = self.n_agents * len(self._central_state_keys)
+        self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
+        self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
+        self.agents = self.possible_agents.copy()
+
+    def _resolve_integrator(self, cfg: Mapping[str, Any]) -> str:
+        integrator_cfg = cfg.get("integrator", Integrator.RK4)
+        if isinstance(integrator_cfg, Integrator):
+            integrator_name = integrator_cfg.value
+        else:
+            integrator_name = str(integrator_cfg)
+        integrator_name = integrator_name.strip()
+        if integrator_name.lower() == "rk4":
+            return "RK4"
+        if integrator_name.lower() == "euler":
+            return "Euler"
+        return "RK4"
+
+    @staticmethod
+    def _normalize_map_identifier(identifier: Optional[Any]) -> Optional[str]:
+        if identifier is None:
+            return None
+        identifier = str(identifier)
+        return identifier if Path(identifier).suffix else f"{identifier}.yaml"
+
+    def _configure_map_paths(self, cfg: Mapping[str, Any], map_data: Optional[Any]) -> None:
+        map_dir_value = cfg.get("map_dir")
+        if map_dir_value is not None:
+            self.map_dir = Path(map_dir_value)
+        elif map_data is not None:
+            self.map_dir = Path(map_data.yaml_path).parent  # type: ignore[attr-defined]
+        else:
+            self.map_dir = Path.cwd()
+
+        map_ext_value = cfg.get("map_ext")
+        if map_ext_value is not None:
+            self.map_ext = map_ext_value
+        elif map_data is not None:
+            self.map_ext = map_data.image_path.suffix or ".png"  # type: ignore[attr-defined]
+        else:
+            self.map_ext = ".png"
+
+        raw_map_name = cfg.get("map")
+        raw_map_yaml = cfg.get("map_yaml")
+        self.map_name = self._normalize_map_identifier(raw_map_name)
+        self.map_yaml = self._normalize_map_identifier(raw_map_yaml)
+
+        if self.map_name is None and self.map_yaml is not None:
+            self.map_name = self.map_yaml
+        elif self.map_yaml is None and self.map_name is not None:
+            self.map_yaml = self.map_name
+
+        self.map_path = (self.map_dir / f"{self.map_name}").resolve()
+        self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
+
+    def _configure_vehicle_params(self, cfg: Mapping[str, Any]) -> Dict[str, float]:
+        base_vehicle_params = _default_vehicle_params()
+        vehicle_params = cfg.get("vehicle_params")
+        if vehicle_params is None:
+            vehicle_params = cfg.get("params")
+        if vehicle_params is not None:
+            if not isinstance(vehicle_params, Mapping):
+                raise TypeError("env.vehicle_params must be a mapping")
+            overrides = {str(key): float(value) for key, value in vehicle_params.items()}
+            base_vehicle_params.update(overrides)
+        return base_vehicle_params
+
+    def _load_map_metadata(
+        self,
+        cfg: Mapping[str, Any],
+        map_data: Optional[Any],
+    ) -> Tuple[Dict[str, Any], Path, Tuple[int, int]]:
+        meta = cfg.get("map_meta")
+        if meta is None and map_data is not None:
+            meta = dict(map_data.metadata)  # type: ignore[attr-defined]
+        elif isinstance(meta, Mapping):
+            meta = dict(meta)
+        if meta is None:
+            with open(self.map_path, "r") as f:
+                meta = yaml.safe_load(f) or {}
+
+        preloaded_image_path = cfg.get("map_image_path")
+        if preloaded_image_path is None and map_data is not None:
+            preloaded_image_path = map_data.image_path  # type: ignore[attr-defined]
+        image_rel = meta.get("image")
+        if preloaded_image_path is not None:
+            img_path = Path(preloaded_image_path).resolve()
+        elif image_rel:
+            img_path = (self.map_path.parent / image_rel).resolve()
+        else:
+            img_filename = cfg.get("map_image")
+            if img_filename is not None:
+                img_path = (self.map_dir / img_filename).resolve()
+            elif map_data is not None:
+                img_path = Path(map_data.image_path).resolve()  # type: ignore[attr-defined]
+            else:
+                img_path = self.map_path.with_suffix(self.map_ext)
+
+        image_size = cfg.get("map_image_size")
+        if image_size is None and map_data is not None:
+            image_size = map_data.image_size  # type: ignore[attr-defined]
+        if image_size is not None:
+            width, height = map(int, image_size)
+        else:
+            with Image.open(img_path) as img:
+                width, height = img.size
+
+        return meta, img_path, (width, height)
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
@@ -334,13 +357,7 @@ class F110ParallelEnv(ParallelEnv):
         poses = None
         if self.renderer is not None:
             self.renderer.reset_state()
-            if self.centerline_render_enabled:
-                self.renderer.update_centerline(
-                    self._render_centerline_points,
-                    connect=self.centerline_render_connect,
-                )
-            else:
-                self.renderer.update_centerline(None)
+            self._update_renderer_centerline()
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -438,9 +455,8 @@ class F110ParallelEnv(ParallelEnv):
                 map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
-                centerline_points=self._render_centerline_points if self.centerline_render_enabled else None,
-                centerline_connect=self.centerline_render_connect,
             )
+            self._update_renderer_centerline()
 
     def update_params(self, params, index=-1):
 
@@ -541,6 +557,17 @@ class F110ParallelEnv(ParallelEnv):
         ordered = sorted(indices)
         return base[ordered]
 
+    def _update_renderer_centerline(self) -> None:
+        if self.renderer is None:
+            return
+        if self.centerline_render_enabled:
+            self.renderer.update_centerline(
+                self._render_centerline_points,
+                connect=self.centerline_render_connect,
+            )
+        else:
+            self.renderer.update_centerline(None)
+
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
         if centerline is not None:
             array = np.asarray(centerline, dtype=np.float32)
@@ -551,14 +578,7 @@ class F110ParallelEnv(ParallelEnv):
         self.centerline_path = path.resolve() if path is not None else None
         self.centerline_features_enabled = self._centerline_feature_requested and array is not None
         self._render_centerline_points = self._build_render_centerline_points()
-        if self.renderer is not None:
-            if self.centerline_render_enabled:
-                self.renderer.update_centerline(
-                    self._render_centerline_points,
-                    connect=self.centerline_render_connect,
-                )
-            else:
-                self.renderer.update_centerline(None)
+        self._update_renderer_centerline()
     
     def close(self):
         if self.renderer is not None:
