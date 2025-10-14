@@ -88,9 +88,9 @@ scenario:
               back_left: 0.0
               left: 0.01
               front_left: 0.25
-            preferred_radius: 0.75
-            inner_tolerance: 0.2
-            outer_tolerance: 0.2
+            preferred_radius: 0.9
+            inner_tolerance: 0.05
+            outer_tolerance: 0.05
       wrappers:
         - factory: obs
           params:
@@ -107,11 +107,17 @@ scenario:
                 type: ego_pose
                 params:
                   normalize_xy: 30.0
-                  angle_mode: sin
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  normalize: 10.0
+                  include_speed: true
+                  speed_scale: 10.0
               - id: ego_collision
                 type: collision
-              - id: target_pose
-                type: target_pose
+              - id: relative_pose
+                type: relative_pose
                 params:
                   normalize_xy: 30.0
                   angle_mode: sin_cos
