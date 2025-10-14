@@ -35,15 +35,15 @@ scenario:
         name: r_dqn
         params:
           device: cpu
-          action_repeat: 10
+          action_repeat: 5
           lr: 0.0005
           gamma: 0.99
           batch_size: 128
-          buffer_size: 100000
-          target_update_interval: 500
-          n_step: 3
+          buffer_size: 150000
+          target_update_interval: 250
+          n_step: 5
           atoms: 51
-          v_min: -20.0
+          v_min: -5.0
           v_max: 20.0
           noisy_layers: true
           noisy_sigma0: 0.5
@@ -54,13 +54,13 @@ scenario:
           prioritized_replay: true
           per_alpha: 0.6
           per_beta_start: 0.4
-          per_beta_increment: 5.0e-05
+          per_beta_increment: 2.0e-04
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
-          steering_rate: 7.5
-          accel_rate: 14.0
-          brake_rate: 14.0
+          steering_rate: 3.75
+          accel_rate: 7.0
+          brake_rate: 7.0
           rate_initial_speed: 2.0
           save_dir: checkpoints/rainbow_gaplock
           checkpoint_name: rainbow_gaplock.pt
@@ -73,7 +73,7 @@ scenario:
           self_collision_penalty: -2.0
           reward_weight: null
           reward_decay: null
-          reward_smoothing: null
+          reward_smoothing: 0.9
           relative_reward:
             weights:
               front: 0.0

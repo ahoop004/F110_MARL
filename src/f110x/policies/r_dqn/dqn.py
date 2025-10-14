@@ -282,8 +282,6 @@ class RainbowDQNAgent:
         chosen_q = torch.sum(chosen_probs * self.q_net.support, dim=-1)
 
         with torch.no_grad():
-            if self.use_noisy:
-                self.q_net.reset_noise()
             next_logits_online = self.q_net(next_obs)
             next_probs = torch.softmax(next_logits_online, dim=-1)
             next_q = torch.sum(next_probs * self.q_net.support, dim=-1)
