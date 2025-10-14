@@ -33,6 +33,7 @@ from f110x.policies.centerline_pursuit import CenterlinePursuitPolicy
 from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
+from f110x.policies.r_dqn.dqn import RainbowDQNAgent
 from f110x.trainer.base import Trainer
 from f110x.trainer import registry as trainer_registry
 
@@ -748,11 +749,15 @@ def _build_algo_rec_ppo(
     )
 
 
-def _build_algo_dqn(
+def _build_dqn_family_algo(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
     roster: RosterLayout,
     pipeline: ObservationPipeline,
+    *,
+    algo_name: str,
+    controller_factory: Callable[[Dict[str, Any]], Any],
+    trainer_key: str,
 ) -> AgentBundle:
     agent_id = assignment.agent_id
     action_space = ctx.env.action_space(agent_id)
@@ -805,13 +810,13 @@ def _build_algo_dqn(
     dqn_cfg["obs_dim"] = obs_dim
 
     shared_policy_key = dqn_cfg.get("shared_policy") or dqn_cfg.get("shared_policy_id")
-    controller: DQNAgent
+    controller: Any
+    shared_store = ctx.shared_algorithms.setdefault(algo_name.lower(), {})
     if shared_policy_key:
-        shared_store = ctx.shared_algorithms.setdefault("dqn", {})
         policy_id = str(shared_policy_key)
         shared_entry = shared_store.get(policy_id)
         if shared_entry is None:
-            controller = DQNAgent(dqn_cfg)
+            controller = controller_factory(dqn_cfg)
             shared_store[policy_id] = {
                 "agent": controller,
                 "obs_dim": controller.obs_dim,
@@ -822,12 +827,12 @@ def _build_algo_dqn(
             stored_obs_dim = int(shared_entry.get("obs_dim", controller.obs_dim))
             if stored_obs_dim != obs_dim:
                 raise ValueError(
-                    f"Shared DQN policy '{policy_id}' expects obs_dim={stored_obs_dim}, received {obs_dim} for agent '{agent_id}'"
+                    f"Shared {algo_name} policy '{policy_id}' expects obs_dim={stored_obs_dim}, received {obs_dim} for agent '{agent_id}'"
                 )
     else:
-        controller = DQNAgent(dqn_cfg)
+        controller = controller_factory(dqn_cfg)
 
-    trainer = trainer_registry.create_trainer("dqn", agent_id, controller, config=dqn_cfg)
+    trainer = trainer_registry.create_trainer(trainer_key, agent_id, controller, config=dqn_cfg)
     if action_mode == "delta":
         action_wrapper = DeltaDiscreteActionWrapper(
             dqn_cfg.get("action_deltas", dqn_cfg["action_set"]),
@@ -853,13 +858,46 @@ def _build_algo_dqn(
         dqn_cfg["action_repeat"] = repeat_steps
     return AgentBundle(
         assignment=assignment,
-        algo="dqn",
+        algo=algo_name,
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=True),
         metadata={"config": dqn_cfg},
         trainer=trainer,
         action_wrapper=action_wrapper,
+    )
+
+def _build_algo_dqn(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    return _build_dqn_family_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_name="dqn",
+        controller_factory=DQNAgent,
+        trainer_key="dqn",
+    )
+
+
+def _build_algo_r_dqn(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    return _build_dqn_family_algo(
+        assignment,
+        ctx,
+        roster,
+        pipeline,
+        algo_name="r_dqn",
+        controller_factory=RainbowDQNAgent,
+        trainer_key="r_dqn",
     )
 
 
@@ -973,6 +1011,8 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "td3": _build_algo_td3,
     "sac": _build_algo_sac,
     "dqn": _build_algo_dqn,
+    "r_dqn": _build_algo_r_dqn,
+    "rainbow_dqn": _build_algo_r_dqn,
 }
 
 

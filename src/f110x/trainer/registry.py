@@ -67,7 +67,7 @@ register_trainer(
 )
 register_trainer("td3", _class_factory(TD3Trainer))
 register_trainer("sac", _class_factory(SACTrainer))
-register_trainer("dqn", _class_factory(DQNTrainer))
+register_trainer("dqn", _class_factory(DQNTrainer), aliases=("r_dqn", "rainbow_dqn"))
 
 
 __all__ = [

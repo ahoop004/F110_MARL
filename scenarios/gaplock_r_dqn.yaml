@@ -1,5 +1,5 @@
 meta:
-  name: gaplock_dqn
+  name: gaplock_r_dqn
 
 scenario:
   env:
@@ -18,21 +18,21 @@ scenario:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: dqn
+      group: r_dqn
       tags:
-        - dqn
+        - rainbow
     mode: train_eval
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
     train_episodes: 10000
     eval_episodes: 1
-    checkpoint: checkpoints/dqn_gaplock/dqn_gaplock.pt
+    checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
 
   agents:
     car_1:
       trainable: true
       algorithm:
-        name: dqn
+        name: r_dqn
         params:
           device: cpu
           action_repeat: 10
@@ -41,9 +41,13 @@ scenario:
           batch_size: 128
           buffer_size: 100000
           target_update_interval: 500
-          epsilon_start: 0.98
-          epsilon_end: 0.05
-          epsilon_decay_rate: 0.9996
+          n_step: 3
+          atoms: 51
+          v_min: -20.0
+          v_max: 20.0
+          noisy_layers: true
+          noisy_sigma0: 0.5
+          epsilon_enabled: false
           hidden_dims:
             - 256
             - 256
@@ -58,8 +62,8 @@ scenario:
           accel_rate: 14.0
           brake_rate: 14.0
           rate_initial_speed: 2.0
-          save_dir: checkpoints/dqn_gaplock
-          checkpoint_name: dqn_gaplock.pt
+          save_dir: checkpoints/rainbow_gaplock
+          checkpoint_name: rainbow_gaplock.pt
       reward:
         task: gaplock
         features:

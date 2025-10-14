@@ -175,6 +175,7 @@ class DQNAgent:
         infos = batch.get("infos", [{}] * self.batch_size)
         weights = batch.get("weights")
         indices = batch.get("indices")
+       
         if weights is None:
             weights_t = torch.ones((self.batch_size,), dtype=torch.float32, device=self.device)
         else:
