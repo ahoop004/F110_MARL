@@ -1,0 +1,113 @@
+description: >
+  Random sweep over Rainbow DQN hyperparameters for the Gaplock pursuit scenario.
+  Launch with `wandb sweep sweeps/gaplock_r_dqn.yaml` and point an agent at the
+  emitted sweep ID. Each run delegates to `run.py` with the base scenario config,
+  letting wandb config updates override nested fields.
+
+method: random
+metric:
+  name: train/return_mean
+  goal: maximize
+run_cap: 32
+early_terminate:
+  type: hyperband
+  min_iter: 8
+  eta: 3
+
+command:
+  - ${env}
+  - python
+  - run.py
+  - --scenario
+  - scenarios/gaplock_r_dqn.yaml
+  - --repeat
+  - "1"
+  - --auto-seed
+  - --seed-base
+  - "4601"
+  - --seed-step
+  - "1"
+  - --wandb-prefix
+  - rdqn-sweep-
+
+parameters:
+  scenario:
+    parameters:
+      main:
+        parameters:
+          train_episodes:
+            value: 8000
+          wandb:
+            parameters:
+              group:
+                value: gaplock_r_dqn_sweep
+              tags:
+                value:
+                  - rainbow
+                  - sweep
+      agents:
+        parameters:
+          car_0:
+            parameters:
+              algorithm:
+                parameters:
+                  params:
+                    parameters:
+                      lr:
+                        distribution: log_uniform
+                        min: 5.0e-05
+                        max: 3.0e-04
+                      gamma:
+                        values:
+                          - 0.97
+                          - 0.985
+                          - 0.99
+                      batch_size:
+                        values:
+                          - 192
+                          - 256
+                          - 320
+                      n_step:
+                        values:
+                          - 3
+                          - 5
+                          - 7
+                      per_beta_start:
+                        values:
+                          - 0.3
+                          - 0.35
+                          - 0.4
+                      per_beta_increment:
+                        values:
+                          - 0.0001
+                          - 0.0002
+                          - 0.0003
+                      noisy_sigma0:
+                        values:
+                          - 0.3
+                          - 0.5
+                          - 0.7
+                      steering_rate:
+                        values:
+                          - 3.0
+                          - 3.75
+                          - 4.5
+                      accel_rate:
+                        values:
+                          - 6.0
+                          - 7.0
+                          - 8.0
+                      brake_rate:
+                        values:
+                          - 6.0
+                          - 7.0
+                          - 8.0
+                      action_repeat:
+                        values:
+                          - 3
+                          - 5
+                      rate_initial_speed:
+                        values:
+                          - 1.5
+                          - 2.0
+                          - 2.5
