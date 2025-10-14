@@ -66,7 +66,7 @@ scenario:
       reward:
         task: gaplock
         idle_speed_threshold: 0.2
-        idle_patience_steps: 0
+        idle_patience_steps: 25
         features:
           - gaplock_offense
           - idle_guard
@@ -76,15 +76,17 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
+          idle_speed_threshold: 0.2
+          idle_truncation_penalty: -5.0
           relative_reward:
             weights:
               front: 0.0
               front_right: 0.25
-              right: 0.0
+              right: 0.01
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.0
+              left: 0.01
               front_left: 0.25
             preferred_radius: 0.75
             inner_tolerance: 0.2

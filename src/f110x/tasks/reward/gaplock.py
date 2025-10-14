@@ -26,6 +26,7 @@ GAPLOCK_PARAM_KEYS = (
     "idle_penalty",
     "idle_penalty_steps",
     "idle_speed_threshold",
+    "idle_truncation_penalty",
 )
 
 
@@ -48,6 +49,7 @@ class GaplockRewardStrategy(RewardStrategy):
         idle_penalty: float = 0.0,
         idle_penalty_steps: int = 0,
         idle_speed_threshold: float = 0.1,
+        idle_truncation_penalty: float = 0.0,
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
         reward_ring_callback: Optional[Callable[[str, Optional[str]], None]] = None,
         reward_ring_focus_agent: Optional[str] = None,
@@ -68,6 +70,9 @@ class GaplockRewardStrategy(RewardStrategy):
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self.idle_speed_threshold = max(float(idle_speed_threshold), 0.0)
         self._idle_counters: Dict[str, int] = {}
+        self._idle_penalty_applied: Dict[str, int] = {}
+        self.idle_truncation_penalty = float(idle_truncation_penalty)
+        self._idle_truncation_applied: set[str] = set()
         self._target_resolver = target_resolver
         self.relative_reward_cfg = self._prepare_relative_reward(relative_reward)
         self._reward_ring_callback = reward_ring_callback
@@ -86,6 +91,8 @@ class GaplockRewardStrategy(RewardStrategy):
     def reset(self, episode_index: int) -> None:
         self._success_awarded.clear()
         self._idle_counters.clear()
+        self._idle_penalty_applied.clear()
+        self._idle_truncation_applied.clear()
 
     def _select_target_obs(
         self,
@@ -126,15 +133,6 @@ class GaplockRewardStrategy(RewardStrategy):
             # Rendering is auxiliary; ignore callback errors.
             pass
 
-    def _register_idle(self, agent_id: str, speed: float) -> int:
-        counter = self._idle_counters.get(agent_id, 0)
-        if speed < self.idle_speed_threshold:
-            counter += 1
-        else:
-            counter = 0
-        self._idle_counters[agent_id] = counter
-        return counter
-
     @staticmethod
     def _coerce_speed_value(value: float) -> float:
         if np.isnan(value) or not np.isfinite(value):
@@ -160,6 +158,35 @@ class GaplockRewardStrategy(RewardStrategy):
                 return None
         return self._coerce_speed_value(speed_val)
 
+    def _apply_idle_penalty(self, acc: RewardAccumulator, agent_id: str, speed: Optional[float]) -> None:
+        if speed is None or self.idle_speed_threshold <= 0.0:
+            self._idle_counters.pop(agent_id, None)
+            self._idle_penalty_applied.pop(agent_id, None)
+            return
+
+        if speed < self.idle_speed_threshold:
+            counter = self._idle_counters.get(agent_id, 0) + 1
+            self._idle_counters[agent_id] = counter
+            applied = self._idle_penalty_applied.get(agent_id, 0)
+            capped = self.idle_penalty_steps > 0
+            if self.idle_penalty and (not capped or applied < self.idle_penalty_steps):
+                acc.add("idle_penalty", -abs(self.idle_penalty))
+                if capped:
+                    self._idle_penalty_applied[agent_id] = applied + 1
+            elif not capped:
+                self._idle_penalty_applied[agent_id] = applied + 1
+        else:
+            self._idle_counters[agent_id] = 0
+            self._idle_penalty_applied[agent_id] = 0
+
+    def _is_idle_truncation(self, step: RewardStep) -> bool:
+        if step.events and step.events.get("idle_triggered"):
+            return True
+        info = step.info if isinstance(step.info, dict) else None
+        if info and info.get("idle_triggered"):
+            return True
+        return False
+
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         acc = RewardAccumulator()
 
@@ -173,17 +200,7 @@ class GaplockRewardStrategy(RewardStrategy):
         overlay_target_id: Optional[str] = None
 
         speed = self._extract_speed(ego_obs)
-        if (
-            self.idle_penalty
-            and self.idle_penalty_steps > 0
-            and self.idle_speed_threshold > 0.0
-            and speed is not None
-        ):
-            counter = self._register_idle(step.agent_id, speed)
-            if counter >= self.idle_penalty_steps:
-                acc.add("idle_penalty", -abs(self.idle_penalty))
-        elif speed is None:
-            self._idle_counters.pop(step.agent_id, None)
+        self._apply_idle_penalty(acc, step.agent_id, speed)
 
         if ego_crashed and self.self_collision_penalty:
             acc.add("self_collision_penalty", self.self_collision_penalty)
@@ -202,6 +219,9 @@ class GaplockRewardStrategy(RewardStrategy):
             truncated = bool(step.info.get("truncated", False))
         if truncated and self.truncation_penalty:
             acc.add("truncation_penalty", self.truncation_penalty)
+        if self._is_idle_truncation(step) and self.idle_truncation_penalty and step.agent_id not in self._idle_truncation_applied:
+            acc.add("idle_truncation_penalty", float(self.idle_truncation_penalty))
+            self._idle_truncation_applied.add(step.agent_id)
 
         if self.relative_reward_cfg and target_obs is not None:
             self._apply_relative_reward(acc, ego_obs, target_obs)
