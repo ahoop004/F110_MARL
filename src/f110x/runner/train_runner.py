@@ -117,8 +117,21 @@ class TrainRunner:
 
         reward_cfg = self.context.reward_cfg
         truncation_penalty = self._resolve_reward_value(reward_cfg, "truncation_penalty")
-        idle_speed_threshold = float(reward_cfg.get("idle_speed_threshold", 0.4))
-        idle_patience_steps = int(reward_cfg.get("idle_patience_steps", 200))
+        params_block = reward_cfg.get("params") if isinstance(reward_cfg.get("params"), dict) else {}
+
+        def _extract_reward_param(name: str, default: float) -> float:
+            value = reward_cfg.get(name)
+            if value is None and isinstance(params_block, dict):
+                value = params_block.get(name)
+            if value is None:
+                return float(default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float(default)
+
+        idle_speed_threshold = _extract_reward_param("idle_speed_threshold", 0.4)
+        idle_patience_steps = int(round(_extract_reward_param("idle_patience_steps", 200)))
         idle_tracker = IdleTerminationTracker(idle_speed_threshold, idle_patience_steps)
         reward_sharing_cfg = reward_cfg.get("shared_reward")
 

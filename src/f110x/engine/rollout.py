@@ -337,16 +337,40 @@ def run_episode(
             if truncs.get(agent_id, False):
                 step_events_map[agent_id]["truncated"] = True
 
-            velocity = next_obs.get(agent_id, {}).get("velocity")
-            if velocity is None:
+            obs_next = next_obs.get(agent_id, {})
+            velocity = obs_next.get("velocity")
+            speed = None
+            if velocity is not None:
+                try:
+                    speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
+                except Exception:
+                    speed = None
+            if speed is None:
+                raw_speed = obs_next.get("speed")
+                if raw_speed is not None:
+                    try:
+                        speed = float(raw_speed)
+                    except (TypeError, ValueError):
+                        speed = None
+            if speed is None:
                 continue
-            speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
-            if np.isnan(speed):
+            if np.isnan(speed) or not np.isfinite(speed):
                 speed = 0.0
             step_speed_values[idx] = speed
             step_speed_present[idx] = True
             speed_sums_array[idx] += speed
             speed_counts_array[idx] += 1
+
+        if terminate_any_done and any(
+            terms.get(agent_id, False) or truncs.get(agent_id, False) for agent_id in agent_order
+        ):
+            for agent_id in agent_order:
+                if terms.get(agent_id, False) or truncs.get(agent_id, False):
+                    continue
+                truncs[agent_id] = True
+                agent_info = infos.setdefault(agent_id, {})
+                agent_info["truncated"] = True
+                step_events_map.setdefault(agent_id, {})["truncated"] = True
 
         if idle_tracker.observe(step_speed_values, step_speed_present):
             idle_triggered = True
