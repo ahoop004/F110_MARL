@@ -55,14 +55,26 @@ ZOOM_OUT_FACTOR = 1.0 / ZOOM_IN_FACTOR
 CAR_LENGTH = 0.58
 CAR_WIDTH  = 0.31
 
-# colors (normalized RGB)
-CAR_LEARNER = tuple(c / 255.0 for c in (183, 193, 222))
-CAR_OTHER   = tuple(c / 255.0 for c in ( 99,  52,  94))
-MAP_COLOR   = tuple(c / 255.0 for c in (255, 193,  50))
-CENTERLINE_COLOR = tuple(c / 255.0 for c in (102, 255, 102))
-CENTERLINE_POINT_COLOR = tuple(c / 255.0 for c in (255, 255, 255))
-LIDAR_COLOR_HIT = (1.0, 0.0, 0.0)
-LIDAR_COLOR_MAX = tuple(c / 255.0 for c in (180, 180, 180))
+# colors (normalized RGBA)
+def _rgba255(r: float, g: float, b: float, a: float = 255.0) -> tuple[float, float, float, float]:
+    return (
+        float(r) / 255.0,
+        float(g) / 255.0,
+        float(b) / 255.0,
+        float(a) / 255.0,
+    )
+
+
+CAR_LEARNER = _rgba255(183, 193, 222)
+CAR_OTHER   = _rgba255( 99,  52,  94)
+MAP_COLOR   = _rgba255(255, 193,  50)
+CENTERLINE_COLOR = _rgba255(102, 255, 102)
+CENTERLINE_POINT_COLOR = _rgba255(255, 255, 255)
+LIDAR_COLOR_HIT = (1.0, 0.0, 0.0, 1.0)
+LIDAR_COLOR_MAX = _rgba255(180, 180, 180)
+REWARD_RING_FILL_COLOR = _rgba255(120, 220, 120, 96)
+REWARD_RING_BORDER_COLOR = _rgba255(56, 182, 86, 220)
+REWARD_RING_PREFERRED_COLOR = _rgba255(255, 255, 255, 255)
 
 if not _PYGLET_AVAILABLE:
     class EnvRenderer:
@@ -119,6 +131,28 @@ else:
             self._user_camera_target = None
             self._follow_padding_m = 16.0
             self._lidar_buffer_cache = {}
+            self._reward_ring_enabled = False
+            self._reward_ring_config = {}
+            self._reward_ring_target = None
+            self._reward_ring_segments = 0
+            self._reward_ring_angles = None
+            self._reward_ring_angles_ext = None
+            self._reward_ring_cos = None
+            self._reward_ring_sin = None
+            self._reward_ring_cos_ext = None
+            self._reward_ring_sin_ext = None
+            self._reward_ring_fill_vlist = None
+            self._reward_ring_outer_vlist = None
+            self._reward_ring_inner_vlist = None
+            self._reward_ring_pref_vlist = None
+            self._reward_ring_fill_positions = None
+            self._reward_ring_fill_view = None
+            self._reward_ring_outer_positions = None
+            self._reward_ring_outer_view = None
+            self._reward_ring_inner_positions = None
+            self._reward_ring_inner_view = None
+            self._reward_ring_pref_positions = None
+            self._reward_ring_pref_view = None
 
             # options
             self.lidar_fov = lidar_fov
@@ -315,6 +349,8 @@ else:
                 except Exception:
                     pass
                 self._centerline_points_vlist = None
+            self._clear_reward_ring_geometry()
+            self._reward_ring_target = None
 
         # ---------- Window / Camera ----------
 
@@ -364,6 +400,8 @@ else:
             self.shader.use()
             self.shader['projection'] = proj
             self.shader['point_size'] = float(self.point_size)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glEnable(GL_PROGRAM_POINT_SIZE)
             glPointSize(4)
 
@@ -456,7 +494,7 @@ else:
                     sin_buffer = np.empty_like(base_angles)
                     positions_array = array('f', [0.0] * (2 * n))
                     positions_view = np.frombuffer(positions_array, dtype=np.float32)
-                    colors_array = array('f', [0.0] * (3 * n))
+                    colors_array = array('f', [0.0] * (4 * n))
                     colors_view = np.frombuffer(colors_array, dtype=np.float32)
                     buffers = {
                         'base_angles': base_angles,
@@ -466,7 +504,7 @@ else:
                         'positions_array': positions_array,
                         'positions_view': positions_view,
                         'colors_array': colors_array,
-                        'colors_matrix': colors_view.reshape((n, 3)),
+                        'colors_matrix': colors_view.reshape((n, 4)),
                     }
                     self._lidar_buffer_cache[key] = buffers
 
@@ -545,6 +583,8 @@ else:
                 hud_lines.append(f"{aid}: {lap_str} {time_str}{status_suffix}")
 
             self.hud_label.text = "\n".join(hud_lines)
+
+            self._update_reward_ring_overlay()
 
             if self._follow_enabled:
                 self._camera_follow_first()
@@ -690,7 +730,7 @@ else:
             def callback(env_renderer: "EnvRenderer"):
                 glPointSize(point_size)
                 pts = (waypoints * env_renderer.render_scale).flatten().tolist()
-                color = [0, 255, 0]
+                color = [0, 255, 0, 255]
                 if not hasattr(env_renderer, '_centerline_vlist'):
                     n = waypoints.shape[0]
                     env_renderer._centerline_vlist = env_renderer.shader.vertex_list(
@@ -725,14 +765,252 @@ else:
                             break
                 for i in range(num):
                     if passed_flags and i < len(passed_flags) and passed_flags[i]:
-                        colors.extend([255, 0, 0])     # passed
+                        colors.extend([255, 0, 0, 255])     # passed
                     elif current_idx is not None and i == current_idx:
-                        colors.extend([255, 255, 255]) # current
+                        colors.extend([255, 255, 255, 255]) # current
                     else:
-                        colors.extend([255, 255, 0])   # pending
+                        colors.extend([255, 255, 0, 255])   # pending
                 pos = (waypoints * env_renderer.render_scale).flatten().tolist()
                 env_renderer._waypoints_vlist = env_renderer.shader.vertex_list(
                     num, pyglet.gl.GL_POINTS, batch=env_renderer.batch, group=env_renderer.shader_group,
                     position=('f', pos), color=('B', colors)
                 )
             return callback
+
+        # ---------- Reward Ring Overlay ----------
+
+        def configure_reward_ring(
+            self,
+            *,
+            enabled: bool,
+            preferred_radius: float = 0.0,
+            inner_tolerance: float = 0.0,
+            outer_tolerance: float = 0.0,
+            segments: int = 96,
+            fill_color: Optional[tuple[float, float, float, float]] = None,
+            border_color: Optional[tuple[float, float, float, float]] = None,
+            preferred_color: Optional[tuple[float, float, float, float]] = None,
+        ) -> None:
+            desired_enabled = bool(enabled) and int(segments) >= 8
+            if not desired_enabled:
+                self._reward_ring_enabled = False
+                self._reward_ring_config = {}
+                self._reward_ring_segments = 0
+                self._reward_ring_target = None
+                self._clear_reward_ring_geometry()
+                return
+
+            segments = max(int(segments), 8)
+            config = {
+                "preferred_radius": max(float(preferred_radius), 0.0),
+                "inner_tolerance": max(float(inner_tolerance), 0.0),
+                "outer_tolerance": max(float(outer_tolerance), 0.0),
+                "segments": segments,
+                "fill_color": tuple(fill_color) if fill_color is not None else REWARD_RING_FILL_COLOR,
+                "border_color": tuple(border_color) if border_color is not None else REWARD_RING_BORDER_COLOR,
+                "preferred_color": tuple(preferred_color) if preferred_color is not None else REWARD_RING_PREFERRED_COLOR,
+            }
+
+            if self._reward_ring_enabled and self._reward_ring_config == config:
+                return
+
+            self._reward_ring_enabled = True
+            self._reward_ring_config = config
+            self._reward_ring_segments = segments
+            angles = np.linspace(0.0, 2.0 * np.pi, segments, endpoint=False, dtype=np.float32)
+            self._reward_ring_angles = angles
+            self._reward_ring_cos = np.cos(angles).astype(np.float32)
+            self._reward_ring_sin = np.sin(angles).astype(np.float32)
+            angles_ext = np.concatenate([angles, angles[:1]])
+            self._reward_ring_angles_ext = angles_ext.astype(np.float32)
+            self._reward_ring_cos_ext = np.cos(self._reward_ring_angles_ext).astype(np.float32)
+            self._reward_ring_sin_ext = np.sin(self._reward_ring_angles_ext).astype(np.float32)
+            self._clear_reward_ring_geometry()
+
+        def set_reward_ring_target(self, agent_id: Optional[str]) -> None:
+            if agent_id == self._reward_ring_target:
+                return
+            self._reward_ring_target = agent_id
+            if agent_id is None:
+                self._clear_reward_ring_geometry()
+
+        def _ensure_reward_ring_geometry(self, *, need_inner: bool, need_preferred: bool) -> None:
+            if not self._reward_ring_enabled or not self._reward_ring_config:
+                return
+            segments = self._reward_ring_segments
+            if segments <= 0:
+                return
+
+            fill_vertices = 2 * (segments + 1)
+            if self._reward_ring_fill_vlist is None:
+                self._reward_ring_fill_positions = array('f', [0.0] * (2 * fill_vertices))
+                self._reward_ring_fill_view = np.frombuffer(self._reward_ring_fill_positions, dtype=np.float32)
+                fill_color = list(self._reward_ring_config.get("fill_color", REWARD_RING_FILL_COLOR)) * fill_vertices
+                self._reward_ring_fill_vlist = self.shader.vertex_list(
+                    fill_vertices,
+                    pyglet.gl.GL_TRIANGLE_STRIP,
+                    batch=self.batch,
+                    group=self.shader_group,
+                    position=('f/dynamic', self._reward_ring_fill_positions),
+                    color=('f', fill_color),
+                )
+
+            if self._reward_ring_outer_vlist is None:
+                self._reward_ring_outer_positions = array('f', [0.0] * (2 * segments))
+                self._reward_ring_outer_view = np.frombuffer(self._reward_ring_outer_positions, dtype=np.float32)
+                border_color = list(self._reward_ring_config.get("border_color", REWARD_RING_BORDER_COLOR)) * segments
+                self._reward_ring_outer_vlist = self.shader.vertex_list(
+                    segments,
+                    pyglet.gl.GL_LINE_LOOP,
+                    batch=self.batch,
+                    group=self.shader_group,
+                    position=('f/dynamic', self._reward_ring_outer_positions),
+                    color=('f', border_color),
+                )
+
+            if need_inner:
+                if self._reward_ring_inner_vlist is None:
+                    self._reward_ring_inner_positions = array('f', [0.0] * (2 * segments))
+                    self._reward_ring_inner_view = np.frombuffer(self._reward_ring_inner_positions, dtype=np.float32)
+                    border_color = list(self._reward_ring_config.get("border_color", REWARD_RING_BORDER_COLOR)) * segments
+                    self._reward_ring_inner_vlist = self.shader.vertex_list(
+                        segments,
+                        pyglet.gl.GL_LINE_LOOP,
+                        batch=self.batch,
+                        group=self.shader_group,
+                        position=('f/dynamic', self._reward_ring_inner_positions),
+                        color=('f', border_color),
+                    )
+            elif self._reward_ring_inner_vlist is not None:
+                try:
+                    self._reward_ring_inner_vlist.delete()
+                except Exception:
+                    pass
+                self._reward_ring_inner_vlist = None
+                self._reward_ring_inner_positions = None
+                self._reward_ring_inner_view = None
+
+            if need_preferred:
+                if self._reward_ring_pref_vlist is None:
+                    self._reward_ring_pref_positions = array('f', [0.0] * (2 * segments))
+                    self._reward_ring_pref_view = np.frombuffer(self._reward_ring_pref_positions, dtype=np.float32)
+                    pref_color = list(self._reward_ring_config.get("preferred_color", REWARD_RING_PREFERRED_COLOR)) * segments
+                    self._reward_ring_pref_vlist = self.shader.vertex_list(
+                        segments,
+                        pyglet.gl.GL_LINE_LOOP,
+                        batch=self.batch,
+                        group=self.shader_group,
+                        position=('f/dynamic', self._reward_ring_pref_positions),
+                        color=('f', pref_color),
+                    )
+            elif self._reward_ring_pref_vlist is not None:
+                try:
+                    self._reward_ring_pref_vlist.delete()
+                except Exception:
+                    pass
+                self._reward_ring_pref_vlist = None
+                self._reward_ring_pref_positions = None
+                self._reward_ring_pref_view = None
+
+        def _clear_reward_ring_geometry(self) -> None:
+            for attr in (
+                "_reward_ring_fill_vlist",
+                "_reward_ring_outer_vlist",
+                "_reward_ring_inner_vlist",
+                "_reward_ring_pref_vlist",
+            ):
+                vlist = getattr(self, attr, None)
+                if vlist is not None:
+                    try:
+                        vlist.delete()
+                    except Exception:
+                        pass
+                    setattr(self, attr, None)
+
+            self._reward_ring_fill_positions = None
+            self._reward_ring_fill_view = None
+            self._reward_ring_outer_positions = None
+            self._reward_ring_outer_view = None
+            self._reward_ring_inner_positions = None
+            self._reward_ring_inner_view = None
+            self._reward_ring_pref_positions = None
+            self._reward_ring_pref_view = None
+
+        def _update_reward_ring_overlay(self) -> None:
+            if not self._reward_ring_enabled or not self._reward_ring_config:
+                return
+            if self._reward_ring_cos is None:
+                return
+
+            target_id = self._reward_ring_target
+            if not target_id:
+                self._clear_reward_ring_geometry()
+                return
+
+            state = self.agent_infos.get(target_id)
+            if state is None:
+                self._clear_reward_ring_geometry()
+                return
+
+            cx = float(state.get("poses_x", 0.0)) * self.render_scale
+            cy = float(state.get("poses_y", 0.0)) * self.render_scale
+
+            cfg = self._reward_ring_config
+            preferred = max(float(cfg.get("preferred_radius", 0.0)), 0.0)
+            inner_tol = max(float(cfg.get("inner_tolerance", 0.0)), 0.0)
+            outer_tol = max(float(cfg.get("outer_tolerance", 0.0)), 0.0)
+
+            inner = max(preferred - inner_tol, 0.0)
+            outer = max(preferred + outer_tol, 0.0)
+            if outer <= 0.0:
+                self._clear_reward_ring_geometry()
+                return
+
+            px_outer = outer * self.render_scale
+            px_inner = inner * self.render_scale
+            px_pref = preferred * self.render_scale
+
+            need_inner = px_inner > 1e-4
+            need_preferred = px_pref > 1e-4
+            self._ensure_reward_ring_geometry(need_inner=need_inner, need_preferred=need_preferred)
+
+            if self._reward_ring_outer_view is None or self._reward_ring_fill_view is None:
+                return
+
+            outer_x = cx + px_outer * self._reward_ring_cos
+            outer_y = cy + px_outer * self._reward_ring_sin
+            self._reward_ring_outer_view[0::2] = outer_x
+            self._reward_ring_outer_view[1::2] = outer_y
+            if self._reward_ring_outer_vlist is not None and self._reward_ring_outer_positions is not None:
+                self._reward_ring_outer_vlist.position[:] = self._reward_ring_outer_positions
+
+            if self._reward_ring_inner_view is not None and self._reward_ring_inner_vlist is not None:
+                inner_x = cx + px_inner * self._reward_ring_cos
+                inner_y = cy + px_inner * self._reward_ring_sin
+                self._reward_ring_inner_view[0::2] = inner_x
+                self._reward_ring_inner_view[1::2] = inner_y
+                if self._reward_ring_inner_positions is not None:
+                    self._reward_ring_inner_vlist.position[:] = self._reward_ring_inner_positions
+
+            if self._reward_ring_pref_view is not None and self._reward_ring_pref_vlist is not None:
+                pref_x = cx + px_pref * self._reward_ring_cos
+                pref_y = cy + px_pref * self._reward_ring_sin
+                self._reward_ring_pref_view[0::2] = pref_x
+                self._reward_ring_pref_view[1::2] = pref_y
+                if self._reward_ring_pref_positions is not None:
+                    self._reward_ring_pref_vlist.position[:] = self._reward_ring_pref_positions
+
+            if self._reward_ring_cos_ext is None or self._reward_ring_sin_ext is None:
+                return
+
+            fill_outer_x = cx + px_outer * self._reward_ring_cos_ext
+            fill_outer_y = cy + px_outer * self._reward_ring_sin_ext
+            fill_inner_x = cx + px_inner * self._reward_ring_cos_ext
+            fill_inner_y = cy + px_inner * self._reward_ring_sin_ext
+
+            self._reward_ring_fill_view[0::4] = fill_outer_x
+            self._reward_ring_fill_view[1::4] = fill_outer_y
+            self._reward_ring_fill_view[2::4] = fill_inner_x
+            self._reward_ring_fill_view[3::4] = fill_inner_y
+            if self._reward_ring_fill_positions is not None and self._reward_ring_fill_vlist is not None:
+                self._reward_ring_fill_vlist.position[:] = self._reward_ring_fill_positions

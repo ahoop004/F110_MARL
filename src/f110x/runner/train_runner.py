@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 from f110x.engine.rollout import (
     BestReturnTracker,
@@ -46,6 +47,9 @@ class TrainRunner:
         self.trainer_map = dict(self.context.trainer_map)
         self._configure_output_paths()
         self._logger = self.context.logger
+        self._trainer_stats: Dict[str, Dict[str, Any]] = {
+            trainer_id: {} for trainer_id in self.trainer_map
+        }
 
     # ------------------------------------------------------------------
     # Public surface
@@ -108,6 +112,8 @@ class TrainRunner:
         primary_cfg = primary_bundle.metadata.get("config", {})
         recent_window = max(1, int(primary_cfg.get("rolling_avg_window", 10)))
         best_tracker = BestReturnTracker(recent_window)
+        recent_returns: Deque[float] = deque(maxlen=recent_window)
+        recent_success: Deque[float] = deque(maxlen=recent_window)
 
         reward_cfg = self.context.reward_cfg
         truncation_penalty = self._resolve_reward_value(reward_cfg, "truncation_penalty")
@@ -132,6 +138,7 @@ class TrainRunner:
         def on_offpolicy_flush(agent_id: str, trainer: Trainer, buffer) -> None:
             for _ in range(buffer.updates_per_step):
                 stats = trainer.update()
+                self._record_trainer_stats(agent_id, stats)
                 if trainer_update_hook:
                     trainer_update_hook(agent_id, trainer, stats)
 
@@ -142,7 +149,6 @@ class TrainRunner:
             should_render = None
 
         agent_ids = list(env.possible_agents)
-        id_to_index = {aid: idx for idx, aid in enumerate(agent_ids)}
         update_after = max(1, int(self.context.update_after or 1))
         _ = update_start  # kept for compatibility with legacy callers
 
@@ -151,12 +157,12 @@ class TrainRunner:
         logger.start({
             "mode": "train",
             "primary_agent": primary_id,
-            "train_total_episodes": total_episodes,
+            "train/episodes_total": total_episodes,
         })
         logger.update_context(
             mode="train",
             primary_agent=primary_id,
-            train_total_episodes=total_episodes,
+            **{"train/episodes_total": total_episodes},
         )
 
         for episode_idx in range(int(episodes)):
@@ -262,21 +268,45 @@ class TrainRunner:
                     episode_record[f"collision_step_{aid}"] = int(step_val)
                 episode_record[f"avg_speed_{aid}"] = float(rollout.average_speeds.get(aid, 0.0))
 
+            primary_return = float(returns.get(primary_id, 0.0))
+            recent_returns.append(primary_return)
+            rolling_return = float(sum(recent_returns) / len(recent_returns))
+
+            if success is not None:
+                recent_success.append(1.0 if success else 0.0)
+            success_rate = (
+                float(sum(recent_success) / len(recent_success)) if recent_success else None
+            )
+
+            collision_rate = float(collisions_total) / max(float(rollout.steps), 1.0)
+            best_average = best_tracker.best if best_tracker.best != float("-inf") else None
+            buffer_fraction = None
+            if primary_id:
+                buffer_fraction = self._trainer_stats.get(primary_id, {}).get("buffer_fraction")
+            if buffer_fraction is None:
+                for stats_snapshot in self._trainer_stats.values():
+                    candidate = stats_snapshot.get("buffer_fraction")
+                    if candidate is not None:
+                        buffer_fraction = candidate
+                        break
+
             metrics: Dict[str, Any] = {
                 "train/episode": float(episode_idx + 1),
-                "train/total_episodes": float(total_episodes),
+                "train/episodes_total": float(total_episodes),
                 "train/steps": float(rollout.steps),
-                "train/collisions_total": float(collisions_total),
-                "train/idle_truncated": rollout.idle_triggered,
-                "train/cause": rollout.cause,
+                "train/return": primary_return,
+                "train/return_mean": rolling_return,
+                "train/collisions": float(collisions_total),
+                "train/collision_rate": collision_rate,
+                "train/idle": bool(rollout.idle_triggered),
                 "train/reward_task": rollout.reward_task,
-                "train/reward_mode": rollout.reward_mode,
             }
-            if success is not None:
-                metrics["train/success"] = bool(success)
             if primary_id:
                 metrics["train/primary_agent"] = primary_id
-            metrics["train/primary_return"] = float(returns.get(primary_id, 0.0))
+            if success is not None:
+                metrics["train/success"] = bool(success)
+            if success_rate is not None:
+                metrics["train/success_rate"] = success_rate
             if epsilon_val is not None:
                 metrics["train/epsilon"] = float(epsilon_val)
             if attacker_crashed is not None:
@@ -285,27 +315,37 @@ class TrainRunner:
                 metrics["train/defender_crashed"] = bool(defender_crashed)
             if defender_survival_steps is not None:
                 metrics["train/defender_survival_steps"] = float(defender_survival_steps)
+            if best_average is not None:
+                metrics["train/return_best"] = float(best_average)
+            metrics["train/return_window"] = float(recent_returns.maxlen)
+            if buffer_fraction is not None:
+                metrics["train/buffer_fraction"] = float(buffer_fraction)
+                episode_record["buffer_fraction"] = float(buffer_fraction)
+
             for aid, value in returns.items():
-                metrics[f"train/return_{aid}"] = float(value)
+                metrics[f"train/agent/{aid}/return"] = float(value)
             for aid, count in rollout.collisions.items():
-                metrics[f"train/collision_count_{aid}"] = float(count)
+                metrics[f"train/agent/{aid}/collisions"] = float(count)
             for aid, speed in rollout.average_speeds.items():
-                metrics[f"train/avg_speed_{aid}"] = float(speed)
+                metrics[f"train/agent/{aid}/avg_speed"] = float(speed)
             for aid, step_val in rollout.collision_steps.items():
                 if step_val >= 0:
-                    metrics[f"train/collision_step_{aid}"] = float(step_val)
+                    metrics[f"train/agent/{aid}/collision_step"] = float(step_val)
             for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
-                    metrics[f"train/reward_component_{aid}/{name}"] = float(value)
+                    metrics[f"train/reward/{aid}/{name}"] = float(value)
 
             logger.log_metrics("train", metrics, step=episode_idx + 1)
 
             results.append(episode_record)
 
             if update_callback:
-                payload: Dict[str, Any] = {"train/episode": float(episode_idx + 1)}
+                payload: Dict[str, Any] = {
+                    "train/episode": float(episode_idx + 1),
+                    "train/return": primary_return,
+                }
                 for aid, value in returns.items():
-                    payload[f"train/return_{aid}"] = float(value)
+                    payload[f"train/agent/{aid}/return"] = float(value)
                 update_callback(payload)
 
             if (episode_idx + 1) % update_after == 0:
@@ -313,6 +353,7 @@ class TrainRunner:
                     if trainer_id in off_policy_ids:
                         continue
                     stats = trainer.update()
+                    self._record_trainer_stats(trainer_id, stats)
                     if trainer_update_hook:
                         trainer_update_hook(trainer_id, trainer, stats)
 
@@ -339,10 +380,12 @@ class TrainRunner:
                 if flushed:
                     for _ in range(buffer.updates_per_step):
                         stats = trainer.update()
+                        self._record_trainer_stats(trainer_id, stats)
                         if trainer_update_hook:
                             trainer_update_hook(trainer_id, trainer, stats)
                 continue
             stats = trainer.update()
+            self._record_trainer_stats(trainer_id, stats)
             if trainer_update_hook:
                 trainer_update_hook(trainer_id, trainer, stats)
 
@@ -352,6 +395,16 @@ class TrainRunner:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _record_trainer_stats(
+        self,
+        trainer_id: str,
+        stats: Optional[Dict[str, Any]],
+    ) -> None:
+        if not stats:
+            return
+        snapshot = self._trainer_stats.setdefault(trainer_id, {})
+        snapshot.update(stats)
+
     def _ensure_primary_agent(self) -> None:
         if self.context.primary_agent_id:
             return

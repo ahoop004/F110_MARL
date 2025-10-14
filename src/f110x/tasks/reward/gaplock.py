@@ -43,6 +43,8 @@ class GaplockRewardStrategy(RewardStrategy):
         reward_smoothing: Optional[float] = None,
         relative_reward: Optional[Dict[str, Any]] = None,
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
+        reward_ring_callback: Optional[Callable[[str, Optional[str]], None]] = None,
+        reward_ring_focus_agent: Optional[str] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -58,6 +60,8 @@ class GaplockRewardStrategy(RewardStrategy):
         self._success_awarded: Dict[str, set[Tuple[str, str]]] = {}
         self._target_resolver = target_resolver
         self.relative_reward_cfg = self._prepare_relative_reward(relative_reward)
+        self._reward_ring_callback = reward_ring_callback
+        self._reward_ring_focus_agent = reward_ring_focus_agent
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -100,6 +104,17 @@ class GaplockRewardStrategy(RewardStrategy):
             awarded.add(key)
         return False
 
+    def _notify_reward_ring(self, agent_id: str, target_id: Optional[str]) -> None:
+        if self._reward_ring_callback is None:
+            return
+        if self._reward_ring_focus_agent is not None and agent_id != self._reward_ring_focus_agent:
+            return
+        try:
+            self._reward_ring_callback(agent_id, target_id)
+        except Exception:
+            # Rendering is auxiliary; ignore callback errors.
+            pass
+
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         acc = RewardAccumulator()
 
@@ -110,15 +125,18 @@ class GaplockRewardStrategy(RewardStrategy):
         ego_obs = step.obs
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
+        overlay_target_id: Optional[str] = None
 
         if ego_crashed and self.self_collision_penalty:
             acc.add("self_collision_penalty", self.self_collision_penalty)
 
         if target_obs is not None:
+            overlay_target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
-                target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
-                if not self.success_once or not self._has_awarded(step.agent_id, target_id):
+                if overlay_target_id and (
+                    not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id)
+                ):
                     acc.add("success_reward", self.target_crash_reward)
 
         truncated = bool(step.events.get("truncated")) if step.events else False
@@ -129,6 +147,8 @@ class GaplockRewardStrategy(RewardStrategy):
 
         if self.relative_reward_cfg and target_obs is not None:
             self._apply_relative_reward(acc, ego_obs, target_obs)
+
+        self._notify_reward_ring(step.agent_id, overlay_target_id)
 
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
         return total, components
@@ -218,6 +238,24 @@ def _extract_agent_roles(roster: Any) -> Dict[str, str]:
     return roles
 
 
+def _find_trainable_agent(roster: Any) -> Optional[str]:
+    assignments = getattr(roster, "assignments", None)
+    if not isinstance(assignments, Iterable):
+        return None
+    for assignment in assignments:
+        spec = getattr(assignment, "spec", None)
+        trainable = getattr(spec, "trainable", None)
+        if trainable is True:
+            agent_id = getattr(assignment, "agent_id", None)
+            if agent_id:
+                return str(agent_id)
+    for assignment in assignments:
+        agent_id = getattr(assignment, "agent_id", None)
+        if agent_id:
+            return str(agent_id)
+    return None
+
+
 def _build_gaplock_target_resolver(context: RewardRuntimeContext) -> Optional[Callable[[str], Optional[str]]]:
     roster = getattr(context, "roster", None)
     role_members = _normalise_role_members(roster)
@@ -263,7 +301,30 @@ def _build_gaplock_strategy(
         resolver = _build_gaplock_target_resolver(context)
         if resolver is not None:
             params["target_resolver"] = resolver
-    return GaplockRewardStrategy(**params)
+    if "reward_ring_focus_agent" not in params:
+        focus_agent = _find_trainable_agent(getattr(context, "roster", None))
+        if focus_agent:
+            params["reward_ring_focus_agent"] = focus_agent
+    if "reward_ring_callback" not in params and hasattr(context.env, "update_reward_ring_target"):
+        params["reward_ring_callback"] = context.env.update_reward_ring_target
+
+    strategy = GaplockRewardStrategy(**params)
+
+    if hasattr(context.env, "configure_reward_ring"):
+        if strategy.relative_reward_cfg:
+            overlay_cfg = strategy.relative_reward_cfg
+            payload: Dict[str, Any] = {
+                "preferred_radius": overlay_cfg.get("preferred_radius", 0.0),
+                "inner_tolerance": overlay_cfg.get("inner_tolerance", 0.0),
+                "outer_tolerance": overlay_cfg.get("outer_tolerance", 0.0),
+                "segments": 96,
+            }
+            focus_agent = getattr(strategy, "_reward_ring_focus_agent", None)
+            context.env.configure_reward_ring(payload, agent_id=focus_agent)
+        else:
+            context.env.configure_reward_ring(None)
+
+    return strategy
 
 
 register_reward_task(

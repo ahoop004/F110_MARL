@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import pickle
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
 
@@ -141,14 +142,17 @@ class EvalRunner:
             {
                 "mode": "eval",
                 "primary_agent": primary_id,
-                "eval_total_episodes": total_episodes,
+                "eval/episodes_total": total_episodes,
             }
         )
         logger.update_context(
             mode="eval",
             primary_agent=primary_id,
-            eval_total_episodes=total_episodes,
+            **{"eval/episodes_total": total_episodes},
         )
+        eval_window = max(1, min(total_episodes, 10))
+        recent_returns: Deque[float] = deque(maxlen=eval_window)
+        recent_success: Deque[float] = deque(maxlen=eval_window)
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         idle_tracker = IdleTerminationTracker(0.0, 0)
@@ -223,6 +227,14 @@ class EvalRunner:
                 if attacker_step is not None:
                     attacker_crash_step = int(attacker_step)
 
+            success: Optional[bool] = None
+            if defender_crashed is not None and attacker_crashed is not None:
+                success = defender_crashed and not attacker_crashed
+            elif defender_crashed is not None:
+                success = defender_crashed
+            elif attacker_crashed is not None:
+                success = not attacker_crashed
+
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
                 "steps": rollout.steps,
@@ -230,6 +242,8 @@ class EvalRunner:
                 "returns": returns,
                 "collision_total": collision_total,
             }
+            if success is not None:
+                record["success"] = success
             if rollout.spawn_points:
                 record["spawn_points"] = dict(rollout.spawn_points)
             if rollout.spawn_option is not None:
@@ -271,36 +285,56 @@ class EvalRunner:
                     pickle.dump({"trajectory": transformed, "metrics": record}, handle)
                 record["rollout_path"] = str(rollout_path)
 
+            primary_return = float(returns.get(primary_id, 0.0))
+            recent_returns.append(primary_return)
+            mean_return = float(sum(recent_returns) / len(recent_returns))
+
+            if success is not None:
+                recent_success.append(1.0 if success else 0.0)
+            success_rate = (
+                float(sum(recent_success) / len(recent_success)) if recent_success else None
+            )
+
+            collision_rate = float(collision_total) / max(float(rollout.steps), 1.0)
+
             metrics: Dict[str, Any] = {
                 "eval/episode": float(ep_index + 1),
-                "eval/total_episodes": float(total_episodes),
+                "eval/episodes_total": float(total_episodes),
                 "eval/steps": float(rollout.steps),
+                "eval/return": primary_return,
+                "eval/return_mean": mean_return,
+                "eval/collisions": float(collision_total),
+                "eval/collision_rate": collision_rate,
                 "eval/cause": rollout.cause,
-                "eval/collisions_total": float(collision_total),
             }
             if primary_id:
                 metrics["eval/primary_agent"] = primary_id
-            metrics["eval/primary_return"] = float(returns.get(primary_id, 0.0))
+            if success is not None:
+                metrics["eval/success"] = bool(success)
+            if success_rate is not None:
+                metrics["eval/success_rate"] = success_rate
             if defender_crashed is not None:
                 metrics["eval/defender_crashed"] = bool(defender_crashed)
             if attacker_crashed is not None:
                 metrics["eval/attacker_crashed"] = bool(attacker_crashed)
-            for aid, value in returns.items():
-                metrics[f"eval/return_{aid}"] = float(value)
-            for aid, count in rollout.collisions.items():
-                metrics[f"eval/collision_count_{aid}"] = float(count)
-            for aid, speed in rollout.average_speeds.items():
-                metrics[f"eval/avg_speed_{aid}"] = float(speed)
-            for aid, step_val in collision_steps.items():
-                if step_val is not None:
-                    metrics[f"eval/collision_step_{aid}"] = float(step_val)
-            for aid, count in lap_counts.items():
-                metrics[f"eval/lap_count_{aid}"] = float(count)
             if defender_survival_steps_value is not None:
                 metrics["eval/defender_survival_steps"] = float(defender_survival_steps_value)
+            metrics["eval/return_window"] = float(recent_returns.maxlen or len(recent_returns))
+
+            for aid, value in returns.items():
+                metrics[f"eval/agent/{aid}/return"] = float(value)
+            for aid, count in rollout.collisions.items():
+                metrics[f"eval/agent/{aid}/collisions"] = float(count)
+            for aid, speed in rollout.average_speeds.items():
+                metrics[f"eval/agent/{aid}/avg_speed"] = float(speed)
+            for aid, step_val in collision_steps.items():
+                if step_val is not None:
+                    metrics[f"eval/agent/{aid}/collision_step"] = float(step_val)
+            for aid, count in lap_counts.items():
+                metrics[f"eval/agent/{aid}/lap_count"] = float(count)
             for aid, breakdown in rollout.reward_breakdown.items():
                 for name, value in breakdown.items():
-                    metrics[f"eval/reward_component_{aid}/{name}"] = float(value)
+                    metrics[f"eval/reward/{aid}/{name}"] = float(value)
 
             logger.log_metrics("eval", metrics, step=ep_index + 1)
 

@@ -214,8 +214,9 @@ class DQNAgent:
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        grad_norm = None
         if self.max_grad_norm > 0.0:
-            clip_grad_norm_(self.q_net.parameters(), max_norm=self.max_grad_norm)
+            grad_norm = clip_grad_norm_(self.q_net.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
 
         self._updates += 1
@@ -228,12 +229,28 @@ class DQNAgent:
 
         td_mean = float(td_errors.detach().mean().cpu().item())
         td_abs_mean = float(td_errors.detach().abs().mean().cpu().item())
+        q_mean = float(chosen_q.detach().mean().cpu().item())
+        q_max = float(chosen_q.detach().max().cpu().item())
+        target_mean = float(target.detach().mean().cpu().item())
+        buffer_fill = float(len(self.buffer) / float(getattr(self.buffer, "capacity", max(len(self.buffer), 1))))
+        lr = float(self.optimizer.param_groups[0].get("lr", 0.0))
         stats: Dict[str, Any] = {
             "loss": float(loss.item()),
             "td_error_mean": td_mean,
             "td_error_abs": td_abs_mean,
+            "q_mean": q_mean,
+            "q_max": q_max,
+            "target_mean": target_mean,
+            "buffer_fraction": buffer_fill,
             "epsilon": float(self.epsilon()),
+            "lr": lr,
+            "updates": float(self._updates),
         }
+        if grad_norm is not None:
+            try:
+                stats["grad_norm"] = float(grad_norm.detach().cpu().item())
+            except AttributeError:
+                stats["grad_norm"] = float(grad_norm)
         if self._use_per and weights is not None:
             stats["is_weight_mean"] = float(weights_t.detach().mean().cpu().item())
         return stats

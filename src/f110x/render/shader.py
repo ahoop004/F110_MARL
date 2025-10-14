@@ -6,9 +6,9 @@ VERTEX_SHADER_SRC = """
 #version 150 core
 
 in vec2 position;
-in vec3 color;
+in vec4 color;
 
-out vec3 frag_color;
+out vec4 frag_color;
 
 uniform mat4 projection;
 uniform float point_size;
@@ -24,12 +24,12 @@ void main()
 FRAGMENT_SHADER_SRC = """
 #version 150 core
 
-in vec3 frag_color;
+in vec4 frag_color;
 out vec4 final_color;
 
 void main()
 {
-    final_color = vec4(frag_color, 1.0);
+    final_color = frag_color;
 }
 """
 

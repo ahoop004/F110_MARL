@@ -196,51 +196,88 @@ if _HAS_RICH:
                 return
 
             episode = _format_int(metrics.get(f"{phase}/episode", step))
-            total = _format_int(metrics.get(f"{phase}/total_episodes"))
+            total = _format_int(metrics.get(f"{phase}/episodes_total"))
             steps = _format_int(metrics.get(f"{phase}/steps"))
-            collisions = _format_int(metrics.get(f"{phase}/collisions_total"))
+            collisions = _format_int(metrics.get(f"{phase}/collisions"))
+            collision_rate = _format_number(metrics.get(f"{phase}/collision_rate"))
             mode = metrics.get(f"{phase}/reward_task") or metrics.get(f"{phase}/reward_mode")
             cause = metrics.get(f"{phase}/cause")
             success = _format_bool(metrics.get(f"{phase}/success"))
-            idle = _format_bool(metrics.get(f"{phase}/idle_truncated"))
-            epsilon = _format_number(metrics.get("train/epsilon")) if phase == "train" else None
+            success_rate = _format_number(metrics.get(f"{phase}/success_rate"))
+            idle = _format_bool(metrics.get(f"{phase}/idle"))
+            epsilon = (
+                _format_number(metrics.get("train/epsilon"))
+                if phase == "train"
+                else _format_number(metrics.get(f"{phase}/epsilon"))
+            )
             primary_agent = metrics.get(f"{phase}/primary_agent")
-            primary_return = _format_number(metrics.get(f"{phase}/primary_return"))
+            primary_return = _format_number(metrics.get(f"{phase}/return"))
+            return_mean = _format_number(metrics.get(f"{phase}/return_mean"))
+            return_window = _format_int(metrics.get(f"{phase}/return_window"))
+            return_best = _format_number(metrics.get(f"{phase}/return_best"))
+            buffer_fraction = _format_number(metrics.get(f"{phase}/buffer_fraction"))
             defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
             attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
 
-            tracked.update(
-                {
-                    "episode": episode,
-                    "total": total,
-                    "steps": steps,
-                    "collisions": collisions,
-                    "mode": mode,
-                    "cause": cause,
-                    "success": success,
-                    "idle": idle,
-                    "epsilon": epsilon,
-                    "primary_agent": primary_agent,
-                    "primary_return": primary_return,
-                    "defender_crash": defender_crash,
-                    "attacker_crash": attacker_crash,
-                }
-            )
+            if episode is not None:
+                tracked["episode"] = episode
+            if total is not None:
+                tracked["total"] = total
+            if steps is not None:
+                tracked["steps"] = steps
+            if collisions is not None:
+                tracked["collisions"] = collisions
+            if collision_rate is not None:
+                tracked["collision_rate"] = collision_rate
+            if mode is not None:
+                tracked["mode"] = mode
+            if cause is not None:
+                tracked["cause"] = cause
+            if success is not None:
+                tracked["success"] = success
+            if success_rate is not None:
+                tracked["success_rate"] = success_rate
+            if idle is not None:
+                tracked["idle"] = idle
+            if epsilon is not None:
+                tracked["epsilon"] = epsilon
+            if primary_agent is not None:
+                tracked["primary_agent"] = primary_agent
+            if primary_return is not None:
+                tracked["primary_return"] = primary_return
+            if return_mean is not None:
+                tracked["return_mean"] = return_mean
+            if return_window is not None:
+                tracked["return_window"] = return_window
+            if return_best is not None:
+                tracked["return_best"] = return_best
+            if buffer_fraction is not None:
+                tracked["buffer_fraction"] = buffer_fraction
+            if defender_crash is not None:
+                tracked["defender_crash"] = defender_crash
+            if attacker_crash is not None:
+                tracked["attacker_crash"] = attacker_crash
 
             agents = tracked.setdefault("agents", {})
-            return_prefix = f"{phase}/return_"
-            collision_prefix = f"{phase}/collision_count_"
-            speed_prefix = f"{phase}/avg_speed_"
             for key, value in metrics.items():
-                if key.startswith(return_prefix):
-                    agent_id = key[len(return_prefix) :]
-                    agents.setdefault(agent_id, {})["return"] = _format_number(value)
-                elif key.startswith(collision_prefix):
-                    agent_id = key[len(collision_prefix) :]
-                    agents.setdefault(agent_id, {})["collisions"] = _format_number(value)
-                elif key.startswith(speed_prefix):
-                    agent_id = key[len(speed_prefix) :]
-                    agents.setdefault(agent_id, {})["speed"] = _format_number(value)
+                agent_prefix = f"{phase}/agent/"
+                if key.startswith(agent_prefix):
+                    remainder = key[len(agent_prefix) :]
+                    agent_id, _, metric_name = remainder.partition("/")
+                    if not metric_name:
+                        continue
+                    entry = agents.setdefault(agent_id, {})
+                    formatted = _format_number(value)
+                    if metric_name == "return":
+                        entry["return"] = formatted
+                    elif metric_name == "collisions":
+                        entry["collisions"] = formatted
+                    elif metric_name == "avg_speed":
+                        entry["speed"] = formatted
+                    elif metric_name == "collision_step":
+                        entry["collision_step"] = formatted
+                    elif metric_name == "lap_count":
+                        entry["lap_count"] = formatted
 
             self._refresh()
 
@@ -296,13 +333,19 @@ if _HAS_RICH:
 
             steps = state.get("steps")
             collisions = state.get("collisions")
+            collision_rate = state.get("collision_rate")
+            buffer_fraction = state.get("buffer_fraction")
             metrics_line_parts = []
             if steps is not None:
                 metrics_line_parts.append(f"Steps {steps}")
             if collisions is not None:
                 metrics_line_parts.append(f"Collisions {collisions}")
+            if collision_rate is not None:
+                metrics_line_parts.append(f"CollRate {collision_rate:.2f}")
             if metrics_line_parts:
                 summary_lines.append("  ".join(metrics_line_parts))
+            if buffer_fraction is not None:
+                summary_lines.append(f"Buffer: {buffer_fraction * 100:.0f}%")
 
             mode = state.get("mode")
             cause = state.get("cause")
@@ -314,10 +357,13 @@ if _HAS_RICH:
             success = state.get("success")
             if success is not None:
                 summary_lines.append(f"Success: {'yes' if success else 'no'}")
+            success_rate = state.get("success_rate")
+            if success_rate is not None:
+                summary_lines.append(f"Success rate: {success_rate * 100:.1f}%")
 
             idle = state.get("idle")
             if idle is not None:
-                summary_lines.append(f"Idle truncated: {'yes' if idle else 'no'}")
+                summary_lines.append(f"Idle stop: {'yes' if idle else 'no'}")
 
             epsilon = state.get("epsilon")
             if epsilon is not None:
@@ -335,8 +381,27 @@ if _HAS_RICH:
 
             primary_agent = state.get("primary_agent")
             primary_return = state.get("primary_return")
+            return_mean = state.get("return_mean")
+            return_best = state.get("return_best")
+            return_window = state.get("return_window")
+            avg_label = None
+            if return_mean is not None:
+                if return_window:
+                    avg_label = f"avg{int(return_window)}ep {return_mean:.2f}"
+                else:
+                    avg_label = f"avg {return_mean:.2f}"
             if primary_agent and primary_return is not None:
-                summary_lines.append(f"{primary_agent} return: {primary_return:.2f}")
+                line = f"{primary_agent} return: {primary_return:.2f}"
+                if avg_label is not None:
+                    line += f" ({avg_label})"
+                if return_best is not None:
+                    line += f", best {return_best:.2f}"
+                summary_lines.append(line)
+            elif avg_label is not None:
+                line = f"Return {avg_label}"
+                if return_best is not None:
+                    line += f", best {return_best:.2f}"
+                summary_lines.append(line)
 
             summary_text = Text("\n".join(summary_lines) if summary_lines else "No telemetry yet.")
 
@@ -360,10 +425,11 @@ if _HAS_RICH:
                         f"{speed:.2f}" if speed is not None else "—",
                     )
 
+            components = [Align.left(summary_text)]
             if agents_table is not None:
-                content = Group(Align.left(summary_text), Align.left(agents_table))
-            else:
-                content = Align.left(summary_text)
+                components.append(Align.left(agents_table))
+
+            content = Group(*components) if len(components) > 1 else components[0]
 
             return Panel(content, title=title, border_style="cyan")
 

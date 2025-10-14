@@ -140,6 +140,11 @@ class F110ParallelEnv(ParallelEnv):
 
         # stateful observations for rendering
         self.render_obs = None
+        self._reward_ring_config: Optional[Dict[str, Any]] = None
+        self._reward_ring_focus_agent: Optional[str] = None
+        self._reward_ring_target: Optional[str] = None
+        self._reward_ring_dirty: bool = False
+        self._reward_ring_target_dirty: bool = False
 
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
@@ -356,6 +361,70 @@ class F110ParallelEnv(ParallelEnv):
         self.render_obs = render_obs
 
    
+    def configure_reward_ring(self, config: Optional[Dict[str, Any]], *, agent_id: Optional[str] = None) -> None:
+        if config is None:
+            self._reward_ring_config = None
+            self._reward_ring_focus_agent = None
+            self._reward_ring_target = None
+            self._reward_ring_dirty = True
+            self._reward_ring_target_dirty = True
+            return
+
+        stored = {
+            "preferred_radius": max(float(config.get("preferred_radius", 0.0)), 0.0),
+            "inner_tolerance": max(float(config.get("inner_tolerance", 0.0)), 0.0),
+            "outer_tolerance": max(float(config.get("outer_tolerance", 0.0)), 0.0),
+            "segments": max(int(config.get("segments", 96) or 96), 8),
+        }
+        for key in ("fill_color", "border_color", "preferred_color"):
+            if key in config and isinstance(config[key], (list, tuple)):
+                stored[key] = tuple(float(component) for component in config[key])
+
+        if self._reward_ring_config != stored or self._reward_ring_focus_agent != agent_id:
+            self._reward_ring_config = stored
+            self._reward_ring_focus_agent = agent_id
+            self._reward_ring_dirty = True
+            self._reward_ring_target_dirty = True
+
+    def update_reward_ring_target(self, agent_id: str, target_id: Optional[str]) -> None:
+        if self._reward_ring_config is None:
+            return
+
+        focus = self._reward_ring_focus_agent
+        if focus is not None and agent_id != focus:
+            return
+
+        normalized = str(target_id) if target_id else None
+        if self._reward_ring_target != normalized:
+            self._reward_ring_target = normalized
+            self._reward_ring_target_dirty = True
+
+    def _apply_reward_ring_to_renderer(self) -> None:
+        if self.renderer is None:
+            return
+
+        if self._reward_ring_dirty:
+            cfg = self._reward_ring_config
+            if cfg:
+                payload: Dict[str, Any] = {
+                    "enabled": True,
+                    "preferred_radius": cfg["preferred_radius"],
+                    "inner_tolerance": cfg["inner_tolerance"],
+                    "outer_tolerance": cfg["outer_tolerance"],
+                    "segments": cfg.get("segments", 96),
+                }
+                for key in ("fill_color", "border_color", "preferred_color"):
+                    if key in cfg:
+                        payload[key] = cfg[key]
+                self.renderer.configure_reward_ring(**payload)
+            else:
+                self.renderer.configure_reward_ring(enabled=False)
+            self._reward_ring_dirty = False
+
+        if self._reward_ring_target_dirty:
+            self.renderer.set_reward_ring_target(self._reward_ring_target)
+            self._reward_ring_target_dirty = False
+
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
             return
@@ -376,6 +445,8 @@ class F110ParallelEnv(ParallelEnv):
         if self.renderer is not None:
             self.renderer.reset_state()
             self._update_renderer_centerline()
+            self._reward_ring_dirty = True
+            self._reward_ring_target_dirty = True
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -501,6 +572,10 @@ class F110ParallelEnv(ParallelEnv):
                 centerline_points=self._render_centerline_points if self.centerline_render_enabled else None,
                 centerline_connect=self.centerline_render_connect,
             )
+            self._reward_ring_dirty = True
+            self._reward_ring_target_dirty = True
+
+        self._apply_reward_ring_to_renderer()
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
