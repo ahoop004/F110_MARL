@@ -23,6 +23,9 @@ GAPLOCK_PARAM_KEYS = (
     "reward_weight",
     "reward_decay",
     "reward_smoothing",
+    "idle_penalty",
+    "idle_penalty_steps",
+    "idle_speed_threshold",
 )
 
 
@@ -42,6 +45,9 @@ class GaplockRewardStrategy(RewardStrategy):
         reward_decay: Optional[float] = None,
         reward_smoothing: Optional[float] = None,
         relative_reward: Optional[Dict[str, Any]] = None,
+        idle_penalty: float = 0.0,
+        idle_penalty_steps: int = 0,
+        idle_speed_threshold: float = 0.1,
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
         reward_ring_callback: Optional[Callable[[str, Optional[str]], None]] = None,
         reward_ring_focus_agent: Optional[str] = None,
@@ -58,6 +64,10 @@ class GaplockRewardStrategy(RewardStrategy):
             smoothing=self._coerce_positive_float(reward_smoothing),
         )
         self._success_awarded: Dict[str, set[Tuple[str, str]]] = {}
+        self.idle_penalty = float(idle_penalty)
+        self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
+        self.idle_speed_threshold = max(float(idle_speed_threshold), 0.0)
+        self._idle_counters: Dict[str, int] = {}
         self._target_resolver = target_resolver
         self.relative_reward_cfg = self._prepare_relative_reward(relative_reward)
         self._reward_ring_callback = reward_ring_callback
@@ -75,6 +85,7 @@ class GaplockRewardStrategy(RewardStrategy):
 
     def reset(self, episode_index: int) -> None:
         self._success_awarded.clear()
+        self._idle_counters.clear()
 
     def _select_target_obs(
         self,
@@ -115,6 +126,40 @@ class GaplockRewardStrategy(RewardStrategy):
             # Rendering is auxiliary; ignore callback errors.
             pass
 
+    def _register_idle(self, agent_id: str, speed: float) -> int:
+        counter = self._idle_counters.get(agent_id, 0)
+        if speed < self.idle_speed_threshold:
+            counter += 1
+        else:
+            counter = 0
+        self._idle_counters[agent_id] = counter
+        return counter
+
+    @staticmethod
+    def _coerce_speed_value(value: float) -> float:
+        if np.isnan(value) or not np.isfinite(value):
+            return 0.0
+        return float(value)
+
+    def _extract_speed(self, obs: Dict[str, Any]) -> Optional[float]:
+        velocity = obs.get("velocity")
+        speed_val: Optional[float] = None
+        if velocity is not None:
+            try:
+                vector = np.asarray(velocity, dtype=np.float32)
+                speed_val = float(np.linalg.norm(vector))
+            except Exception:
+                speed_val = None
+        if speed_val is None:
+            raw_speed = obs.get("speed")
+            if raw_speed is None:
+                return None
+            try:
+                speed_val = float(raw_speed)
+            except (TypeError, ValueError):
+                return None
+        return self._coerce_speed_value(speed_val)
+
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
         acc = RewardAccumulator()
 
@@ -126,6 +171,19 @@ class GaplockRewardStrategy(RewardStrategy):
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
         overlay_target_id: Optional[str] = None
+
+        speed = self._extract_speed(ego_obs)
+        if (
+            self.idle_penalty
+            and self.idle_penalty_steps > 0
+            and self.idle_speed_threshold > 0.0
+            and speed is not None
+        ):
+            counter = self._register_idle(step.agent_id, speed)
+            if counter >= self.idle_penalty_steps:
+                acc.add("idle_penalty", -abs(self.idle_penalty))
+        elif speed is None:
+            self._idle_counters.pop(step.agent_id, None)
 
         if ego_crashed and self.self_collision_penalty:
             acc.add("self_collision_penalty", self.self_collision_penalty)
@@ -324,7 +382,7 @@ def _build_gaplock_strategy(
         else:
             context.env.configure_reward_ring(None)
 
-    return strategy
+        return strategy
 
 
 register_reward_task(

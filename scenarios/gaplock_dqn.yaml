@@ -9,6 +9,7 @@ scenario:
     lidar_beams: 54
     update: 2
     terminate_on_any_done: true
+    random_spawn: true
     spawn_points:
       - spawn_1
       - spawn_2

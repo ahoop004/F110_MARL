@@ -134,6 +134,34 @@ def reset_with_start_poses(
     map_data: MapData | None = None,
     max_attempts: int = 20,
 ):
+    random_enabled = bool(getattr(env, "_random_spawn_enabled", False))
+    sampler = getattr(env, "_sample_random_spawn", None)
+    if random_enabled and callable(sampler):
+        attempts = max_attempts if max_attempts and max_attempts > 0 else 1
+        attempt_idx = 0
+        while attempt_idx < attempts:
+            sampled = sampler()
+            if sampled is None:
+                break
+            spawn_mapping, poses = sampled
+            adjusted = adjust_start_poses(
+                poses,
+                back_gap,
+                min_spacing,
+                map_data=map_data,
+            )
+            obs, infos = env.reset(options={"poses": adjusted})
+            if spawn_mapping:
+                for agent_id, spawn_name in spawn_mapping.items():
+                    infos.setdefault(agent_id, {})["spawn_point"] = spawn_name
+                if hasattr(env, "_last_spawn_selection"):
+                    env._last_spawn_selection = dict(spawn_mapping)
+            collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
+            if not any(collisions):
+                return obs, infos
+            attempt_idx += 1
+        return env.reset()
+
     if not options:
         return env.reset()
 

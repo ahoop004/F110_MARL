@@ -128,6 +128,23 @@ class F110ParallelEnv(ParallelEnv):
 
         self.map_meta = meta
         self.map_image_path = img_path
+        self._spawn_points = self._extract_spawn_points(map_data, meta)
+        random_spawn_cfg = merged.get("random_spawn")
+        if random_spawn_cfg is None:
+            random_spawn_cfg = merged.get("spawn_random")
+        allow_reuse_flag = False
+        if isinstance(random_spawn_cfg, Mapping):
+            enabled_val = random_spawn_cfg.get("enabled", True)
+            self._random_spawn_enabled = bool(enabled_val) and bool(self._spawn_points)
+            allow_reuse_flag = bool(random_spawn_cfg.get("allow_reuse", False))
+        else:
+            self._random_spawn_enabled = bool(random_spawn_cfg) and bool(self._spawn_points)
+            allow_reuse_flag = bool(merged.get("random_spawn_allow_reuse", False))
+        if not self._spawn_points:
+            self._random_spawn_enabled = False
+        self._random_spawn_allow_reuse = allow_reuse_flag
+        self._spawn_point_names: List[str] = sorted(self._spawn_points.keys())
+        self._last_spawn_selection: Dict[str, str] = {}
 
         R = float(meta.get("resolution", 1.0))
         x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
@@ -203,6 +220,7 @@ class F110ParallelEnv(ParallelEnv):
 
     def _configure_basic_environment(self, cfg: Mapping[str, Any]) -> None:
         self.seed = int(cfg.get("seed", 42))
+        self.rng = np.random.default_rng(self.seed)
         self.max_steps = int(cfg.get("max_steps", 5000))
         self.n_agents = int(cfg.get("n_agents", 2))
         self._central_state_keys = (
@@ -323,6 +341,86 @@ class F110ParallelEnv(ParallelEnv):
 
         return meta, img_path, (width, height)
 
+    @staticmethod
+    def _extract_spawn_points(
+        map_data: Optional[Any],
+        metadata: Mapping[str, Any],
+    ) -> Dict[str, np.ndarray]:
+        spawn_points: Dict[str, np.ndarray] = {}
+        if map_data is not None:
+            candidate = getattr(map_data, "spawn_points", None)
+            if isinstance(candidate, Mapping):
+                for name, value in candidate.items():
+                    arr = np.asarray(value, dtype=np.float32)
+                    if arr.ndim == 1 and arr.shape[0] >= 2:
+                        spawn_points[str(name)] = arr
+        if spawn_points:
+            return spawn_points
+
+        annotations = metadata.get("annotations", {})
+        if isinstance(annotations, Mapping):
+            points = annotations.get("spawn_points")
+        else:
+            points = None
+        if isinstance(points, Mapping):
+            iterable = points.items()
+        elif isinstance(points, list):
+            iterable = ((entry.get("name"), entry.get("pose")) for entry in points if isinstance(entry, Mapping))
+        else:
+            iterable = []
+
+        for name, value in iterable:
+            if name is None:
+                continue
+            arr = np.asarray(value, dtype=np.float32)
+            if arr.ndim == 1 and arr.shape[0] >= 2:
+                spawn_points[str(name)] = arr
+        return spawn_points
+
+    def _sample_random_spawn(self) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
+        if not self._random_spawn_enabled or not self._spawn_point_names:
+            return None
+
+        agent_ids = self.possible_agents
+        count = len(agent_ids)
+        if count == 0:
+            return None
+
+        pool = self._spawn_point_names
+        replace = self._random_spawn_allow_reuse or len(pool) < count
+
+        rng = getattr(self, "rng", None)
+        if rng is None:
+            rng = np.random.default_rng(self.seed)
+            self.rng = rng
+
+        selected_names = rng.choice(pool, size=count, replace=replace)
+        if isinstance(selected_names, np.ndarray):
+            selected_list = [str(name) for name in selected_names.tolist()]
+        else:
+            selected_list = [str(name) for name in selected_names]
+
+        pose_rows: List[np.ndarray] = []
+        spawn_mapping: Dict[str, str] = {}
+        for idx, name in enumerate(selected_list):
+            raw = self._spawn_points.get(name)
+            if raw is None:
+                continue
+            if raw.shape[0] < 3:
+                pose = np.zeros(3, dtype=np.float32)
+                pose[: raw.shape[0]] = raw
+            else:
+                pose = np.asarray(raw[:3], dtype=np.float32)
+            pose_rows.append(pose)
+            if idx < len(agent_ids):
+                spawn_mapping[agent_ids[idx]] = name
+
+        if len(pose_rows) != count:
+            return None
+
+        poses = np.stack(pose_rows, axis=0)
+        return spawn_mapping, poses
+
     def action_space(self, agent: str):
         return self.action_spaces[agent]
 
@@ -442,6 +540,7 @@ class F110ParallelEnv(ParallelEnv):
         self.start_state.reset()
         self.state_buffers.reset()
         poses = None
+        spawn_mapping: Dict[str, str] = {}
         if self.renderer is not None:
             self.renderer.reset_state()
             self._update_renderer_centerline()
@@ -454,9 +553,18 @@ class F110ParallelEnv(ParallelEnv):
                 if poses.ndim == 1:
                     poses = np.expand_dims(poses, axis=0)
                 self._update_start_from_poses(poses)
+                spawn_mapping = {}
         # Case 2: Default to config start_poses
+        if poses is None and self._random_spawn_enabled:
+            sampled = self._sample_random_spawn()
+            if sampled is not None:
+                spawn_mapping, sampled_poses = sampled
+                self._update_start_from_poses(sampled_poses)
+                poses = self.start_poses
         if poses is None and hasattr(self, "start_poses") and len(self.start_poses) > 0:
             poses = self.start_poses
+            spawn_mapping = {}
+        self._last_spawn_selection = dict(spawn_mapping)
 
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
@@ -467,6 +575,10 @@ class F110ParallelEnv(ParallelEnv):
         self._refresh_render_observations(obs)
 
         infos = {aid: {} for aid in self.agents}
+        if spawn_mapping:
+            for aid, name in spawn_mapping.items():
+                if aid in infos:
+                    infos[aid]["spawn_point"] = name
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):

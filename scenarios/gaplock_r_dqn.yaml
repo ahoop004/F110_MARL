@@ -7,11 +7,9 @@ scenario:
     seed: 42
     max_steps: 10000
     lidar_beams: 54
-    update: 2
     terminate_on_any_done: true
-    spawn_points:
-      - spawn_1
-      - spawn_2
+    random_spawn: true
+
 
   main:
     wandb:
@@ -29,18 +27,18 @@ scenario:
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
 
   agents:
-    car_1:
+    car_0:
       trainable: true
       algorithm:
         name: r_dqn
         params:
           device: cpu
           action_repeat: 5
-          lr: 0.0005
+          lr: 0.0001
           gamma: 0.99
-          batch_size: 128
+          batch_size: 256
           buffer_size: 150000
-          target_update_interval: 250
+          target_update_interval: 500
           n_step: 5
           atoms: 51
           v_min: -5.0
@@ -50,10 +48,11 @@ scenario:
           epsilon_enabled: false
           hidden_dims:
             - 256
+            - 512
             - 256
           prioritized_replay: true
           per_alpha: 0.6
-          per_beta_start: 0.4
+          per_beta_start: 0.35
           per_beta_increment: 2.0e-04
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
@@ -66,14 +65,17 @@ scenario:
           checkpoint_name: rainbow_gaplock.pt
       reward:
         task: gaplock
+        idle_speed_threshold: 0.2
+        idle_patience_steps: 0
         features:
           - gaplock_offense
+          - idle_guard
         params:
           target_crash_reward: 10.0
           self_collision_penalty: -2.0
           reward_weight: null
           reward_decay: null
-          reward_smoothing: 0.9
+          reward_smoothing: null
           relative_reward:
             weights:
               front: 0.0
@@ -85,8 +87,8 @@ scenario:
               left: 0.0
               front_left: 0.25
             preferred_radius: 0.75
-            inner_tolerance: 0.1
-            outer_tolerance: 0.1
+            inner_tolerance: 0.2
+            outer_tolerance: 0.2
       wrappers:
         - factory: obs
           params:
@@ -112,13 +114,13 @@ scenario:
                   normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
-                  agent: car_0
+                  agent: car_1
               - id: target_collision
                 type: collision
                 target:
-                  agent: car_0
+                  agent: car_1
 
-    car_0:
+    car_1:
       trainable: false
       algorithm:
         name: follow_gap

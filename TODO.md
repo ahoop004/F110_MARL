@@ -10,8 +10,8 @@
 - [x] Centralise centerline renderer updates in a helper shared by `reset` and `set_centerline`.
 - [x] Collapse map configuration down to a single bundle identifier and derive paths/exts from it.
 - [x] Auto-toggle centerline features/rendering based on whether any agent uses centerline inputs.
-- [ ] Add a random spawn toggle that samples start poses from map annotations.
-  - [ ] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
+- [x] Add a random spawn toggle that samples start poses from map annotations.
+  - [x] Define sampling behaviour (per-episode reset, replacement rules, seeding expectations).
 - [x] Move task/reward/algorithm configuration under each agent declaration.
 - [x] Derive `n_agents` from declared agents (warn on mismatches with legacy configs).
 - [ ] Extract shared policy network utilities (MLP builders, target updates, tanh-squash helpers) and migrate TD3/SAC/PPO to them with multi-agent-ready hooks.
