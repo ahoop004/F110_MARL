@@ -54,17 +54,32 @@ class TrajectoryBuffer:
 class IdleTerminationTracker:
     """Tracks per-step speeds to decide when to truncate idle episodes."""
 
-    __slots__ = ("threshold", "patience", "counter", "triggered")
+    __slots__ = ("threshold", "patience", "counter", "triggered", "_agent_filter")
 
-    def __init__(self, speed_threshold: float, patience_steps: int) -> None:
+    def __init__(
+        self,
+        speed_threshold: float,
+        patience_steps: int,
+        *,
+        agent_ids: Optional[Iterable[str]] = None,
+    ) -> None:
         self.threshold = float(speed_threshold)
         self.patience = max(int(patience_steps), 0)
         self.counter = 0
         self.triggered = False
+        if agent_ids is None:
+            self._agent_filter: Optional[Set[str]] = None
+        else:
+            self._agent_filter = {str(agent) for agent in agent_ids}
 
     def reset(self) -> None:
         self.counter = 0
         self.triggered = False
+
+    def include_agent(self, agent_id: str) -> bool:
+        if self._agent_filter is None:
+            return True
+        return agent_id in self._agent_filter
 
     def observe(self, speed_values: np.ndarray, present_mask: np.ndarray) -> bool:
         if self.patience <= 0:
@@ -352,12 +367,16 @@ def run_episode(
                         speed = float(raw_speed)
                     except (TypeError, ValueError):
                         speed = None
+            track_agent = idle_tracker.include_agent(agent_id)
             if speed is None:
+                if track_agent:
+                    step_speed_present[idx] = False
                 continue
             if np.isnan(speed) or not np.isfinite(speed):
                 speed = 0.0
             step_speed_values[idx] = speed
-            step_speed_present[idx] = True
+            if track_agent:
+                step_speed_present[idx] = True
             speed_sums_array[idx] += speed
             speed_counts_array[idx] += 1
 

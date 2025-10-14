@@ -70,7 +70,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self.idle_speed_threshold = max(float(idle_speed_threshold), 0.0)
         self._idle_counters: Dict[str, int] = {}
-        self._idle_penalty_applied: Dict[str, int] = {}
+        self._idle_penalty_applied: set[str] = set()
         self.idle_truncation_penalty = float(idle_truncation_penalty)
         self._idle_truncation_applied: set[str] = set()
         self._target_resolver = target_resolver
@@ -161,23 +161,13 @@ class GaplockRewardStrategy(RewardStrategy):
     def _apply_idle_penalty(self, acc: RewardAccumulator, agent_id: str, speed: Optional[float]) -> None:
         if speed is None or self.idle_speed_threshold <= 0.0:
             self._idle_counters.pop(agent_id, None)
-            self._idle_penalty_applied.pop(agent_id, None)
             return
 
         if speed < self.idle_speed_threshold:
             counter = self._idle_counters.get(agent_id, 0) + 1
             self._idle_counters[agent_id] = counter
-            applied = self._idle_penalty_applied.get(agent_id, 0)
-            capped = self.idle_penalty_steps > 0
-            if self.idle_penalty and (not capped or applied < self.idle_penalty_steps):
-                acc.add("idle_penalty", -abs(self.idle_penalty))
-                if capped:
-                    self._idle_penalty_applied[agent_id] = applied + 1
-            elif not capped:
-                self._idle_penalty_applied[agent_id] = applied + 1
         else:
             self._idle_counters[agent_id] = 0
-            self._idle_penalty_applied[agent_id] = 0
 
     def _is_idle_truncation(self, step: RewardStep) -> bool:
         if step.events and step.events.get("idle_triggered"):
@@ -222,6 +212,9 @@ class GaplockRewardStrategy(RewardStrategy):
         if self._is_idle_truncation(step) and self.idle_truncation_penalty and step.agent_id not in self._idle_truncation_applied:
             acc.add("idle_truncation_penalty", float(self.idle_truncation_penalty))
             self._idle_truncation_applied.add(step.agent_id)
+        if self._is_idle_truncation(step) and self.idle_penalty and step.agent_id not in self._idle_penalty_applied:
+            acc.add("idle_penalty", -abs(self.idle_penalty))
+            self._idle_penalty_applied.add(step.agent_id)
 
         if self.relative_reward_cfg and target_obs is not None:
             self._apply_relative_reward(acc, ego_obs, target_obs)
