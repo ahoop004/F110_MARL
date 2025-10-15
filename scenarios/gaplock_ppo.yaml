@@ -1,0 +1,142 @@
+meta:
+  name: gaplock_ppo
+
+scenario:
+  env:
+    map: line2
+    seed: 42
+    max_steps: 10000
+    lidar_beams: 54
+    terminate_on_any_done: true
+    random_spawn: true
+    update: 1
+
+  main:
+    mode: train_eval
+    train_episodes: 10000
+    eval_episodes: 5
+    save_eval_rollouts: true
+    eval_rollout_dir: eval_rollouts
+    checkpoint: checkpoints/ppo_gaplock/ppo_gaplock.pt
+    wandb:
+      enabled: true
+      project: marl-f110
+      entity: ahoop004-old-dominion-university
+      group: ppo
+      tags:
+        - ppo
+
+  agents:
+    car_0:
+      trainable: true
+      algorithm:
+        name: ppo
+        params:
+          device: cuda
+          actor_lr: 0.0003
+          critic_lr: 0.0005
+          gamma: 0.99
+          lam: 0.95
+          clip_eps: 0.2
+          update_epochs: 10
+          minibatch_size: 512
+          max_grad_norm: 0.5
+          ent_coef: 0.01
+          ent_coef_schedule:
+            start: 0.02
+            final: 0.0
+            decay_start: 250
+            decay_episodes: 2000
+          on_policy_buffer_size: 4096
+          train_episodes: 10000
+          eval_episodes: 5
+          save_dir: checkpoints/ppo_gaplock
+          checkpoint_name: ppo_gaplock.pt
+      reward:
+        task: gaplock
+        idle_speed_threshold: 0.2
+        idle_patience_steps: 30
+        features:
+          - gaplock_offense
+          - idle_guard
+        params:
+          step_reward: 0.02
+          target_crash_reward: 10.0
+          self_collision_penalty: -10.0
+          idle_speed_threshold: 0.2
+          idle_truncation_penalty: -5.0
+          reward_weight: null
+          reward_decay: null
+          reward_smoothing: null
+          relative_reward:
+            weights:
+              front: 0.0
+              front_right: 0.25
+              right: 0.1
+              back_right: 0.0
+              back: 0.0
+              back_left: 0.0
+              left: 0.1
+              front_left: 0.25
+            preferred_radius: 0.9
+            inner_tolerance: 0.1
+            outer_tolerance: 0.1
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 54
+                  max_range: 30.0
+                  normalize: true
+              - id: ego_pose
+                type: ego_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+              - id: ego_velocity
+                type: velocity
+                params:
+                  normalize: 10.0
+                  include_speed: true
+                  speed_scale: 10.0
+              - id: ego_collision
+                type: collision
+              - id: relative_pose
+                type: relative_pose
+                params:
+                  normalize_xy: 30.0
+                  angle_mode: sin_cos
+                target:
+                  agent: car_1
+              - id: target_collision
+                type: collision
+                target:
+                  agent: car_1
+
+    car_1:
+      trainable: false
+      algorithm:
+        name: follow_gap
+        params:
+          max_speed: 20.0
+          min_speed: 2.5
+          steering_gain: 1.0
+          bubble_radius: 4.0
+          steer_smooth: 0.0
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 54
+                  max_range: 30.0
+                  normalize: true

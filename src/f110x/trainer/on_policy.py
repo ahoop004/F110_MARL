@@ -33,7 +33,7 @@ class PPOTrainer(Trainer):
                 record_value(next_obs)
 
         done_flag = transition.terminated or transition.truncated
-        self._agent.store(next_obs, transition.action, transition.reward, done_flag)
+        self._agent.store(transition.obs, transition.action, transition.reward, done_flag)
 
     def update(self) -> Optional[Dict[str, Any]]:
         stats = self._agent.update()
@@ -63,14 +63,16 @@ class RecurrentPPOTrainer(Trainer):
         return act_fn(obs, self.agent_id)
 
     def observe(self, transition: Transition) -> None:
+        if transition.truncated and not transition.terminated:
+            record_value = getattr(self._agent, "record_final_value", None)
+            if callable(record_value):
+                record_value(transition.next_obs)
         done_flag = transition.terminated or transition.truncated
         self._agent.store(
             transition.obs,
             transition.action,
             transition.reward,
-            transition.next_obs,
             done_flag,
-            transition.info or {},
         )
 
     def update(self) -> Optional[Dict[str, Any]]:
