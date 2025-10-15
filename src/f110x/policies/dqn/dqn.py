@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
+import torch.nn.functional as F
 
 # try:  # optional dependency for richer logging
 #     import wandb  # type: ignore
@@ -88,6 +89,7 @@ class DQNAgent:
                 store_action_indices=True,
             )
         self._use_per = prioritized
+        self.use_huber = bool(cfg.get("use_huber", True))
 
         self.step_count = 0
         self._updates = 0
@@ -211,7 +213,11 @@ class DQNAgent:
             target = rewards.squeeze(-1) + (1 - dones.squeeze(-1)) * self.gamma * next_q_values
 
         td_errors = chosen_q - target
-        loss = (weights_t * td_errors.pow(2)).mean()
+        per_sample = (
+            F.smooth_l1_loss(chosen_q, target, reduction="none") if getattr(self, "use_huber", True)
+            else td_errors.pow(2)
+        )
+        loss = (weights_t * per_sample).mean()
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -226,7 +232,7 @@ class DQNAgent:
 
         if self._use_per and indices is not None:
             td_error_np = td_errors.detach().cpu().numpy()
-            self.buffer.update_priorities(np.asarray(indices), td_error_np)
+            self.buffer.update_priorities(np.asarray(indices), np.abs(td_error_np))
 
         td_mean = float(td_errors.detach().mean().cpu().item())
         td_abs_mean = float(td_errors.detach().abs().mean().cpu().item())
@@ -317,7 +323,11 @@ class DQNAgent:
     def _initial_epsilon(self) -> float:
         if self.epsilon_decay_rate:
             return self.epsilon_start
-        return self._epsilon_from_counts()
+        return self._epsilon_from_progress()
+    def _epsilon_from_progress(self) -> float:
+         progress = self.episode_count if self.epsilon_unit == "episode" else self.step_count
+         fraction = min(1.0, progress / float(max(1, self.epsilon_decay)))
+         return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1.0 - fraction)
 
     def _epsilon_from_counts(self) -> float:
         fraction = min(1.0, self.episode_count / self.epsilon_decay)
