@@ -14,6 +14,7 @@ from f110x.engine.rollout import (
     run_episode,
 )
 from f110x.runner.context import RunnerContext
+from f110x.runner.eval_runner import EvalRunner
 from f110x.runner.rollout_helpers import build_rollout_hooks
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
@@ -35,6 +36,9 @@ class TrainRunner:
     _primary_bundle: AgentBundle = field(init=False)
     _primary_trainer: Optional[Trainer] = field(init=False, default=None)
     _logger: Logger = field(init=False)
+    _eval_interval: int = field(init=False, default=0)
+    _eval_episodes: int = field(init=False, default=1)
+    _eval_runner: Optional[EvalRunner] = field(init=False, default=None)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -50,6 +54,19 @@ class TrainRunner:
         self._trainer_stats: Dict[str, Dict[str, Any]] = {
             trainer_id: {} for trainer_id in self.trainer_map
         }
+        interval_value = getattr(self.context, "eval_interval", 0)
+        try:
+            interval_int = int(interval_value)
+        except (TypeError, ValueError):
+            interval_int = 0
+        self._eval_interval = max(interval_int, 0)
+        episodes_value = getattr(self.context, "eval_episodes", 1)
+        try:
+            episodes_int = int(episodes_value)
+        except (TypeError, ValueError):
+            episodes_int = 1
+        self._eval_episodes = max(episodes_int, 1)
+        self._eval_runner = None
 
     # ------------------------------------------------------------------
     # Public surface
@@ -388,6 +405,12 @@ class TrainRunner:
                         },
                     )
 
+            if self._eval_interval and (episode_idx + 1) % self._eval_interval == 0:
+                self._run_periodic_evaluation(
+                    episode_idx + 1,
+                    trainer_map,
+                )
+
         for trainer_id, trainer in trainer_map.items():
             buffer = trajectory_buffers.get(trainer_id)
             flushed = False
@@ -487,6 +510,58 @@ class TrainRunner:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         save_fn(str(self.best_model_path))
         return True
+
+    def _run_periodic_evaluation(
+        self,
+        train_episode: int,
+        trainer_map: Dict[str, Trainer],
+    ) -> None:
+        if self._eval_episodes <= 0:
+            return
+        self.context.trainer_map = dict(trainer_map)
+        if self._eval_runner is None:
+            try:
+                self._eval_runner = EvalRunner(self.context)
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to initialise periodic evaluator",
+                    extra={
+                        "episode": train_episode,
+                        "error": str(exc),
+                    },
+                )
+                self._eval_runner = None
+                return
+        else:
+            self._eval_runner.trainer_map = dict(trainer_map)
+            self._eval_runner.context.trainer_map = dict(trainer_map)
+
+        self._logger.info(
+            "Starting periodic evaluation",
+            extra={
+                "train_episode": train_episode,
+                "eval_interval": self._eval_interval,
+                "eval_episodes": self._eval_episodes,
+            },
+        )
+        try:
+            self.team.reset_actions()
+            self._eval_runner.run(
+                episodes=self._eval_episodes,
+                auto_load=False,
+                force_render=False,
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "Periodic evaluation failed",
+                extra={
+                    "train_episode": train_episode,
+                    "error": str(exc),
+                },
+            )
+        finally:
+            self.team.reset_actions()
+            self._logger.update_context(mode="train")
 
     @staticmethod
     def _slugify_suffix(value: Optional[str]) -> Optional[str]:

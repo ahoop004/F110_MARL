@@ -30,6 +30,8 @@ class RunnerContext:
     start_pose_back_gap: float = 0.0
     start_pose_min_spacing: float = 0.0
     render_interval: int = 0
+    eval_interval: int = 0
+    eval_episodes: int = 1
     update_after: int = 1
     trainer_map: Dict[str, Trainer] = field(default_factory=dict)
     trainable_ids: List[str] = field(default_factory=list)

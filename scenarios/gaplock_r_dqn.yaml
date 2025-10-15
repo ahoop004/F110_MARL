@@ -22,6 +22,7 @@ scenario:
     mode: train_eval
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
+    eval_interval: 10
     train_episodes: 1000
     eval_episodes: 1
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt

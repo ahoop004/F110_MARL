@@ -70,6 +70,19 @@ def build_runner_context(
     curriculum_schedule: CurriculumSchedule = build_curriculum_schedule(raw_curriculum)
 
     render_interval = int(cfg.env.get("render_interval", 0) or 0)
+    eval_interval = int(cfg.main.get("eval_interval", 0) or 0)
+    if eval_interval < 0:
+        eval_interval = 0
+    eval_episodes_raw = cfg.main.get(
+        "eval_episodes",
+        getattr(cfg.main, "eval_episodes", None),
+    )
+    try:
+        eval_episodes = int(eval_episodes_raw)
+    except (TypeError, ValueError):
+        eval_episodes = 1
+    if eval_episodes <= 0:
+        eval_episodes = 1
     update_after = int(cfg.env.get("update", 1) or 1)
     start_pose_back_gap = float(cfg.env.get("start_pose_back_gap", 0.0) or 0.0)
     start_pose_min_spacing = float(cfg.env.get("start_pose_min_spacing", 0.0) or 0.0)
@@ -90,6 +103,8 @@ def build_runner_context(
         start_pose_back_gap=start_pose_back_gap,
         start_pose_min_spacing=start_pose_min_spacing,
         render_interval=render_interval,
+        eval_interval=eval_interval,
+        eval_episodes=eval_episodes,
         update_after=update_after,
         trainer_map=trainer_map,
         trainable_ids=[bundle.agent_id for bundle in trainable_bundles],
