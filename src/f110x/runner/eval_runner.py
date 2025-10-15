@@ -155,7 +155,27 @@ class EvalRunner:
         recent_success: Deque[float] = deque(maxlen=eval_window)
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
-        idle_tracker = IdleTerminationTracker(0.0, 0)
+        reward_cfg = self.context.reward_cfg
+        params_block = reward_cfg.get("params") if isinstance(reward_cfg.get("params"), dict) else {}
+
+        def _extract_reward_param(name: str, default: float) -> float:
+            value = reward_cfg.get(name)
+            if value is None and isinstance(params_block, dict):
+                value = params_block.get(name)
+            if value is None:
+                return float(default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float(default)
+
+        idle_speed_threshold = _extract_reward_param("idle_speed_threshold", 0.0)
+        idle_patience_steps = int(round(_extract_reward_param("idle_patience_steps", 0.0)))
+        idle_tracker = IdleTerminationTracker(
+            idle_speed_threshold,
+            idle_patience_steps,
+            agent_ids=self.trainable_agent_ids,
+        )
         reward_sharing_cfg = self.context.reward_cfg.get("shared_reward")
 
         hooks = build_rollout_hooks(
