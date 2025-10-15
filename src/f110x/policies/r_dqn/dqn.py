@@ -318,7 +318,7 @@ class RainbowDQNAgent:
 
         if self._use_per and indices is not None:
             td_errors = (chosen_q - target_q).detach().cpu().numpy()
-            self.buffer.update_priorities(np.asarray(indices), td_errors)
+            self.buffer.update_priorities(np.asarray(indices), np.abs(td_errors))
 
         buffer_capacity = float(getattr(self.buffer, "capacity", max(len(self.buffer), 1)))
         buffer_fraction = float(len(self.buffer) / buffer_capacity)
