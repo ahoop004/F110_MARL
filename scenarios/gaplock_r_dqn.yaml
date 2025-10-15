@@ -57,9 +57,9 @@ scenario:
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
-          steering_rate: 1.9
-          accel_rate: 3.5
-          brake_rate: 3.5
+          steering_rate: 4.5
+          accel_rate: 8.0
+          brake_rate: 8.0
           rate_initial_speed: 2.0
           updates_per_step: 3
           save_dir: checkpoints/rainbow_gaplock
@@ -79,7 +79,7 @@ scenario:
           reward_smoothing: null
           step_reward: 0.02
           idle_speed_threshold: 0.05
-          idle_patience_steps: 120
+          idle_penalty_steps: 120
           idle_truncation_penalty: -2.0
           relative_reward:
             weights:
