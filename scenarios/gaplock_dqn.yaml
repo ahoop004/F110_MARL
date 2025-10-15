@@ -34,7 +34,7 @@ scenario:
         name: dqn
         params:
           device: cpu
-          action_repeat: 5
+          action_repeat: 2
           lr: 0.0004
           gamma: 0.995
           batch_size: 64
@@ -56,9 +56,9 @@ scenario:
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
-          steering_rate: 3.75
-          accel_rate: 7.0
-          brake_rate: 7.0
+          steering_rate: 1.9
+          accel_rate: 3.5
+          brake_rate: 3.5
           rate_initial_speed: 2.5
           save_dir: checkpoints/dqn_gaplock
           checkpoint_name: dqngaplock.pt
