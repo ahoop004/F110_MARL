@@ -26,7 +26,8 @@ class DQNTrainer(Trainer):
         return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
-        done = transition.terminated or transition.truncated
+        # Keep bootstrapping across time/truncation cuts so idle stops do not poison Q targets.
+        done = transition.terminated
         self._agent.store_transition(
             transition.obs,
             transition.action,

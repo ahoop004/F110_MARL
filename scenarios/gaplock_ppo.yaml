@@ -32,7 +32,7 @@ scenario:
       algorithm:
         name: ppo
         params:
-          device: cuda
+          device: cpu
           actor_lr: 0.0003
           critic_lr: 0.0005
           gamma: 0.99
@@ -61,7 +61,7 @@ scenario:
           - idle_guard
         params:
           step_reward: 0.02
-          target_crash_reward: 10.0
+          target_crash_reward: 100.0
           self_collision_penalty: -10.0
           idle_speed_threshold: 0.2
           idle_truncation_penalty: -5.0

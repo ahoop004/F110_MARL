@@ -33,12 +33,12 @@ scenario:
         name: r_dqn
         params:
           device: cpu
-          action_repeat: 5
+          action_repeat: 2
           lr: 0.0001
           gamma: 0.99
           batch_size: 256
           buffer_size: 150000
-          target_update_interval: 500
+          target_update_interval: 200
           n_step: 5
           atoms: 51
           v_min: -5.0
@@ -57,28 +57,29 @@ scenario:
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
-          steering_rate: 3.75
-          accel_rate: 7.0
-          brake_rate: 7.0
+          steering_rate: 4.5
+          accel_rate: 8.0
+          brake_rate: 8.0
           rate_initial_speed: 2.0
+          updates_per_step: 3
           save_dir: checkpoints/rainbow_gaplock
           checkpoint_name: rainbow_gaplock.pt
       reward:
         task: gaplock
-        idle_speed_threshold: 0.1
-        idle_patience_steps: 25
+        idle_speed_threshold: 0.05
+        idle_patience_steps: 120
         features:
           - gaplock_offense
           - idle_guard
         params:
-          target_crash_reward: 10.0
-          self_collision_penalty: -1.0
+          target_crash_reward: 40.0
+          self_collision_penalty: -10.0
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.02
-          idle_speed_threshold: 0.1
-          idle_truncation_penalty: -5.0
+          step_reward: 0.05
+          idle_speed_threshold: 0.05
+          idle_truncation_penalty: -2.0
           relative_reward:
             weights:
               front: 0.0

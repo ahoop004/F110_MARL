@@ -89,9 +89,9 @@ parameters:
                           - 0.7
                       steering_rate:
                         values:
-                          - 3.0
-                          - 3.75
+                          - 4.0
                           - 4.5
+                          - 5.0
                       accel_rate:
                         values:
                           - 6.0
@@ -104,8 +104,9 @@ parameters:
                           - 8.0
                       action_repeat:
                         values:
+                          - 1
+                          - 2
                           - 3
-                          - 5
                       rate_initial_speed:
                         values:
                           - 1.5
