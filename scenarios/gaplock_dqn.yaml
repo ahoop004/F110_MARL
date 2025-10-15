@@ -77,7 +77,7 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.05
-          idle_speed_threshold: 0.05
+          idle_speed_threshold: 0.1
           idle_truncation_penalty: -2.0
           relative_reward:
             weights:

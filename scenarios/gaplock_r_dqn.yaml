@@ -3,7 +3,7 @@ meta:
 
 scenario:
   env:
-    map: Shanghai_map
+    map: line2
     seed: 42
     max_steps: 10000
     lidar_beams: 54
@@ -22,7 +22,7 @@ scenario:
     mode: train_eval
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
-    train_episodes: 10000
+    train_episodes: 1000
     eval_episodes: 1
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
 
@@ -33,10 +33,10 @@ scenario:
         name: r_dqn
         params:
           device: cpu
-          action_repeat: 2
-          lr: 0.0001
-          gamma: 0.99
-          batch_size: 256
+          action_repeat: 1
+          lr: 0.0004
+          gamma: 0.995
+          batch_size: 64
           buffer_size: 150000
           target_update_interval: 200
           n_step: 5
@@ -49,7 +49,7 @@ scenario:
           hidden_dims:
             - 256
             - 512
-            - 256
+            - 128
           prioritized_replay: true
           per_alpha: 0.6
           per_beta_start: 0.35
@@ -57,9 +57,9 @@ scenario:
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
-          steering_rate: 4.5
-          accel_rate: 8.0
-          brake_rate: 8.0
+          steering_rate: 1.9
+          accel_rate: 3.5
+          brake_rate: 3.5
           rate_initial_speed: 2.0
           updates_per_step: 3
           save_dir: checkpoints/rainbow_gaplock
@@ -77,8 +77,9 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.05
+          step_reward: 0.02
           idle_speed_threshold: 0.05
+          idle_patience_steps: 120
           idle_truncation_penalty: -2.0
           relative_reward:
             weights:
