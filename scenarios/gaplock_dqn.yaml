@@ -3,16 +3,14 @@ meta:
 
 scenario:
   env:
-    map: Shanghai_map
+    map: line2
     seed: 42
     max_steps: 10000
     lidar_beams: 54
-    update: 2
+
     terminate_on_any_done: true
     random_spawn: true
-    spawn_points:
-      - spawn_1
-      - spawn_2
+
 
   main:
     wandb:
@@ -30,24 +28,27 @@ scenario:
     checkpoint: checkpoints/dqn_gaplock/dqn_gaplock.pt
 
   agents:
-    car_1:
+    car_0:
       trainable: true
       algorithm:
         name: dqn
         params:
           device: cpu
           action_repeat: 5
-          lr: 0.0005
-          gamma: 0.99
-          batch_size: 128
-          buffer_size: 100000
+          lr: 0.0004
+          gamma: 0.995
+          batch_size: 64
+          buffer_size: 150000
           target_update_interval: 500
+          noisy_layers: false
+          epsilon_enabled: true
           epsilon_start: 0.98
           epsilon_end: 0.05
-          epsilon_decay_rate: 0.9996
+          epsilon_decay_rate: 0.996
           hidden_dims:
             - 256
-            - 256
+            - 512
+            - 128
           prioritized_replay: true
           per_alpha: 0.6
           per_beta_start: 0.35
@@ -58,9 +59,9 @@ scenario:
           steering_rate: 3.75
           accel_rate: 7.0
           brake_rate: 7.0
-          rate_initial_speed: 2.0
+          rate_initial_speed: 2.5
           save_dir: checkpoints/dqn_gaplock
-          checkpoint_name: dqn_gaplock.pt
+          checkpoint_name: dqngaplock.pt
       reward:
         task: gaplock
         idle_speed_threshold: 0.1
@@ -70,25 +71,26 @@ scenario:
           - idle_guard
         params:
           target_crash_reward: 10.0
-          self_collision_penalty: -2.0
+          self_collision_penalty: -10.0
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
+          step_reward: 0.02
           idle_speed_threshold: 0.1
           idle_truncation_penalty: -5.0
           relative_reward:
             weights:
               front: 0.0
               front_right: 0.25
-              right: 0.01
+              right: 0.1
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.01
+              left: 0.1
               front_left: 0.25
-            preferred_radius: 0.75
-            inner_tolerance: 0.2
-            outer_tolerance: 0.2
+            preferred_radius: 0.9
+            inner_tolerance: 0.1
+            outer_tolerance: 0.1
       wrappers:
         - factory: obs
           params:
@@ -120,20 +122,20 @@ scenario:
                   normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
-                  agent: car_0
+                  agent: car_1
               - id: target_collision
                 type: collision
                 target:
-                  agent: car_0
+                  agent: car_1
 
-    car_0:
+    car_1:
       trainable: false
       algorithm:
         name: follow_gap
         params:
-          max_speed: 18.0
-          min_speed: 2.0
-          steering_gain: 0.95
+          max_speed: 20.0
+          min_speed: 2.5
+          steering_gain: 1.0
           bubble_radius: 4.0
           steer_smooth: 0.0
       wrappers:

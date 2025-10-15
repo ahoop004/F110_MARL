@@ -23,6 +23,7 @@ GAPLOCK_PARAM_KEYS = (
     "reward_weight",
     "reward_decay",
     "reward_smoothing",
+    "step_reward",
     "idle_penalty",
     "idle_penalty_steps",
     "idle_speed_threshold",
@@ -45,6 +46,7 @@ class GaplockRewardStrategy(RewardStrategy):
         reward_weight: Optional[float] = None,
         reward_decay: Optional[float] = None,
         reward_smoothing: Optional[float] = None,
+        step_reward: float = 0.0,
         relative_reward: Optional[Dict[str, Any]] = None,
         idle_penalty: float = 0.0,
         idle_penalty_steps: int = 0,
@@ -66,6 +68,7 @@ class GaplockRewardStrategy(RewardStrategy):
             smoothing=self._coerce_positive_float(reward_smoothing),
         )
         self._success_awarded: Dict[str, set[Tuple[str, str]]] = {}
+        self.step_reward = float(step_reward)
         self.idle_penalty = float(idle_penalty)
         self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
         self.idle_speed_threshold = max(float(idle_speed_threshold), 0.0)
@@ -188,6 +191,9 @@ class GaplockRewardStrategy(RewardStrategy):
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
         overlay_target_id: Optional[str] = None
+
+        if self.step_reward:
+            acc.add("step_reward", float(self.step_reward))
 
         speed = self._extract_speed(ego_obs)
         self._apply_idle_penalty(acc, step.agent_id, speed)
