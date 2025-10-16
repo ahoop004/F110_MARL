@@ -24,7 +24,7 @@ command:
   - "1"
   - --auto-seed
   - --seed-base
-  - "4601"
+  - "42"
   - --seed-step
   - "1"
   - --wandb-prefix
@@ -36,7 +36,7 @@ parameters:
       main:
         parameters:
           train_episodes:
-            value: 8000
+            value: 5000
           wandb:
             parameters:
               group:
@@ -77,38 +77,43 @@ parameters:
                           - 0.3
                           - 0.35
                           - 0.4
-                      per_beta_increment:
-                        values:
-                          - 0.0001
-                          - 0.0002
-                          - 0.0003
-                      noisy_sigma0:
-                        values:
-                          - 0.3
-                          - 0.5
-                          - 0.7
-                      steering_rate:
-                        values:
-                          - 4.0
-                          - 4.5
-                          - 5.0
-                      accel_rate:
-                        values:
-                          - 6.0
-                          - 7.0
-                          - 8.0
-                      brake_rate:
-                        values:
-                          - 6.0
-                          - 7.0
-                          - 8.0
-                      action_repeat:
-                        values:
-                          - 1
-                          - 2
-                          - 3
-                      rate_initial_speed:
-                        values:
-                          - 1.5
-                          - 2.0
-                          - 2.5
+                  per_beta_increment:
+                    values:
+                      - 5.0e-05
+                      - 1.0e-04
+                      - 2.0e-04
+                  noisy_sigma0:
+                    values:
+                      - 0.3
+                      - 0.5
+                      - 0.7
+                  steering_rate:
+                    values:
+                      - 4.0
+                      - 4.5
+                      - 5.0
+                  accel_rate:
+                    values:
+                      - 6.0
+                      - 7.0
+                      - 8.0
+                  brake_rate:
+                    values:
+                      - 6.0
+                      - 7.0
+                      - 8.0
+                  action_repeat:
+                    values:
+                      - 1
+                      - 2
+                      - 3
+                  target_update_interval:
+                    values:
+                      - 256
+                      - 512
+                      - 1024
+                  rate_initial_speed:
+                    values:
+                      - 1.5
+                      - 2.0
+                      - 2.5

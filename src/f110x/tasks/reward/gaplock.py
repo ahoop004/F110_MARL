@@ -33,6 +33,7 @@ GAPLOCK_PARAM_KEYS = (
     "pressure_timeout",
     "pressure_min_speed",
     "pressure_heading_tolerance",
+    "ignored_agents",
 )
 
 
@@ -64,6 +65,7 @@ class GaplockRewardStrategy(RewardStrategy):
         pressure_timeout: float = 0.5,
         pressure_min_speed: float = 0.1,
         pressure_heading_tolerance: float = math.pi,
+        ignored_agents: Optional[Iterable[Any]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -95,6 +97,9 @@ class GaplockRewardStrategy(RewardStrategy):
         tolerance = float(pressure_heading_tolerance) if pressure_heading_tolerance is not None else math.pi
         self.pressure_heading_tolerance = min(max(tolerance, 0.0), math.pi)
         self._pressure_log: Dict[str, Dict[str, Tuple[float, int]]] = {}
+        self._ignored_agents: set[str] = {
+            str(agent_id) for agent_id in (ignored_agents or []) if agent_id is not None and str(agent_id)
+        }
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -197,6 +202,14 @@ class GaplockRewardStrategy(RewardStrategy):
         return False
 
     def compute(self, step: RewardStep) -> Tuple[float, Dict[str, float]]:
+        if self._ignored_agents and step.agent_id in self._ignored_agents:
+            env_reward = float(step.env_reward)
+            components: Dict[str, float] = {}
+            if env_reward:
+                components["env_reward"] = env_reward
+            total, scaled_components = apply_reward_scaling(env_reward, components, self.scaling_params)
+            return total, scaled_components
+
         acc = RewardAccumulator()
 
         env_reward = float(step.env_reward)
