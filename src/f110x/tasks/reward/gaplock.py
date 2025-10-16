@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -28,6 +29,10 @@ GAPLOCK_PARAM_KEYS = (
     "idle_penalty_steps",
     "idle_speed_threshold",
     "idle_truncation_penalty",
+    "pressure_distance",
+    "pressure_timeout",
+    "pressure_min_speed",
+    "pressure_heading_tolerance",
 )
 
 
@@ -55,6 +60,10 @@ class GaplockRewardStrategy(RewardStrategy):
         target_resolver: Optional[Callable[[str], Optional[str]]] = None,
         reward_ring_callback: Optional[Callable[[str, Optional[str]], None]] = None,
         reward_ring_focus_agent: Optional[str] = None,
+        pressure_distance: float = 0.75,
+        pressure_timeout: float = 0.5,
+        pressure_min_speed: float = 0.1,
+        pressure_heading_tolerance: float = math.pi,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -80,6 +89,12 @@ class GaplockRewardStrategy(RewardStrategy):
         self.relative_reward_cfg = self._prepare_relative_reward(relative_reward)
         self._reward_ring_callback = reward_ring_callback
         self._reward_ring_focus_agent = reward_ring_focus_agent
+        self.pressure_distance = max(float(pressure_distance), 0.0)
+        self.pressure_timeout = max(float(pressure_timeout), 0.0)
+        self.pressure_min_speed = max(float(pressure_min_speed), 0.0)
+        tolerance = float(pressure_heading_tolerance) if pressure_heading_tolerance is not None else math.pi
+        self.pressure_heading_tolerance = min(max(tolerance, 0.0), math.pi)
+        self._pressure_log: Dict[str, Dict[str, Tuple[float, int]]] = {}
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -96,6 +111,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self._idle_counters.clear()
         self._idle_penalty_applied.clear()
         self._idle_truncation_applied.clear()
+        self._pressure_log.clear()
 
     def _select_target_obs(
         self,
@@ -201,14 +217,30 @@ class GaplockRewardStrategy(RewardStrategy):
         if ego_crashed and self.self_collision_penalty:
             acc.add("self_collision_penalty", self.self_collision_penalty)
 
+        pressure_recent = False
         if target_obs is not None:
             overlay_target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
+            if overlay_target_id:
+                if self._detect_pressure(ego_obs, target_obs):
+                    self._store_pressure(
+                        step.agent_id,
+                        overlay_target_id,
+                        step.current_time,
+                        step.step_index,
+                    )
+                pressure_recent = self._has_recent_pressure(
+                    step.agent_id,
+                    overlay_target_id,
+                    step.current_time,
+                    step.step_index,
+                    step.timestep,
+                )
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
-                if overlay_target_id and (
-                    not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id)
-                ):
-                    acc.add("success_reward", self.target_crash_reward)
+                if overlay_target_id and pressure_recent:
+                    if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
+                        acc.add("success_reward", self.target_crash_reward)
+                        self._clear_pressure(step.agent_id, overlay_target_id)
 
         truncated = bool(step.events.get("truncated")) if step.events else False
         if not truncated and isinstance(step.info, dict):
@@ -278,6 +310,93 @@ class GaplockRewardStrategy(RewardStrategy):
             falloff=cfg["falloff"],
             scale=cfg["scale"],
         )
+
+    @staticmethod
+    def _extract_pose(obs: Dict[str, Any]) -> Optional[np.ndarray]:
+        pose = obs.get("pose")
+        if pose is None:
+            return None
+        try:
+            arr = np.asarray(pose, dtype=np.float32)
+        except Exception:
+            return None
+        if arr.size < 3:
+            return None
+        return arr
+
+    @staticmethod
+    def _wrap_angle(value: float) -> float:
+        return float(math.atan2(math.sin(value), math.cos(value)))
+
+    def _detect_pressure(self, ego_obs: Dict[str, Any], target_obs: Dict[str, Any]) -> bool:
+        if self.pressure_distance <= 0.0:
+            return False
+
+        ego_pose = self._extract_pose(ego_obs)
+        target_pose = self._extract_pose(target_obs)
+        if ego_pose is None or target_pose is None:
+            return False
+
+        displacement = target_pose[:2] - ego_pose[:2]
+        distance = float(np.linalg.norm(displacement))
+        if not np.isfinite(distance) or distance > self.pressure_distance:
+            return False
+
+        if self.pressure_min_speed > 0.0:
+            ego_speed = self._extract_speed(ego_obs)
+            if ego_speed is None or ego_speed < self.pressure_min_speed:
+                return False
+
+        if self.pressure_heading_tolerance < math.pi:
+            ego_heading = float(ego_pose[2])
+            target_heading = float(target_pose[2])
+            heading_delta = abs(self._wrap_angle(ego_heading - target_heading))
+            if heading_delta > self.pressure_heading_tolerance:
+                return False
+
+        return True
+
+    def _store_pressure(self, agent_id: str, target_id: str, current_time: float, step_index: int) -> None:
+        entries = self._pressure_log.setdefault(agent_id, {})
+        entries[target_id] = (float(current_time), int(step_index))
+
+    def _clear_pressure(self, agent_id: str, target_id: str) -> None:
+        entries = self._pressure_log.get(agent_id)
+        if not entries:
+            return
+        entries.pop(target_id, None)
+        if not entries:
+            self._pressure_log.pop(agent_id, None)
+
+    def _has_recent_pressure(
+        self,
+        agent_id: str,
+        target_id: str,
+        current_time: float,
+        step_index: int,
+        timestep: float,
+    ) -> bool:
+        if self.pressure_timeout <= 0.0:
+            return True
+        entries = self._pressure_log.get(agent_id)
+        if not entries:
+            return False
+        record = entries.get(target_id)
+        if record is None:
+            return False
+
+        last_time, last_step = record
+
+        if np.isfinite(current_time) and np.isfinite(last_time):
+            delta = float(current_time) - float(last_time)
+            if delta >= 0.0 and delta <= self.pressure_timeout:
+                return True
+
+        if timestep <= 0.0:
+            return False
+        delta_steps = max(int(step_index) - int(last_step), 0)
+        delta_time = float(delta_steps) * float(timestep)
+        return delta_time <= self.pressure_timeout
 
 
 def _normalise_role_members(roster: Any) -> Dict[str, List[str]]:

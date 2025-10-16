@@ -6,7 +6,7 @@ scenario:
     map: line2
     seed: 42
     max_steps: 10000
-    lidar_beams: 54
+    lidar_beams: 1080
     terminate_on_any_done: true
     random_spawn: true
 
@@ -23,8 +23,8 @@ scenario:
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
     eval_interval: 10
-    train_episodes: 1000
-    eval_episodes: 1
+    train_episodes: 5000
+    eval_episodes: 5 
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
 
   agents:
@@ -33,17 +33,17 @@ scenario:
       algorithm:
         name: r_dqn
         params:
-          device: cpu
+          device: cuda
           action_repeat: 1
-          lr: 0.0004
-          gamma: 0.995
-          batch_size: 64
+          lr: 0.0002
+          gamma: 0.99
+          batch_size: 128
           buffer_size: 150000
-          target_update_interval: 200
+          target_update_interval: 120
           n_step: 5
           atoms: 51
-          v_min: -5.0
-          v_max: 20.0
+          v_min: -10.0
+          v_max: 80.0
           noisy_layers: true
           noisy_sigma0: 0.5
           epsilon_enabled: false
@@ -54,7 +54,7 @@ scenario:
           prioritized_replay: true
           per_alpha: 0.6
           per_beta_start: 0.35
-          per_beta_increment: 2.0e-04
+          per_beta_increment: 1.0e-04
           per_min_priority: 0.001
           per_epsilon: 1.0e-06
           action_mode: rate
@@ -62,7 +62,7 @@ scenario:
           accel_rate: 8.0
           brake_rate: 8.0
           rate_initial_speed: 2.0
-          updates_per_step: 3
+          updates_per_step: 2
           save_dir: checkpoints/rainbow_gaplock
           checkpoint_name: rainbow_gaplock.pt
       reward:
@@ -85,15 +85,15 @@ scenario:
           relative_reward:
             weights:
               front: 0.0
-              front_right: 0.25
-              right: 0.1
+              front_right: 0.025
+              right: 0.01
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.1
+              left: 0.01
               front_left: 0.25
-            preferred_radius: 0.9
-            inner_tolerance: 0.1
+            preferred_radius: 0.8
+            inner_tolerance: 0.2
             outer_tolerance: 0.1
       wrappers:
         - factory: obs
@@ -104,7 +104,7 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 54
+                  beams: 1080
                   max_range: 30.0
                   normalize: true
               - id: ego_pose
@@ -139,7 +139,7 @@ scenario:
         params:
           max_speed: 18.0
           min_speed: 2.0
-          steering_gain: 1.0
+          steering_gain: 1.2
           bubble_radius: 4.0
           steer_smooth: 0.0
       wrappers:
@@ -151,6 +151,6 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 54
+                  beams: 1080
                   max_range: 30.0
                   normalize: true
