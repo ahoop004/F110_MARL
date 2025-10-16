@@ -39,7 +39,7 @@ scenario:
           gamma: 0.99
           batch_size: 128
           buffer_size: 150000
-          target_update_interval: 120
+          target_update_interval: 1
           n_step: 5
           atoms: 51
           v_min: -10.0
@@ -78,7 +78,7 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.02
+          step_reward: 0.001
           idle_speed_threshold: 0.05
           idle_penalty_steps: 120
           idle_truncation_penalty: -2.0

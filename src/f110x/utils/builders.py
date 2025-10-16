@@ -33,7 +33,7 @@ from f110x.policies.centerline_pursuit import CenterlinePursuitPolicy
 from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
-from f110x.policies.r_dqn.dqn import RainbowDQNAgent
+from f110x.policies.rainbow import RainbowDQNAgent
 from f110x.trainer.base import Trainer
 from f110x.trainer import registry as trainer_registry
 
