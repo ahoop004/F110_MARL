@@ -1,5 +1,5 @@
 meta:
-  name: gaplock_r_dqn
+  name: gaplock_td3
 
 scenario:
   env:
@@ -10,61 +10,47 @@ scenario:
     terminate_on_any_done: true
     random_spawn: true
 
-
   main:
+    mode: train_eval
+    train_episodes: 10000
+    eval_episodes: 3
+    eval_interval: 10
+    save_eval_rollouts: true
+    eval_rollout_dir: eval_rollouts
+    checkpoint: checkpoints/td3_gaplock/td3_gaplock.pt
     wandb:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: r_dqn
+      group: td3
       tags:
-        - rainbow
-    mode: train_eval
-    save_eval_rollouts: true
-    eval_rollout_dir: eval_rollouts
-    eval_interval: 10
-    train_episodes: 5000
-    eval_episodes: 5 
-    checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
+        - td3
 
   agents:
     car_0:
       trainable: true
       algorithm:
-        name: r_dqn
+        name: td3
         params:
           device: cpu
-          action_repeat: 1
-          lr: 0.001
-          gamma: 0.99
-          batch_size: 128
-          buffer_size: 150000
-          target_update_interval: 500
-          n_step: 5
-          atoms: 51
-          v_min: -10.0
-          v_max: 80.0
-          noisy_layers: true
-          noisy_sigma0: 0.5
-          epsilon_enabled: false
+          actor_lr: 0.0003
+          critic_lr: 0.0006
+          gamma: 0.995
+          tau: 0.005
+          policy_noise: 0.2
+          noise_clip: 0.5
+          policy_delay: 2
+          batch_size: 256
+          buffer_size: 200000
+          warmup_steps: 5000
+          exploration_noise: 0.2
+          exploration_noise_final: 0.05
+          exploration_noise_decay_steps: 50000
           hidden_dims:
             - 256
-            - 512
-            - 128
-          prioritized_replay: true
-          per_alpha: 0.6
-          per_beta_start: 0.35
-          per_beta_increment: 1.0e-04
-          per_min_priority: 0.001
-          per_epsilon: 1.0e-06
-          action_mode: rate
-          steering_rate: 4.5
-          accel_rate: 8.0
-          brake_rate: 8.0
-          rate_initial_speed: 2.0
-          updates_per_step: 2
-          save_dir: checkpoints/rainbow_gaplock
-          checkpoint_name: rainbow_gaplock.pt
+            - 256
+          save_dir: checkpoints/td3_gaplock
+          checkpoint_name: td3_gaplock.pt
       reward:
         task: gaplock
         idle_speed_threshold: 0.05
@@ -74,29 +60,27 @@ scenario:
           - idle_guard
         params:
           target_crash_reward: 40.0
-          self_collision_penalty: -20.0
+          self_collision_penalty: -10.0
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.001
-          idle_speed_threshold: 0.05
+          step_reward: 0.05
+          idle_speed_threshold: 0.1
           idle_penalty_steps: 120
-          idle_truncation_penalty: -10.0
+          idle_truncation_penalty: -2.0
           relative_reward:
             weights:
               front: 0.0
-              front_right: 0.025
-              right: 0.01
+              front_right: 0.25
+              right: 0.1
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.01
-              front_left: 0.025
+              left: 0.1
+              front_left: 0.25
             preferred_radius: 0.9
-            inner_tolerance: 0.2
+            inner_tolerance: 0.1
             outer_tolerance: 0.1
-          ignored_agents:
-            - car_1
       wrappers:
         - factory: obs
           params:
@@ -139,10 +123,10 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_speed: 18.0
-          min_speed: 2.0
-          steering_gain: 0.95
-          bubble_radius: 4.5
+          max_speed: 20.0
+          min_speed: 2.5
+          steering_gain: 1.0
+          bubble_radius: 4.0
           steer_smooth: 0.0
       wrappers:
         - factory: obs

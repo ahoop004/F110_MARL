@@ -27,6 +27,7 @@ class DQNTrainer(Trainer):
 
     def observe(self, transition: Transition) -> None:
         # Keep bootstrapping across time/truncation cuts so idle stops do not poison Q targets.
+        # Keep bootstrapping across time-limit truncations so critic targets stay consistent.
         done = transition.terminated
         self._agent.store_transition(
             transition.obs,
@@ -67,7 +68,7 @@ class TD3Trainer(Trainer):
         return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
-        done = transition.terminated or transition.truncated
+        done = transition.terminated
         self._agent.store_transition(
             transition.obs,
             transition.action,

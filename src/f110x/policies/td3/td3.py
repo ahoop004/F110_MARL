@@ -90,6 +90,10 @@ class TD3Agent:
             self._exploration_step += 1
         return action.astype(np.float32)
 
+    def reset_noise_schedule(self) -> None:
+        """Reset exploration-noise decay so new episodes start at the initial scale."""
+        self._exploration_step = 0
+
     def store_transition(
         self,
         obs: np.ndarray,
@@ -115,6 +119,7 @@ class TD3Agent:
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
 
         with torch.no_grad():
+            # Policy smoothing regularization: perturb target action before evaluating target critics.
             noise = (torch.randn_like(actions) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
             next_action = self.actor_target(next_obs)
             next_action = self._scale_action_torch(next_action)
