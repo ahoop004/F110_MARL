@@ -135,11 +135,11 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_speed: 20.0
-          min_speed: 2.5
-          steering_gain: 1.0
-          bubble_radius: 4.0
-          steer_smooth: 0.0
+          max_speed: 12.0
+          min_speed: 1.0
+          steering_gain: 6.0
+          bubble_radius: 2.0
+          steer_smooth: 0.15
       wrappers:
         - factory: obs
           params:
