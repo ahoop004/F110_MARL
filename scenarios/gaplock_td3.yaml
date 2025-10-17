@@ -12,7 +12,7 @@ scenario:
 
   main:
     mode: train_eval
-    train_episodes: 50000
+    train_episodes: 5000
     eval_episodes: 5
     eval_interval: 10
     save_eval_rollouts: true
@@ -32,7 +32,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cuda
+          device: cpu
           actor_lr: 0.0003
           critic_lr: 0.0006
           gamma: 0.995
@@ -45,8 +45,8 @@ scenario:
           warmup_steps: 5000
           exploration_noise: 0.2
           exploration_noise_final: 0.05
-          exploration_noise_decay_steps: 50000
-          exploration_noise_decay_episodes: 200
+          # exploration_noise_decay_steps: 50000
+          exploration_noise_decay_episodes: 4000
           hidden_dims:
             - 256
             - 256
@@ -66,11 +66,10 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.05
-          idle_speed_threshold: 0.05
+          idle_speed_threshold: 0.2
           idle_penalty_steps: 120
           idle_truncation_penalty: -10.0
-          ignored_agents:
-            - car_1
+          rate_prevent_reverse: true
           relative_reward:
             weights:
               front: 0.0
@@ -84,6 +83,8 @@ scenario:
             preferred_radius: 0.9
             inner_tolerance: 0.2
             outer_tolerance: 0.1
+            ignored_agents:
+              - car_1
       wrappers:
         - factory: obs
           params:
