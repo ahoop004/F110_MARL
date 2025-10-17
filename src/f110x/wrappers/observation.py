@@ -20,6 +20,59 @@ ComponentFn = Callable[
 
 COMPONENT_REGISTRY: Dict[str, ComponentFn] = {}
 
+_SECTOR_DEGREES = (
+    ("front", -22.5, 22.5),
+    ("front_right", 22.5, 67.5),
+    ("right", 67.5, 112.5),
+    ("back_right", 112.5, 157.5),
+    ("back", 157.5, -157.5),
+    ("back_left", -157.5, -112.5),
+    ("left", -112.5, -67.5),
+    ("front_left", -67.5, -22.5),
+)
+_SECTOR_NAMES = tuple(name for name, *_ in _SECTOR_DEGREES)
+
+
+def _wrap_degrees(angle: float) -> float:
+    wrapped = (angle + 180.0) % 360.0 - 180.0
+    return wrapped
+
+
+def _sector_from_angle(angle_deg: float) -> str:
+    angle_deg = _wrap_degrees(angle_deg)
+    for name, start, end in _SECTOR_DEGREES:
+        if name == "back":
+            if angle_deg >= 157.5 or angle_deg < -157.5:
+                return name
+        elif start <= end and start <= angle_deg < end:
+            return name
+        elif start > end and (angle_deg >= start or angle_deg < end):
+            return name
+    return "front"
+
+
+def _radial_gain(distance: float, preferred: float, inner_tol: float, outer_tol: float, falloff: str) -> float:
+    preferred = max(float(preferred), 0.0)
+    inner_tol = max(float(inner_tol), 0.0)
+    outer_tol = max(float(outer_tol), 0.0)
+    lower = max(0.0, preferred - inner_tol)
+    upper = preferred + outer_tol
+
+    if falloff == "binary":
+        return 1.0 if lower <= distance <= upper else 0.0
+
+    if distance < lower:
+        return 1.0 if inner_tol > 0.0 else 0.0
+    if distance > upper:
+        if outer_tol == 0.0:
+            return 0.0
+        ratio = (upper - distance) / outer_tol
+        return max(0.0, min(1.0, ratio))
+    if falloff == "gaussian":
+        sigma = (inner_tol + outer_tol) / 2.0 or 1.0
+        return float(np.exp(-((distance - preferred) ** 2) / (2.0 * sigma ** 2)))
+    return 1.0
+
 
 def register_observation_component(name: str) -> Callable[[ComponentFn], ComponentFn]:
     """Decorator to register an observation component factory."""
@@ -791,6 +844,58 @@ def component_relative_pose(
     pieces = [dx, dy]
     pieces.extend(angle_terms)
     return np.asarray(pieces, dtype=np.float32)
+
+
+@register_observation_component("relative_sector")
+def component_relative_sector(
+    wrapper: ObsWrapper,
+    obs: Dict[str, Dict[str, Any]],
+    ego_id: str,
+    spec: ComponentSpec,
+    target_id: Optional[str],
+) -> np.ndarray:
+    flags = np.zeros(len(_SECTOR_NAMES), dtype=np.float32)
+    if target_id is None:
+        return flags
+
+    ego_pose = to_numpy(obs.get(ego_id, {}).get("pose", ()), flatten=True)
+    target_pose = to_numpy(obs.get(target_id, {}).get("pose", ()), flatten=True)
+    if ego_pose.size < 3 or target_pose.size < 2:
+        return flags
+
+    dx = float(target_pose[0] - ego_pose[0])
+    dy = float(target_pose[1] - ego_pose[1])
+    if dx == 0.0 and dy == 0.0:
+        return flags
+
+    distance = float(np.linalg.norm([dx, dy]))
+    ego_heading = float(ego_pose[2]) if ego_pose.size >= 3 else 0.0
+    angle = float(np.degrees(np.arctan2(dy, dx) - ego_heading))
+    sector = _sector_from_angle(angle)
+
+    def _coerce(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    preferred = _coerce(spec.params.get("preferred_radius", 0.0))
+    inner_tol = _coerce(spec.params.get("inner_tolerance", 0.0))
+    outer_tol = _coerce(spec.params.get("outer_tolerance", 0.0))
+    falloff = str(spec.params.get("falloff", "linear")).lower()
+    if falloff not in {"linear", "gaussian", "binary"}:
+        raise ValueError(f"Unsupported falloff '{falloff}' for relative_sector component")
+
+    include = True
+    if preferred > 0.0 or inner_tol > 0.0 or outer_tol > 0.0:
+        gain = _radial_gain(distance, preferred, inner_tol, outer_tol, falloff)
+        include = gain > 0.0
+
+    if include:
+        idx = _SECTOR_NAMES.index(sector)
+        flags[idx] = 1.0
+
+    return flags
 
 
 @register_observation_component("distance")

@@ -117,6 +117,14 @@ scenario:
                   angle_mode: sin_cos
                 target:
                   agent: car_1
+              - id: relative_sector
+                type: relative_sector
+                params:
+                  preferred_radius: 0.9
+                  inner_tolerance: 0.2
+                  outer_tolerance: 0.1
+                target:
+                  agent: car_1
               - id: target_collision
                 type: collision
                 target:
