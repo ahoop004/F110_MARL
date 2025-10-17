@@ -191,3 +191,39 @@ class ActionRepeatWrapper:
         if not info:
             return None
         return info
+
+
+class PreventReverseContinuousWrapper:
+    """Clamp continuous throttle commands to prevent reverse motion."""
+
+    def __init__(
+        self,
+        low: Iterable[float],
+        high: Iterable[float],
+        *,
+        min_speed: float = 0.0,
+        speed_index: int = 1,
+    ) -> None:
+        self.low = to_numpy(low, copy=True)
+        self.high = to_numpy(high, copy=True)
+        if self.low.shape != self.high.shape:
+            raise ValueError("low/high must have matching shapes for PreventReverseContinuousWrapper")
+        self.min_speed = float(min_speed)
+        self.speed_index = int(speed_index)
+
+    def transform(self, _agent_id: str, action: Any) -> np.ndarray:
+        action_arr = to_numpy(action, copy=True)
+        if action_arr.shape != self.low.shape:
+            action_arr = action_arr.reshape(self.low.shape)
+
+        clipped = np.clip(action_arr, self.low, self.high)
+        idx = self.speed_index
+        if 0 <= idx < clipped.shape[0]:
+            lower_bound = max(self.min_speed, float(self.low[idx]))
+            max_speed = float(self.high[idx])
+            min_speed = lower_bound if lower_bound <= max_speed else max_speed
+            clipped[idx] = float(np.clip(clipped[idx], min_speed, max_speed))
+        return clipped
+
+    def reset(self, _agent_id: str) -> None:  # pragma: no cover - stateless
+        return

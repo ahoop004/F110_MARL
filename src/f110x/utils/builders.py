@@ -22,6 +22,7 @@ from f110x.wrappers.action import (
     ActionRepeatWrapper,
     DiscreteActionWrapper,
     DeltaDiscreteActionWrapper,
+    PreventReverseContinuousWrapper,
 )
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
@@ -621,6 +622,47 @@ def _is_trainable(spec: AgentSpecConfig, default: bool) -> bool:
     return bool(spec.trainable)
 
 
+def _config_flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _continuous_prevent_reverse_factory(action_space: spaces.Box, algo_cfg: Dict[str, Any]) -> Optional[Any]:
+    flag = algo_cfg.get("prevent_reverse")
+    if flag is None:
+        flag = algo_cfg.get("rate_prevent_reverse")
+    if not _config_flag(flag):
+        return None
+
+    min_speed_raw = algo_cfg.get("prevent_reverse_min_speed")
+    if min_speed_raw is None:
+        min_speed_raw = algo_cfg.get("rate_stop_speed", 0.0)
+    try:
+        min_speed_val = float(min_speed_raw)
+    except (TypeError, ValueError):
+        min_speed_val = 0.0
+
+    speed_index_raw = algo_cfg.get("prevent_reverse_speed_index")
+    if speed_index_raw is None:
+        speed_index_raw = algo_cfg.get("rate_speed_index", 1)
+    try:
+        speed_index_val = int(speed_index_raw)
+    except (TypeError, ValueError):
+        speed_index_val = 1
+
+    algo_cfg["prevent_reverse"] = True
+    algo_cfg["prevent_reverse_min_speed"] = min_speed_val
+    algo_cfg["prevent_reverse_speed_index"] = speed_index_val
+
+    return PreventReverseContinuousWrapper(
+        action_space.low,
+        action_space.high,
+        min_speed=min_speed_val,
+        speed_index=speed_index_val,
+    )
+
+
 def _build_continuous_algo(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -694,6 +736,7 @@ def _build_algo_ppo(
         algo_key="ppo",
         controller_factory=PPOAgent,
         trainer_key="ppo",
+        action_wrapper_factory=_continuous_prevent_reverse_factory,
     )
 
 
@@ -711,6 +754,7 @@ def _build_algo_td3(
         algo_key="td3",
         controller_factory=TD3Agent,
         trainer_key="td3",
+        action_wrapper_factory=_continuous_prevent_reverse_factory,
     )
 
 
@@ -728,6 +772,7 @@ def _build_algo_sac(
         algo_key="sac",
         controller_factory=SACAgent,
         trainer_key="sac",
+        action_wrapper_factory=_continuous_prevent_reverse_factory,
     )
 
 
@@ -746,6 +791,7 @@ def _build_algo_rec_ppo(
         controller_factory=RecurrentPPOAgent,
         trainer_key="rec_ppo",
         post_init=lambda controller: getattr(controller, "reset_hidden_state", lambda: None)(),
+        action_wrapper_factory=_continuous_prevent_reverse_factory,
     )
 
 

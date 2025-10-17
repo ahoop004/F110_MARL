@@ -47,6 +47,7 @@ scenario:
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 50000
           exploration_noise_decay_episodes: 4000
+          prevent_reverse: true
           hidden_dims:
             - 256
             - 256
@@ -69,7 +70,6 @@ scenario:
           idle_speed_threshold: 0.2
           idle_penalty_steps: 120
           idle_truncation_penalty: -10.0
-          rate_prevent_reverse: true
           relative_reward:
             weights:
               front: 0.0
