@@ -69,6 +69,8 @@ scenario:
           idle_speed_threshold: 0.05
           idle_penalty_steps: 120
           idle_truncation_penalty: -10.0
+          ignored_agents:
+            - car_1
           relative_reward:
             weights:
               front: 0.0
