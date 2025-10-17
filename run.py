@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import os
 import random
@@ -150,13 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--wandb-group-template",
         type=str,
         default="{prefix}{config_slug}",
-        help="Template for W&B group; keys: prefix, algo, config, config_stem, config_slug, run_idx, total_runs.",
+        help="Template for W&B group; keys: prefix, algo, config, config_stem, config_slug, config_hash, run_idx, total_runs.",
     )
     parser.add_argument(
         "--wandb-name-template",
         type=str,
-        default="{group}-r{run_idx:02d}",
-        help="Template for W&B run name; keys include group, prefix, algo, config, config_stem, run_idx, total_runs.",
+        default="{group}-r{run_idx:02d}-{config_hash}",
+        help="Template for W&B run name; keys include group, prefix, algo, config, config_stem, config_slug, config_hash, run_idx, total_runs.",
     )
     parser.add_argument(
         "--grid",
@@ -248,6 +249,7 @@ def _format_wandb_labels(
     prefix: str,
     group_template: str,
     name_template: str,
+    config_hash: str,
 ) -> Dict[str, str]:
     context = {
         "prefix": prefix,
@@ -258,6 +260,7 @@ def _format_wandb_labels(
         "config_slug": "",
         "run_idx": run_idx,
         "total_runs": total,
+        "config_hash": config_hash,
     }
 
     slug_base = config_slug_base or context["config_stem"]
@@ -309,6 +312,17 @@ def _normalize_main_args(value: Any) -> List[str]:
     if isinstance(value, str):
         return shlex.split(value)
     return [str(value)]
+
+
+def _compute_file_hash(path: Path, length: int = 8) -> str:
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return "unknown"
+    digest = hashlib.sha256(data).hexdigest()
+    if length <= 0 or length >= len(digest):
+        return digest
+    return digest[:length]
 
 
 def _expand_matrix(matrix: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -577,6 +591,7 @@ def _prepare_spec_runs(
     slug_source = Path(slug_source)
     config_name = slug_source.name
     config_slug_base = slug_source.stem
+    config_hash = _compute_file_hash(slug_source)
 
     requests: List[RunRequest] = []
     for run_idx, seed in enumerate(seeds, start=1):
@@ -594,12 +609,14 @@ def _prepare_spec_runs(
                 prefix,
                 group_template,
                 name_template,
+                config_hash,
             )
         except ValueError as exc:
             parser.error(str(exc))
         env_overrides.update(wandb_labels)
         if experiment_name:
             env_overrides.setdefault("F110_EXPERIMENT", experiment_name)
+        env_overrides.setdefault("RUN_CONFIG_HASH", config_hash)
 
         requests.append(
             RunRequest(
@@ -644,9 +661,11 @@ def run_once(
     wandb_msg = ""
     if wandb_group or wandb_name:
         wandb_msg = f", W&B group={wandb_group or '—'}, name={wandb_name or '—'}"
+    cfg_hash = env_overrides.get("RUN_CONFIG_HASH")
+    hash_msg = f", cfg_hash={cfg_hash}" if cfg_hash else ""
     exp_msg = f" (experiment={experiment})" if experiment else ""
     print(
-        f"[run.py] Launching spec {spec_index}/{total_specs} '{label}' run {run_idx}/{total} with config '{cfg_path}'{exp_msg}{seed_msg}{wandb_msg} and args: {pretty_args}"
+        f"[run.py] Launching spec {spec_index}/{total_specs} '{label}' run {run_idx}/{total} with config '{cfg_path}'{exp_msg}{seed_msg}{hash_msg}{wandb_msg} and args: {pretty_args}"
     )
 
     result = subprocess.run(cmd, env=env)
