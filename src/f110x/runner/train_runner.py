@@ -370,6 +370,12 @@ class TrainRunner:
                     metrics[f"train/reward/{aid}/{name}"] = float(value)
 
             logger.log_metrics("train", metrics, step=episode_idx + 1)
+            publish_metrics = getattr(env, "update_render_metrics", None)
+            if callable(publish_metrics):
+                try:
+                    publish_metrics("train", metrics, step=episode_idx + 1)
+                except Exception:
+                    pass
 
             results.append(episode_record)
 

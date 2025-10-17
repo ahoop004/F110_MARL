@@ -528,6 +528,9 @@ def _build_gaplock_strategy(
                 "outer_tolerance": overlay_cfg.get("outer_tolerance", 0.0),
                 "segments": 96,
             }
+            payload["falloff"] = overlay_cfg.get("falloff", "linear")
+            if "weights" in overlay_cfg:
+                payload["weights"] = overlay_cfg.get("weights")
             focus_agent = getattr(strategy, "_reward_ring_focus_agent", None)
             context.env.configure_reward_ring(payload, agent_id=focus_agent)
         else:

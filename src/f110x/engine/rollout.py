@@ -454,6 +454,20 @@ def run_episode(
                         snapshot["shared_reward"] = snapshot.get("shared_reward", 0.0) + float(delta)
                     shaped_rewards[idx] = shared_value
 
+        ticker_hook = getattr(env, "append_render_ticker", None)
+        if callable(ticker_hook):
+            for idx, agent_id in enumerate(agent_order):
+                components = step_component_snapshots.get(agent_id)
+                try:
+                    ticker_hook(
+                        agent_id,
+                        step=steps,
+                        reward=float(shaped_rewards[idx]),
+                        components=components,
+                    )
+                except Exception:
+                    pass
+
         for idx, agent_id in enumerate(agent_order):
             totals_array[idx] += float(shaped_rewards[idx])
             if agent_id in step_component_snapshots:

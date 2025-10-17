@@ -3,6 +3,7 @@
 # Refactored for PettingZoo MARL with per-agent render_obs dict.
 
 import os
+import time
 
 _PYGLET_HEADLESS = os.environ.get("PYGLET_HEADLESS", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -37,7 +38,7 @@ except Exception as exc:  # pragma: no cover - headless fallback
 import numpy as np
 from array import array
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 from PIL import Image
 import yaml
 import pandas as pd
@@ -168,8 +169,26 @@ else:
                 y=height - 10,
                 anchor_x='left',
                 anchor_y='top',
-                color=(255, 255, 255, 255)
+                color=(255, 255, 255, 255),
+                multiline=True,
+                width=max(width - 20, 100),
             )
+            self.ticker_label = pyglet.text.Label(
+                '',
+                font_size=12,
+                x=10,
+                y=10,
+                anchor_x='left',
+                anchor_y='bottom',
+                color=(200, 200, 200, 255),
+                multiline=True,
+                width=max(width - 20, 100),
+            )
+            self._telemetry_phase: Optional[str] = None
+            self._telemetry_metrics: Dict[str, Any] = {}
+            self._telemetry_step: Optional[float] = None
+            self._telemetry_timestamp: Optional[float] = None
+            self._ticker_lines: List[str] = []
 
         # ---------- Map ----------
 
@@ -337,6 +356,8 @@ else:
             self.agent_ids = []
             self._camera_target = None
             self.hud_label.text = 'Agents: 0'
+            self.ticker_label.text = ''
+            self._ticker_lines.clear()
             if self._centerline_vlist is not None:
                 try:
                     self._centerline_vlist.delete()
@@ -363,7 +384,10 @@ else:
             self.top = self.zoom_level * height / 2
             self.zoomed_width = self.zoom_level * width
             self.zoomed_height = self.zoom_level * height
+            max_width = max(width - 20, 100)
             self.hud_label.y = height - 10
+            self.hud_label.width = max_width
+            self.ticker_label.width = max_width
 
         def on_mouse_drag(self, x, y, dx, dy, _buttons, _modifiers):
             if self._follow_enabled:
@@ -408,8 +432,9 @@ else:
             self.batch.draw()
             self.shader.stop()
 
-            self.fps_display.draw()
             self.hud_label.draw()
+            self.ticker_label.draw()
+            self.fps_display.draw()
 
         # ---------- Per-Agent Update ----------
 
@@ -580,7 +605,25 @@ else:
                         pass
 
                 status_suffix = "" if st.get("__active__", False) else " (inactive)"
-                hud_lines.append(f"{aid}: {lap_str} {time_str}{status_suffix}")
+                extras: List[str] = []
+                relative_info = st.get("relative")
+                if isinstance(relative_info, dict):
+                    sector_code = relative_info.get("sector_code")
+                    if sector_code:
+                        extras.append(str(sector_code))
+                    sector_active = relative_info.get("sector_active")
+                    if sector_active is not None:
+                        extras.append(f"S={1 if sector_active else 0}")
+                    in_ring = relative_info.get("in_ring")
+                    if in_ring is not None:
+                        extras.append(f"R={1 if in_ring else 0}")
+                extra_text = f" | {' '.join(extras)}" if extras else ""
+                hud_lines.append(f"{aid}: {lap_str} {time_str}{status_suffix}{extra_text}")
+
+            telemetry_lines = self._format_telemetry_lines()
+            if telemetry_lines:
+                hud_lines.append("")
+                hud_lines.extend(telemetry_lines)
 
             self.hud_label.text = "\n".join(hud_lines)
 
@@ -588,6 +631,215 @@ else:
 
             if self._follow_enabled:
                 self._camera_follow_first()
+
+        def update_metrics(
+            self,
+            *,
+            phase: str,
+            metrics: Mapping[str, Any],
+            step: Optional[float] = None,
+            timestamp: Optional[float] = None,
+        ) -> None:
+            phase_label = str(phase).strip().lower() if phase else ""
+            self._telemetry_phase = phase_label or None
+            if metrics is None:
+                snapshot: Dict[str, Any] = {}
+            else:
+                try:
+                    snapshot = dict(metrics)
+                except Exception:
+                    snapshot = {}
+            self._telemetry_metrics = snapshot
+            self._telemetry_step = float(step) if step is not None else None
+            if timestamp is not None:
+                try:
+                    self._telemetry_timestamp = float(timestamp)
+                except (TypeError, ValueError):
+                    self._telemetry_timestamp = time.time()
+            else:
+                self._telemetry_timestamp = time.time()
+
+        def update_ticker(self, entries: Sequence[str]) -> None:
+            if not entries:
+                if self._ticker_lines:
+                    self._ticker_lines = []
+                    self.ticker_label.text = ""
+                return
+            new_lines = list(entries)
+            if new_lines == self._ticker_lines:
+                return
+            self._ticker_lines = new_lines
+            self.ticker_label.text = "\n".join(new_lines)
+
+        def _format_telemetry_lines(self) -> List[str]:
+            metrics = self._telemetry_metrics
+            if not metrics:
+                return []
+
+            phase = self._telemetry_phase or ""
+            prefix = f"{phase}/" if phase else ""
+            base: Dict[str, Any] = {}
+            agents: Dict[str, Dict[str, Any]] = {}
+            for raw_key, value in metrics.items():
+                if prefix:
+                    if not raw_key.startswith(prefix):
+                        continue
+                    key = raw_key[len(prefix):]
+                else:
+                    key = raw_key
+
+                if key.startswith("agent/"):
+                    remainder = key[len("agent/") :]
+                    agent_id, _, metric_name = remainder.partition("/")
+                    if not metric_name:
+                        continue
+                    entry = agents.setdefault(agent_id, {})
+                    entry[metric_name] = value
+                    continue
+                if key.startswith("reward/"):
+                    continue
+                base[key] = value
+
+            if self._telemetry_step is not None and "episode" not in base:
+                base["episode"] = self._telemetry_step
+
+            lines: List[str] = []
+            header = f"Telemetry [{phase.upper()}]" if phase else "Telemetry"
+            lines.append(header)
+
+            episode = self._coerce_int(base.get("episode"))
+            total = self._coerce_int(base.get("episodes_total"))
+            if episode is not None:
+                label = f"Episode {episode}"
+                if total is not None and total > 0:
+                    label += f"/{total}"
+                lines.append(label)
+            elif total is not None:
+                lines.append(f"Episodes total {total}")
+
+            steps = self._coerce_int(base.get("steps"))
+            if steps is not None:
+                lines.append(f"Steps {steps}")
+
+            return_parts: List[str] = []
+            primary_return = self._coerce_float(base.get("return"))
+            if primary_return is not None:
+                return_parts.append(f"Return {primary_return:.2f}")
+            return_mean = self._coerce_float(base.get("return_mean"))
+            if return_mean is not None:
+                window = self._coerce_int(base.get("return_window"))
+                if window and window > 1:
+                    return_parts.append(f"Avg{window} {return_mean:.2f}")
+                else:
+                    return_parts.append(f"Avg {return_mean:.2f}")
+            return_best = self._coerce_float(base.get("return_best"))
+            if return_best is not None:
+                return_parts.append(f"Best {return_best:.2f}")
+            if return_parts:
+                lines.append("  ".join(return_parts))
+
+            collision_parts: List[str] = []
+            collisions = self._coerce_float(base.get("collisions"))
+            if collisions is not None:
+                collision_parts.append(f"Coll {collisions:.0f}")
+            collision_rate = self._coerce_float(base.get("collision_rate"))
+            if collision_rate is not None:
+                collision_parts.append(f"Rate {collision_rate:.2f}")
+            if collision_parts:
+                lines.append("  ".join(collision_parts))
+
+            success = self._coerce_bool(base.get("success"))
+            success_rate = self._coerce_float(base.get("success_rate"))
+            if success is not None or success_rate is not None:
+                status_parts: List[str] = []
+                if success is not None:
+                    status_parts.append(f"Success {'yes' if success else 'no'}")
+                if success_rate is not None:
+                    status_parts.append(f"{success_rate * 100:.1f}%")
+                lines.append("  ".join(status_parts))
+
+            epsilon = self._coerce_float(base.get("epsilon"))
+            buffer_fraction = self._coerce_float(base.get("buffer_fraction"))
+            idle = self._coerce_bool(base.get("idle"))
+            misc_parts: List[str] = []
+            if epsilon is not None:
+                misc_parts.append(f"Eps {epsilon:.3f}")
+            if buffer_fraction is not None:
+                misc_parts.append(f"Buffer {buffer_fraction * 100:.0f}%")
+            if idle is not None:
+                misc_parts.append(f"Idle {'yes' if idle else 'no'}")
+            if misc_parts:
+                lines.append("  ".join(misc_parts))
+
+            defender_crashed = self._coerce_bool(base.get("defender_crashed"))
+            attacker_crashed = self._coerce_bool(base.get("attacker_crashed"))
+            defender_survival = self._coerce_float(base.get("defender_survival_steps"))
+            crash_parts: List[str] = []
+            if defender_crashed is not None:
+                crash_parts.append(f"Def {'X' if defender_crashed else 'ok'}")
+            if attacker_crashed is not None:
+                crash_parts.append(f"Atk {'X' if attacker_crashed else 'ok'}")
+            if crash_parts:
+                if defender_survival is not None:
+                    crash_parts.append(f"Surv {defender_survival:.0f}")
+                lines.append("  ".join(crash_parts))
+            elif defender_survival is not None:
+                lines.append(f"Defender survival {defender_survival:.0f}")
+
+            primary_agent = base.get("primary_agent")
+            if isinstance(primary_agent, str) and primary_agent:
+                lines.append(f"Primary {primary_agent}")
+
+            if agents:
+                for agent_id in sorted(agents):
+                    entry = agents[agent_id]
+                    row_parts: List[str] = [agent_id]
+                    ret_val = self._coerce_float(entry.get("return"))
+                    if ret_val is not None:
+                        row_parts.append(f"R {ret_val:.2f}")
+                    coll_val = self._coerce_float(entry.get("collisions"))
+                    if coll_val is not None:
+                        row_parts.append(f"C {coll_val:.0f}")
+                    speed_val = self._coerce_float(entry.get("avg_speed") or entry.get("speed"))
+                    if speed_val is not None:
+                        row_parts.append(f"V {speed_val:.2f}")
+                    collision_step = self._coerce_float(entry.get("collision_step"))
+                    if collision_step is not None:
+                        row_parts.append(f"Hit {collision_step:.0f}")
+                    lap_count = self._coerce_float(entry.get("lap_count"))
+                    if lap_count is not None:
+                        row_parts.append(f"Lap {lap_count:.0f}")
+                    lines.append("  ".join(row_parts))
+
+            if self._telemetry_timestamp is not None:
+                age = max(time.time() - self._telemetry_timestamp, 0.0)
+                lines.append(f"Updated {age:.1f}s ago")
+
+            return lines
+
+        @staticmethod
+        def _coerce_float(value: Any) -> Optional[float]:
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        @staticmethod
+        def _coerce_int(value: Any) -> Optional[int]:
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        @staticmethod
+        def _coerce_bool(value: Any) -> Optional[bool]:
+            if isinstance(value, bool):
+                return value
+            return None
 
         # ---------- Helpers ----------
 

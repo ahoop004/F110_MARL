@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 5000
+    max_steps: 1500
     lidar_beams: 54
     terminate_on_any_done: true
     random_spawn: true
@@ -32,18 +32,18 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cuda
-          actor_lr: 0.0004
+          device: cpu
+          actor_lr: 0.0003
           critic_lr: 0.0005
           gamma: 0.995
-          tau: 0.005
+          tau: 0.01
           policy_noise: 0.2
           noise_clip: 0.5
           policy_delay: 2
           batch_size: 256
           buffer_size: 200000
           warmup_steps: 5000
-          exploration_noise: 0.5
+          exploration_noise: 0.3
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 50000
           exploration_noise_decay_episodes: 4000

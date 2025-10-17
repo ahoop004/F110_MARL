@@ -357,6 +357,12 @@ class EvalRunner:
                     metrics[f"eval/reward/{aid}/{name}"] = float(value)
 
             logger.log_metrics("eval", metrics, step=ep_index + 1)
+            publish_metrics = getattr(env, "update_render_metrics", None)
+            if callable(publish_metrics):
+                try:
+                    publish_metrics("eval", metrics, step=ep_index + 1)
+                except Exception:
+                    pass
 
             results.append(record)
 

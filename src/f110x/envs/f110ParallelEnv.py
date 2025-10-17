@@ -1,3 +1,4 @@
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 import gymnasium as gym
@@ -21,6 +22,7 @@ from f110x.utils.config_schema import _default_vehicle_params
 import numpy as np
 import os
 import time
+import math
 
 # gl
 import pyglet
@@ -29,6 +31,7 @@ from pyglet import gl
 from pyglet import image as pyg_img
 
 # constants
+from f110x.wrappers.observation import _sector_from_angle, _radial_gain
 
 # rendering
 # VIDEO_W = 600
@@ -162,6 +165,10 @@ class F110ParallelEnv(ParallelEnv):
         self._reward_ring_target: Optional[str] = None
         self._reward_ring_dirty: bool = False
         self._reward_ring_target_dirty: bool = False
+        self._render_metrics_payload: Optional[Dict[str, Any]] = None
+        self._render_metrics_dirty: bool = False
+        self._render_ticker: deque[str] = deque(maxlen=64)
+        self._render_ticker_dirty: bool = False
 
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
@@ -454,11 +461,143 @@ class F110ParallelEnv(ParallelEnv):
                 scan_entry = agent_obs.get("scans")
                 if scan_entry is not None:
                     entry["scans"] = scan_entry
+            snapshot = self._compute_relative_snapshot(aid)
+            if snapshot is not None:
+                entry["relative"] = snapshot
             render_obs[aid] = entry
 
         self.render_obs = render_obs
 
-   
+    def _compute_relative_snapshot(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        agent_idx = self._agent_id_to_index.get(agent_id)
+        target_idx = self._agent_target_index.get(agent_id)
+        if agent_idx is None or target_idx is None:
+            return None
+        if not (0 <= agent_idx < len(self.poses_x)) or not (0 <= target_idx < len(self.poses_x)):
+            return None
+
+        agent_x = float(self.poses_x[agent_idx])
+        agent_y = float(self.poses_y[agent_idx])
+        agent_heading = float(self.poses_theta[agent_idx]) if agent_idx < len(self.poses_theta) else 0.0
+
+        target_x = float(self.poses_x[target_idx])
+        target_y = float(self.poses_y[target_idx])
+
+        dx = target_x - agent_x
+        dy = target_y - agent_y
+        distance = float(math.hypot(dx, dy))
+
+        if dx == 0.0 and dy == 0.0:
+            sector = "front"
+        else:
+            rel_angle = math.degrees(math.atan2(dy, dx) - agent_heading)
+            sector = _sector_from_angle(rel_angle)
+
+        cfg = self._reward_ring_config or {}
+        preferred = float(cfg.get("preferred_radius", 0.0) or 0.0)
+        inner = float(cfg.get("inner_tolerance", 0.0) or 0.0)
+        outer = float(cfg.get("outer_tolerance", 0.0) or 0.0)
+        falloff = str(cfg.get("falloff", "linear") or "linear").lower()
+
+        gain = _radial_gain(distance, preferred, inner, outer, falloff)
+        sector_active = gain > 0.0
+
+        if preferred > 0.0 or inner > 0.0 or outer > 0.0:
+            lower = max(preferred - inner, 0.0)
+            upper = preferred + outer
+            in_ring = float(lower) <= distance <= float(upper)
+        else:
+            in_ring = sector_active
+
+        weights_raw = cfg.get("weights")
+        sector_weight = 0.0
+        if isinstance(weights_raw, dict):
+            try:
+                sector_weight = float(weights_raw.get(sector, 0.0))
+            except (TypeError, ValueError):
+                sector_weight = 0.0
+        reward_sector = sector_active and sector_weight > 0.0
+
+        sector_code = "".join(word[0].upper() for word in sector.split("_")) if sector else "--"
+
+        return {
+            "distance": distance,
+            "sector": sector,
+            "sector_code": sector_code,
+            "sector_active": bool(sector_active),
+            "in_ring": bool(in_ring),
+            "sector_weight": sector_weight,
+            "reward_sector": bool(reward_sector),
+        }
+
+    def update_render_metrics(
+        self,
+        phase: str,
+        metrics: Mapping[str, Any],
+        *,
+        step: Optional[float] = None,
+    ) -> None:
+        """
+        Cache the latest logger metrics so the renderer HUD can surface them.
+        """
+        if not phase or metrics is None:
+            return
+        try:
+            snapshot = dict(metrics)
+        except Exception:
+            return
+        payload: Dict[str, Any] = {
+            "phase": str(phase).strip().lower(),
+            "metrics": snapshot,
+            "timestamp": time.time(),
+        }
+        if step is not None:
+            payload["step"] = float(step)
+        self._render_metrics_payload = payload
+        self._render_metrics_dirty = True
+
+    def append_render_ticker(
+        self,
+        agent_id: str,
+        *,
+        step: int,
+        reward: float,
+        components: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        snapshot = self._compute_relative_snapshot(agent_id)
+        if snapshot is None:
+            return
+
+        relative_reward = None
+        if components:
+            value = components.get("relative_position")
+            try:
+                relative_reward = float(value)
+            except (TypeError, ValueError):
+                relative_reward = None
+
+        total_reward = float(reward)
+        distance = snapshot["distance"]
+        sector_code = snapshot.get("sector_code", "--")
+        sector_active = snapshot.get("sector_active", False)
+        in_ring = snapshot.get("in_ring", False)
+        reward_sector = snapshot.get("reward_sector", False)
+
+        rel_text = f"{relative_reward:+.3f}" if relative_reward is not None else "--"
+        line = (
+            f"{int(step):04d} {agent_id} "
+            f"r={total_reward:+.3f} "
+            f"rel={rel_text} "
+            f"d={distance:.2f} "
+            f"{sector_code:<2} "
+            f"S={1 if sector_active else 0} "
+            f"R={1 if in_ring else 0} "
+            f"W={1 if reward_sector else 0}"
+        )
+
+        self._render_ticker.appendleft(line)
+        self._render_ticker_dirty = True
+
     def configure_reward_ring(self, config: Optional[Dict[str, Any]], *, agent_id: Optional[str] = None) -> None:
         if config is None:
             self._reward_ring_config = None
@@ -477,6 +616,21 @@ class F110ParallelEnv(ParallelEnv):
         for key in ("fill_color", "border_color", "preferred_color"):
             if key in config and isinstance(config[key], (list, tuple)):
                 stored[key] = tuple(float(component) for component in config[key])
+        falloff_val = config.get("falloff")
+        if falloff_val is not None:
+            stored["falloff"] = str(falloff_val).lower()
+        weights_val = config.get("weights")
+        if isinstance(weights_val, Mapping):
+            safe_weights: Dict[str, float] = {}
+            for name, value in weights_val.items():
+                if value is None:
+                    continue
+                try:
+                    safe_weights[str(name)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            if safe_weights:
+                stored["weights"] = safe_weights
 
         if self._reward_ring_config != stored or self._reward_ring_focus_agent != agent_id:
             self._reward_ring_config = stored
@@ -504,7 +658,7 @@ class F110ParallelEnv(ParallelEnv):
         if self._reward_ring_dirty:
             cfg = self._reward_ring_config
             if cfg:
-                payload: Dict[str, Any] = {
+                renderer_payload: Dict[str, Any] = {
                     "enabled": True,
                     "preferred_radius": cfg["preferred_radius"],
                     "inner_tolerance": cfg["inner_tolerance"],
@@ -513,8 +667,8 @@ class F110ParallelEnv(ParallelEnv):
                 }
                 for key in ("fill_color", "border_color", "preferred_color"):
                     if key in cfg:
-                        payload[key] = cfg[key]
-                self.renderer.configure_reward_ring(**payload)
+                        renderer_payload[key] = cfg[key]
+                self.renderer.configure_reward_ring(**renderer_payload)
             else:
                 self.renderer.configure_reward_ring(enabled=False)
             self._reward_ring_dirty = False
@@ -539,6 +693,8 @@ class F110ParallelEnv(ParallelEnv):
         self.current_time = 0.0
         self.start_state.reset()
         self.state_buffers.reset()
+        self._render_ticker.clear()
+        self._render_ticker_dirty = True
         poses = None
         spawn_mapping: Dict[str, str] = {}
         if self.renderer is not None:
@@ -688,6 +844,21 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_ring_target_dirty = True
 
         self._apply_reward_ring_to_renderer()
+
+        if self.renderer is not None and self._render_metrics_payload is not None and self._render_metrics_dirty:
+            payload = self._render_metrics_payload
+            self.renderer.update_metrics(
+                phase=payload.get("phase", ""),
+                metrics=payload.get("metrics", {}),
+                step=payload.get("step"),
+                timestamp=payload.get("timestamp"),
+            )
+            self._render_metrics_dirty = False
+
+        if self.renderer is not None and self._render_ticker_dirty:
+            lines = list(self._render_ticker)
+            self.renderer.update_ticker(lines[:16])
+            self._render_ticker_dirty = False
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
