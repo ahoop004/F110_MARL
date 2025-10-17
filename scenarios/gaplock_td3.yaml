@@ -5,15 +5,15 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 10000
+    max_steps: 5000
     lidar_beams: 54
     terminate_on_any_done: true
     random_spawn: true
 
   main:
     mode: train_eval
-    train_episodes: 10000
-    eval_episodes: 3
+    train_episodes: 50000
+    eval_episodes: 5
     eval_interval: 10
     save_eval_rollouts: true
     eval_rollout_dir: eval_rollouts
@@ -32,7 +32,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
+          device: cuda
           actor_lr: 0.0003
           critic_lr: 0.0006
           gamma: 0.995
@@ -46,6 +46,7 @@ scenario:
           exploration_noise: 0.2
           exploration_noise_final: 0.05
           exploration_noise_decay_steps: 50000
+          exploration_noise_decay_episodes: 200
           hidden_dims:
             - 256
             - 256
@@ -65,21 +66,21 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.05
-          idle_speed_threshold: 0.1
+          idle_speed_threshold: 0.05
           idle_penalty_steps: 120
-          idle_truncation_penalty: -2.0
+          idle_truncation_penalty: -10.0
           relative_reward:
             weights:
               front: 0.0
-              front_right: 0.25
-              right: 0.1
+              front_right: 0.025
+              right: 0.01
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.1
-              front_left: 0.25
+              left: 0.01
+              front_left: 0.025
             preferred_radius: 0.9
-            inner_tolerance: 0.1
+            inner_tolerance: 0.2
             outer_tolerance: 0.1
       wrappers:
         - factory: obs

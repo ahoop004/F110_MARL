@@ -58,6 +58,12 @@ class TD3Agent:
             1, int(cfg.get("exploration_noise_decay_steps", 50_000))
         )
         self._exploration_step = 0
+        try:
+            decay_episodes_value = int(cfg.get("exploration_noise_decay_episodes", 0))
+        except (TypeError, ValueError):
+            decay_episodes_value = 0
+        self.exploration_noise_decay_episodes = max(decay_episodes_value, 0)
+        self._exploration_episode = 0
 
         buffer_size = int(cfg.get("buffer_size", 100_000))
         self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
@@ -90,9 +96,19 @@ class TD3Agent:
             self._exploration_step += 1
         return action.astype(np.float32)
 
-    def reset_noise_schedule(self) -> None:
-        """Reset exploration-noise decay so new episodes start at the initial scale."""
-        self._exploration_step = 0
+    def reset_noise_schedule(self, *, restart: bool = False) -> None:
+        """Reset or advance the exploration-noise schedule."""
+        if restart:
+            self._exploration_step = 0
+            self._exploration_episode = 0
+            return
+
+        if self.exploration_noise_decay_episodes > 0:
+            self._exploration_step = 0
+            self._exploration_episode = min(
+                self._exploration_episode + 1,
+                self.exploration_noise_decay_episodes,
+            )
 
     def store_transition(
         self,
@@ -164,9 +180,18 @@ class TD3Agent:
         }
 
     def _current_exploration_noise(self) -> float:
-        if self.exploration_noise_decay_steps <= 0:
-            return self.exploration_noise_final
-        frac = min(1.0, self._exploration_step / self.exploration_noise_decay_steps)
+        if self.exploration_noise_decay_episodes > 0:
+            frac = min(
+                1.0,
+                self._exploration_episode / float(self.exploration_noise_decay_episodes),
+            )
+        else:
+            if self.exploration_noise_decay_steps <= 0:
+                return self.exploration_noise_final
+            frac = min(
+                1.0,
+                self._exploration_step / float(self.exploration_noise_decay_steps),
+            )
         return (
             (1.0 - frac) * self.exploration_noise_initial
             + frac * self.exploration_noise_final

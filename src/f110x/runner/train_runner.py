@@ -405,6 +405,11 @@ class TrainRunner:
                         },
                     )
 
+            for trainer in trainer_map.values():
+                reset_noise = getattr(trainer, "reset_noise_schedule", None)
+                if callable(reset_noise):
+                    reset_noise()
+
             if self._eval_interval and (episode_idx + 1) % self._eval_interval == 0:
                 self._run_periodic_evaluation(
                     episode_idx + 1,

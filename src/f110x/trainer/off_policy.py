@@ -90,6 +90,11 @@ class TD3Trainer(Trainer):
     def load(self, path: str) -> None:
         self._agent.load(path)
 
+    def reset_noise_schedule(self) -> None:
+        reset_fn = getattr(self._agent, "reset_noise_schedule", None)
+        if callable(reset_fn):
+            reset_fn()
+
 
 class SACTrainer(Trainer):
     """Adapter exposing SACAgent via the Trainer contract."""
