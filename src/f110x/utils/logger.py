@@ -523,10 +523,15 @@ class WandbSink(LogSink):
 
     def __init__(self, run: Any) -> None:  # type: ignore[valid-type]
         self._run = run
+        self._train_step_max: float = 0.0
+        self._phase_counters: Dict[str, int] = {}
+        self._phase_stride: float = 1e-3
 
     def start(self, context: Mapping[str, Any]) -> None:  # noqa: D401 - context unused
         # wandb run already initialised upstream; nothing extra required.
         _ = context
+        self._train_step_max = 0.0
+        self._phase_counters.clear()
 
     def stop(self) -> None:
         if self._run is not None:
@@ -552,14 +557,41 @@ class WandbSink(LogSink):
                 payload[key] = value
         if not payload:
             return
-        if step is not None:
+
+        step_value: Optional[float]
+        if step is None:
+            step_value = None
+        else:
             try:
-                self._run.log(payload, step=float(step))
-                return
+                step_value = float(step)
+            except (TypeError, ValueError):
+                step_value = None
+
+        wandb_step: Optional[float]
+        if phase == "train":
+            if step_value is None:
+                step_value = self._train_step_max + 1.0
+            self._train_step_max = max(self._train_step_max, step_value)
+            wandb_step = step_value
+        else:
+            base = self._train_step_max if self._train_step_max > 0.0 else 0.0
+            counter = self._phase_counters.get(phase, 0) + 1
+            self._phase_counters[phase] = counter
+            candidate = base + counter * self._phase_stride
+            if candidate <= self._train_step_max:
+                candidate = self._train_step_max + counter * self._phase_stride
+            wandb_step = candidate
+
+        try:
+            if wandb_step is not None:
+                self._run.log(payload, step=float(wandb_step))
+            else:
+                self._run.log(payload)
+        except Exception:
+            try:
+                self._run.log(payload)
             except Exception:
-                # Fall back to default step if wandb rejects manual step.
                 pass
-        self._run.log(payload)
 
     def log_event(
         self,
