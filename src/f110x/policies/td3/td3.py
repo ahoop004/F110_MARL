@@ -13,7 +13,7 @@ import torch.nn.functional as F
 # except ImportError:  # pragma: no cover - wandb optional
 #     wandb = None
 
-from f110x.policies.buffers import ReplayBuffer
+from f110x.policies.buffers import PrioritizedReplayBuffer, ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -66,7 +66,25 @@ class TD3Agent:
         self._exploration_episode = 0
 
         buffer_size = int(cfg.get("buffer_size", 100_000))
-        self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
+        self.use_per = bool(cfg.get("use_per", False))
+        if self.use_per:
+            per_alpha = float(cfg.get("per_alpha", 0.6))
+            per_beta = float(cfg.get("per_beta", 0.4))
+            per_beta_increment = float(cfg.get("per_beta_increment", 1e-4))
+            per_min_priority = float(cfg.get("per_min_priority", 1e-3))
+            per_epsilon = float(cfg.get("per_epsilon", 1e-6))
+            self.buffer = PrioritizedReplayBuffer(
+                buffer_size,
+                (self.obs_dim,),
+                (self.act_dim,),
+                alpha=per_alpha,
+                beta=per_beta,
+                beta_increment_per_sample=per_beta_increment,
+                min_priority=per_min_priority,
+                epsilon=per_epsilon,
+            )
+        else:
+            self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -133,6 +151,13 @@ class TD3Agent:
         rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
         next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
+        if self.use_per:
+            weights = torch.as_tensor(batch["weights"], dtype=torch.float32, device=self.device)
+            # Ensure weights broadcast across action dimension
+            if weights.ndim == 1:
+                weights = weights.view(-1, 1)
+        else:
+            weights = torch.ones_like(rewards, device=self.device)
 
         with torch.no_grad():
             # Policy smoothing regularization: perturb target action before evaluating target critics.
@@ -151,8 +176,10 @@ class TD3Agent:
 
         current_q1 = self.critic1(obs, actions)
         current_q2 = self.critic2(obs, actions)
+        td_error1 = current_q1 - target
+        td_error2 = current_q2 - target
 
-        critic_loss = F.mse_loss(current_q1, target) + F.mse_loss(current_q2, target)
+        critic_loss = ((td_error1.pow(2) + td_error2.pow(2)) * weights).mean()
 
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
@@ -172,6 +199,14 @@ class TD3Agent:
             soft_update(self.critic_target2, self.critic2, self.tau)
 
         self.total_it += 1
+
+        if self.use_per:
+            td_errors = (td_error1.abs() + td_error2.abs()) * 0.5
+            indices = batch["indices"]
+            self.buffer.update_priorities(
+                indices,
+                td_errors.detach().cpu().squeeze(1).numpy(),
+            )
 
         return {
             "critic_loss": float(critic_loss.detach().cpu().item()),

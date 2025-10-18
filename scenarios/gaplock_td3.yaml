@@ -65,6 +65,7 @@ scenario:
           policy_delay: 2
           batch_size: 256
           buffer_size: 200000
+          use_per: true
           warmup_steps: 8000
           exploration_noise: 0.35
           exploration_noise_final: 0.1
