@@ -483,7 +483,12 @@ class TrainRunner:
             "checkpoint_name",
             f"{self._primary_bundle.algo.lower()}_best.pt",
         )
-        run_suffix = os.environ.get("RUN_ITER") or os.environ.get("RUN_SEED")
+        run_suffix = (
+            os.environ.get("RUN_ITER")
+            or os.environ.get("RUN_SEED")
+            or os.environ.get("WANDB_RUN_ID")
+            or os.environ.get("WANDB_RUN_NAME")
+        )
         safe_suffix = self._slugify_suffix(run_suffix)
         if safe_suffix:
             base_name = Path(checkpoint_name)

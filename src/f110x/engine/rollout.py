@@ -334,6 +334,13 @@ def run_episode(
         if not actions:
             break
 
+        publish_wrapped = getattr(env, "update_render_wrapped_observations", None)
+        if callable(publish_wrapped):
+            try:
+                publish_wrapped(processed_obs)
+            except Exception:
+                pass
+
         obs_snapshot = {aid: obs.get(aid) for aid in agent_order if aid in obs}
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         steps += 1

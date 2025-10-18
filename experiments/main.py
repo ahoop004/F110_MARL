@@ -229,6 +229,19 @@ def _wandb_init(cfg: Dict[str, Any], main_cfg: Dict[str, Any], mode: str):
         wandb.define_metric("train/return_*", step_metric="train/episode")
         wandb.define_metric("eval/episode")
         wandb.define_metric("eval/return_*", step_metric="eval/episode")
+        try:
+            os.environ["WANDB_RUN_ID"] = str(run.id)
+        except Exception:
+            pass
+        run_name = getattr(run, "name", None)
+        if run_name:
+            os.environ["WANDB_RUN_NAME"] = str(run_name)
+        run_path = getattr(run, "path", None)
+        if run_path:
+            try:
+                os.environ["WANDB_RUN_PATH"] = "/".join(run_path)
+            except Exception:
+                pass
 
     return run
 

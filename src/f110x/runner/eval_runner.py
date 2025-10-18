@@ -405,6 +405,17 @@ class EvalRunner:
             "checkpoint_name",
             f"{bundle.algo.lower()}_best.pt" if bundle else "model.pt",
         )
+        run_suffix = (
+            os.environ.get("RUN_ITER")
+            or os.environ.get("RUN_SEED")
+            or os.environ.get("WANDB_RUN_ID")
+            or os.environ.get("WANDB_RUN_NAME")
+        )
+        if run_suffix:
+            safe_suffix = "".join(ch for ch in str(run_suffix) if ch.isalnum() or ch in {"-", "_"})
+            if safe_suffix:
+                base_name = Path(checkpoint_name)
+                checkpoint_name = f"{base_name.stem}_{safe_suffix}{base_name.suffix}"
         self.default_checkpoint_path = checkpoint_dir / checkpoint_name if bundle else None
 
         explicit_raw = self.context.cfg.main.checkpoint

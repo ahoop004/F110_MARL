@@ -31,7 +31,7 @@ from pyglet import gl
 from pyglet import image as pyg_img
 
 # constants
-from f110x.wrappers.observation import _sector_from_angle, _radial_gain
+from f110x.wrappers.observation import _sector_from_angle, _radial_gain, _SECTOR_NAMES
 
 # rendering
 # VIDEO_W = 600
@@ -169,6 +169,12 @@ class F110ParallelEnv(ParallelEnv):
         self._render_metrics_dirty: bool = False
         self._render_ticker: deque[str] = deque(maxlen=64)
         self._render_ticker_dirty: bool = False
+        self._render_wrapped_obs: Dict[str, np.ndarray] = {}
+        default_lidar_skip = int(merged.get("lidar_beams", self._lidar_beam_count))
+        if default_lidar_skip < 0:
+            default_lidar_skip = 0
+        self._render_lidar_skip_default = default_lidar_skip
+        self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
 
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
@@ -461,9 +467,50 @@ class F110ParallelEnv(ParallelEnv):
                 scan_entry = agent_obs.get("scans")
                 if scan_entry is not None:
                     entry["scans"] = scan_entry
+                    self._render_lidar_skip[aid] = self._render_lidar_skip_default
+                target_collision_val = agent_obs.get("target_collision")
+                if target_collision_val is not None:
+                    try:
+                        entry["target_collision"] = bool(target_collision_val)
+                    except Exception:
+                        entry["target_collision"] = False
+                components: Dict[str, Any] = {}
+                for key, value in agent_obs.items():
+                    if key in {"scans", "lidar", "state"}:
+                        continue
+                    if key in entry and key not in {"collision", "target_collision"}:
+                        continue
+                    cleaned: Any
+                    if key == "relative_sector":
+                        arr = np.asarray(value, dtype=np.float32).flatten()
+                        sector_flags: Dict[str, bool] = {}
+                        for idx, name in enumerate(_SECTOR_NAMES):
+                            flag = False
+                            if idx < arr.size:
+                                flag = bool(arr[idx] > 0.5)
+                            sector_flags[name] = flag
+                        cleaned = sector_flags
+                    elif isinstance(value, np.ndarray):
+                        cleaned = value.astype(np.float32, copy=False).flatten()
+                        if cleaned.size > 6:
+                            cleaned = cleaned[:6]
+                        cleaned = cleaned.tolist()
+                    elif isinstance(value, (np.bool_, bool)):
+                        cleaned = bool(value)
+                    elif isinstance(value, (np.floating, np.integer)):
+                        cleaned = float(value)
+                    else:
+                        cleaned = value
+                    components[key] = cleaned
+                if components:
+                    entry["obs_components"] = components
             snapshot = self._compute_relative_snapshot(aid)
             if snapshot is not None:
                 entry["relative"] = snapshot
+            wrapped_vector = self._render_wrapped_obs.get(aid)
+            if wrapped_vector is not None:
+                entry["wrapped_obs"] = np.asarray(wrapped_vector, dtype=np.float32)
+                entry["wrapped_skip"] = int(self._render_lidar_skip.get(aid, self._render_lidar_skip_default))
             render_obs[aid] = entry
 
         self.render_obs = render_obs
@@ -555,6 +602,22 @@ class F110ParallelEnv(ParallelEnv):
             payload["step"] = float(step)
         self._render_metrics_payload = payload
         self._render_metrics_dirty = True
+
+    def update_render_wrapped_observations(self, wrapped: Mapping[str, np.ndarray]) -> None:
+        if not wrapped:
+            return
+        store: Dict[str, np.ndarray] = {}
+        for agent_id, vector in wrapped.items():
+            if vector is None:
+                continue
+            try:
+                array = np.asarray(vector, dtype=np.float32)
+            except Exception:
+                continue
+            store[str(agent_id)] = array.copy()
+        if not store:
+            return
+        self._render_wrapped_obs = store
 
     def append_render_ticker(
         self,
@@ -695,6 +758,7 @@ class F110ParallelEnv(ParallelEnv):
         self.state_buffers.reset()
         self._render_ticker.clear()
         self._render_ticker_dirty = True
+        self._render_wrapped_obs.clear()
         poses = None
         spawn_mapping: Dict[str, str] = {}
         if self.renderer is not None:

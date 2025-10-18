@@ -617,8 +617,29 @@ else:
                     in_ring = relative_info.get("in_ring")
                     if in_ring is not None:
                         extras.append(f"R={1 if in_ring else 0}")
+                collision_value = st.get("collision")
+                if collision_value is not None:
+                    extras.append(f"C={1 if bool(collision_value) else 0}")
+                target_collision = st.get("target_collision")
+                if target_collision is not None:
+                    extras.append(f"T={1 if bool(target_collision) else 0}")
                 extra_text = f" | {' '.join(extras)}" if extras else ""
                 hud_lines.append(f"{aid}: {lap_str} {time_str}{status_suffix}{extra_text}")
+                components = st.get("obs_components")
+                if isinstance(components, dict):
+                    comp_text = self._format_obs_components(components)
+                    if comp_text:
+                        hud_lines.append(f"    {comp_text}")
+                wrapped_obs = st.get("wrapped_obs")
+                if wrapped_obs is not None:
+                    skip = st.get("wrapped_skip")
+                    try:
+                        lidar_len = int(skip)
+                    except (TypeError, ValueError):
+                        lidar_len = 0
+                    vector_text = self._format_observation_vector(wrapped_obs, lidar_len=lidar_len)
+                    if vector_text:
+                        hud_lines.append(f"    obs={vector_text}")
 
             telemetry_lines = self._format_telemetry_lines()
             if telemetry_lines:
@@ -816,6 +837,68 @@ else:
                 lines.append(f"Updated {age:.1f}s ago")
 
             return lines
+
+        @staticmethod
+        def _format_obs_components(components: Mapping[str, Any]) -> Optional[str]:
+            if not components:
+                return None
+            chunks: List[str] = []
+            for key in sorted(components):
+                value = components[key]
+                if isinstance(value, np.ndarray):
+                    arr = value.flatten()
+                    if arr.size > 6:
+                        arr = arr[:6]
+                    val_str = ",".join(f"{float(item):.2f}" for item in arr)
+                    val_repr = f"[{val_str}]"
+                elif isinstance(value, (list, tuple)):
+                    subset = list(value[:6])
+                    if subset and all(isinstance(item, (int, float)) for item in subset):
+                        val_repr = "[" + ",".join(f"{float(item):.2f}" for item in subset) + "]"
+                    else:
+                        val_repr = str(subset)
+                elif isinstance(value, Mapping):
+                    entries = []
+                    max_items = 8 if len(value) >= 8 else len(value)
+                    idx = 0
+                    for sub_key, sub_val in value.items():
+                        flag = "T" if bool(sub_val) else "F"
+                        entries.append(f"{sub_key[:2]}={flag}")
+                        idx += 1
+                        if idx >= max_items:
+                            break
+                    if len(value) > max_items:
+                        entries.append("…")
+                    val_repr = "[" + ", ".join(entries) + "]"
+                elif isinstance(value, (np.bool_, bool)):
+                    val_repr = "T" if bool(value) else "F"
+                elif isinstance(value, (float, int, np.floating, np.integer)):
+                    val_repr = f"{float(value):.2f}"
+                else:
+                    val_repr = str(value)
+                chunks.append(f"{key}={val_repr}")
+                if len(chunks) >= 4:
+                    break
+            if not chunks:
+                return None
+            return " | ".join(chunks)
+
+        @staticmethod
+        def _format_observation_vector(vector: Any, *, lidar_len: int = 0) -> Optional[str]:
+            try:
+                arr = np.asarray(vector, dtype=np.float32).flatten()
+            except Exception:
+                return None
+            if arr.size == 0:
+                return "[]"
+            if lidar_len > 0 and arr.size > lidar_len:
+                arr = arr[lidar_len:]
+            max_items = 24
+            display = arr[:max_items]
+            values = ", ".join(f"{value:+.3f}" for value in display)
+            if arr.size > max_items:
+                values += ", …"
+            return f"[{values}] (len={arr.size})"
 
         @staticmethod
         def _coerce_float(value: Any) -> Optional[float]:
