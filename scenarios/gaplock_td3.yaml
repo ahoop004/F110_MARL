@@ -35,7 +35,7 @@ scenario:
 
   main:
     mode: train_eval
-    train_episodes: 5000
+    train_episodes: 15000
     eval_episodes: 5
     eval_interval: 10
     save_eval_rollouts: true
@@ -66,10 +66,10 @@ scenario:
           batch_size: 256
           buffer_size: 200000
           warmup_steps: 5000
-          exploration_noise: 0.3
+          exploration_noise: 0.35
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 50000
-          exploration_noise_decay_episodes: 4000
+          exploration_noise_decay_episodes: 14000
           prevent_reverse: true
           hidden_dims:
             - 256
@@ -78,7 +78,7 @@ scenario:
           checkpoint_name: td3_gaplock.pt
       reward:
         task: gaplock
-        idle_speed_threshold: 0.1
+        idle_speed_threshold: 0.2
         idle_patience_steps: 120
         features:
           - gaplock_offense
@@ -90,8 +90,9 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.005
-          idle_speed_threshold: 0.1
-          idle_penalty_steps: 120
+          idle_speed_threshold: 0.2
+          idle_penalty: -0.005
+          idle_penalty_steps: 15
           idle_truncation_penalty: -10.0
           relative_reward:
             weights:
@@ -103,8 +104,8 @@ scenario:
               back_left: 0.0
               left: 0.01
               front_left: 0.025
-            preferred_radius: 0.9
-            inner_tolerance: 0.3
+            preferred_radius: 0.7
+            inner_tolerance: 0.1
             outer_tolerance: 0.2
             ignored_agents:
               - car_1
@@ -142,9 +143,9 @@ scenario:
               - id: relative_sector
                 type: relative_sector
                 params:
-                  preferred_radius: 0.8
-                  inner_tolerance: 0.2
-                  outer_tolerance: 0.1
+                  preferred_radius: 0.7
+                  inner_tolerance: 0.1
+                  outer_tolerance: 0.2
                 target:
                   agent: car_1
               - id: target_collision

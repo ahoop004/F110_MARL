@@ -190,6 +190,9 @@ class GaplockRewardStrategy(RewardStrategy):
         if speed < self.idle_speed_threshold:
             counter = self._idle_counters.get(agent_id, 0) + 1
             self._idle_counters[agent_id] = counter
+            threshold_steps = max(1, self.idle_penalty_steps)
+            if self.idle_penalty and counter >= threshold_steps:
+                acc.add("idle_penalty", float(self.idle_penalty))
         else:
             self._idle_counters[agent_id] = 0
 
