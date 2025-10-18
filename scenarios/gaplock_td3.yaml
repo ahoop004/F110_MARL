@@ -103,7 +103,7 @@ scenario:
           idle_truncation_penalty: -10.0
           relative_reward:
             weights:
-              front: 0.0
+              front: 0.02
               front_right: 0.025
               right: 0.01
               back_right: 0.0
@@ -171,6 +171,46 @@ scenario:
           steering_gain: 1.0
           bubble_radius: 2.0
           steer_smooth: 0.0
+      defender_curriculum:
+        min_episode: 1500
+        success_window: 200
+        activation_samples: 200
+        enable_patience: 4
+        disable_patience: 2
+        cooldown: 300
+        persist: false
+        stages:
+          - name: baseline
+            params:
+              max_speed: 10.0
+              min_speed: 2.5
+              steering_gain: 1.0
+              bubble_radius: 2.0
+              steer_smooth: 0.0
+          - name: pressure
+            enable_rate: 0.6
+            disable_rate: 0.5
+            params:
+              max_speed: 11.0
+              steering_gain: 1.1
+              bubble_radius: 2.5
+              steer_smooth: 0.1
+          - name: aggressive
+            enable_rate: 0.75
+            disable_rate: 0.6
+            params:
+              max_speed: 12.5
+              steering_gain: 1.25
+              bubble_radius: 3.0
+              steer_smooth: 0.15
+          - name: lockdown
+            enable_rate: 0.85
+            disable_rate: 0.7
+            params:
+              max_speed: 13.5
+              steering_gain: 1.35
+              bubble_radius: 3.5
+              steer_smooth: 0.2
       wrappers:
         - factory: obs
           params:

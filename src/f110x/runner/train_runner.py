@@ -5,7 +5,7 @@ import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional, Mapping
 
 from f110x.engine.rollout import (
     BestReturnTracker,
@@ -165,6 +165,176 @@ class SpawnCurriculumManager:
         }
 
 
+class DefenderCurriculumManager:
+    """Schedules defender heuristic parameters using attacker outcomes."""
+
+    def __init__(
+        self,
+        *,
+        controller: Any,
+        config: Mapping[str, Any],
+        logger: Logger,
+    ) -> None:
+        self.controller = controller
+        self.logger = logger
+        self.config = dict(config or {})
+
+        self.success_window = max(1, int(self.config.get("success_window", self.config.get("window", 200))))
+        self.activation_samples = max(1, int(self.config.get("activation_samples", self.success_window)))
+        self.min_episode = max(0, int(self.config.get("min_episode", 0)))
+        self.cooldown = max(0, int(self.config.get("cooldown", 0)))
+        self.persist = bool(self.config.get("persist", False))
+        self.enable_rate_default = float(self.config.get("enable_rate", 0.7))
+        self.disable_rate_default = float(self.config.get("disable_rate", 0.5))
+        self.enable_patience_default = max(1, int(self.config.get("enable_patience", 3)))
+        self.disable_patience_default = max(1, int(self.config.get("disable_patience", 2)))
+
+        raw_stages = self.config.get("stages") or []
+        stages: List[Dict[str, Any]] = []
+        for idx, stage in enumerate(raw_stages):
+            if isinstance(stage, Mapping):
+                entry = dict(stage)
+            else:
+                continue
+            entry.setdefault("name", f"stage_{idx}")
+            params = entry.get("params")
+            if params is not None and not isinstance(params, Mapping):
+                raise TypeError("Defender curriculum stage 'params' must be a mapping")
+            stages.append(entry)
+        if not stages:
+            stages = [{"name": "baseline"}]
+        baseline_params = stages[0].get("params")
+        if not isinstance(baseline_params, Mapping) or not baseline_params:
+            stages[0]["params"] = self._capture_params()
+        else:
+            stages[0]["params"] = dict(baseline_params)
+
+        self.stages = stages
+        self.history: Deque[float] = deque(maxlen=self.success_window)
+        self.current_stage_index = 0
+        self._last_change_episode: Optional[int] = None
+        self._promote_streak = 0
+        self._regress_streak = 0
+        self._apply_stage(0, episode=0, initial=True)
+
+    @property
+    def window(self) -> int:
+        return self.success_window
+
+    @property
+    def success_rate(self) -> Optional[float]:
+        if not self.history:
+            return None
+        return float(sum(self.history) / len(self.history))
+
+    def _capture_params(self) -> Dict[str, Any]:
+        exporter = getattr(self.controller, "export_config", None)
+        if callable(exporter):
+            snapshot = exporter()
+        else:
+            keys = ("max_speed", "min_speed", "steering_gain", "bubble_radius", "steer_smooth")
+            snapshot = {key: getattr(self.controller, key) for key in keys if hasattr(self.controller, key)}
+        return self._sanitize_params(snapshot)
+
+    @staticmethod
+    def _sanitize_params(params: Mapping[str, Any]) -> Dict[str, Any]:
+        cleaned: Dict[str, Any] = {}
+        for key, value in params.items():
+            if isinstance(value, (int, float)):
+                cleaned[key] = float(value)
+            else:
+                cleaned[key] = value
+        return cleaned
+
+    def _apply_stage(self, index: int, *, episode: int, initial: bool = False) -> None:
+        index = max(0, min(index, len(self.stages) - 1))
+        stage = self.stages[index]
+        params = stage.get("params")
+        if isinstance(params, Mapping):
+            self.controller.apply_config(params)
+        applied = self._capture_params()
+        stage["_applied_params"] = applied
+        stage_name = stage.get("name", f"stage_{index}")
+        previous_index = getattr(self, "current_stage_index", 0)
+        self.current_stage_index = index
+        self._promote_streak = 0
+        self._regress_streak = 0
+        if initial:
+            self._last_change_episode = None
+            return
+        self._last_change_episode = episode
+        if index != previous_index:
+            self.logger.info(
+                "Defender curriculum transition",
+                extra={
+                    "episode": episode,
+                    "stage": stage_name,
+                    "stage_index": index,
+                    "defender_params": applied,
+                },
+            )
+
+    def _cooldown_ready(self, episode: int) -> bool:
+        if self.cooldown <= 0:
+            return True
+        if self._last_change_episode is None:
+            return True
+        return (episode - self._last_change_episode) >= self.cooldown
+
+    def observe(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
+        if success is not None:
+            self.history.append(1.0 if success else 0.0)
+
+        success_rate = self.success_rate
+        history_ready = len(self.history) >= self.activation_samples
+        changed = False
+
+        if len(self.stages) <= 1:
+            return self._state(changed, success_rate)
+
+        if not history_ready or success_rate is None or episode < self.min_episode:
+            self._promote_streak = 0
+            self._regress_streak = 0
+            return self._state(changed, success_rate)
+
+        if self.current_stage_index < len(self.stages) - 1:
+            next_stage_index = self.current_stage_index + 1
+            next_stage = self.stages[next_stage_index]
+            enable_rate = float(next_stage.get("enable_rate", self.enable_rate_default))
+            enable_patience = max(1, int(next_stage.get("enable_patience", self.enable_patience_default)))
+            if success_rate >= enable_rate:
+                self._promote_streak += 1
+            else:
+                self._promote_streak = 0
+            if self._promote_streak >= enable_patience and self._cooldown_ready(episode):
+                self._apply_stage(next_stage_index, episode=episode)
+                changed = True
+
+        if not self.persist and self.current_stage_index > 0:
+            current_stage = self.stages[self.current_stage_index]
+            disable_rate = float(current_stage.get("disable_rate", self.disable_rate_default))
+            disable_patience = max(1, int(current_stage.get("disable_patience", self.disable_patience_default)))
+            if success_rate < disable_rate:
+                self._regress_streak += 1
+            else:
+                self._regress_streak = 0
+            if self._regress_streak >= disable_patience and self._cooldown_ready(episode):
+                self._apply_stage(self.current_stage_index - 1, episode=episode)
+                changed = True
+
+        return self._state(changed, success_rate)
+
+    def _state(self, changed: bool, success_rate: Optional[float]) -> Dict[str, Any]:
+        stage = self.stages[self.current_stage_index]
+        return {
+            "changed": changed,
+            "stage_index": self.current_stage_index,
+            "stage": stage.get("name", f"stage_{self.current_stage_index}"),
+            "success_rate": success_rate,
+            "params": dict(stage.get("_applied_params", {})),
+        }
+
+
 @dataclass
 class TrainRunner:
     """Compose trainers, environments, and reward helpers for training loops."""
@@ -277,13 +447,29 @@ class TrainRunner:
         attacker_id = team.primary_role("attacker")
         defender_id = team.primary_role("defender")
 
+        defender_manager: Optional[DefenderCurriculumManager] = None
+        if defender_id:
+            defender_bundle = getattr(team, "by_id", {}).get(defender_id)
+            if defender_bundle is not None:
+                curriculum_cfg = defender_bundle.metadata.get("policy_curriculum", {})
+                controller = getattr(defender_bundle, "controller", None)
+                if curriculum_cfg and hasattr(controller, "apply_config"):
+                    defender_manager = DefenderCurriculumManager(
+                        controller=controller,
+                        config=curriculum_cfg,
+                        logger=logger,
+                    )
+
         primary_cfg = primary_bundle.metadata.get("config", {})
         recent_window = max(1, int(primary_cfg.get("rolling_avg_window", 10)))
         if spawn_manager is not None:
             recent_window = max(recent_window, spawn_manager.window)
+        if defender_manager is not None:
+            recent_window = max(recent_window, defender_manager.window)
         best_tracker = BestReturnTracker(recent_window)
         recent_returns: Deque[float] = deque(maxlen=recent_window)
         recent_success: Deque[float] = deque(maxlen=recent_window)
+        total_successes: int = 0
 
         reward_cfg = self.context.reward_cfg
         truncation_penalty = self._resolve_reward_value(reward_cfg, "truncation_penalty")
@@ -418,6 +604,8 @@ class TrainRunner:
                 success = defender_crashed
             elif attacker_crashed is not None:
                 success = not attacker_crashed
+            if success:
+                total_successes += 1
 
             collisions_total = int(sum(rollout.collisions.values()))
             episode_record: Dict[str, Any] = {
@@ -467,6 +655,9 @@ class TrainRunner:
             spawn_state: Optional[Dict[str, Any]] = None
             if spawn_manager is not None:
                 spawn_state = spawn_manager.observe(episode_idx + 1, success)
+            defender_state: Optional[Dict[str, Any]] = None
+            if defender_manager is not None:
+                defender_state = defender_manager.observe(episode_idx + 1, success)
 
             collision_rate = float(collisions_total) / max(float(rollout.steps), 1.0)
             best_average = best_tracker.best if best_tracker.best != float("-inf") else None
@@ -497,6 +688,7 @@ class TrainRunner:
                 metrics["train/success"] = bool(success)
             if success_rate is not None:
                 metrics["train/success_rate"] = success_rate
+            metrics["train/success_total"] = float(total_successes)
             if epsilon_val is not None:
                 metrics["train/epsilon"] = float(epsilon_val)
             if attacker_crashed is not None:
@@ -522,6 +714,26 @@ class TrainRunner:
                     metrics["train/spawn_success_rate"] = float(spawn_rate)
                     episode_record["spawn_success_rate"] = float(spawn_rate)
                 episode_record["random_spawn_enabled"] = bool(spawn_state.get("enabled", False))
+            if defender_state is not None:
+                stage_name = defender_state.get("stage")
+                if stage_name is not None:
+                    metrics["train/defender_stage"] = stage_name
+                    episode_record["defender_stage"] = stage_name
+                stage_index = defender_state.get("stage_index")
+                if stage_index is not None:
+                    metrics["train/defender_stage_index"] = float(stage_index)
+                    episode_record["defender_stage_index"] = int(stage_index)
+                defender_success = defender_state.get("success_rate")
+                if defender_success is not None:
+                    metrics["train/defender_success_rate"] = float(defender_success)
+                    episode_record["defender_success_rate"] = float(defender_success)
+                params_snapshot = defender_state.get("params") or {}
+                if params_snapshot:
+                    episode_record["defender_params"] = dict(params_snapshot)
+                    for key, value in params_snapshot.items():
+                        if isinstance(value, (int, float)):
+                            metrics[f"train/defender_param/{key}"] = float(value)
+            episode_record["success_total"] = total_successes
 
             for aid, value in returns.items():
                 metrics[f"train/agent/{aid}/return"] = float(value)

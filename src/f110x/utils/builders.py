@@ -956,13 +956,16 @@ def _build_algo_follow_gap(
     controller = FollowTheGapPolicy.from_config(assignment.spec.params)
     if ctx.map_data.centerline is not None:
         setattr(controller, "centerline", ctx.map_data.centerline)
+    metadata: Dict[str, Any] = {"centerline": ctx.map_data.centerline}
+    if assignment.spec.policy_curriculum:
+        metadata["policy_curriculum"] = dict(assignment.spec.policy_curriculum)
     return AgentBundle(
         assignment=assignment,
         algo="follow_gap",
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=False),
-        metadata={"centerline": ctx.map_data.centerline},
+        metadata=metadata,
     )
 
 

@@ -39,27 +39,38 @@ class FollowTheGapPolicy:
         # keep track of last steering for smoothing
         self.last_steer = 0.0
 
+    @staticmethod
+    def _coerce_like(value, default):
+        if value is None:
+            return default
+        if isinstance(default, bool):
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(value)
+        if isinstance(default, int) and not isinstance(default, bool):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                try:
+                    return int(float(value))
+                except (TypeError, ValueError):
+                    return default
+        if isinstance(default, float):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+        if isinstance(default, (np.ndarray, list, tuple)):
+            return type(default)(value)
+        return value
+
     @classmethod
     def from_config(cls, params):
         if not params:
             return cls()
 
         def _coerce(value, default):
-            if value is None:
-                return default
-            if isinstance(default, bool):
-                if isinstance(value, str):
-                    return value.strip().lower() in {"1", "true", "yes", "on"}
-                return bool(value)
-            if isinstance(default, int):
-                try:
-                    return int(value)
-                except (TypeError, ValueError):
-                    return int(float(value))
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return value
+            return cls._coerce_like(value, default)
 
         kwargs = {}
         for key, default in cls.CONFIG_DEFAULTS.items():
@@ -77,6 +88,25 @@ class FollowTheGapPolicy:
             print(f"[FollowTheGapPolicy] Ignoring unsupported config keys: {sorted(unexpected)}")
 
         return cls(**kwargs)
+
+    def apply_config(self, params):
+        if not params:
+            return
+        for key, value in params.items():
+            if not hasattr(self, key):
+                continue
+            default = self.CONFIG_DEFAULTS.get(key, getattr(self, key))
+            coerced = self._coerce_like(value, default)
+            setattr(self, key, coerced)
+
+    def export_config(self, keys=None):
+        if keys is None:
+            keys = ("max_speed", "min_speed", "steering_gain", "bubble_radius", "steer_smooth")
+        snapshot = {}
+        for key in keys:
+            if hasattr(self, key):
+                snapshot[key] = getattr(self, key)
+        return snapshot
 
     def preprocess_lidar(self, ranges):
         """Smooth LiDAR with moving average + clip to max_distance."""

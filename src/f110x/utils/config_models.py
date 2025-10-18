@@ -80,6 +80,7 @@ class AgentSpecConfig:
     target_roles: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     reward: Dict[str, Any] = field(default_factory=dict)
+    policy_curriculum: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentSpecConfig":
@@ -102,6 +103,11 @@ class AgentSpecConfig:
             trainable = bool(trainable)
 
         metadata = _coerce_mapping(data.get("metadata"), name="Agent metadata")
+        curriculum_payload: Dict[str, Any] = {}
+        for key in ("policy_curriculum", "controller_curriculum", "defender_curriculum"):
+            if key in data:
+                curriculum_payload = _coerce_mapping(data.get(key), name=f"Agent {key}")
+                break
 
         reward_cfg = _coerce_mapping(data.get("reward"), name="Agent reward config")
 
@@ -170,6 +176,7 @@ class AgentSpecConfig:
             target_roles=target_roles_list,
             metadata=dict(metadata),
             reward=dict(reward_cfg),
+            policy_curriculum=dict(curriculum_payload),
         )
 
 
