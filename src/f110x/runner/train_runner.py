@@ -483,16 +483,7 @@ class TrainRunner:
             "checkpoint_name",
             f"{self._primary_bundle.algo.lower()}_best.pt",
         )
-        run_suffix = (
-            os.environ.get("RUN_ITER")
-            or os.environ.get("RUN_SEED")
-            or os.environ.get("WANDB_RUN_ID")
-            or os.environ.get("WANDB_RUN_NAME")
-        )
-        safe_suffix = self._slugify_suffix(run_suffix)
-        if safe_suffix:
-            base_name = Path(checkpoint_name)
-            checkpoint_name = f"{base_name.stem}_{safe_suffix}{base_name.suffix}"
+        checkpoint_name = self._apply_run_suffix(checkpoint_name)
         bundle_cfg["checkpoint_name"] = checkpoint_name
         self.best_model_path = self.checkpoint_dir / checkpoint_name
         self._primary_bundle.metadata["config"] = bundle_cfg
@@ -523,6 +514,13 @@ class TrainRunner:
         save_fn = getattr(controller, "save", None)
         if not callable(save_fn):
             return False
+        current_name = self.best_model_path.name
+        suffixed = self._apply_run_suffix(current_name)
+        if suffixed != current_name:
+            self.best_model_path = self.checkpoint_dir / suffixed
+            bundle_cfg = dict(self._primary_bundle.metadata.get("config", {}))
+            bundle_cfg["checkpoint_name"] = suffixed
+            self._primary_bundle.metadata["config"] = bundle_cfg
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         save_fn(str(self.best_model_path))
         return True
@@ -586,6 +584,38 @@ class TrainRunner:
         cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value))
         cleaned = cleaned.strip("-")
         return cleaned or None
+
+    def _resolve_run_suffix(self) -> Optional[str]:
+        candidates = [
+            os.environ.get("F110_RUN_SUFFIX"),
+            os.environ.get("WANDB_RUN_ID"),
+            os.environ.get("WANDB_RUN_NAME"),
+            os.environ.get("WANDB_RUN_PATH"),
+            os.environ.get("RUN_ITER"),
+            os.environ.get("RUN_SEED"),
+        ]
+        meta = getattr(self.context, "metadata", {})
+        if isinstance(meta, dict):
+            candidates.extend([
+                meta.get("wandb_run_id"),
+                meta.get("wandb_run_name"),
+                meta.get("run_suffix"),
+            ])
+        for candidate in candidates:
+            slug = self._slugify_suffix(candidate)
+            if slug:
+                return slug
+        return None
+
+    def _apply_run_suffix(self, checkpoint_name: str) -> str:
+        suffix = self._resolve_run_suffix()
+        if not suffix:
+            return checkpoint_name
+        base = Path(checkpoint_name)
+        stem = base.stem
+        if stem.endswith(f"_{suffix}"):
+            return base.name
+        return f"{stem}_{suffix}{base.suffix}"
 
     @staticmethod
     def _resolve_reward_value(cfg: Dict[str, Any], key: str) -> float:

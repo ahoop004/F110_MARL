@@ -1,6 +1,7 @@
 """Evaluation entrypoint that leverages the new runner abstraction."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -83,6 +84,14 @@ def build_evaluation_session(
         ensure_trainable=False,
         prefer_algorithms=("centerline", "ppo", "rec_ppo", "dqn"),
     )
+    try:
+        runner_ctx.update_metadata(
+            wandb_run_id=os.environ.get("WANDB_RUN_ID"),
+            wandb_run_name=os.environ.get("WANDB_RUN_NAME"),
+            run_suffix=os.environ.get("F110_RUN_SUFFIX"),
+        )
+    except Exception:
+        pass
     runner = EvalRunner(runner_ctx)
     return EvaluationSession(
         runner=runner,

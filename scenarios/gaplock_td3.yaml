@@ -66,20 +66,20 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.001
+          step_reward: 0.005
           idle_speed_threshold: 0.2
           idle_penalty_steps: 120
           idle_truncation_penalty: -10.0
           relative_reward:
             weights:
               front: 0.0
-              front_right: 0.0125
-              right: 0.001
+              front_right: 0.025
+              right: 0.01
               back_right: 0.0
               back: -0.0
               back_left: 0.0
-              left: 0.001
-              front_left: 0.0125
+              left: 0.01
+              front_left: 0.025
             preferred_radius: 0.9
             inner_tolerance: 0.3
             outer_tolerance: 0.2
@@ -135,8 +135,8 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_speed: 5.0
-          min_speed: 2.0
+          max_speed: 10.0
+          min_speed: 2.5
           steering_gain: 1.0
           bubble_radius: 2.0
           steer_smooth: 0.0

@@ -231,15 +231,19 @@ def _wandb_init(cfg: Dict[str, Any], main_cfg: Dict[str, Any], mode: str):
         wandb.define_metric("eval/return_*", step_metric="eval/episode")
         try:
             os.environ["WANDB_RUN_ID"] = str(run.id)
+            os.environ["F110_RUN_SUFFIX"] = str(run.id)
         except Exception:
             pass
         run_name = getattr(run, "name", None)
         if run_name:
             os.environ["WANDB_RUN_NAME"] = str(run_name)
+            os.environ.setdefault("F110_RUN_SUFFIX", str(run_name))
         run_path = getattr(run, "path", None)
         if run_path:
             try:
-                os.environ["WANDB_RUN_PATH"] = "/".join(run_path)
+                path_str = "/".join(run_path)
+                os.environ["WANDB_RUN_PATH"] = path_str
+                os.environ.setdefault("F110_RUN_SUFFIX", path_str)
             except Exception:
                 pass
 
@@ -325,6 +329,12 @@ def main():
     main_cfg = _ensure_section(active_cfg, "main")
     mode = str(main_cfg.get("mode", "train")).lower()
     wandb_run = _wandb_init(cfg, main_cfg, mode)
+    wandb_run_id = getattr(wandb_run, "id", None)
+    wandb_run_name = getattr(wandb_run, "name", None)
+    if wandb_run_id:
+        os.environ.setdefault("F110_RUN_SUFFIX", str(wandb_run_id))
+    elif wandb_run_name:
+        os.environ.setdefault("F110_RUN_SUFFIX", str(wandb_run_name))
     if wandb_run is not None:
         overrides = wandb_run.config.as_dict()
         if overrides:
@@ -359,6 +369,12 @@ def main():
         "config_path": str(cfg_path),
         "experiment": cfg_experiment,
     })
+    if wandb_run is not None:
+        logger.update_context(
+            wandb_run_id=wandb_run_id,
+            wandb_run_name=wandb_run_name,
+            run_suffix=os.environ.get("F110_RUN_SUFFIX"),
+        )
     for level, message, extra in pending_logs:
         if level == "info":
             logger.info(message, extra=extra)

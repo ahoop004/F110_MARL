@@ -1,6 +1,7 @@
 """Training entrypoint that delegates execution to the runner layer."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -84,6 +85,14 @@ def build_training_session(
     """Compose a training runner for the supplied configuration."""
 
     runner_ctx = build_runner_context(config, logger=logger)
+    try:
+        runner_ctx.update_metadata(
+            wandb_run_id=os.environ.get("WANDB_RUN_ID"),
+            wandb_run_name=os.environ.get("WANDB_RUN_NAME"),
+            run_suffix=os.environ.get("F110_RUN_SUFFIX"),
+        )
+    except Exception:
+        pass
     runner = TrainRunner(runner_ctx)
     return TrainingSession(
         runner=runner,

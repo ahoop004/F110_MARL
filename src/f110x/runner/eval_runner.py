@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
+import os
 
 from f110x.engine.rollout import IdleTerminationTracker, collect_trajectory, run_episode
 from f110x.runner.context import RunnerContext
@@ -405,17 +406,7 @@ class EvalRunner:
             "checkpoint_name",
             f"{bundle.algo.lower()}_best.pt" if bundle else "model.pt",
         )
-        run_suffix = (
-            os.environ.get("RUN_ITER")
-            or os.environ.get("RUN_SEED")
-            or os.environ.get("WANDB_RUN_ID")
-            or os.environ.get("WANDB_RUN_NAME")
-        )
-        if run_suffix:
-            safe_suffix = "".join(ch for ch in str(run_suffix) if ch.isalnum() or ch in {"-", "_"})
-            if safe_suffix:
-                base_name = Path(checkpoint_name)
-                checkpoint_name = f"{base_name.stem}_{safe_suffix}{base_name.suffix}"
+        checkpoint_name = self._apply_run_suffix(checkpoint_name)
         self.default_checkpoint_path = checkpoint_dir / checkpoint_name if bundle else None
 
         explicit_raw = self.context.cfg.main.checkpoint
@@ -440,6 +431,41 @@ class EvalRunner:
         if bundle is not None:
             bundle_cfg["checkpoint_name"] = checkpoint_name
             bundle.metadata["config"] = bundle_cfg
+
+    def _resolve_run_suffix(self) -> Optional[str]:
+        candidates = [
+            os.environ.get("F110_RUN_SUFFIX"),
+            os.environ.get("WANDB_RUN_ID"),
+            os.environ.get("WANDB_RUN_NAME"),
+            os.environ.get("WANDB_RUN_PATH"),
+            os.environ.get("RUN_ITER"),
+            os.environ.get("RUN_SEED"),
+        ]
+        meta = getattr(self.context, "metadata", {})
+        if isinstance(meta, dict):
+            candidates.extend([
+                meta.get("wandb_run_id"),
+                meta.get("wandb_run_name"),
+                meta.get("run_suffix"),
+            ])
+        for candidate in candidates:
+            if not candidate:
+                continue
+            cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(candidate))
+            cleaned = cleaned.strip("-")
+            if cleaned:
+                return cleaned
+        return None
+
+    def _apply_run_suffix(self, checkpoint_name: str) -> str:
+        suffix = self._resolve_run_suffix()
+        if not suffix:
+            return checkpoint_name
+        base = Path(checkpoint_name)
+        stem = base.stem
+        if stem.endswith(f"_{suffix}"):
+            return base.name
+        return f"{stem}_{suffix}{base.suffix}"
 
     def _resolve_checkpoint_path(self, override: Optional[Path | str]) -> Optional[Path]:
         if override is not None:
