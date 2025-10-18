@@ -748,9 +748,13 @@ class F110ParallelEnv(ParallelEnv):
         self.start_state.reset()
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
-        if seed is not None: 
-            self.seed = seed
-            self.rng = np.random.default_rng(seed)
+        if seed is not None:
+            seed_value = int(seed)
+            self.seed = seed_value
+            self.rng = np.random.default_rng(seed_value)
+            reseed_sim = getattr(self.sim, "reseed", None)
+            if callable(reseed_sim):
+                reseed_sim(seed_value)
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
         self.current_time = 0.0

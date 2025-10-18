@@ -65,12 +65,14 @@ scenario:
           policy_delay: 2
           batch_size: 256
           buffer_size: 200000
-          warmup_steps: 5000
+          warmup_steps: 8000
           exploration_noise: 0.35
-          exploration_noise_final: 0.05
+          exploration_noise_final: 0.1
           # exploration_noise_decay_steps: 50000
           exploration_noise_decay_episodes: 14000
           prevent_reverse: true
+          prevent_reverse_min_speed: 0.3
+          prevent_reverse_speed_index: 1
           hidden_dims:
             - 256
             - 256

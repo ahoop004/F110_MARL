@@ -204,6 +204,16 @@ class RaceCar(object):
         """
         self.params = params
         self._refresh_param_cache()
+
+    def set_seed(self, seed):
+        """
+        Update the RNG seed used for LiDAR noise and reset behaviour.
+
+        Args:
+            seed (int): New seed value.
+        """
+        self.seed = int(seed)
+        self.scan_rng = np.random.default_rng(seed=self.seed)
     
     def set_map(self, map_path: str, map_ext: str):
         """

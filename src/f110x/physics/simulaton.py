@@ -150,6 +150,18 @@ class Simulator(object):
             # index out of bounds, throw error
             raise IndexError('Index given is out of bounds for list of agents.')
 
+    def reseed(self, seed):
+        """
+        Update the simulator RNG seed and propagate it to all agents.
+
+        Args:
+            seed (int): New seed value.
+        """
+        self.seed = int(seed)
+        for agent in self.agents:
+            if hasattr(agent, "set_seed"):
+                agent.set_seed(self.seed)
+
     def step(self, control_inputs: np.ndarray) -> dict:
         """
         Advance all agents one physics step and return vectorized observations.
