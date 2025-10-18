@@ -20,9 +20,149 @@ from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
 from f110x.utils.logger import Logger
 from f110x.utils.output import resolve_output_dir, resolve_output_file
+from f110x.utils.start_pose import StartPoseOption
 
 
 TrainerUpdateHook = Callable[[str, Trainer, Optional[Dict[str, Any]]], None]
+
+
+class SpawnCurriculumManager:
+    """Gate random spawn usage based on recent success rate."""
+
+    def __init__(self, context: RunnerContext, config: Dict[str, Any], logger: Logger) -> None:
+        self.context = context
+        self.logger = logger
+        self.config = dict(config)
+
+        self.success_window = max(1, int(self.config.get("success_window", self.config.get("window", 200))))
+        self.activation_samples = max(1, int(self.config.get("activation_samples", self.success_window)))
+        self.min_episode = max(0, int(self.config.get("min_episode", 0)))
+        self.enable_rate = float(self.config.get("enable_rate", self.config.get("threshold", 0.7)))
+        self.enable_patience = max(1, int(self.config.get("enable_patience", self.config.get("confirm_patience", 3))))
+        self.disable_rate = float(self.config.get("disable_rate", self.config.get("revert_rate", 0.5)))
+        self.disable_patience = max(1, int(self.config.get("disable_patience", self.config.get("revert_patience", 2))))
+        self.cooldown = max(0, int(self.config.get("cooldown", 0)))
+        self.persist = bool(self.config.get("persist", False))
+        self.start_enabled = bool(self.config.get("start_enabled", False))
+
+        self._success_history: Deque[float] = deque(maxlen=self.success_window)
+        self._enable_streak = 0
+        self._disable_streak = 0
+        self._last_toggle_episode: Optional[int] = None
+
+        all_options = list(context.start_pose_options or [])
+        self._all_options: List[StartPoseOption] = list(all_options)
+        self._random_options: List[StartPoseOption] = [opt for opt in all_options if self._is_random_option(opt)]
+        random_ids = {id(opt) for opt in self._random_options}
+        self._baseline_options: List[StartPoseOption] = [opt for opt in all_options if id(opt) not in random_ids]
+        if not self._baseline_options and all_options:
+            self._baseline_options = list(all_options)
+
+        self.random_capable = bool(self._random_options)
+        initial_state = self.start_enabled and self.random_capable
+        self.random_enabled = False
+        self._apply_state(initial_state, force=True)
+
+    @staticmethod
+    def _is_random_option(option: StartPoseOption) -> bool:
+        metadata = getattr(option, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            return False
+        if metadata.get("spawn_random_pool"):
+            return True
+        option_id = metadata.get("spawn_option_id")
+        if isinstance(option_id, str) and option_id.strip().lower() == "spawn_random":
+            return True
+        return False
+
+    @property
+    def window(self) -> int:
+        return self.success_window
+
+    @property
+    def success_rate(self) -> Optional[float]:
+        if not self._success_history:
+            return None
+        return float(sum(self._success_history) / len(self._success_history))
+
+    def _apply_state(self, enable: bool, *, force: bool = False) -> bool:
+        target = bool(enable and self.random_capable)
+        if not force and self.random_enabled == target:
+            return False
+
+        self.random_enabled = target
+        if target:
+            selected = list(self._random_options or self._baseline_options or self._all_options)
+        else:
+            selected = list(self._baseline_options or self._random_options or self._all_options)
+
+        self.context.start_pose_options = selected or None
+        return not force
+
+    def observe(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
+        if success is not None:
+            self._success_history.append(1.0 if success else 0.0)
+
+        success_rate = self.success_rate
+        history_ready = len(self._success_history) >= self.activation_samples
+        changed = False
+
+        if not self.random_capable:
+            return {
+                "changed": False,
+                "enabled": self.random_enabled,
+                "success_rate": success_rate,
+                "stage": "random" if self.random_enabled else "structured",
+            }
+
+        if not self.random_enabled:
+            if episode < self.min_episode or not history_ready or success_rate is None:
+                self._enable_streak = 0
+            else:
+                if success_rate >= self.enable_rate:
+                    self._enable_streak += 1
+                else:
+                    self._enable_streak = 0
+
+                if self._enable_streak >= self.enable_patience:
+                    changed = self._apply_state(True)
+                    self._last_toggle_episode = episode
+                    self._enable_streak = 0
+                    self._disable_streak = 0
+        else:
+            if not self.persist and history_ready and success_rate is not None:
+                if success_rate < self.disable_rate:
+                    self._disable_streak += 1
+                else:
+                    self._disable_streak = 0
+
+                cooldown_ready = (
+                    self.cooldown <= 0
+                    or self._last_toggle_episode is None
+                    or (episode - self._last_toggle_episode) >= self.cooldown
+                )
+                if cooldown_ready and self._disable_streak >= self.disable_patience:
+                    changed = self._apply_state(False)
+                    self._last_toggle_episode = episode
+                    self._disable_streak = 0
+                    self._enable_streak = 0
+
+        if changed:
+            self.logger.info(
+                "Spawn curriculum transition",
+                extra={
+                    "episode": episode,
+                    "stage": "random" if self.random_enabled else "structured",
+                    "success_rate": float(success_rate) if success_rate is not None else None,
+                },
+            )
+
+        return {
+            "changed": changed,
+            "enabled": self.random_enabled,
+            "success_rate": success_rate,
+            "stage": "random" if self.random_enabled else "structured",
+        }
 
 
 @dataclass
@@ -121,6 +261,17 @@ class TrainRunner:
         trainer_map = self.trainer_map
         results: List[Dict[str, Any]] = []
 
+        logger = self._logger
+
+        spawn_manager: Optional[SpawnCurriculumManager] = None
+        spawn_cfg = self.context.cfg.env.get("spawn_curriculum", {})
+        if isinstance(spawn_cfg, dict) and spawn_cfg:
+            spawn_manager = SpawnCurriculumManager(
+                context=self.context,
+                config=spawn_cfg,
+                logger=logger,
+            )
+
         primary_id = self.primary_agent_id
         primary_bundle = self.primary_bundle
         attacker_id = team.primary_role("attacker")
@@ -128,6 +279,8 @@ class TrainRunner:
 
         primary_cfg = primary_bundle.metadata.get("config", {})
         recent_window = max(1, int(primary_cfg.get("rolling_avg_window", 10)))
+        if spawn_manager is not None:
+            recent_window = max(recent_window, spawn_manager.window)
         best_tracker = BestReturnTracker(recent_window)
         recent_returns: Deque[float] = deque(maxlen=recent_window)
         recent_success: Deque[float] = deque(maxlen=recent_window)
@@ -186,7 +339,6 @@ class TrainRunner:
         update_after = max(1, int(self.context.update_after or 1))
         _ = update_start  # kept for compatibility with legacy callers
 
-        logger = self._logger
         total_episodes = int(episodes)
         logger.start({
             "mode": "train",
@@ -312,6 +464,10 @@ class TrainRunner:
                 float(sum(recent_success) / len(recent_success)) if recent_success else None
             )
 
+            spawn_state: Optional[Dict[str, Any]] = None
+            if spawn_manager is not None:
+                spawn_state = spawn_manager.observe(episode_idx + 1, success)
+
             collision_rate = float(collisions_total) / max(float(rollout.steps), 1.0)
             best_average = best_tracker.best if best_tracker.best != float("-inf") else None
             buffer_fraction = None
@@ -355,6 +511,17 @@ class TrainRunner:
             if buffer_fraction is not None:
                 metrics["train/buffer_fraction"] = float(buffer_fraction)
                 episode_record["buffer_fraction"] = float(buffer_fraction)
+            if spawn_state is not None:
+                metrics["train/random_spawn_enabled"] = bool(spawn_state.get("enabled", False))
+                stage_value = spawn_state.get("stage")
+                if stage_value is not None:
+                    metrics["train/spawn_stage"] = stage_value
+                    episode_record["spawn_stage"] = stage_value
+                spawn_rate = spawn_state.get("success_rate")
+                if spawn_rate is not None:
+                    metrics["train/spawn_success_rate"] = float(spawn_rate)
+                    episode_record["spawn_success_rate"] = float(spawn_rate)
+                episode_record["random_spawn_enabled"] = bool(spawn_state.get("enabled", False))
 
             for aid, value in returns.items():
                 metrics[f"train/agent/{aid}/return"] = float(value)

@@ -6,9 +6,40 @@ scenario:
     map: line2
     seed: 42
     max_steps: 1500
-    lidar_beams: 27
+    lidar_beams: 54
     terminate_on_any_done: true
-    # random_spawn: true
+    spawn_point_sets:
+      - id: baseline_pair
+        names:
+          - spawn_1
+          - spawn_2
+      - id: offset_pair
+        names:
+          - spawn_3
+          - spawn_6
+      - id: wide_offset
+        names:
+          - spawn_5
+          - spawn_8
+    spawn_point_randomize:
+      pool:
+        - spawn_1
+        - spawn_2
+        - spawn_3
+        - spawn_4
+        - spawn_5
+        - spawn_6
+        - spawn_7
+        - spawn_8
+      allow_reuse: false
+    spawn_curriculum:
+      min_episode: 1000
+      success_window: 200
+      enable_rate: 0.7
+      enable_patience: 3
+      disable_rate: 0.5
+      disable_patience: 2
+      cooldown: 200
 
   main:
     mode: train_eval
@@ -94,7 +125,7 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 27
+                  beams: 54
                   max_range: 30.0
                   normalize: true
               - id: ego_pose
@@ -149,6 +180,6 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 27
+                  beams: 54
                   max_range: 30.0
                   normalize: true

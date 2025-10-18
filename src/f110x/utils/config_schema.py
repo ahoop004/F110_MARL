@@ -175,6 +175,7 @@ class EnvSchema(BaseSchema):
     spawn_points: Optional[Any] = None
     spawn_point_sets: List[Any] = field(default_factory=list)
     spawn_point_randomize: Any = None
+    spawn_curriculum: Dict[str, Any] = field(default_factory=dict)
     lidar_beams: int = 1080
     lidar_range: float = 30.0
     lidar_dist: float = 0.0
