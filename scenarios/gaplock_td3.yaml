@@ -120,10 +120,10 @@ scenario:
                   beams: 54
                   max_range: 30.0
                   normalize: true
+                  clip: 1.0
               - id: ego_pose
                 type: ego_pose
                 params:
-                  normalize_xy: 30.0
                   angle_mode: sin_cos
               - id: ego_velocity
                 type: velocity
@@ -136,7 +136,6 @@ scenario:
               - id: relative_pose
                 type: relative_pose
                 params:
-                  normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
                   agent: car_1

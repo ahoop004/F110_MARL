@@ -462,6 +462,25 @@ class ObservationPipeline(Sequence[ObservationAdapter]):
 WrapperBuilder = Callable[[AgentWrapperSpec, "AgentBuildContext", AgentAssignment, RosterLayout], ObservationAdapter]
 
 
+def _infer_map_xy_scale(map_data: MapData) -> float:
+    metadata = map_data.metadata or {}
+    resolution = float(metadata.get("resolution", 0.05))
+    origin = metadata.get("origin", (0.0, 0.0, 0.0))
+    try:
+        ox = float(origin[0])
+        oy = float(origin[1])
+    except (TypeError, ValueError, IndexError):
+        ox = 0.0
+        oy = 0.0
+    width, height = map_data.image_size
+    x_vals = [ox, ox + width * resolution]
+    y_vals = [oy, oy + height * resolution]
+    max_abs = max(abs(val) for val in (x_vals + y_vals))
+    if not np.isfinite(max_abs) or max_abs <= 0.0:
+        return 30.0
+    return max_abs
+
+
 def _build_obs_wrapper(
     wrapper_spec: AgentWrapperSpec,
     ctx: "AgentBuildContext",
@@ -512,6 +531,19 @@ def _build_obs_wrapper(
 
     if target_agent is not None:
         params.setdefault("legacy_target_agent", str(target_agent))
+
+    default_pose_scale = _infer_map_xy_scale(ctx.map_data)
+
+    components = params.get("components")
+    if isinstance(components, list):
+        for entry in components:
+            if not isinstance(entry, dict):
+                continue
+            comp_type = str(entry.get("type") or entry.get("name") or entry.get("id") or "").strip().lower()
+            comp_params = entry.setdefault("params", {})
+            if comp_type in {"ego_pose", "pose", "target_pose", "relative_pose"}:
+                if comp_params.get("normalize_xy") in (None, 0, 0.0):
+                    comp_params["normalize_xy"] = default_pose_scale
 
     obs_wrapper = ObsWrapper(**params)
     return ObservationAdapter(

@@ -221,11 +221,18 @@ class GaplockRewardStrategy(RewardStrategy):
         ego_crashed = bool(ego_obs.get("collision", False))
         overlay_target_id: Optional[str] = None
 
-        if self.step_reward:
-            acc.add("step_reward", float(self.step_reward))
-
         speed = self._extract_speed(ego_obs)
         self._apply_idle_penalty(acc, step.agent_id, speed)
+
+        if self.step_reward:
+            idle_threshold = self.idle_speed_threshold
+            is_idle_step = (
+                speed is not None
+                and idle_threshold > 0.0
+                and speed < idle_threshold
+            )
+            if not is_idle_step:
+                acc.add("step_reward", float(self.step_reward))
 
         if ego_crashed and self.self_collision_penalty:
             acc.add("self_collision_penalty", self.self_collision_penalty)

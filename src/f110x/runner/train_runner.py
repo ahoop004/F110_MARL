@@ -444,8 +444,20 @@ class TrainRunner:
 
         primary_id = self.primary_agent_id
         primary_bundle = self.primary_bundle
+        roster = team.roster
+
         attacker_id = team.primary_role("attacker")
+        if attacker_id is None:
+            attacker_id = primary_id or (roster.agent_ids[0] if roster.agent_ids else None)
+
         defender_id = team.primary_role("defender")
+        if defender_id is None and attacker_id is not None:
+            defender_id = roster.first_other(attacker_id)
+        if defender_id is None:
+            for bundle in team.agents:
+                if attacker_id is None or bundle.agent_id != attacker_id:
+                    defender_id = bundle.agent_id
+                    break
 
         defender_manager: Optional[DefenderCurriculumManager] = None
         if defender_id:
