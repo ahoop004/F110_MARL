@@ -38,7 +38,7 @@ scenario:
     train_episodes: 15000
     eval_episodes: 5
     eval_interval: 10
-    save_eval_rollouts: true
+    save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/td3_gaplock/td3_gaplock.pt
     wandb:

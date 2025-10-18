@@ -68,7 +68,7 @@ class TD3Trainer(Trainer):
         return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
-        done = transition.terminated
+        done = transition.terminated or transition.truncated
         self._agent.store_transition(
             transition.obs,
             transition.action,
