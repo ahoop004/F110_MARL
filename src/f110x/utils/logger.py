@@ -204,6 +204,7 @@ if _HAS_RICH:
             cause = metrics.get(f"{phase}/cause")
             success = _format_bool(metrics.get(f"{phase}/success"))
             success_rate = _format_number(metrics.get(f"{phase}/success_rate"))
+            success_total = _format_number(metrics.get(f"{phase}/success_total"))
             idle = _format_bool(metrics.get(f"{phase}/idle"))
             epsilon = (
                 _format_number(metrics.get("train/epsilon"))
@@ -253,6 +254,8 @@ if _HAS_RICH:
                 tracked["return_best"] = return_best
             if buffer_fraction is not None:
                 tracked["buffer_fraction"] = buffer_fraction
+            if success_total is not None:
+                tracked["success_total"] = success_total
             if defender_crash is not None:
                 tracked["defender_crash"] = defender_crash
             if attacker_crash is not None:
@@ -360,6 +363,9 @@ if _HAS_RICH:
             success_rate = state.get("success_rate")
             if success_rate is not None:
                 summary_lines.append(f"Success rate: {success_rate * 100:.1f}%")
+            success_total = state.get("success_total")
+            if success_total is not None:
+                summary_lines.append(f"Success total: {int(success_total)}")
 
             idle = state.get("idle")
             if idle is not None:

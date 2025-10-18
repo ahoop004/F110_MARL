@@ -685,7 +685,7 @@ class TrainRunner:
             if primary_id:
                 metrics["train/primary_agent"] = primary_id
             if success is not None:
-                metrics["train/success"] = 1.0 if success else 0.0
+                metrics["train/success"] = bool(success)
                 episode_record["success"] = bool(success)
             if success_rate is not None:
                 metrics["train/success_rate"] = success_rate

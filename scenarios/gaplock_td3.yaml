@@ -86,7 +86,7 @@ scenario:
           checkpoint_name: td3_gaplock.pt
       reward:
         task: gaplock
-        idle_speed_threshold: 0.05
+        idle_speed_threshold: 0.1
         idle_patience_steps: 120
         features:
           - gaplock_offense
@@ -98,7 +98,7 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.005
-          idle_speed_threshold: 0.2
+          idle_speed_threshold: 0.1
           idle_penalty_steps: 120
           idle_truncation_penalty: -10.0
           relative_reward:
