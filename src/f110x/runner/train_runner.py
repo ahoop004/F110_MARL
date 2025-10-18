@@ -606,6 +606,15 @@ class TrainRunner:
                 success = not attacker_crashed
             if success:
                 total_successes += 1
+                logger.info(
+                    "Gaplock success recorded",
+                    extra={
+                        "episode": episode_idx + 1,
+                        "steps": rollout.steps,
+                        "spawn_option": rollout.spawn_option,
+                        "spawn_points": rollout.spawn_points,
+                    },
+                )
 
             collisions_total = int(sum(rollout.collisions.values()))
             episode_record: Dict[str, Any] = {

@@ -13,14 +13,6 @@ scenario:
         names:
           - spawn_1
           - spawn_2
-      - id: offset_pair
-        names:
-          - spawn_3
-          - spawn_6
-      - id: wide_offset
-        names:
-          - spawn_5
-          - spawn_8
     spawn_point_randomize:
       pool:
         - spawn_1

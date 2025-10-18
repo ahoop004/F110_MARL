@@ -219,6 +219,12 @@ if _HAS_RICH:
             buffer_fraction = _format_number(metrics.get(f"{phase}/buffer_fraction"))
             defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
             attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
+            spawn_enabled_raw = metrics.get(f"{phase}/random_spawn_enabled")
+            spawn_stage = metrics.get(f"{phase}/spawn_stage")
+            spawn_success_rate = _format_number(metrics.get(f"{phase}/spawn_success_rate"))
+            defender_stage = metrics.get(f"{phase}/defender_stage")
+            defender_success_rate = _format_number(metrics.get(f"{phase}/defender_success_rate"))
+            defender_stage_index = _format_number(metrics.get(f"{phase}/defender_stage_index"))
 
             if episode is not None:
                 tracked["episode"] = episode
@@ -260,6 +266,18 @@ if _HAS_RICH:
                 tracked["defender_crash"] = defender_crash
             if attacker_crash is not None:
                 tracked["attacker_crash"] = attacker_crash
+            if spawn_enabled_raw is not None:
+                tracked["spawn_enabled"] = bool(spawn_enabled_raw)
+            if spawn_stage is not None:
+                tracked["spawn_stage"] = str(spawn_stage)
+            if spawn_success_rate is not None:
+                tracked["spawn_success_rate"] = spawn_success_rate
+            if defender_stage is not None:
+                tracked["defender_stage"] = str(defender_stage)
+            if defender_success_rate is not None:
+                tracked["defender_success_rate"] = defender_success_rate
+            if defender_stage_index is not None:
+                tracked["defender_stage_index"] = defender_stage_index
 
             agents = tracked.setdefault("agents", {})
             for key, value in metrics.items():
@@ -345,6 +363,9 @@ if _HAS_RICH:
                 metrics_line_parts.append(f"Collisions {collisions}")
             if collision_rate is not None:
                 metrics_line_parts.append(f"CollRate {collision_rate:.2f}")
+            success_total = state.get("success_total")
+            if success_total is not None:
+                metrics_line_parts.append(f"SuccessTot {int(success_total)}")
             if metrics_line_parts:
                 summary_lines.append("  ".join(metrics_line_parts))
             if buffer_fraction is not None:
@@ -363,9 +384,34 @@ if _HAS_RICH:
             success_rate = state.get("success_rate")
             if success_rate is not None:
                 summary_lines.append(f"Success rate: {success_rate * 100:.1f}%")
-            success_total = state.get("success_total")
-            if success_total is not None:
+            if success_total is not None and success_total > 0:
                 summary_lines.append(f"Success total: {int(success_total)}")
+
+            spawn_enabled = state.get("spawn_enabled")
+            spawn_stage = state.get("spawn_stage")
+            spawn_success_rate = state.get("spawn_success_rate")
+            spawn_line_parts = []
+            if spawn_enabled is not None:
+                spawn_line_parts.append(f"Spawn random: {'on' if spawn_enabled else 'off'}")
+            if spawn_stage:
+                spawn_line_parts.append(f"Stage {spawn_stage}")
+            if spawn_success_rate is not None:
+                spawn_line_parts.append(f"Stage success {spawn_success_rate * 100:.1f}%")
+            if spawn_line_parts:
+                summary_lines.append(" ".join(spawn_line_parts))
+
+            defender_stage = state.get("defender_stage")
+            defender_stage_index = state.get("defender_stage_index")
+            defender_success_rate = state.get("defender_success_rate")
+            defender_line_parts = []
+            if defender_stage:
+                defender_line_parts.append(f"Defender stage {defender_stage}")
+            if defender_stage_index is not None:
+                defender_line_parts.append(f"(idx {int(defender_stage_index)})")
+            if defender_success_rate is not None:
+                defender_line_parts.append(f"Defender success {defender_success_rate * 100:.1f}%")
+            if defender_line_parts:
+                summary_lines.append(" ".join(defender_line_parts))
 
             idle = state.get("idle")
             if idle is not None:
