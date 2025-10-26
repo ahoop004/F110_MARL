@@ -38,6 +38,24 @@ GAPLOCK_PARAM_KEYS = (
     "pressure_bonus_interval",
     "proximity_penalty_distance",
     "proximity_penalty_value",
+    "speed_bonus_coef",
+    "speed_bonus_target",
+    "brake_penalty",
+    "brake_speed_threshold",
+    "brake_drop_threshold",
+    "heading_reward_coef",
+    "distance_reward_near",
+    "distance_reward_near_distance",
+    "distance_reward_far_distance",
+    "distance_penalty_far",
+    "pressure_streak_bonus",
+    "pressure_streak_cap",
+    "commit_distance",
+    "commit_heading_threshold",
+    "commit_speed_threshold",
+    "commit_bonus",
+    "escape_distance",
+    "escape_penalty",
 )
 
 
@@ -74,6 +92,24 @@ class GaplockRewardStrategy(RewardStrategy):
         pressure_bonus_interval: int = 1,
         proximity_penalty_distance: float = 0.0,
         proximity_penalty_value: float = 0.0,
+        speed_bonus_coef: float = 0.0,
+        speed_bonus_target: float = 0.0,
+        brake_penalty: float = 0.0,
+        brake_speed_threshold: float = 0.0,
+        brake_drop_threshold: float = 0.0,
+        heading_reward_coef: float = 0.0,
+        distance_reward_near: float = 0.0,
+        distance_reward_near_distance: float = 0.0,
+        distance_reward_far_distance: float = 0.0,
+        distance_penalty_far: float = 0.0,
+        pressure_streak_bonus: float = 0.0,
+        pressure_streak_cap: int = 0,
+        commit_distance: float = 0.0,
+        commit_heading_threshold: float = 0.0,
+        commit_speed_threshold: float = 0.0,
+        commit_bonus: float = 0.0,
+        escape_distance: float = 0.0,
+        escape_penalty: float = 0.0,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -113,6 +149,28 @@ class GaplockRewardStrategy(RewardStrategy):
         self.proximity_penalty_distance = max(float(proximity_penalty_distance), 0.0)
         self.proximity_penalty_value = float(proximity_penalty_value)
         self._pressure_bonus_counters: Dict[str, int] = {}
+        self.speed_bonus_coef = float(speed_bonus_coef)
+        self.speed_bonus_target = max(float(speed_bonus_target), 0.0)
+        self.brake_penalty = float(brake_penalty)
+        self.brake_speed_threshold = max(float(brake_speed_threshold), 0.0)
+        self.brake_drop_threshold = max(float(brake_drop_threshold), 0.0)
+        self.heading_reward_coef = float(heading_reward_coef)
+        self.distance_reward_near = float(distance_reward_near)
+        self.distance_reward_near_distance = max(float(distance_reward_near_distance), 0.0)
+        self.distance_reward_far_distance = max(float(distance_reward_far_distance), 0.0)
+        self.distance_penalty_far = max(float(distance_penalty_far), 0.0)
+        self.pressure_streak_bonus = max(float(pressure_streak_bonus), 0.0)
+        self.pressure_streak_cap = max(int(pressure_streak_cap), 0)
+        self.commit_distance = max(float(commit_distance), 0.0)
+        self.commit_heading_threshold = float(commit_heading_threshold)
+        self.commit_speed_threshold = max(float(commit_speed_threshold), 0.0)
+        self.commit_bonus = float(commit_bonus)
+        self.escape_distance = max(float(escape_distance), 0.0)
+        self.escape_penalty = float(escape_penalty)
+        self._last_speed: Dict[str, float] = {}
+        self._pressure_streak: Dict[str, int] = {}
+        self._commit_active: Dict[str, bool] = {}
+        self._commit_awarded: set[str] = set()
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -131,6 +189,10 @@ class GaplockRewardStrategy(RewardStrategy):
         self._idle_truncation_applied.clear()
         self._pressure_log.clear()
         self._pressure_bonus_counters.clear()
+        self._pressure_streak.clear()
+        self._last_speed.clear()
+        self._commit_active.clear()
+        self._commit_awarded.clear()
 
     def _select_target_obs(
         self,
@@ -241,6 +303,26 @@ class GaplockRewardStrategy(RewardStrategy):
         speed = self._extract_speed(ego_obs)
         self._apply_idle_penalty(acc, step.agent_id, speed)
 
+        prev_speed = self._last_speed.get(step.agent_id)
+        if speed is not None:
+            if self.speed_bonus_coef:
+                capped = speed
+                if self.speed_bonus_target > 0.0:
+                    capped = min(speed, self.speed_bonus_target)
+                acc.add("speed_bonus", self.speed_bonus_coef * max(capped, 0.0))
+            if (
+                self.brake_penalty
+                and prev_speed is not None
+                and self.brake_drop_threshold > 0.0
+                and prev_speed - speed >= self.brake_drop_threshold
+                and speed <= max(self.brake_speed_threshold, 0.0)
+            ):
+                acc.add("brake_penalty", float(self.brake_penalty))
+        if speed is not None:
+            self._last_speed[step.agent_id] = float(speed)
+        else:
+            self._last_speed.pop(step.agent_id, None)
+
         if self.step_reward:
             idle_threshold = self.idle_speed_threshold
             is_idle_step = (
@@ -255,6 +337,8 @@ class GaplockRewardStrategy(RewardStrategy):
             acc.add("self_collision_penalty", self.self_collision_penalty)
 
         pressure_recent = False
+        distance: Optional[float] = None
+        alignment: Optional[float] = None
         if target_obs is not None:
             overlay_target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
             if overlay_target_id:
@@ -273,6 +357,49 @@ class GaplockRewardStrategy(RewardStrategy):
                     step.timestep,
                 )
 
+            ego_pose_arr = self._extract_pose(ego_obs)
+            target_pose_arr = self._extract_pose(target_obs)
+            if ego_pose_arr is not None and target_pose_arr is not None:
+                rel_vec = target_pose_arr[:2] - ego_pose_arr[:2]
+                dist_val = float(np.linalg.norm(rel_vec))
+                if np.isfinite(dist_val):
+                    distance = dist_val
+                    if distance > 1e-6:
+                        rel_unit = rel_vec / distance
+                        ego_heading = float(ego_pose_arr[2])
+                        ego_dir = np.array([math.cos(ego_heading), math.sin(ego_heading)], dtype=np.float32)
+                        alignment = float(np.dot(rel_unit, ego_dir))
+                    else:
+                        alignment = 1.0
+
+                    near_dist = self.distance_reward_near_distance
+                    far_dist = self.distance_reward_far_distance
+                    if self.distance_reward_near and near_dist > 0.0:
+                        if distance <= near_dist:
+                            acc.add("distance_reward", self.distance_reward_near)
+                        elif far_dist > near_dist and distance < far_dist:
+                            span = far_dist - near_dist
+                            weight = (far_dist - distance) / span
+                            acc.add("distance_reward", self.distance_reward_near * weight)
+                    if far_dist > 0.0 and distance >= far_dist and self.distance_penalty_far:
+                        acc.add("distance_penalty", -abs(self.distance_penalty_far))
+
+                    if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
+                        if distance > self.proximity_penalty_distance:
+                            acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
+
+                    if alignment is not None and self.heading_reward_coef:
+                        acc.add("heading_reward", self.heading_reward_coef * alignment)
+
+            if pressure_recent:
+                streak_value = self._pressure_streak.get(step.agent_id, 0) + 1
+                self._pressure_streak[step.agent_id] = streak_value
+                if self.pressure_streak_bonus > 0.0:
+                    capped = streak_value if self.pressure_streak_cap <= 0 else min(streak_value, self.pressure_streak_cap)
+                    acc.add("pressure_streak", self.pressure_streak_bonus * capped)
+            else:
+                self._pressure_streak.pop(step.agent_id, None)
+
             if pressure_recent and self.pressure_bonus > 0.0:
                 counter = self._pressure_bonus_counters.get(step.agent_id, 0) + 1
                 if counter >= self.pressure_bonus_interval:
@@ -282,13 +409,32 @@ class GaplockRewardStrategy(RewardStrategy):
             else:
                 self._pressure_bonus_counters.pop(step.agent_id, None)
 
-            if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
-                ego_pose = self._extract_pose(ego_obs)
-                target_pose = self._extract_pose(target_obs)
-                if ego_pose is not None and target_pose is not None:
-                    distance = float(np.linalg.norm(target_pose[:2] - ego_pose[:2]))
-                    if np.isfinite(distance) and distance > self.proximity_penalty_distance:
-                        acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
+            commit_ready = False
+            if (
+                self.commit_distance > 0.0
+                and distance is not None
+                and distance <= self.commit_distance
+                and alignment is not None
+                and alignment >= self.commit_heading_threshold
+                and speed is not None
+                and speed >= self.commit_speed_threshold
+            ):
+                commit_ready = True
+
+            if commit_ready and self.commit_bonus and step.agent_id not in self._commit_awarded:
+                acc.add("commit_bonus", float(self.commit_bonus))
+                self._commit_awarded.add(step.agent_id)
+                self._commit_active[step.agent_id] = True
+            elif (
+                self._commit_active.get(step.agent_id)
+                and self.escape_distance > 0.0
+                and distance is not None
+                and distance > self.escape_distance
+            ):
+                if self.escape_penalty:
+                    acc.add("escape_penalty", -abs(self.escape_penalty))
+                self._commit_active.pop(step.agent_id, None)
+                self._commit_awarded.discard(step.agent_id)
 
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
@@ -296,6 +442,8 @@ class GaplockRewardStrategy(RewardStrategy):
                     if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
                         acc.add("success_reward", self.target_crash_reward)
                         self._clear_pressure(step.agent_id, overlay_target_id)
+                self._commit_active.pop(step.agent_id, None)
+                self._commit_awarded.discard(step.agent_id)
 
         truncated = bool(step.events.get("truncated")) if step.events else False
         if not truncated and isinstance(step.info, dict):
