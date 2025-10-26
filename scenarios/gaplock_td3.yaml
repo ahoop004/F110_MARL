@@ -40,7 +40,7 @@ scenario:
     eval_interval: 10
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
-    checkpoint: checkpoints/td3_gaplock/td3_gaplock.pt
+    checkpoint: checkpoints/td3_gaplock_v2/td3_gaplock.pt
     wandb:
       enabled: true
       project: marl-f110
@@ -55,7 +55,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cuda
+          device: cpu
           actor_lr: 0.00025
           critic_lr: 0.0005
           gamma: 0.995
@@ -87,12 +87,12 @@ scenario:
             - 256
             - 256
             - 128
-          save_dir: checkpoints/td3_gaplock
+          save_dir: checkpoints/td3_gaplock_v2
           checkpoint_name: td3_gaplock.pt
       reward:
         task: gaplock
         idle_speed_threshold: 0.2
-        idle_patience_steps: 120
+        idle_patience_steps: 90
         features:
           - gaplock_offense
           - idle_guard
@@ -102,14 +102,14 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.025
-          idle_speed_threshold: 0.2
-          idle_penalty: -0.001
-          idle_penalty_steps: 15
-          idle_truncation_penalty: -10.0
+          step_reward: 0.035
+          idle_speed_threshold: 0.25
+          idle_penalty: -0.03
+          idle_penalty_steps: 12
+          idle_truncation_penalty: -25.0
           pressure_distance: 1.1
-          pressure_timeout: 1.0
-          pressure_min_speed: 0.05
+          pressure_timeout: 0.8
+          pressure_min_speed: 0.15
           relative_reward:
             weights:
               front: 0.02
