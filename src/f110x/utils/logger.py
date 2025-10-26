@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from collections import deque
 from datetime import datetime
@@ -127,6 +128,23 @@ def _format_number(value: Any) -> Optional[float]:
 def _format_bool(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        return bool(value)
+    try:
+        import numpy as np  # type: ignore
+
+        if isinstance(value, (np.bool_, np.bool8)):  # pragma: no cover - numpy optional
+            return bool(value)
+        if isinstance(value, (np.integer, np.floating)):  # pragma: no cover - numpy optional
+            if np.isnan(value):
+                return None
+            return bool(value)
+    except Exception:  # pragma: no cover - numpy optional
+        pass
     return None
 
 
