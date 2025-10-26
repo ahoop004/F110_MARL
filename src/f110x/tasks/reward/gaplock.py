@@ -149,6 +149,8 @@ class GaplockRewardStrategy(RewardStrategy):
         self.proximity_penalty_distance = max(float(proximity_penalty_distance), 0.0)
         self.proximity_penalty_value = float(proximity_penalty_value)
         self._pressure_bonus_counters: Dict[str, int] = {}
+        self._pressure_streak: Dict[str, int] = {}
+        self._pressure_streak_levels: Dict[str, int] = {}
         self.speed_bonus_coef = float(speed_bonus_coef)
         self.speed_bonus_target = max(float(speed_bonus_target), 0.0)
         self.brake_penalty = float(brake_penalty)
@@ -190,6 +192,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self._pressure_log.clear()
         self._pressure_bonus_counters.clear()
         self._pressure_streak.clear()
+        self._pressure_streak_levels.clear()
         self._last_speed.clear()
         self._commit_active.clear()
         self._commit_awarded.clear()
@@ -301,7 +304,9 @@ class GaplockRewardStrategy(RewardStrategy):
         overlay_target_id: Optional[str] = None
 
         timestep = float(step.timestep) if isinstance(step.timestep, (int, float)) else 0.0
-        time_scale = timestep if timestep > 0.0 else 1.0
+        time_scale = timestep if timestep > 0.0 else 0.1
+        if time_scale > 0.2:
+            time_scale = 0.2
 
         speed = self._extract_speed(ego_obs)
         self._apply_idle_penalty(acc, step.agent_id, speed)
@@ -378,35 +383,47 @@ class GaplockRewardStrategy(RewardStrategy):
                     near_dist = self.distance_reward_near_distance
                     far_dist = self.distance_reward_far_distance
                     if self.distance_reward_near and near_dist > 0.0:
+                        reward_value = 0.0
                         if distance <= near_dist:
-                            acc.add("distance_reward", self.distance_reward_near * time_scale)
+                            reward_value = self.distance_reward_near
                         elif far_dist > near_dist and distance < far_dist:
                             span = far_dist - near_dist
                             weight = (far_dist - distance) / span
-                            acc.add("distance_reward", self.distance_reward_near * weight * time_scale)
+                            reward_value = self.distance_reward_near * weight
+                        if reward_value:
+                            value = reward_value * time_scale
+                            acc.add("distance_reward", min(max(value, -0.5), 0.5))
                     if far_dist > 0.0 and distance >= far_dist and self.distance_penalty_far:
-                        acc.add("distance_penalty", -abs(self.distance_penalty_far) * time_scale)
+                        penalty_value = -abs(self.distance_penalty_far) * time_scale
+                        acc.add("distance_penalty", max(penalty_value, -0.5))
 
                     if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
                         if distance > self.proximity_penalty_distance:
                             acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
 
                     if alignment is not None and self.heading_reward_coef:
-                        acc.add("heading_reward", self.heading_reward_coef * alignment * time_scale)
+                        heading_value = self.heading_reward_coef * alignment * time_scale
+                        acc.add("heading_reward", min(max(heading_value, -0.3), 0.3))
 
             if pressure_recent:
                 streak_value = self._pressure_streak.get(step.agent_id, 0) + 1
                 self._pressure_streak[step.agent_id] = streak_value
                 if self.pressure_streak_bonus > 0.0:
                     capped = streak_value if self.pressure_streak_cap <= 0 else min(streak_value, self.pressure_streak_cap)
-                    acc.add("pressure_streak", self.pressure_streak_bonus * capped)
+                    prev_level = self._pressure_streak_levels.get(step.agent_id, 0)
+                    delta = max(capped - prev_level, 0)
+                    if delta > 0:
+                        self._pressure_streak_levels[step.agent_id] = capped
+                        streak_value_scaled = min(self.pressure_streak_bonus * delta, 1.0)
+                        acc.add("pressure_streak", streak_value_scaled)
             else:
                 self._pressure_streak.pop(step.agent_id, None)
+                self._pressure_streak_levels.pop(step.agent_id, None)
 
             if pressure_recent and self.pressure_bonus > 0.0:
                 counter = self._pressure_bonus_counters.get(step.agent_id, 0) + 1
                 if counter >= self.pressure_bonus_interval:
-                    acc.add("pressure_bonus", self.pressure_bonus)
+                    acc.add("pressure_bonus", min(self.pressure_bonus, 0.5))
                     counter = 0
                 self._pressure_bonus_counters[step.agent_id] = counter
             else:
