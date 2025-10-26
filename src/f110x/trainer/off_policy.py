@@ -1,34 +1,30 @@
 """Trainer implementations for off-policy algorithms."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from f110x.trainer.base import Trainer, Transition
 
-try:  # Lazy imports keep module available without policy extras installed
-    from f110x.policies.dqn.dqn import DQNAgent
-    from f110x.policies.td3.td3 import TD3Agent
-    from f110x.policies.sac.sac import SACAgent
-except Exception:  # pragma: no cover
-    DQNAgent = Any  # type: ignore
-    TD3Agent = Any  # type: ignore
-    SACAgent = Any  # type: ignore
 
+class OffPolicyTrainer(Trainer):
+    """Generic adapter for off-policy agents sharing a common API."""
 
-class DQNTrainer(Trainer):
-    """Adapter that exposes the DQN agent via the Trainer interface."""
-
-    def __init__(self, agent_id: str, agent: DQNAgent) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        agent: Any,
+        config: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         super().__init__(agent_id)
         self._agent = agent
+        cfg = dict(config or {})
+        self._include_truncation = bool(cfg.get("include_truncation", True))
 
     def select_action(self, obs: Any, *, deterministic: bool = False) -> Any:
         return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
-        # Keep bootstrapping across time/truncation cuts so idle stops do not poison Q targets.
-        # Keep bootstrapping across time-limit truncations so critic targets stay consistent.
-        done = transition.terminated
+        done = transition.terminated or (self._include_truncation and transition.truncated)
         self._agent.store_transition(
             transition.obs,
             transition.action,
@@ -54,41 +50,7 @@ class DQNTrainer(Trainer):
         eps_fn = getattr(self._agent, "epsilon", None)
         if callable(eps_fn):
             return float(eps_fn())
-        raise AttributeError("Underlying DQN agent does not expose epsilon()")
-
-
-class TD3Trainer(Trainer):
-    """Adapter exposing TD3Agent via the Trainer contract."""
-
-    def __init__(self, agent_id: str, agent: TD3Agent) -> None:
-        super().__init__(agent_id)
-        self._agent = agent
-
-    def select_action(self, obs: Any, *, deterministic: bool = False) -> Any:
-        return self._agent.act(obs, deterministic=deterministic)
-
-    def observe(self, transition: Transition) -> None:
-        done = transition.terminated or transition.truncated
-        self._agent.store_transition(
-            transition.obs,
-            transition.action,
-            transition.reward,
-            transition.next_obs,
-            done,
-            transition.info,
-        )
-
-    def update(self) -> Optional[Dict[str, Any]]:
-        stats = self._agent.update()
-        if not stats:
-            return None
-        return {f"{self.agent_id}/{key}": value for key, value in stats.items()}
-
-    def save(self, path: str) -> None:
-        self._agent.save(path)
-
-    def load(self, path: str) -> None:
-        self._agent.load(path)
+        raise AttributeError("Underlying agent does not expose epsilon()")
 
     def reset_noise_schedule(self) -> None:
         reset_fn = getattr(self._agent, "reset_noise_schedule", None)
@@ -96,38 +58,8 @@ class TD3Trainer(Trainer):
             reset_fn()
 
 
-class SACTrainer(Trainer):
-    """Adapter exposing SACAgent via the Trainer contract."""
+DQNTrainer = OffPolicyTrainer
+TD3Trainer = OffPolicyTrainer
+SACTrainer = OffPolicyTrainer
 
-    def __init__(self, agent_id: str, agent: SACAgent) -> None:
-        super().__init__(agent_id)
-        self._agent = agent
-
-    def select_action(self, obs: Any, *, deterministic: bool = False) -> Any:
-        return self._agent.act(obs, deterministic=deterministic)
-
-    def observe(self, transition: Transition) -> None:
-        done = transition.terminated or transition.truncated
-        self._agent.store_transition(
-            transition.obs,
-            transition.action,
-            transition.reward,
-            transition.next_obs,
-            done,
-            transition.info,
-        )
-
-    def update(self) -> Optional[Dict[str, Any]]:
-        stats = self._agent.update()
-        if not stats:
-            return None
-        return {f"{self.agent_id}/{key}": value for key, value in stats.items()}
-
-    def save(self, path: str) -> None:
-        self._agent.save(path)
-
-    def load(self, path: str) -> None:
-        self._agent.load(path)
-
-
-__all__ = ["DQNTrainer", "TD3Trainer", "SACTrainer"]
+__all__ = ["OffPolicyTrainer", "DQNTrainer", "TD3Trainer", "SACTrainer"]

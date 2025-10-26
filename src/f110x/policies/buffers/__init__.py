@@ -1,5 +1,6 @@
 """Common replay/storage utilities shared across agents."""
 
-from .replay import Transition, ReplayBuffer, PrioritizedReplayBuffer
+from .prioritized import PrioritizedReplayBuffer
+from .replay import ReplayBuffer, Transition
 
 __all__ = ["Transition", "ReplayBuffer", "PrioritizedReplayBuffer"]

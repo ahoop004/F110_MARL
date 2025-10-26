@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from collections import deque
 from typing import Any, Deque, Dict, Iterable, Optional, Tuple
-import warnings
 
 import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-from f110x.policies.buffers.replay import ReplayBuffer
-from f110x.policies.rainbow.per import PrioritizedReplayBuffer
+from f110x.policies.common import DiscreteAgentBase, sample_replay_batch
 from f110x.policies.rainbow.r_dqn_net import RainbowQNetwork
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -27,23 +25,20 @@ NStepEntry = Tuple[
 ]
 
 
-class RainbowDQNAgent:
+class RainbowDQNAgent(DiscreteAgentBase):
     """Rainbow-style DQN agent operating on discrete action sets."""
 
     def __init__(self, cfg: Dict[str, Any]):
         self.device = resolve_device([cfg.get("device")])
-
-        self.obs_dim = int(cfg["obs_dim"])
-        self.action_mode = str(cfg.get("action_mode", "absolute")).lower()
-        self._requires_action_index = self.action_mode in {"delta", "rate"}
-        self._warned_action_index_fallback = False
-
-        action_set = np.asarray(cfg.get("action_set"), dtype=np.float32)
-        if action_set.ndim != 2:
-            raise ValueError("RainbowDQN requires `action_set` as a list of action vectors")
-        self.action_set = action_set
-        self.n_actions = action_set.shape[0]
-        self.act_dim = action_set.shape[1]
+        store_actions_flag = not bool(cfg.get("store_action_indices_only", True))
+        buffer_size = int(cfg.get("buffer_size", 50_000))
+        super().__init__(
+            cfg,
+            obs_dim=int(cfg["obs_dim"]),
+            store_actions=store_actions_flag,
+            store_action_indices=True,
+            default_prioritized=True,
+        )
 
         self.use_noisy = bool(cfg.get("noisy_layers", True))
         self.noisy_sigma0 = float(cfg.get("noisy_sigma0", 0.5))
@@ -87,10 +82,8 @@ class RainbowDQNAgent:
         self.n_step = max(1, int(cfg.get("n_step", 3)))
         self.batch_size = int(cfg.get("batch_size", 64))
         self.target_update_interval = int(cfg.get("target_update_interval", 500))
-        self.learning_starts = max(
-            self.batch_size,
-            int(cfg.get("learning_starts", 1000)),
-        )
+        self.learning_starts = max(self.batch_size, int(cfg.get("learning_starts", 1000)))
+        self.learning_starts = min(self.learning_starts, buffer_size)
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
 
         epsilon_flag = cfg.get("epsilon_enabled")
@@ -100,51 +93,20 @@ class RainbowDQNAgent:
                 "RainbowDQN cannot enable epsilon-greedy when noisy exploration layers are active. "
                 "Set `epsilon_enabled=false` or disable `noisy_layers`."
             )
-        self.epsilon_start = float(cfg.get("epsilon_start", 0.9 if self.use_epsilon else 0.0))
-        self.epsilon_end = float(cfg.get("epsilon_end", 0.05 if self.use_epsilon else 0.0))
-        self.epsilon_decay = max(1, int(cfg.get("epsilon_decay", 20000))) if self.use_epsilon else 1
-        self.epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
-        if self.use_epsilon and self.epsilon_decay_rate:
-            if not 0.0 < self.epsilon_decay_rate < 1.0:
-                raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
-        self.episode_count = 0
-        self._epsilon_value = self._initial_epsilon()
-        self._episode_done = False
+        epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
+        if self.use_epsilon and epsilon_decay_rate and not 0.0 < epsilon_decay_rate < 1.0:
+            raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
+        self.configure_epsilon(
+            start=float(cfg.get("epsilon_start", 0.9 if self.use_epsilon else 0.0)),
+            end=float(cfg.get("epsilon_end", 0.05 if self.use_epsilon else 0.0)),
+            decay=cfg.get("epsilon_decay", 20000 if self.use_epsilon else 1),
+            decay_rate=epsilon_decay_rate if self.use_epsilon else 0.0,
+            unit=cfg.get("epsilon_unit", "episode"),
+            enabled=self.use_epsilon,
+        )
 
-        buffer_size = int(cfg.get("buffer_size", 50000))
-        self.learning_starts = min(self.learning_starts, buffer_size)
-        prioritized = bool(cfg.get("prioritized_replay", True))
-        store_actions = not bool(cfg.get("store_action_indices_only", True))
-        if prioritized:
-            per_args = dict(
-                alpha=float(cfg.get("per_alpha", 0.6)),
-                beta=float(cfg.get("per_beta_start", 0.4)),
-                beta_increment_per_sample=float(cfg.get("per_beta_increment", 1e-4)),
-                min_priority=float(cfg.get("per_min_priority", 1e-3)),
-                epsilon=float(cfg.get("per_epsilon", 1e-6)),
-            )
-            self.buffer: ReplayBuffer = PrioritizedReplayBuffer(
-                buffer_size,
-                (self.obs_dim,),
-                (self.act_dim,),
-                store_actions=store_actions,
-                store_action_indices=True,
-                **per_args,
-            )
-        else:
-            self.buffer = ReplayBuffer(
-                buffer_size,
-                (self.obs_dim,),
-                (self.act_dim,),
-                store_actions=store_actions,
-                store_action_indices=True,
-            )
-        self._use_per = prioritized
-        self._store_actions = getattr(self.buffer, "store_actions", True)
+        self._store_actions = getattr(self.buffer, "store_actions", store_actions_flag)
         self._n_step_buffer: Deque[NStepEntry] = deque()
-
-        self.step_count = 0
-        self._updates = 0
 
     # -------------------- Interaction --------------------
 
@@ -188,37 +150,18 @@ class RainbowDQNAgent:
         done: bool,
         info: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if info is None:
-            info = {}
         obs_arr = np.asarray(obs, dtype=np.float32)
         next_obs_arr = np.asarray(next_obs, dtype=np.float32)
 
-        action_arr: Optional[np.ndarray]
-        if np.isscalar(action) or (
-            isinstance(action, np.ndarray) and action.ndim == 0
-        ):
-            action_idx_fallback = int(np.asarray(action).item())
-            action_arr = self.action_set[action_idx_fallback]
-        else:
-            action_arr = np.asarray(action, dtype=np.float32)
-            action_idx_fallback = self._action_to_index(action_arr, info)
-
-        info = dict(info)
-        action_idx: int
-        if "action_index" in info:
-            action_idx = int(info["action_index"])
-        else:
-            action_idx = action_idx_fallback
-        info["action_index"] = action_idx
-
-        action_vec = action_arr if self._store_actions else None
+        action_vec, info_dict, action_idx = self._action_helper.prepare_action(action, info)
+        action_vec = action_vec if self._store_actions else None
         transition: NStepEntry = (
             obs_arr,
             None if action_vec is None else np.asarray(action_vec, dtype=np.float32),
             float(reward),
             next_obs_arr,
             bool(done),
-            info,
+            info_dict,
             action_idx,
         )
 
@@ -241,40 +184,20 @@ class RainbowDQNAgent:
         if self.step_count < self.learning_starts:
             return None
 
-        batch = self.buffer.sample(self.batch_size)
-        obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
-        rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
-        next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
-        dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
-
-        infos = batch.get("infos")
-        if infos is None:
-            infos = [{}] * self.batch_size
-        weights = batch.get("weights")
-        if weights is None:
-            weights_t = torch.ones((self.batch_size,), dtype=torch.float32, device=self.device)
-        else:
-            weights_t = torch.as_tensor(weights, dtype=torch.float32, device=self.device).view(-1)
-        indices = batch.get("indices")
-
-        action_indices_data = batch.get("action_indices")
-        if action_indices_data is not None:
-            action_indices_np = np.asarray(action_indices_data, dtype=np.int64).reshape(-1)
-            if (action_indices_np < 0).any():
-                raise RuntimeError("ReplayBuffer returned invalid action indices for Rainbow DQN update")
-            action_indices = torch.as_tensor(action_indices_np, dtype=torch.long, device=self.device)
-        else:
-            actions_data = batch.get("actions")
-            if actions_data is None:
-                raise RuntimeError("ReplayBatch missing actions and action indices")
-            actions_np = np.asarray(actions_data, dtype=np.float32)
-            inferred: list[int] = []
-            for act, info in zip(actions_np, infos):
-                if info and "action_index" in info:
-                    inferred.append(int(info["action_index"]))
-                else:
-                    inferred.append(self._action_to_index(act, info))
-            action_indices = torch.as_tensor(inferred, dtype=torch.long, device=self.device)
+        sample = sample_replay_batch(
+            self.buffer,
+            self.batch_size,
+            self.device,
+            self._action_helper,
+        )
+        obs = sample.obs
+        rewards = sample.rewards
+        next_obs = sample.next_obs
+        dones = sample.dones
+        action_indices = sample.action_indices
+        weights_t = sample.weights
+        infos = sample.infos
+        indices = sample.indices
 
         discounts = self._gather_discounts(infos, obs.size(0)).unsqueeze(-1)
 
@@ -325,7 +248,7 @@ class RainbowDQNAgent:
 
         if self._use_per and indices is not None:
             td_errors = (chosen_q - target_q).detach().cpu().numpy()
-            self.buffer.update_priorities(np.asarray(indices), np.abs(td_errors))
+            self.buffer.update_priorities(indices, np.abs(td_errors))
 
         buffer_capacity = float(getattr(self.buffer, "capacity", max(len(self.buffer), 1)))
         buffer_fraction = float(len(self.buffer) / buffer_capacity)
@@ -345,7 +268,7 @@ class RainbowDQNAgent:
                 stats["grad_norm"] = float(grad_norm.detach().cpu().item())
             except AttributeError:
                 stats["grad_norm"] = float(grad_norm)
-        if self._use_per and weights is not None:
+        if self._use_per:
             stats["is_weight_mean"] = float(weights_t.detach().mean().cpu().item())
         return stats
 
@@ -402,42 +325,17 @@ class RainbowDQNAgent:
         self.episode_count = int(ckpt.get("episode_count", 0))
         self._epsilon_value = float(ckpt.get("epsilon_value", self._initial_epsilon()))
         if "action_set" in ckpt:
-            self.action_set = np.asarray(ckpt["action_set"], dtype=np.float32)
-            self.n_actions = self.action_set.shape[0]
-            self.act_dim = self.action_set.shape[1]
+            self.refresh_action_helper(np.asarray(ckpt["action_set"], dtype=np.float32))
         self.use_noisy = bool(ckpt.get("use_noisy", self.use_noisy))
         self.noisy_sigma0 = float(ckpt.get("noisy_sigma0", self.noisy_sigma0))
         self.n_step = max(1, int(ckpt.get("n_step", self.n_step)))
         self.use_epsilon = bool(ckpt.get("use_epsilon", self.use_epsilon))
+        self.epsilon_enabled = self.use_epsilon
         self.delta_z = (self.v_max - self.v_min) / (self.atoms - 1)
         self._n_step_buffer.clear()
         self._episode_done = False
         self.q_net.to(self.device)
         self.target_q_net.to(self.device)
-
-    # -------------------- Helpers --------------------
-
-    def _advance_episode(self) -> None:
-        self.episode_count += 1
-        if not self.use_epsilon:
-            self._epsilon_value = 0.0
-            return
-        if self.epsilon_decay_rate:
-            next_eps = self._epsilon_value * self.epsilon_decay_rate
-            self._epsilon_value = max(self.epsilon_end, next_eps)
-        else:
-            self._epsilon_value = self._epsilon_from_counts()
-
-    def _initial_epsilon(self) -> float:
-        if not self.use_epsilon:
-            return 0.0
-        if self.epsilon_decay_rate:
-            return self.epsilon_start
-        return self._epsilon_from_counts()
-
-    def _epsilon_from_counts(self) -> float:
-        fraction = min(1.0, self.episode_count / self.epsilon_decay)
-        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1 - fraction)
 
     def _maybe_append_transition(self, terminal: bool) -> None:
         while len(self._n_step_buffer) >= self.n_step or (terminal and self._n_step_buffer):
@@ -513,25 +411,6 @@ class RainbowDQNAgent:
         projected = projected.clamp_min_(1e-8)
         projected = projected / projected.sum(dim=-1, keepdim=True)
         return projected
-
-    def _action_to_index(self, action: Iterable[float], info: Optional[Dict[str, Any]] = None) -> int:
-        if info and "action_index" in info:
-            return int(info["action_index"])
-        if self._requires_action_index:
-            raise RuntimeError(
-                "RainbowDQNAgent requires 'action_index' metadata when using a ``rate`` or ``delta`` action mode"
-            )
-        action_arr = np.asarray(action, dtype=np.float32)
-        diffs = np.linalg.norm(self.action_set - action_arr, axis=1)
-        if not self._warned_action_index_fallback:
-            warnings.warn(
-                "Falling back to nearest-action lookup because no 'action_index' metadata was provided; "
-                "ensure discrete action indices are recorded alongside transitions.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            self._warned_action_index_fallback = True
-        return int(np.argmin(diffs))
 
 
 # Backwards compatibility alias for code that still expects `DQNAgent`.

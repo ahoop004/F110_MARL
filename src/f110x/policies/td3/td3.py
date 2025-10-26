@@ -13,7 +13,7 @@ import torch.nn.functional as F
 # except ImportError:  # pragma: no cover - wandb optional
 #     wandb = None
 
-from f110x.policies.buffers import PrioritizedReplayBuffer, ReplayBuffer
+from f110x.policies.common import build_replay_buffer, sample_continuous_replay
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -66,25 +66,15 @@ class TD3Agent:
         self._exploration_episode = 0
 
         buffer_size = int(cfg.get("buffer_size", 100_000))
-        self.use_per = bool(cfg.get("use_per", False))
-        if self.use_per:
-            per_alpha = float(cfg.get("per_alpha", 0.6))
-            per_beta = float(cfg.get("per_beta", 0.4))
-            per_beta_increment = float(cfg.get("per_beta_increment", 1e-4))
-            per_min_priority = float(cfg.get("per_min_priority", 1e-3))
-            per_epsilon = float(cfg.get("per_epsilon", 1e-6))
-            self.buffer = PrioritizedReplayBuffer(
-                buffer_size,
-                (self.obs_dim,),
-                (self.act_dim,),
-                alpha=per_alpha,
-                beta=per_beta,
-                beta_increment_per_sample=per_beta_increment,
-                min_priority=per_min_priority,
-                epsilon=per_epsilon,
-            )
-        else:
-            self.buffer = ReplayBuffer(buffer_size, (self.obs_dim,), (self.act_dim,))
+        self.buffer, self.use_per = build_replay_buffer(
+            cfg,
+            self.obs_dim,
+            self.act_dim,
+            store_actions=True,
+            store_action_indices=False,
+            per_flag_key="use_per",
+            default_prioritized=False,
+        )
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -145,19 +135,13 @@ class TD3Agent:
         if len(self.buffer) < max(self.batch_size, self.warmup_steps):
             return None
 
-        batch = self.buffer.sample(self.batch_size)
-        obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
-        actions = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
-        rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
-        next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
-        dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
-        if self.use_per:
-            weights = torch.as_tensor(batch["weights"], dtype=torch.float32, device=self.device)
-            # Ensure weights broadcast across action dimension
-            if weights.ndim == 1:
-                weights = weights.view(-1, 1)
-        else:
-            weights = torch.ones_like(rewards, device=self.device)
+        sample = sample_continuous_replay(self.buffer, self.batch_size, self.device)
+        obs = sample.obs
+        actions = sample.actions
+        rewards = sample.rewards
+        next_obs = sample.next_obs
+        dones = sample.dones
+        weights = sample.weights if self.use_per else torch.ones_like(rewards, device=self.device)
 
         with torch.no_grad():
             # Policy smoothing regularization: perturb target action before evaluating target critics.
@@ -200,11 +184,10 @@ class TD3Agent:
 
         self.total_it += 1
 
-        if self.use_per:
+        if self.use_per and sample.indices is not None:
             td_errors = (td_error1.abs() + td_error2.abs()) * 0.5
-            indices = batch["indices"]
             self.buffer.update_priorities(
-                indices,
+                sample.indices,
                 td_errors.detach().cpu().squeeze(1).numpy(),
             )
 

@@ -118,6 +118,7 @@ import yaml
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(_ROOT))
 sys.path.append(str(_ROOT / 'src'))
 
 import pyglet
@@ -130,8 +131,7 @@ try:
 except ImportError:  # optional dependency
     wandb = None
 
-import train as train_module
-import eval as eval_module
+from experiments import session as session_module
 from f110x.utils.config import resolve_active_config_block
 from f110x.utils.logger import ConsoleSink, Logger, WandbSink
 
@@ -383,7 +383,7 @@ def main():
     pending_logs.clear()
 
     if mode == "train":
-        train_session = train_module.create_training_session(
+        train_session = session_module.create_training_session(
             cfg_path,
             experiment=cfg_experiment,
             logger=logger,
@@ -393,12 +393,12 @@ def main():
             if _RENDER_FLAG:
                 train_session.enable_render()
             fallback_train = _coerce_positive_int(main_cfg.get("train_episodes"), 10)
-            episodes = train_module.resolve_train_episodes(
+            episodes = session_module.resolve_train_episodes(
                 train_session,
                 override=_EP_OVERRIDE,
                 fallback=fallback_train,
             )
-            results = train_module.run_training(
+            results = session_module.run_training(
                 train_session,
                 episodes=episodes,
             )
@@ -413,7 +413,7 @@ def main():
                 train_env.close()
 
     elif mode == "eval":
-        eval_session = eval_module.create_evaluation_session(
+        eval_session = session_module.create_evaluation_session(
             cfg_path,
             auto_load=True,
             experiment=cfg_experiment,
@@ -424,12 +424,12 @@ def main():
             if _RENDER_FLAG:
                 eval_session.enable_render()
             fallback_eval = _coerce_positive_int(main_cfg.get("eval_episodes"), 5)
-            episodes = eval_module.resolve_eval_episodes(
+            episodes = session_module.resolve_eval_episodes(
                 eval_session,
                 override=_EVAL_EP_OVERRIDE,
                 fallback=fallback_eval,
             )
-            results = eval_module.run_evaluation(
+            results = session_module.run_evaluation(
                 eval_session,
                 episodes=episodes,
                 force_render=_RENDER_FLAG,
@@ -440,7 +440,7 @@ def main():
                 eval_env.close()
 
     elif mode == "train_eval":
-        train_session = train_module.create_training_session(
+        train_session = session_module.create_training_session(
             cfg_path,
             experiment=cfg_experiment,
             logger=logger,
@@ -450,12 +450,12 @@ def main():
             if _RENDER_FLAG:
                 train_session.enable_render()
             fallback_train = _coerce_positive_int(main_cfg.get("train_episodes"), 10)
-            train_episodes = train_module.resolve_train_episodes(
+            train_episodes = session_module.resolve_train_episodes(
                 train_session,
                 override=_EP_OVERRIDE,
                 fallback=fallback_train,
             )
-            train_results = train_module.run_training(
+            train_results = session_module.run_training(
                 train_session,
                 episodes=train_episodes,
             )
@@ -469,7 +469,7 @@ def main():
             if train_env is not None:
                 train_env.close()
 
-        eval_session = eval_module.create_evaluation_session(
+        eval_session = session_module.create_evaluation_session(
             cfg_path,
             auto_load=True,
             experiment=cfg_experiment,
@@ -480,12 +480,12 @@ def main():
             if _RENDER_FLAG:
                 eval_session.enable_render()
             fallback_eval = _coerce_positive_int(main_cfg.get("eval_episodes"), 5)
-            eval_episodes = eval_module.resolve_eval_episodes(
+            eval_episodes = session_module.resolve_eval_episodes(
                 eval_session,
                 override=_EVAL_EP_OVERRIDE,
                 fallback=fallback_eval,
             )
-            eval_results = eval_module.run_evaluation(
+            eval_results = session_module.run_evaluation(
                 eval_session,
                 episodes=eval_episodes,
                 force_render=_RENDER_FLAG,

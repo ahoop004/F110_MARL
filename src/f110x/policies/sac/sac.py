@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from f110x.policies.buffers import ReplayBuffer
+from f110x.policies.common import build_replay_buffer, sample_continuous_replay
 from f110x.policies.sac.net import GaussianPolicy, QNetwork, hard_update, soft_update
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -61,7 +61,15 @@ class SACAgent:
 
         self.squash_eps = 1e-6
 
-        self.buffer = ReplayBuffer(self.buffer_size, (self.obs_dim,), (self.act_dim,))
+        self.buffer, self.use_per = build_replay_buffer(
+            cfg,
+            self.obs_dim,
+            self.act_dim,
+            store_actions=True,
+            store_action_indices=False,
+            per_flag_key="use_per",
+            default_prioritized=False,
+        )
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -111,12 +119,12 @@ class SACAgent:
         if len(self.buffer) < max(self.batch_size, self.warmup_steps):
             return None
 
-        batch = self.buffer.sample(self.batch_size)
-        obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
-        actions = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
-        rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
-        next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
-        dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
+        sample = sample_continuous_replay(self.buffer, self.batch_size, self.device)
+        obs = sample.obs
+        actions = sample.actions
+        rewards = sample.rewards
+        next_obs = sample.next_obs
+        dones = sample.dones
 
         # Critic update -------------------------------------------------
         with torch.no_grad():

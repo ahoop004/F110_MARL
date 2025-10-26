@@ -1,16 +1,15 @@
-"""Prioritized experience replay utilities for Rainbow-style agents."""
-
+"""Prioritized replay buffer implementation shared across agents."""
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
 import numpy as np
 
-from f110x.policies.buffers.replay import ReplayBuffer
+from .replay import ReplayBuffer
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
-    """Replay buffer with proportional prioritized sampling and importance weights."""
+    """Proportional prioritized replay buffer with importance sampling weights."""
 
     def __init__(
         self,
@@ -122,3 +121,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         updated = np.maximum(abs_errors, self.min_priority)
         self._priorities[idxs] = updated
         self._max_priority = max(self._max_priority, float(updated.max()))
+
+
+__all__ = ["PrioritizedReplayBuffer"]

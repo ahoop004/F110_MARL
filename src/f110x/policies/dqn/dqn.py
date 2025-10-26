@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
-import warnings
 
 import numpy as np
 import torch
@@ -14,25 +13,22 @@ import torch.nn.functional as F
 # except ImportError:  # pragma: no cover - wandb optional
 #     wandb = None
 
-from f110x.policies.buffers import PrioritizedReplayBuffer, ReplayBuffer
+from f110x.policies.common import DiscreteAgentBase, sample_replay_batch
 from f110x.utils.torch_io import resolve_device, safe_load
 from f110x.policies.dqn.net import QNetwork
 
 
-class DQNAgent:
+class DQNAgent(DiscreteAgentBase):
     def __init__(self, cfg: Dict[str, Any]):
         self.device = resolve_device([cfg.get("device")])
-
-        self.obs_dim = int(cfg["obs_dim"])
-        self.action_mode = str(cfg.get("action_mode", "absolute")).lower()
-        self._requires_action_index = self.action_mode in {"delta", "rate"}
-        self._warned_action_index_fallback = False
-        action_set = np.asarray(cfg.get("action_set"), dtype=np.float32)
-        if action_set.ndim != 2:
-            raise ValueError("DQN requires `action_set` as a list of action vectors")
-        self.action_set = action_set
-        self.n_actions = action_set.shape[0]
-        self.act_dim = action_set.shape[1]
+        buffer_size = int(cfg.get("buffer_size", 50_000))
+        super().__init__(
+            cfg,
+            obs_dim=int(cfg["obs_dim"]),
+            store_actions=False,
+            store_action_indices=True,
+            default_prioritized=True,
+        )
 
         hidden_dims: Iterable[int] = cfg.get("hidden_dims", [256, 256])
         self.q_net = QNetwork(self.obs_dim, self.n_actions, hidden_dims).to(self.device)
@@ -48,51 +44,20 @@ class DQNAgent:
             self.batch_size,
             int(cfg.get("learning_starts", 1000)),
         )
-        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
-
-        self.epsilon_start = float(cfg.get("epsilon_start", 0.9))
-        self.epsilon_end = float(cfg.get("epsilon_end", 0.05))
-        self.epsilon_decay = max(1, int(cfg.get("epsilon_decay", 20000)))
-        self.epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
-        if self.epsilon_decay_rate:
-            if not 0.0 < self.epsilon_decay_rate < 1.0:
-                raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
-        self.episode_count = 0
-        self._epsilon_value = self._initial_epsilon()
-        self._episode_done = False
-
-        buffer_size = int(cfg.get("buffer_size", 50000))
         self.learning_starts = min(self.learning_starts, buffer_size)
-        prioritized = bool(cfg.get("prioritized_replay", True))
-        if prioritized:
-            per_args = dict(
-                alpha=float(cfg.get("per_alpha", 0.6)),
-                beta=float(cfg.get("per_beta_start", 0.4)),
-                beta_increment_per_sample=float(cfg.get("per_beta_increment", 1e-4)),
-                min_priority=float(cfg.get("per_min_priority", 1e-3)),
-                epsilon=float(cfg.get("per_epsilon", 1e-6)),
-            )
-            self.buffer: ReplayBuffer = PrioritizedReplayBuffer(
-                buffer_size,
-                (self.obs_dim,),
-                (self.act_dim,),
-                store_actions=False,
-                store_action_indices=True,
-                **per_args,
-            )
-        else:
-            self.buffer = ReplayBuffer(
-                buffer_size,
-                (self.obs_dim,),
-                (self.act_dim,),
-                store_actions=False,
-                store_action_indices=True,
-            )
-        self._use_per = prioritized
+        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
+        epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
+        if epsilon_decay_rate and not 0.0 < epsilon_decay_rate < 1.0:
+            raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
+        self.configure_epsilon(
+            start=float(cfg.get("epsilon_start", 0.9)),
+            end=float(cfg.get("epsilon_end", 0.05)),
+            decay=cfg.get("epsilon_decay", 20000),
+            decay_rate=epsilon_decay_rate,
+            unit=cfg.get("epsilon_unit", "episode"),
+            enabled=True,
+        )
         self.use_huber = bool(cfg.get("use_huber", True))
-
-        self.step_count = 0
-        self._updates = 0
 
     # -------------------- Interaction --------------------
 
@@ -119,36 +84,15 @@ class DQNAgent:
         done: bool,
         info: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if info is None:
-            info = {}
-        action_arr: Optional[np.ndarray]
-        if np.isscalar(action) or (
-            isinstance(action, np.ndarray) and action.ndim == 0
-        ):
-            action_idx_fallback = int(np.asarray(action).item())
-            action_arr = self.action_set[action_idx_fallback]
-        else:
-            action_arr = np.asarray(action, dtype=np.float32)
-            action_idx_fallback = self._action_to_index(action_arr, info)
-
-        info = dict(info)
-        action_idx: int
-        if "action_index" in info:
-            action_idx = int(info["action_index"])
-        else:
-            action_idx = action_idx_fallback
-        info["action_index"] = action_idx
-        if getattr(self.buffer, "store_actions", True):
-            action_vec = action_arr if action_arr is not None else self.action_set[action_idx]
-        else:
-            action_vec = None
+        action_vec, info_dict, action_idx = self._action_helper.prepare_action(action, info)
+        action_payload = action_vec if getattr(self.buffer, "store_actions", True) else None
         self.buffer.add(
             obs,
-            action_vec,
+            action_payload,
             reward,
             next_obs,
             done,
-            info,
+            info_dict,
             action_index=action_idx,
         )
         self.step_count += 1
@@ -169,38 +113,19 @@ class DQNAgent:
         if self.step_count < self.learning_starts:
             return None
 
-        batch = self.buffer.sample(self.batch_size)
-        obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=self.device)
-        rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device)
-        next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32, device=self.device)
-        dones = torch.as_tensor(batch["dones"], dtype=torch.float32, device=self.device)
-        infos = batch.get("infos", [{}] * self.batch_size)
-        weights = batch.get("weights")
-        indices = batch.get("indices")
-       
-        if weights is None:
-            weights_t = torch.ones((self.batch_size,), dtype=torch.float32, device=self.device)
-        else:
-            weights_t = torch.as_tensor(weights, dtype=torch.float32, device=self.device).squeeze(-1)
-
-        action_indices_data = batch.get("action_indices")
-        if action_indices_data is not None:
-            action_indices_np = np.asarray(action_indices_data, dtype=np.int64).reshape(-1)
-            if (action_indices_np < 0).any():
-                raise RuntimeError("ReplayBuffer returned invalid action indices for DQN update")
-            action_indices = torch.as_tensor(action_indices_np, dtype=torch.long, device=self.device)
-        else:
-            actions_data = batch.get("actions")
-            if actions_data is None:
-                raise RuntimeError("ReplayBatch missing actions and action indices")
-            actions_np = np.asarray(actions_data, dtype=np.float32)
-            inferred: list[int] = []
-            for act, info in zip(actions_np, infos):
-                if info and "action_index" in info:
-                    inferred.append(int(info["action_index"]))
-                else:
-                    inferred.append(self._action_to_index(act, info))
-            action_indices = torch.as_tensor(inferred, dtype=torch.long, device=self.device)
+        sample = sample_replay_batch(
+            self.buffer,
+            self.batch_size,
+            self.device,
+            self._action_helper,
+        )
+        obs = sample.obs
+        rewards = sample.rewards
+        next_obs = sample.next_obs
+        dones = sample.dones
+        action_indices = sample.action_indices
+        weights_t = sample.weights
+        indices = sample.indices
 
         q_values = self.q_net(obs)
         chosen_q = q_values.gather(1, action_indices.unsqueeze(-1)).squeeze(-1)
@@ -232,7 +157,7 @@ class DQNAgent:
 
         if self._use_per and indices is not None:
             td_error_np = td_errors.detach().cpu().numpy()
-            self.buffer.update_priorities(np.asarray(indices), np.abs(td_error_np))
+            self.buffer.update_priorities(indices, np.abs(td_error_np))
 
         td_mean = float(td_errors.detach().mean().cpu().item())
         td_abs_mean = float(td_errors.detach().abs().mean().cpu().item())
@@ -258,17 +183,9 @@ class DQNAgent:
                 stats["grad_norm"] = float(grad_norm.detach().cpu().item())
             except AttributeError:
                 stats["grad_norm"] = float(grad_norm)
-        if self._use_per and weights is not None:
+        if self._use_per and weights_t is not None:
             stats["is_weight_mean"] = float(weights_t.detach().mean().cpu().item())
         return stats
-
-    def _advance_episode(self) -> None:
-        self.episode_count += 1
-        if self.epsilon_decay_rate:
-            next_eps = self._epsilon_value * self.epsilon_decay_rate
-            self._epsilon_value = max(self.epsilon_end, next_eps)
-        else:
-            self._epsilon_value = self._epsilon_from_counts()
 
     # -------------------- Persistence --------------------
 
@@ -313,43 +230,7 @@ class DQNAgent:
         self.episode_count = int(ckpt.get("episode_count", 0))
         self._epsilon_value = float(ckpt.get("epsilon_value", self._initial_epsilon()))
         if "action_set" in ckpt:
-            self.action_set = np.asarray(ckpt["action_set"], dtype=np.float32)
-            self.n_actions = self.action_set.shape[0]
-            self.act_dim = self.action_set.shape[1]
+            self.refresh_action_helper(np.asarray(ckpt["action_set"], dtype=np.float32))
         self._episode_done = False
         self.q_net.to(self.device)
         self.target_q_net.to(self.device)
-
-    def _initial_epsilon(self) -> float:
-        if self.epsilon_decay_rate:
-            return self.epsilon_start
-        return self._epsilon_from_progress()
-    def _epsilon_from_progress(self) -> float:
-         progress = self.episode_count if self.epsilon_unit == "episode" else self.step_count
-         fraction = min(1.0, progress / float(max(1, self.epsilon_decay)))
-         return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1.0 - fraction)
-
-    def _epsilon_from_counts(self) -> float:
-        fraction = min(1.0, self.episode_count / self.epsilon_decay)
-        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * (1 - fraction)
-
-    # -------------------- Helpers --------------------
-
-    def _action_to_index(self, action: Iterable[float], info: Optional[Dict[str, Any]] = None) -> int:
-        if info and "action_index" in info:
-            return int(info["action_index"])
-        if self._requires_action_index:
-            raise RuntimeError(
-                "DQNAgent requires 'action_index' metadata when using a ``rate`` or ``delta`` action mode"
-            )
-        action_arr = np.asarray(action, dtype=np.float32)
-        diffs = np.linalg.norm(self.action_set - action_arr, axis=1)
-        if not self._warned_action_index_fallback:
-            warnings.warn(
-                "Falling back to nearest-action lookup because no 'action_index' metadata was provided; "
-                "ensure discrete action indices are recorded alongside transitions.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            self._warned_action_index_fallback = True
-        return int(np.argmin(diffs))
