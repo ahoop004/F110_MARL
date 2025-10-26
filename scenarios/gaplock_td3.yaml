@@ -66,11 +66,11 @@ scenario:
           batch_size: 256
           buffer_size: 200000
           use_per: true
-          warmup_steps: 8000
+          warmup_steps: 3000
           exploration_noise: 0.35
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 150000
-          exploration_noise_decay_episodes: 4000
+          exploration_noise_decay_episodes: 2000
           initial_speed: 2.6
           prevent_reverse: true
           prevent_reverse_min_speed: 0.0
@@ -95,11 +95,14 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.005
+          step_reward: 0.025
           idle_speed_threshold: 0.2
-          idle_penalty: -0.005
+          idle_penalty: -0.001
           idle_penalty_steps: 15
           idle_truncation_penalty: -10.0
+          pressure_distance: 1.1
+          pressure_timeout: 1.0
+          pressure_min_speed: 0.05
           relative_reward:
             weights:
               front: 0.02
@@ -170,7 +173,7 @@ scenario:
           bubble_radius: 2.0
           steer_smooth: 0.0
       defender_curriculum:
-        min_episode: 1500
+        min_episode: 3000
         success_window: 200
         activation_samples: 200
         enable_patience: 4
@@ -180,7 +183,7 @@ scenario:
         stages:
           - name: baseline
             params:
-              max_speed: 10.0
+              max_speed: 8.0
               min_speed: 2.5
               steering_gain: 1.0
               bubble_radius: 2.0
