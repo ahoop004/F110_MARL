@@ -300,6 +300,9 @@ class GaplockRewardStrategy(RewardStrategy):
         ego_crashed = bool(ego_obs.get("collision", False))
         overlay_target_id: Optional[str] = None
 
+        timestep = float(step.timestep) if isinstance(step.timestep, (int, float)) else 0.0
+        time_scale = timestep if timestep > 0.0 else 1.0
+
         speed = self._extract_speed(ego_obs)
         self._apply_idle_penalty(acc, step.agent_id, speed)
 
@@ -309,7 +312,7 @@ class GaplockRewardStrategy(RewardStrategy):
                 capped = speed
                 if self.speed_bonus_target > 0.0:
                     capped = min(speed, self.speed_bonus_target)
-                acc.add("speed_bonus", self.speed_bonus_coef * max(capped, 0.0))
+                acc.add("speed_bonus", self.speed_bonus_coef * max(capped, 0.0) * time_scale)
             if (
                 self.brake_penalty
                 and prev_speed is not None
@@ -376,20 +379,20 @@ class GaplockRewardStrategy(RewardStrategy):
                     far_dist = self.distance_reward_far_distance
                     if self.distance_reward_near and near_dist > 0.0:
                         if distance <= near_dist:
-                            acc.add("distance_reward", self.distance_reward_near)
+                            acc.add("distance_reward", self.distance_reward_near * time_scale)
                         elif far_dist > near_dist and distance < far_dist:
                             span = far_dist - near_dist
                             weight = (far_dist - distance) / span
-                            acc.add("distance_reward", self.distance_reward_near * weight)
+                            acc.add("distance_reward", self.distance_reward_near * weight * time_scale)
                     if far_dist > 0.0 and distance >= far_dist and self.distance_penalty_far:
-                        acc.add("distance_penalty", -abs(self.distance_penalty_far))
+                        acc.add("distance_penalty", -abs(self.distance_penalty_far) * time_scale)
 
                     if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
                         if distance > self.proximity_penalty_distance:
                             acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
 
                     if alignment is not None and self.heading_reward_coef:
-                        acc.add("heading_reward", self.heading_reward_coef * alignment)
+                        acc.add("heading_reward", self.heading_reward_coef * alignment * time_scale)
 
             if pressure_recent:
                 streak_value = self._pressure_streak.get(step.agent_id, 0) + 1
