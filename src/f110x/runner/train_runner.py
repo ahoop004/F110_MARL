@@ -46,6 +46,8 @@ class SpawnCurriculumManager:
         self.start_enabled = bool(self.config.get("start_enabled", False))
 
         self._success_history: Deque[float] = deque(maxlen=self.success_window)
+        self._structured_history: Deque[float] = deque(maxlen=self.success_window)
+        self._random_history: Deque[float] = deque(maxlen=self.success_window)
         self._enable_streak = 0
         self._disable_streak = 0
         self._last_toggle_episode: Optional[int] = None
@@ -85,25 +87,43 @@ class SpawnCurriculumManager:
             return None
         return float(sum(self._success_history) / len(self._success_history))
 
+    @staticmethod
+    def _rate(history: Deque[float]) -> Optional[float]:
+        if not history:
+            return None
+        return float(sum(history) / len(history))
+
     def _apply_state(self, enable: bool, *, force: bool = False) -> bool:
         target = bool(enable and self.random_capable)
-        if not force and self.random_enabled == target:
-            return False
-
+        previous = self.random_enabled
         self.random_enabled = target
+        state_changed = previous != target
+        if state_changed:
+            if self.random_enabled:
+                self._random_history.clear()
+            else:
+                self._structured_history.clear()
         if target:
             selected = list(self._random_options or self._baseline_options or self._all_options)
         else:
             selected = list(self._baseline_options or self._random_options or self._all_options)
 
         self.context.start_pose_options = selected or None
-        return not force
+        return state_changed and not force
 
     def observe(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
         if success is not None:
-            self._success_history.append(1.0 if success else 0.0)
+            value = 1.0 if success else 0.0
+            self._success_history.append(value)
+            if self.random_enabled:
+                self._random_history.append(value)
+            else:
+                self._structured_history.append(value)
 
         success_rate = self.success_rate
+        structured_rate = self._rate(self._structured_history)
+        random_rate = self._rate(self._random_history)
+        stage_success_rate = random_rate if self.random_enabled else structured_rate
         history_ready = len(self._success_history) >= self.activation_samples
         changed = False
 
@@ -112,6 +132,9 @@ class SpawnCurriculumManager:
                 "changed": False,
                 "enabled": self.random_enabled,
                 "success_rate": success_rate,
+                "stage_success_rate": stage_success_rate,
+                "structured_success_rate": structured_rate,
+                "random_success_rate": random_rate,
                 "stage": "random" if self.random_enabled else "structured",
             }
 
@@ -161,6 +184,9 @@ class SpawnCurriculumManager:
             "changed": changed,
             "enabled": self.random_enabled,
             "success_rate": success_rate,
+            "stage_success_rate": stage_success_rate,
+            "structured_success_rate": structured_rate,
+            "random_success_rate": random_rate,
             "stage": "random" if self.random_enabled else "structured",
         }
 
@@ -211,6 +237,7 @@ class DefenderCurriculumManager:
 
         self.stages = stages
         self.history: Deque[float] = deque(maxlen=self.success_window)
+        self.stage_histories: Dict[int, Deque[float]] = {}
         self.current_stage_index = 0
         self._last_change_episode: Optional[int] = None
         self._promote_streak = 0
@@ -226,6 +253,19 @@ class DefenderCurriculumManager:
         if not self.history:
             return None
         return float(sum(self.history) / len(self.history))
+
+    def _stage_history(self, index: int) -> Deque[float]:
+        history = self.stage_histories.get(index)
+        if history is None:
+            history = deque(maxlen=self.success_window)
+            self.stage_histories[index] = history
+        return history
+
+    @staticmethod
+    def _rate(history: Deque[float]) -> Optional[float]:
+        if not history:
+            return None
+        return float(sum(history) / len(history))
 
     def _capture_params(self) -> Dict[str, Any]:
         exporter = getattr(self.controller, "export_config", None)
@@ -262,6 +302,7 @@ class DefenderCurriculumManager:
         if initial:
             self._last_change_episode = None
             return
+        self._stage_history(index).clear()
         self._last_change_episode = episode
         if index != previous_index:
             self.logger.info(
@@ -283,7 +324,9 @@ class DefenderCurriculumManager:
 
     def observe(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
         if success is not None:
-            self.history.append(1.0 if success else 0.0)
+            value = 1.0 if success else 0.0
+            self.history.append(value)
+            self._stage_history(self.current_stage_index).append(value)
 
         success_rate = self.success_rate
         history_ready = len(self.history) >= self.activation_samples
@@ -326,11 +369,13 @@ class DefenderCurriculumManager:
 
     def _state(self, changed: bool, success_rate: Optional[float]) -> Dict[str, Any]:
         stage = self.stages[self.current_stage_index]
+        stage_history = self.stage_histories.get(self.current_stage_index)
         return {
             "changed": changed,
             "stage_index": self.current_stage_index,
             "stage": stage.get("name", f"stage_{self.current_stage_index}"),
             "success_rate": success_rate,
+            "stage_success_rate": self._rate(stage_history) if stage_history else None,
             "params": dict(stage.get("_applied_params", {})),
         }
 
@@ -735,6 +780,16 @@ class TrainRunner:
                 if spawn_rate is not None:
                     metrics["train/spawn_success_rate"] = float(spawn_rate)
                     episode_record["spawn_success_rate"] = float(spawn_rate)
+                stage_rate = spawn_state.get("stage_success_rate")
+                if stage_rate is not None:
+                    metrics["train/spawn_stage_success_rate"] = float(stage_rate)
+                    episode_record["spawn_stage_success_rate"] = float(stage_rate)
+                structured_rate = spawn_state.get("structured_success_rate")
+                if structured_rate is not None:
+                    metrics["train/spawn_structured_success_rate"] = float(structured_rate)
+                random_rate = spawn_state.get("random_success_rate")
+                if random_rate is not None:
+                    metrics["train/spawn_random_success_rate"] = float(random_rate)
                 episode_record["random_spawn_enabled"] = bool(spawn_state.get("enabled", False))
             if defender_state is not None:
                 stage_name = defender_state.get("stage")
@@ -749,6 +804,10 @@ class TrainRunner:
                 if defender_success is not None:
                     metrics["train/defender_success_rate"] = float(defender_success)
                     episode_record["defender_success_rate"] = float(defender_success)
+                defender_stage_success = defender_state.get("stage_success_rate")
+                if defender_stage_success is not None:
+                    metrics["train/defender_stage_success_rate"] = float(defender_stage_success)
+                    episode_record["defender_stage_success_rate"] = float(defender_stage_success)
                 params_snapshot = defender_state.get("params") or {}
                 if params_snapshot:
                     episode_record["defender_params"] = dict(params_snapshot)

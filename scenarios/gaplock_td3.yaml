@@ -58,7 +58,7 @@ scenario:
           device: cpu
           actor_lr: 0.00025
           critic_lr: 0.0005
-          gamma: 0.995
+          gamma: 0.99
           tau: 0.005
           policy_noise: 0.2
           noise_clip: 0.4

@@ -240,8 +240,12 @@ if _HAS_RICH:
             spawn_enabled_raw = metrics.get(f"{phase}/random_spawn_enabled")
             spawn_stage = metrics.get(f"{phase}/spawn_stage")
             spawn_success_rate = _format_number(metrics.get(f"{phase}/spawn_success_rate"))
+            spawn_stage_success_rate = _format_number(metrics.get(f"{phase}/spawn_stage_success_rate"))
+            spawn_structured_success_rate = _format_number(metrics.get(f"{phase}/spawn_structured_success_rate"))
+            spawn_random_success_rate = _format_number(metrics.get(f"{phase}/spawn_random_success_rate"))
             defender_stage = metrics.get(f"{phase}/defender_stage")
             defender_success_rate = _format_number(metrics.get(f"{phase}/defender_success_rate"))
+            defender_stage_success_rate = _format_number(metrics.get(f"{phase}/defender_stage_success_rate"))
             defender_stage_index = _format_number(metrics.get(f"{phase}/defender_stage_index"))
 
             if episode is not None:
@@ -290,10 +294,18 @@ if _HAS_RICH:
                 tracked["spawn_stage"] = str(spawn_stage)
             if spawn_success_rate is not None:
                 tracked["spawn_success_rate"] = spawn_success_rate
+            if spawn_stage_success_rate is not None:
+                tracked["spawn_stage_success_rate"] = spawn_stage_success_rate
+            if spawn_structured_success_rate is not None:
+                tracked["spawn_structured_success_rate"] = spawn_structured_success_rate
+            if spawn_random_success_rate is not None:
+                tracked["spawn_random_success_rate"] = spawn_random_success_rate
             if defender_stage is not None:
                 tracked["defender_stage"] = str(defender_stage)
             if defender_success_rate is not None:
                 tracked["defender_success_rate"] = defender_success_rate
+            if defender_stage_success_rate is not None:
+                tracked["defender_stage_success_rate"] = defender_stage_success_rate
             if defender_stage_index is not None:
                 tracked["defender_stage_index"] = defender_stage_index
 
@@ -408,26 +420,44 @@ if _HAS_RICH:
             spawn_enabled = state.get("spawn_enabled")
             spawn_stage = state.get("spawn_stage")
             spawn_success_rate = state.get("spawn_success_rate")
+            spawn_stage_success_rate = state.get("spawn_stage_success_rate")
             spawn_line_parts = []
             if spawn_enabled is not None:
                 spawn_line_parts.append(f"Spawn random: {'on' if spawn_enabled else 'off'}")
             if spawn_stage:
                 spawn_line_parts.append(f"Stage {spawn_stage}")
-            if spawn_success_rate is not None:
-                spawn_line_parts.append(f"Stage success {spawn_success_rate * 100:.1f}%")
+            stage_rate_display = spawn_stage_success_rate if spawn_stage_success_rate is not None else spawn_success_rate
+            if stage_rate_display is not None:
+                spawn_line_parts.append(f"Stage success {stage_rate_display * 100:.1f}%")
+            if (
+                spawn_success_rate is not None
+                and spawn_stage_success_rate is not None
+                and not math.isclose(spawn_success_rate, spawn_stage_success_rate)
+            ):
+                spawn_line_parts.append(f"(overall {spawn_success_rate * 100:.1f}%)")
             if spawn_line_parts:
                 summary_lines.append(" ".join(spawn_line_parts))
 
             defender_stage = state.get("defender_stage")
             defender_stage_index = state.get("defender_stage_index")
             defender_success_rate = state.get("defender_success_rate")
+            defender_stage_success_rate = state.get("defender_stage_success_rate")
             defender_line_parts = []
             if defender_stage:
                 defender_line_parts.append(f"Defender stage {defender_stage}")
             if defender_stage_index is not None:
                 defender_line_parts.append(f"(idx {int(defender_stage_index)})")
-            if defender_success_rate is not None:
-                defender_line_parts.append(f"Defender success {defender_success_rate * 100:.1f}%")
+            stage_success_display = (
+                defender_stage_success_rate if defender_stage_success_rate is not None else defender_success_rate
+            )
+            if stage_success_display is not None:
+                defender_line_parts.append(f"Defender success {stage_success_display * 100:.1f}%")
+            if (
+                defender_success_rate is not None
+                and defender_stage_success_rate is not None
+                and not math.isclose(defender_success_rate, defender_stage_success_rate)
+            ):
+                defender_line_parts.append(f"(overall {defender_success_rate * 100:.1f}%)")
             if defender_line_parts:
                 summary_lines.append(" ".join(defender_line_parts))
 
