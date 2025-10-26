@@ -13,15 +13,14 @@ import torch.nn.functional as F
 # except ImportError:  # pragma: no cover - wandb optional
 #     wandb = None
 
-from f110x.policies.common import DiscreteAgentBase, sample_replay_batch
+from f110x.policies.common import ActionValueAgent
 from f110x.utils.torch_io import resolve_device, safe_load
 from f110x.policies.dqn.net import QNetwork
 
 
-class DQNAgent(DiscreteAgentBase):
+class DQNAgent(ActionValueAgent):
     def __init__(self, cfg: Dict[str, Any]):
         self.device = resolve_device([cfg.get("device")])
-        buffer_size = int(cfg.get("buffer_size", 50_000))
         super().__init__(
             cfg,
             obs_dim=int(cfg["obs_dim"]),
@@ -34,18 +33,9 @@ class DQNAgent(DiscreteAgentBase):
         self.q_net = QNetwork(self.obs_dim, self.n_actions, hidden_dims).to(self.device)
         self.target_q_net = QNetwork(self.obs_dim, self.n_actions, hidden_dims).to(self.device)
         self.target_q_net.load_state_dict(self.q_net.state_dict())
+        self.register_target_networks(self.q_net, self.target_q_net)
 
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=float(cfg.get("lr", 5e-4)))
-
-        self.gamma = float(cfg.get("gamma", 0.99))
-        self.batch_size = int(cfg.get("batch_size", 64))
-        self.target_update_interval = int(cfg.get("target_update_interval", 500))
-        self.learning_starts = max(
-            self.batch_size,
-            int(cfg.get("learning_starts", 1000)),
-        )
-        self.learning_starts = min(self.learning_starts, buffer_size)
-        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
         epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
         if epsilon_decay_rate and not 0.0 < epsilon_decay_rate < 1.0:
             raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
@@ -106,19 +96,10 @@ class DQNAgent(DiscreteAgentBase):
     # -------------------- Learning --------------------
 
     def update(self) -> Optional[Dict[str, Any]]:
-        if len(self.buffer) < self.batch_size:
-            return None
-        if len(self.buffer) < self.learning_starts:
-            return None
-        if self.step_count < self.learning_starts:
+        if not self.ready_to_update():
             return None
 
-        sample = sample_replay_batch(
-            self.buffer,
-            self.batch_size,
-            self.device,
-            self._action_helper,
-        )
+        sample = self.sample_batch()
         obs = sample.obs
         rewards = sample.rewards
         next_obs = sample.next_obs
@@ -151,13 +132,7 @@ class DQNAgent(DiscreteAgentBase):
             grad_norm = clip_grad_norm_(self.q_net.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
 
-        self._updates += 1
-        if self.target_update_interval > 0 and self._updates % self.target_update_interval == 0:
-            self.target_q_net.load_state_dict(self.q_net.state_dict())
-
-        if self._use_per and indices is not None:
-            td_error_np = td_errors.detach().cpu().numpy()
-            self.buffer.update_priorities(indices, np.abs(td_error_np))
+        self.finalize_update(indices, td_errors)
 
         td_mean = float(td_errors.detach().mean().cpu().item())
         td_abs_mean = float(td_errors.detach().abs().mean().cpu().item())

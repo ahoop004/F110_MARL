@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-from f110x.policies.common import DiscreteAgentBase, sample_replay_batch
+from f110x.policies.common import ActionValueAgent
 from f110x.policies.rainbow.r_dqn_net import RainbowQNetwork
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -25,13 +25,12 @@ NStepEntry = Tuple[
 ]
 
 
-class RainbowDQNAgent(DiscreteAgentBase):
+class RainbowDQNAgent(ActionValueAgent):
     """Rainbow-style DQN agent operating on discrete action sets."""
 
     def __init__(self, cfg: Dict[str, Any]):
         self.device = resolve_device([cfg.get("device")])
         store_actions_flag = not bool(cfg.get("store_action_indices_only", True))
-        buffer_size = int(cfg.get("buffer_size", 50_000))
         super().__init__(
             cfg,
             obs_dim=int(cfg["obs_dim"]),
@@ -77,14 +76,9 @@ class RainbowDQNAgent(DiscreteAgentBase):
         self.target_q_net.train()
 
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=float(cfg.get("lr", 5e-4)))
+        self.register_target_networks(self.q_net, self.target_q_net)
 
-        self.gamma = float(cfg.get("gamma", 0.99))
         self.n_step = max(1, int(cfg.get("n_step", 3)))
-        self.batch_size = int(cfg.get("batch_size", 64))
-        self.target_update_interval = int(cfg.get("target_update_interval", 500))
-        self.learning_starts = max(self.batch_size, int(cfg.get("learning_starts", 1000)))
-        self.learning_starts = min(self.learning_starts, buffer_size)
-        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
 
         epsilon_flag = cfg.get("epsilon_enabled")
         self.use_epsilon = bool(epsilon_flag if epsilon_flag is not None else not self.use_noisy)
@@ -177,19 +171,10 @@ class RainbowDQNAgent(DiscreteAgentBase):
     # -------------------- Learning --------------------
 
     def update(self) -> Optional[Dict[str, Any]]:
-        if len(self.buffer) < self.batch_size:
-            return None
-        if len(self.buffer) < self.learning_starts:
-            return None
-        if self.step_count < self.learning_starts:
+        if not self.ready_to_update():
             return None
 
-        sample = sample_replay_batch(
-            self.buffer,
-            self.batch_size,
-            self.device,
-            self._action_helper,
-        )
+        sample = self.sample_batch()
         obs = sample.obs
         rewards = sample.rewards
         next_obs = sample.next_obs
@@ -242,13 +227,8 @@ class RainbowDQNAgent(DiscreteAgentBase):
             grad_norm = clip_grad_norm_(self.q_net.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
 
-        self._updates += 1
-        if self.target_update_interval > 0 and self._updates % self.target_update_interval == 0:
-            self.target_q_net.load_state_dict(self.q_net.state_dict())
-
-        if self._use_per and indices is not None:
-            td_errors = (chosen_q - target_q).detach().cpu().numpy()
-            self.buffer.update_priorities(indices, np.abs(td_errors))
+        td_delta = chosen_q - target_q
+        self.finalize_update(indices, td_delta)
 
         buffer_capacity = float(getattr(self.buffer, "capacity", max(len(self.buffer), 1)))
         buffer_fraction = float(len(self.buffer) / buffer_capacity)

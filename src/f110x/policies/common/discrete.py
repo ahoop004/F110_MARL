@@ -145,6 +145,71 @@ class DiscreteAgentBase:
         self.act_dim = self._action_helper.act_dim
 
 
+class ActionValueAgent(DiscreteAgentBase):
+    """Augments :class:`DiscreteAgentBase` with Q-learning utilities."""
+
+    def __init__(
+        self,
+        cfg: Dict[str, Any],
+        *,
+        obs_dim: int,
+        store_actions: bool,
+        store_action_indices: bool,
+        per_flag_key: str = "prioritized_replay",
+        default_prioritized: bool = True,
+    ) -> None:
+        super().__init__(
+            cfg,
+            obs_dim=obs_dim,
+            store_actions=store_actions,
+            store_action_indices=store_action_indices,
+            per_flag_key=per_flag_key,
+            default_prioritized=default_prioritized,
+        )
+        self.gamma = float(cfg.get("gamma", 0.99))
+        self.batch_size = int(cfg.get("batch_size", 64))
+        base_learning = int(cfg.get("learning_starts", self.batch_size))
+        self.learning_starts = max(self.batch_size, base_learning)
+        capacity = getattr(self.buffer, "capacity", None)
+        if capacity is not None:
+            self.learning_starts = min(self.learning_starts, int(capacity))
+        self.target_update_interval = int(cfg.get("target_update_interval", 500))
+        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.0))
+        self._target_pair: Optional[Tuple[Any, Any]] = None
+
+    # ------------------------------------------------------------------ #
+    # Training helpers
+    # ------------------------------------------------------------------ #
+    def register_target_networks(self, online: Any, target: Any) -> None:
+        self._target_pair = (online, target)
+
+    def ready_to_update(self) -> bool:
+        if len(self.buffer) < self.batch_size:
+            return False
+        if len(self.buffer) < self.learning_starts:
+            return False
+        if self.step_count < self.learning_starts:
+            return False
+        return True
+
+    def sample_batch(self) -> ReplaySample:
+        return sample_replay_batch(self.buffer, self.batch_size, self.device, self._action_helper)
+
+    def finalize_update(self, indices: Optional[np.ndarray], td_errors: Any) -> None:
+        self._updates += 1
+        if self._target_pair and self.target_update_interval > 0:
+            if self._updates % self.target_update_interval == 0:
+                online, target = self._target_pair
+                target.load_state_dict(online.state_dict())
+        if not self._use_per or indices is None or td_errors is None:
+            return
+        if hasattr(td_errors, "detach"):
+            td_np = td_errors.detach().cpu().numpy()
+        else:
+            td_np = np.asarray(td_errors, dtype=np.float32)
+        self.buffer.update_priorities(indices, np.abs(td_np))
+
+
 class DiscreteActionAdapter:
     """Normalises action inputs and metadata for discrete-action agents."""
 
@@ -354,6 +419,7 @@ def sample_continuous_replay(
 
 __all__ = [
     "ContinuousReplaySample",
+    "ActionValueAgent",
     "DiscreteAgentBase",
     "DiscreteActionAdapter",
     "ReplaySample",

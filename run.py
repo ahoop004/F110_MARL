@@ -647,7 +647,7 @@ def run_once(
     spec_index: int,
     total_specs: int,
 ) -> int:
-    cmd = [sys.executable, "experiments/main.py", *forwarded_args]
+    cmd = [sys.executable, "-m", "experiments.main", *forwarded_args]
     env = os.environ.copy()
     env["F110_CONFIG"] = str(cfg_path)
     if experiment:

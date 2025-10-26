@@ -3,6 +3,7 @@
 from .discrete import (
     ContinuousReplaySample,
     DiscreteAgentBase,
+    ActionValueAgent,
     DiscreteActionAdapter,
     ReplaySample,
     build_replay_buffer,
@@ -13,6 +14,7 @@ from .discrete import (
 __all__ = [
     "ContinuousReplaySample",
     "DiscreteAgentBase",
+    "ActionValueAgent",
     "DiscreteActionAdapter",
     "ReplaySample",
     "build_replay_buffer",

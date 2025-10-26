@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal
 
@@ -138,11 +137,10 @@ class PPOAgent(BasePPOAgent):
                 end = min(start + self.minibatch_size, N)  # clamp
                 mb_idx = idx[start:end]
 
-                ob_b   = obs[mb_idx]
-                raw_b  = raw_actions[mb_idx]
-                squashed_b = torch.tanh(raw_b)
-                adv_b  = adv[mb_idx]
-                ret_b  = rets[mb_idx]
+                ob_b = obs[mb_idx]
+                raw_b = raw_actions[mb_idx]
+                adv_b = adv[mb_idx]
+                ret_b = rets[mb_idx]
                 logp_b = logp_old[mb_idx]
 
                 mu, std = self.actor(ob_b)
@@ -150,26 +148,24 @@ class PPOAgent(BasePPOAgent):
                     print("[WARN] Non-finite parameters encountered in PPO update; skipping minibatch")
                     continue
                 dist = Normal(mu, std)
-                logp = dist.log_prob(raw_b).sum(dim=-1)
-                logp -= torch.log(1 - squashed_b.pow(2) + self.squash_eps).sum(dim=-1)
-                ratio = torch.exp(logp - logp_b)
+                values_pred = self.critic(ob_b).squeeze(-1)
 
-                surr1 = ratio * adv_b
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_b
-                policy_loss = -torch.min(surr1, surr2).mean()
+                policy_loss, value_loss, entropy_term, approx_kl = self.compute_losses(
+                    dist=dist,
+                    raw_actions=raw_b,
+                    logp_old=logp_b,
+                    advantages=adv_b,
+                    returns=ret_b,
+                    values_pred=values_pred,
+                    reduction="mean",
+                )
 
-                v_pred = self.critic(ob_b).squeeze(-1)
-                value_loss = F.mse_loss(v_pred, ret_b)
-
-                entropy = dist.entropy().sum(dim=-1).mean()
-                # Encourage exploration by subtracting the entropy bonus (maximise entropy)
-                loss = policy_loss + value_loss - self.ent_coef * entropy
+                loss = policy_loss + value_loss - self.ent_coef * entropy_term
 
                 with torch.no_grad():
                     policy_losses.append(float(policy_loss.detach().cpu().item()))
                     value_losses.append(float(value_loss.detach().cpu().item()))
-                    entropies.append(float(entropy.detach().cpu().item()))
-                    approx_kl = (logp_b - logp).mean()
+                    entropies.append(float(entropy_term.detach().cpu().item()))
                     approx_kls.append(float(approx_kl.detach().cpu().item()))
 
                 self.actor_opt.zero_grad(set_to_none=True)

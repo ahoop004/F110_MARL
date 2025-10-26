@@ -184,7 +184,7 @@ scenario:
           - name: baseline
             params:
               max_speed: 8.0
-              min_speed: 2.5
+              min_speed: 2.0
               steering_gain: 1.0
               bubble_radius: 2.0
               steer_smooth: 0.0

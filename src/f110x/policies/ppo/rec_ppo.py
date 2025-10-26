@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Normal
 
@@ -346,20 +345,21 @@ class RecurrentPPOAgent(BasePPOAgent):
                     mu, log_std = self._actor_eval_sequence(obs_seq)
                     std = log_std.exp()
                     dist = Normal(mu, std)
-                    logp = dist.log_prob(raw_actions).sum(dim=-1)
-                    squashed = torch.tanh(raw_actions)
-                    logp -= torch.log(1 - squashed.pow(2) + self.squash_eps).sum(dim=-1)
-
-                    ratio = torch.exp(logp - logp_old)
-                    surr1 = ratio * adv
-                    surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv
-                    policy_loss += -torch.min(surr1, surr2).sum()
-
                     values_pred = self._critic_eval_sequence(obs_seq)
-                    value_loss += F.mse_loss(values_pred, ret, reduction="sum")
+                    policy_loss_seq, value_loss_seq, entropy_seq, kl_seq = self.compute_losses(
+                        dist=dist,
+                        raw_actions=raw_actions,
+                        logp_old=logp_old,
+                        advantages=adv,
+                        returns=ret,
+                        values_pred=values_pred,
+                        reduction="sum",
+                    )
 
-                    entropy_term += dist.entropy().sum(dim=-1).sum()
-                    kl_term += (logp_old - logp).sum()
+                    policy_loss += policy_loss_seq
+                    value_loss += value_loss_seq
+                    entropy_term += entropy_seq
+                    kl_term += kl_seq
 
                 policy_loss = policy_loss / total_steps
                 value_loss = value_loss / total_steps

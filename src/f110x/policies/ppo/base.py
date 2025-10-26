@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 @dataclass
@@ -62,6 +63,7 @@ class BasePPOAgent:
 
         self._episodes_since_update = 0
         self.device = device
+        self.squash_eps = float(cfg.get("squash_eps", 1e-6))
 
         self.reset_buffer()
 
@@ -200,6 +202,44 @@ class BasePPOAgent:
     @ent_coef.setter
     def ent_coef(self, value: float) -> None:
         self.entropy.current = float(value)
+
+    # ------------------------------------------------------------------ #
+    # Loss helpers ------------------------------------------------------
+    # ------------------------------------------------------------------ #
+    def compute_losses(
+        self,
+        *,
+        dist: torch.distributions.Normal,
+        raw_actions: torch.Tensor,
+        logp_old: torch.Tensor,
+        advantages: torch.Tensor,
+        returns: torch.Tensor,
+        values_pred: torch.Tensor,
+        reduction: str = "mean",
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if reduction not in {"mean", "sum"}:
+            raise ValueError("reduction must be 'mean' or 'sum'")
+
+        squashed = torch.tanh(raw_actions)
+        logp = dist.log_prob(raw_actions).sum(dim=-1)
+        logp -= torch.log(1 - squashed.pow(2) + self.squash_eps).sum(dim=-1)
+
+        ratio = torch.exp(logp - logp_old)
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
+        policy_loss = -torch.min(surr1, surr2)
+
+        value_loss = F.mse_loss(values_pred, returns, reduction="none")
+        entropy = dist.entropy().sum(dim=-1)
+        approx_kl = logp_old - logp
+
+        reducer = torch.mean if reduction == "mean" else torch.sum
+        return (
+            reducer(policy_loss),
+            reducer(value_loss),
+            reducer(entropy),
+            reducer(approx_kl),
+        )
 
 
 __all__ = ["BasePPOAgent"]
