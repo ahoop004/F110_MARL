@@ -55,31 +55,38 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
-          actor_lr: 0.0003
+          device: cuda
+          actor_lr: 0.00025
           critic_lr: 0.0005
           gamma: 0.995
-          tau: 0.01
+          tau: 0.005
           policy_noise: 0.2
-          noise_clip: 0.5
+          noise_clip: 0.4
           policy_delay: 2
           batch_size: 256
-          buffer_size: 200000
+          buffer_size: 262144
+          warmup_steps: 8000
+          updates_per_step: 2
+          include_truncation: true
           use_per: true
-          warmup_steps: 3000
-          exploration_noise: 0.35
+          per_alpha: 0.6
+          per_beta_start: 0.5
+          per_beta: 0.5
+          per_beta_increment: 0.000005
+          per_min_priority: 0.0001
+          per_epsilon: 0.000001
+          exploration_noise: 0.3
           exploration_noise_final: 0.05
-          # exploration_noise_decay_steps: 150000
-          exploration_noise_decay_episodes: 2000
-          initial_speed: 2.6
+          exploration_noise_decay_steps: 200000
+          exploration_noise_decay_episodes: 0
+          initial_speed: 2.8
           prevent_reverse: true
-          prevent_reverse_min_speed: 0.0
+          prevent_reverse_min_speed: 0.1
           prevent_reverse_speed_index: 1
-          per_beta: 0.6
-          per_beta_increment: 0.0005
           hidden_dims:
             - 256
             - 256
+            - 128
           save_dir: checkpoints/td3_gaplock
           checkpoint_name: td3_gaplock.pt
       reward:
