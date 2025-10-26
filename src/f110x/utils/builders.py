@@ -731,6 +731,13 @@ def _build_continuous_algo(
     algo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
     algo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
+    initial_speed_raw = algo_cfg.get("initial_speed", 0.0)
+    try:
+        initial_speed = float(initial_speed_raw)
+    except (TypeError, ValueError):
+        initial_speed = 0.0
+    algo_cfg["initial_speed"] = initial_speed
+
     controller = controller_factory(algo_cfg)
     if post_init is not None:
         post_init(controller)
@@ -748,7 +755,10 @@ def _build_continuous_algo(
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=trainable_default),
-        metadata={"config": algo_cfg},
+        metadata={
+            "config": algo_cfg,
+            "initial_speed": initial_speed,
+        },
         trainer=trainer,
         action_wrapper=action_wrapper,
     )
@@ -1184,6 +1194,31 @@ class AgentTeam:
         if return_info:
             return transformed, meta
         return transformed
+
+    def apply_initial_conditions(self, obs: Dict[str, Any]) -> Dict[str, Any]:
+        """Adjust the environment to honour any per-agent metadata initialisers."""
+        speed_map: Dict[str, float] = {}
+        for bundle in self.agents:
+            initial = bundle.metadata.get("initial_speed")
+            if initial is None:
+                config = bundle.metadata.get("config")
+                if isinstance(config, dict):
+                    initial = config.get("initial_speed")
+            if initial is None:
+                continue
+            try:
+                speed_val = float(initial)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(speed_val) and abs(speed_val) > 0.0:
+                speed_map[bundle.agent_id] = speed_val
+        if not speed_map:
+            return obs
+
+        updated = self.env.apply_initial_speeds(speed_map)
+        if updated is None:
+            return obs
+        return updated
 
     def reset_actions(self) -> None:
         for bundle in self.agents:

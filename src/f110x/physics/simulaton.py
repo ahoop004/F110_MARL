@@ -282,6 +282,39 @@ class Simulator(object):
         }
         return obs_dict
 
+    def set_agent_speed(self, agent_idx: int, speed: float) -> None:
+        """Override the longitudinal speed of a specific agent."""
+        if agent_idx < 0 or agent_idx >= self.num_agents:
+            return
+        try:
+            value = float(speed)
+        except (TypeError, ValueError):
+            value = 0.0
+
+        agent = self.agents[agent_idx]
+        if hasattr(agent, "set_longitudinal_speed"):
+            agent.set_longitudinal_speed(value)
+        else:
+            agent.state[3] = value
+
+        self._linear_vels_x[agent_idx] = np.float32(agent.state[3])
+        lateral = float(agent.state[3] * np.sin(agent.state[6]))
+        self._linear_vels_y[agent_idx] = np.float32(lateral)
+        self._ang_vels_z[agent_idx] = np.float32(agent.state[5])
+
+    def current_observation(self) -> dict:
+        """Return a copy of the latest joint observation buffer."""
+        return {
+            "scans": self._scan_buffer.copy(),
+            "poses_x": self.agent_poses[:, 0].copy(),
+            "poses_y": self.agent_poses[:, 1].copy(),
+            "poses_theta": self.agent_poses[:, 2].copy(),
+            "linear_vels_x": self._linear_vels_x.copy(),
+            "linear_vels_y": self._linear_vels_y.copy(),
+            "ang_vels_z": self._ang_vels_z.copy(),
+            "collisions": self.collisions.copy(),
+        }
+
 
     def reset(self, poses: np.ndarray) -> dict:
         """

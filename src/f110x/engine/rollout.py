@@ -253,6 +253,7 @@ def run_episode(
     """Execute a single environment episode and gather rollout statistics."""
 
     obs, infos = reset_fn()
+    obs = team.apply_initial_conditions(obs)
     team.reset_actions()
 
     agent_order = list(agent_ids) if agent_ids is not None else list(env.possible_agents)

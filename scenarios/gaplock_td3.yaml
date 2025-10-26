@@ -68,12 +68,15 @@ scenario:
           use_per: true
           warmup_steps: 8000
           exploration_noise: 0.35
-          exploration_noise_final: 0.1
-          # exploration_noise_decay_steps: 50000
-          exploration_noise_decay_episodes: 14000
+          exploration_noise_final: 0.05
+          # exploration_noise_decay_steps: 150000
+          exploration_noise_decay_episodes: 4000
+          initial_speed: 2.6
           prevent_reverse: true
-          prevent_reverse_min_speed: 0.3
+          prevent_reverse_min_speed: 0.0
           prevent_reverse_speed_index: 1
+          per_beta: 0.6
+          per_beta_increment: 0.0005
           hidden_dims:
             - 256
             - 256

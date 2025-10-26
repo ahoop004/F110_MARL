@@ -257,6 +257,16 @@ class RaceCar(object):
         # reset scan random generator
         self.scan_rng = np.random.default_rng(seed=self.seed)
 
+    def set_longitudinal_speed(self, speed: float) -> None:
+        """Directly assign the vehicle's forward speed without touching pose."""
+        try:
+            value = float(speed)
+        except (TypeError, ValueError):
+            value = 0.0
+        self.state[3] = value
+        # Synchronise auxiliary attributes if the model exposes them
+        setattr(self, "v_long", value)
+
     def ray_cast_agents(self, all_verts: np.ndarray, agent_index: int):
         """Modify scan by accounting for other agents' hulls.
 

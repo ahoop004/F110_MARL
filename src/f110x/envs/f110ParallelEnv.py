@@ -1161,6 +1161,31 @@ class F110ParallelEnv(ParallelEnv):
             if aid in obs:
                 obs[aid]["state"] = central_state
 
+    def apply_initial_speeds(self, speed_map: Mapping[str, float]) -> Optional[Dict[str, Dict[str, np.ndarray]]]:
+        """Adjust simulator state to honour per-agent initial speed requests."""
+        if not speed_map:
+            return None
+        updated = False
+        for agent_id, raw_value in speed_map.items():
+            idx = self._agent_id_to_index.get(agent_id)
+            if idx is None:
+                continue
+            try:
+                speed = float(raw_value)
+            except (TypeError, ValueError):
+                speed = 0.0
+            self.sim.set_agent_speed(idx, speed)
+            updated = True
+        if not updated:
+            return None
+
+        joint = self.sim.current_observation()
+        self._update_state(joint)
+        obs = self._split_obs(joint)
+        self._attach_central_state(obs, joint)
+        self._refresh_render_observations(obs)
+        return obs
+
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
         out: Dict[str, Dict[str, np.ndarray]] = {}
