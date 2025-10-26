@@ -34,6 +34,10 @@ GAPLOCK_PARAM_KEYS = (
     "pressure_min_speed",
     "pressure_heading_tolerance",
     "ignored_agents",
+    "pressure_bonus",
+    "pressure_bonus_interval",
+    "proximity_penalty_distance",
+    "proximity_penalty_value",
 )
 
 
@@ -66,6 +70,10 @@ class GaplockRewardStrategy(RewardStrategy):
         pressure_min_speed: float = 0.1,
         pressure_heading_tolerance: float = math.pi,
         ignored_agents: Optional[Iterable[Any]] = None,
+        pressure_bonus: float = 0.0,
+        pressure_bonus_interval: int = 1,
+        proximity_penalty_distance: float = 0.0,
+        proximity_penalty_value: float = 0.0,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -100,6 +108,11 @@ class GaplockRewardStrategy(RewardStrategy):
         self._ignored_agents: set[str] = {
             str(agent_id) for agent_id in (ignored_agents or []) if agent_id is not None and str(agent_id)
         }
+        self.pressure_bonus = max(float(pressure_bonus), 0.0)
+        self.pressure_bonus_interval = max(int(pressure_bonus_interval), 1)
+        self.proximity_penalty_distance = max(float(proximity_penalty_distance), 0.0)
+        self.proximity_penalty_value = float(proximity_penalty_value)
+        self._pressure_bonus_counters: Dict[str, int] = {}
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -117,6 +130,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self._idle_penalty_applied.clear()
         self._idle_truncation_applied.clear()
         self._pressure_log.clear()
+        self._pressure_bonus_counters.clear()
 
     def _select_target_obs(
         self,
@@ -258,6 +272,24 @@ class GaplockRewardStrategy(RewardStrategy):
                     step.step_index,
                     step.timestep,
                 )
+
+            if pressure_recent and self.pressure_bonus > 0.0:
+                counter = self._pressure_bonus_counters.get(step.agent_id, 0) + 1
+                if counter >= self.pressure_bonus_interval:
+                    acc.add("pressure_bonus", self.pressure_bonus)
+                    counter = 0
+                self._pressure_bonus_counters[step.agent_id] = counter
+            else:
+                self._pressure_bonus_counters.pop(step.agent_id, None)
+
+            if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
+                ego_pose = self._extract_pose(ego_obs)
+                target_pose = self._extract_pose(target_obs)
+                if ego_pose is not None and target_pose is not None:
+                    distance = float(np.linalg.norm(target_pose[:2] - ego_pose[:2]))
+                    if np.isfinite(distance) and distance > self.proximity_penalty_distance:
+                        acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
+
             target_crashed = bool(target_obs.get("collision", False))
             if target_crashed and not ego_crashed:
                 if overlay_target_id and pressure_recent:
