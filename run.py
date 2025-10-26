@@ -400,6 +400,71 @@ def _merge_specs(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, An
     return merged
 
 
+def _inject_wandb_cli_args(
+    forwarded_args: Sequence[str],
+    cfg_path: Path,
+    experiment: Optional[str],
+) -> List[str]:
+    """Augment forwarded CLI args with W&B flags inferred from the config."""
+
+    try:
+        cfg, _, _ = load_config(
+            cfg_path,
+            default_path=cfg_path,
+            experiment=experiment,
+        )
+    except Exception:
+        return list(forwarded_args)
+
+    wandb_cfg = getattr(cfg.main, "wandb", None)
+    if not isinstance(wandb_cfg, Mapping):
+        return list(forwarded_args)
+
+    enabled_raw = wandb_cfg.get("enabled")
+    if isinstance(enabled_raw, str):
+        enabled = enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        enabled = bool(enabled_raw)
+
+    if not enabled:
+        return list(forwarded_args)
+
+    args = list(forwarded_args)
+
+    def _has_option(option: str) -> bool:
+        prefix = f"{option}="
+        return any(token == option or token.startswith(prefix) for token in args)
+
+    if not _has_option("--wandb"):
+        args.append("--wandb")
+
+    def _append_option(option: str, value: Optional[Any]) -> None:
+        if value is None or _has_option(option):
+            return
+        text = str(value).strip()
+        if text:
+            args.extend([option, text])
+
+    _append_option("--wandb-project", wandb_cfg.get("project"))
+    _append_option("--wandb-entity", wandb_cfg.get("entity"))
+    _append_option("--wandb-group", wandb_cfg.get("group"))
+    _append_option("--wandb-name", wandb_cfg.get("name"))
+
+    tags_value = wandb_cfg.get("tags")
+    if not _has_option("--wandb-tags"):
+        if isinstance(tags_value, (list, tuple, set)):
+            tags_iter = [str(tag).strip() for tag in tags_value if str(tag).strip()]
+        elif isinstance(tags_value, str):
+            tags_iter = [tags_value.strip()] if tags_value.strip() else []
+        else:
+            tags_iter = []
+        if tags_iter:
+            args.append("--wandb-tags")
+            args.extend(tags_iter)
+
+    return args
+
+
 def _resolve_bool(value: Any, name: str, default: bool, parser: argparse.ArgumentParser) -> bool:
     if value is None:
         return default
@@ -515,6 +580,7 @@ def _prepare_spec_runs(
     forwarded_args = ["--config", str(cfg_path)] + forwarded_args
     if experiment_name:
         forwarded_args = ["--experiment", experiment_name] + forwarded_args
+    forwarded_args = _inject_wandb_cli_args(forwarded_args, cfg_path, experiment_name)
 
     repeat_value = spec.get("repeat")
     repeat = _resolve_optional_int(repeat_value, "repeat", parser) or 1

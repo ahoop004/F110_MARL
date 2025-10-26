@@ -401,6 +401,8 @@ def run_episode(
 
         if idle_tracker.observe(step_speed_values, step_speed_present):
             idle_triggered = True
+            if "idle" not in causes:
+                causes.append("idle")
             for agent_id in agent_order:
                 truncs[agent_id] = True
                 agent_info = infos.setdefault(agent_id, {})
@@ -586,9 +588,10 @@ def run_episode(
             )
 
         if idle_triggered:
+            if "idle" not in causes:
+                causes.append("idle")
             for agent_id in env.possible_agents:
                 done_map[agent_id] = True
-            causes.append("idle")
             break
 
         if collision_flags.any():
