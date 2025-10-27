@@ -298,7 +298,7 @@ scenario:
               secondary_warning_border: 0.35
               secondary_hard_border: 0.5
               secondary_safe_distance: 1.0
-              secondary_turn_gain: 1.5
+              secondary_turn_gain: 2.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
               secondary_target_agent: car_0

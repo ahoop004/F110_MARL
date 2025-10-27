@@ -79,7 +79,6 @@ class FollowTheGapPolicy:
         self.secondary_target_agent = (str(secondary_target_agent).strip() if secondary_target_agent else None)
         self.secondary_lane_center = None if secondary_lane_center is None else float(secondary_lane_center)
         self.agent_slot: Optional[int] = None
-        self._secondary_lane_center: Optional[float] = None
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -297,26 +296,18 @@ class FollowTheGapPolicy:
         speed = float(self.max_speed)
         steering = 0.0
 
-        lane_center = self.secondary_lane_center
-        if lane_center is None:
-            if np.isfinite(y1):
-                # Mirror the primary vehicle's lateral position so the follower
-                # hugs the same corridor unless an explicit centre is supplied.
-                self._secondary_lane_center = float(y1)
-            lane_center = self._secondary_lane_center if self._secondary_lane_center is not None else 0.0
+        lane_center = self.secondary_lane_center if self.secondary_lane_center is not None else 0.0
+        y_offset = y2 - lane_center
 
-        # Lateral offset relative to the desired lane centre (defaults to the
-        # primary's lateral position when unspecified).
-        lane_offset = y2 - lane_center
-
-        if abs(y2) > self.secondary_hard_border:
-            speed = self.max_speed * max(0.1, self.secondary_border_speed_scale * 0.5)
-            steering = -self.secondary_max_turn if y2 > 0.0 else self.secondary_max_turn
-        elif abs(y2) > self.secondary_warning_border:
+        if abs(y_offset) > self.secondary_hard_border:
+            speed = 0.0
+            steering = 0.0
+        elif abs(y_offset) > self.secondary_warning_border:
             speed = self.max_speed * self.secondary_border_speed_scale
-            turn_direction = -1.0 if y2 > 0.0 else 1.0
+            turn_direction = -1.0 if y_offset > 0.0 else 1.0
             steering = turn_direction * self.secondary_max_turn
         else:
+            speed = self.max_speed
             distance = float(math.hypot(x1 - x2, y1 - y2))
             if distance < self.secondary_safe_distance:
                 if y1 > 0.0:
@@ -326,7 +317,7 @@ class FollowTheGapPolicy:
                 angle = float(np.clip(angle, -self.secondary_max_turn, self.secondary_max_turn))
                 steering = angle * self.secondary_turn_gain
             else:
-                steering = np.clip(lane_offset * self.secondary_turn_gain, -self.secondary_max_turn, self.secondary_max_turn)
+                steering = 0.0
 
         speed = max(0.0, speed)
         action = np.array([steering, speed], dtype=np.float32)
