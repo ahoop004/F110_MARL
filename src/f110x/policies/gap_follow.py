@@ -303,18 +303,18 @@ class FollowTheGapPolicy:
                 # Mirror the primary vehicle's lateral position so the follower
                 # hugs the same corridor unless an explicit centre is supplied.
                 self._secondary_lane_center = float(y1)
-            lane_center = self._secondary_lane_center if self._secondary_lane_center is not None else y2
+            lane_center = self._secondary_lane_center if self._secondary_lane_center is not None else 0.0
 
         # Lateral offset relative to the desired lane centre (defaults to the
         # primary's lateral position when unspecified).
-        y_offset = y2 - lane_center
+        lane_offset = y2 - lane_center
 
-        if abs(y_offset) > self.secondary_hard_border:
+        if abs(y2) > self.secondary_hard_border:
             speed = self.max_speed * max(0.1, self.secondary_border_speed_scale * 0.5)
-            steering = -self.secondary_max_turn if y_offset > 0.0 else self.secondary_max_turn
-        elif abs(y_offset) > self.secondary_warning_border:
+            steering = -self.secondary_max_turn if y2 > 0.0 else self.secondary_max_turn
+        elif abs(y2) > self.secondary_warning_border:
             speed = self.max_speed * self.secondary_border_speed_scale
-            turn_direction = -1.0 if y_offset > 0.0 else 1.0
+            turn_direction = -1.0 if y2 > 0.0 else 1.0
             steering = turn_direction * self.secondary_max_turn
         else:
             distance = float(math.hypot(x1 - x2, y1 - y2))
@@ -326,7 +326,7 @@ class FollowTheGapPolicy:
                 angle = float(np.clip(angle, -self.secondary_max_turn, self.secondary_max_turn))
                 steering = angle * self.secondary_turn_gain
             else:
-                steering = 0.0
+                steering = np.clip(lane_offset * self.secondary_turn_gain, -self.secondary_max_turn, self.secondary_max_turn)
 
         speed = max(0.0, speed)
         action = np.array([steering, speed], dtype=np.float32)

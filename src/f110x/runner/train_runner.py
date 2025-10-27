@@ -661,6 +661,25 @@ class TrainRunner:
                 success = defender_crashed
             elif attacker_crashed is not None:
                 success = not attacker_crashed
+
+            assisted_success: Optional[bool] = None
+            if success and attacker_id is not None:
+                attacker_components = reward_breakdown.get(attacker_id, {})
+                success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
+                assisted_success = success_reward_val > 0.0
+                if not assisted_success:
+                    logger.log_event(
+                        "debug",
+                        "Ignoring unassisted defender crash",
+                        extra={
+                            "episode": episode_idx + 1,
+                            "steps": rollout.steps,
+                            "spawn_option": rollout.spawn_option,
+                            "spawn_points": rollout.spawn_points,
+                        },
+                    )
+                    success = False
+
             if success:
                 total_successes += 1
                 logger.info(
@@ -683,6 +702,7 @@ class TrainRunner:
                 "returns": returns,
                 "reward_breakdown": reward_breakdown,
                 "success": success,
+                "assisted_success": assisted_success,
                 "collisions_total": collisions_total,
                 "idle_truncated": rollout.idle_triggered,
             }
@@ -753,6 +773,8 @@ class TrainRunner:
             if success is not None:
                 metrics["train/success"] = bool(success)
                 episode_record["success"] = bool(success)
+            if assisted_success is not None:
+                metrics["train/assisted_success"] = bool(assisted_success)
             if success_rate is not None:
                 metrics["train/success_rate"] = success_rate
             metrics["train/success_total"] = float(total_successes)

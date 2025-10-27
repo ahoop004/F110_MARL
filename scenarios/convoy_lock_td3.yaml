@@ -9,30 +9,30 @@ scenario:
     lidar_beams: 54
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 1.0
+      v_max: 0.8
       v_min: 0.001
     spawn_points:
-      - spawn_0
       - spawn_1
+      - spawn_2
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_2
+          - spawn_1
+          - spawn_3
       - id: offset_lane_b
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_3
+          - spawn_1
+          - spawn_5
       - id: extended_gap
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_4
+          - spawn_1
+          - spawn_6
     spawn_curriculum:
       min_episode: 600
       activation_samples: 150
@@ -97,7 +97,7 @@ scenario:
           exploration_noise_final: 0.12
           exploration_noise_decay_steps: 400000
           exploration_noise_decay_episodes: 0
-          initial_speed: 0.4
+          initial_speed: 0.2
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -160,9 +160,9 @@ scenario:
               back_left: -0.015
               left: 0.015
               front_left: 0.025
-            preferred_radius: 0.7
-            inner_tolerance: 0.1
-            outer_tolerance: 0.2
+            preferred_radius: 0.9
+            inner_tolerance: 0.3
+            outer_tolerance: 0.1
             ignored_agents:
               - car_1
       wrappers:
@@ -215,7 +215,7 @@ scenario:
         name: follow_gap
         params:
           mode: secondary
-          max_speed: 0.8
+          max_speed: 1.8
           min_speed: 0.0
           steering_gain: 1.0
           bubble_radius: 2.0

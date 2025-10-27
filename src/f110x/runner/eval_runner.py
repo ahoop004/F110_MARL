@@ -224,6 +224,9 @@ class EvalRunner:
             )
 
             returns = dict(rollout.returns)
+            reward_breakdown = {
+                aid: dict(components) for aid, components in rollout.reward_breakdown.items()
+            }
             collision_total = int(sum(rollout.collisions.values()))
             collision_steps = {
                 aid: (step if step >= 0 else None)
@@ -256,6 +259,14 @@ class EvalRunner:
             elif attacker_crashed is not None:
                 success = not attacker_crashed
 
+            assisted_success: Optional[bool] = None
+            if success and attacker_id is not None:
+                attacker_components = reward_breakdown.get(attacker_id, {})
+                success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
+                assisted_success = success_reward_val > 0.0
+                if not assisted_success:
+                    success = False
+
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
                 "steps": rollout.steps,
@@ -265,6 +276,8 @@ class EvalRunner:
             }
             if success is not None:
                 record["success"] = success
+            record["assisted_success"] = assisted_success
+            record["reward_breakdown"] = reward_breakdown
             if rollout.spawn_points:
                 record["spawn_points"] = dict(rollout.spawn_points)
             if rollout.spawn_option is not None:
@@ -332,6 +345,8 @@ class EvalRunner:
                 metrics["eval/primary_agent"] = primary_id
             if success is not None:
                 metrics["eval/success"] = bool(success)
+            if assisted_success is not None:
+                metrics["eval/assisted_success"] = bool(assisted_success)
             if success_rate is not None:
                 metrics["eval/success_rate"] = success_rate
             if defender_crashed is not None:
@@ -353,7 +368,7 @@ class EvalRunner:
                     metrics[f"eval/agent/{aid}/collision_step"] = float(step_val)
             for aid, count in lap_counts.items():
                 metrics[f"eval/agent/{aid}/lap_count"] = float(count)
-            for aid, breakdown in rollout.reward_breakdown.items():
+            for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
                     metrics[f"eval/reward/{aid}/{name}"] = float(value)
 
