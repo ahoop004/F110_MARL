@@ -56,6 +56,9 @@ GAPLOCK_PARAM_KEYS = (
     "commit_bonus",
     "escape_distance",
     "escape_penalty",
+    "success_border_radius",
+    "success_border_lane_center",
+    "success_border_requires_pressure",
 )
 
 
@@ -110,6 +113,9 @@ class GaplockRewardStrategy(RewardStrategy):
         commit_bonus: float = 0.0,
         escape_distance: float = 0.0,
         escape_penalty: float = 0.0,
+        success_border_radius: float = 0.0,
+        success_border_lane_center: float = 0.0,
+        success_border_requires_pressure: bool = False,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -173,6 +179,9 @@ class GaplockRewardStrategy(RewardStrategy):
         self._pressure_streak: Dict[str, int] = {}
         self._commit_active: Dict[str, bool] = {}
         self._commit_awarded: set[str] = set()
+        self.success_border_radius = max(float(success_border_radius), 0.0)
+        self.success_border_lane_center = float(success_border_lane_center)
+        self.success_border_requires_pressure = bool(success_border_requires_pressure)
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -456,7 +465,19 @@ class GaplockRewardStrategy(RewardStrategy):
                 self._commit_active.pop(step.agent_id, None)
                 self._commit_awarded.discard(step.agent_id)
 
-            target_crashed = bool(target_obs.get("collision", False))
+            border_hit = False
+            target_crashed = False
+            if target_obs is not None:
+                target_crashed = bool(target_obs.get("collision", False))
+                if self.success_border_radius > 0.0:
+                    pose_raw = target_obs.get("pose")
+                    if pose_raw is not None:
+                        pose_arr = np.asarray(pose_raw, dtype=np.float32).flatten()
+                        if pose_arr.size >= 2:
+                            lateral_pos = float(pose_arr[1])
+                            if abs(lateral_pos - self.success_border_lane_center) >= self.success_border_radius:
+                                border_hit = True
+
             if target_crashed and not ego_crashed:
                 if overlay_target_id and pressure_recent:
                     if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
@@ -464,6 +485,17 @@ class GaplockRewardStrategy(RewardStrategy):
                         self._clear_pressure(step.agent_id, overlay_target_id)
                 self._commit_active.pop(step.agent_id, None)
                 self._commit_awarded.discard(step.agent_id)
+            elif border_hit and not ego_crashed:
+                if overlay_target_id and (
+                    not self.success_border_requires_pressure or pressure_recent
+                ):
+                    if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
+                        acc.add("success_reward", self.target_crash_reward)
+                        self._clear_pressure(step.agent_id, overlay_target_id)
+                if step.info is not None:
+                    step.info.setdefault("border_success", True)
+                step.events.setdefault("border_success", True)
+                step.events.setdefault("terminated", True)
 
         truncated = bool(step.events.get("truncated")) if step.events else False
         if not truncated and isinstance(step.info, dict):

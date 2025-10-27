@@ -670,7 +670,7 @@ class TrainRunner:
                 if not assisted_success:
                     logger.log_event(
                         "debug",
-                        "Ignoring unassisted defender crash",
+                        "Defender crash without explicit success reward",
                         extra={
                             "episode": episode_idx + 1,
                             "steps": rollout.steps,
@@ -678,7 +678,13 @@ class TrainRunner:
                             "spawn_points": rollout.spawn_points,
                         },
                     )
-                    success = False
+
+            if not success and attacker_id is not None:
+                attacker_components = reward_breakdown.get(attacker_id, {})
+                success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
+                if success_reward_val > 0.0:
+                    success = True
+                    assisted_success = True
 
             if success:
                 total_successes += 1

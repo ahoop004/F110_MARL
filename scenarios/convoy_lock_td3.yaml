@@ -9,8 +9,8 @@ scenario:
     lidar_beams: 54
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 0.8
-      v_min: 0.001
+      v_max: 1.0
+      v_min: -1.0
     spawn_points:
       - spawn_0
       - spawn_1
@@ -19,20 +19,20 @@ scenario:
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_2
+          - spawn_1
+          - spawn_3
       - id: offset_lane_b
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_3
+          - spawn_2
+          - spawn_5
       - id: extended_gap
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_0
-          - spawn_4
+          - spawn_2
+          - spawn_7
     spawn_curriculum:
       min_episode: 600
       activation_samples: 150
@@ -97,7 +97,7 @@ scenario:
           exploration_noise_final: 0.12
           exploration_noise_decay_steps: 400000
           exploration_noise_decay_episodes: 0
-          initial_speed: 0.2
+          initial_speed: 0.4
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -109,7 +109,7 @@ scenario:
           checkpoint_name: td3_convoy_lock.pt
       reward:
         task: gaplock
-        idle_speed_threshold: 0.02
+        idle_speed_threshold: 0.002
         idle_patience_steps: 90
         features:
           - gaplock_offense
@@ -121,9 +121,9 @@ scenario:
           reward_decay: null
           reward_smoothing: null
           step_reward: 0.015
-          idle_speed_threshold: 0.02
+          idle_speed_threshold: 0.002
           idle_penalty: -0.08
-          idle_penalty_steps: 8
+          idle_penalty_steps: 18
           idle_truncation_penalty: -35.0
           pressure_distance: 1.1
           pressure_timeout: 0.8
@@ -150,6 +150,9 @@ scenario:
           commit_bonus: 3.5
           escape_distance: 3.2
           escape_penalty: 3.5
+          success_border_radius: 0.5
+          success_border_lane_center: -0.426583
+          success_border_requires_pressure: true
           relative_reward:
             weights:
               front: 0.03
@@ -215,8 +218,8 @@ scenario:
         name: follow_gap
         params:
           mode: secondary
-          max_speed: 1.8
-          min_speed: 0.0
+          max_speed: 2.8
+          min_speed: 1.6
           steering_gain: 1.0
           bubble_radius: 2.0
           steer_smooth: 0.0
@@ -226,6 +229,7 @@ scenario:
           secondary_turn_gain: 1.5
           secondary_border_speed_scale: 0.5
           secondary_max_turn: 1.0
+          secondary_lane_center: -0.426583
           secondary_target_agent: car_0
       defender_curriculum:
         min_episode: 3000
@@ -239,8 +243,8 @@ scenario:
           - name: baseline
             params:
               mode: secondary
-              max_speed: 0.8
-              min_speed: 0.0
+              max_speed: 1.8
+              min_speed: 0.6
               steering_gain: 1.0
               bubble_radius: 2.0
               steer_smooth: 0.0
@@ -250,6 +254,7 @@ scenario:
               secondary_turn_gain: 1.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
+              secondary_lane_center: -0.426583
               secondary_target_agent: car_0
           - name: pressure
             enable_rate: 0.6
@@ -267,6 +272,7 @@ scenario:
               secondary_turn_gain: 1.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
+              secondary_lane_center: -0.426583
               secondary_target_agent: car_0
           - name: aggressive
             enable_rate: 0.75
@@ -284,6 +290,7 @@ scenario:
               secondary_turn_gain: 1.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
+              secondary_lane_center: -0.426583
               secondary_target_agent: car_0
           - name: lockdown
             enable_rate: 0.85
@@ -301,6 +308,7 @@ scenario:
               secondary_turn_gain: 2.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
+              secondary_lane_center: -0.426583
               secondary_target_agent: car_0
       wrappers:
         - factory: obs

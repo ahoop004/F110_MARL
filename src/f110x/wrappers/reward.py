@@ -70,6 +70,8 @@ class RewardWrapper:
         effective_step = step_index if step_index is not None else self._step_counter
         self._step_counter = effective_step + 1
 
+        event_payload = events if isinstance(events, dict) else {}
+
         step = RewardStep(
             agent_id=agent_id,
             obs=agent_obs,
@@ -81,7 +83,7 @@ class RewardWrapper:
             step_index=effective_step,
             current_time=current_time,
             timestep=timestep,
-            events=dict(events or {}),
+            events=event_payload,
         )
 
         total_reward, components = self.strategy.compute(step)

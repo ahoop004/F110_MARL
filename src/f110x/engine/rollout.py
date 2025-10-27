@@ -436,6 +436,25 @@ def run_episode(
                 if components:
                     step_component_snapshots[agent_id] = dict(components)
 
+        for agent_id, events in step_events_map.items():
+            if not events:
+                continue
+            if events.get("border_success"):
+                if not terms.get(agent_id, False):
+                    terms[agent_id] = True
+                    infos.setdefault(agent_id, {})["terminated"] = True
+                if "border_success" not in causes:
+                    causes.append("border_success")
+                events["terminated"] = True
+                if terminate_any_done:
+                    for other_id in agent_order:
+                        if other_id == agent_id:
+                            continue
+                        if not terms.get(other_id, False) and not truncs.get(other_id, False):
+                            truncs[other_id] = True
+                            infos.setdefault(other_id, {})["truncated"] = True
+                            step_events_map.setdefault(other_id, {})["truncated"] = True
+
         if reward_share_enabled and reward_share_agents:
             active_mask = np.array(
                 [

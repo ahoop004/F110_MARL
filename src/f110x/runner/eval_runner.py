@@ -264,8 +264,13 @@ class EvalRunner:
                 attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
                 assisted_success = success_reward_val > 0.0
-                if not assisted_success:
-                    success = False
+
+            if not success and attacker_id is not None:
+                attacker_components = reward_breakdown.get(attacker_id, {})
+                success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
+                if success_reward_val > 0.0:
+                    success = True
+                    assisted_success = True
 
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
