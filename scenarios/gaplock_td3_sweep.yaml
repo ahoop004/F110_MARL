@@ -1,0 +1,74 @@
+name: td3_gaplock_sweep
+description: >
+  WandB sweep exploring TD3 hyperparameters for the gaplock scenario. Each run
+  reuses scenarios/gaplock_td3.yaml as the base configuration and overrides the
+  parameters defined below via the sweep-controlled wandb.config dictionary.
+method: random
+metric:
+  name: train/return_mean
+  goal: maximize
+project: marl-f110
+entity: ahoop004-old-dominion-university
+run_cap: 36
+command:
+  - ${env}
+  - python
+  - -m
+  - experiments.main
+  - --config
+  - scenarios/gaplock_td3.yaml
+  - --mode
+  - train_eval
+  - --wandb
+parameters:
+  env:
+    parameters:
+      seed:
+        values: [21, 42, 1337]
+  main:
+    parameters:
+      train_episodes:
+        values: [12000, 15000]
+      eval_interval:
+        values: [10, 20]
+  agents:
+    parameters:
+      car_0:
+        parameters:
+          algorithm:
+            parameters:
+              params:
+                parameters:
+                  actor_lr:
+                    values: [0.0002, 0.00025, 0.0003]
+                  critic_lr:
+                    values: [0.0004, 0.00045, 0.0005]
+                  tau:
+                    values: [0.003, 0.004, 0.005]
+                  batch_size:
+                    values: [128, 192, 256]
+                  hidden_dims:
+                    values:
+                      - [256, 256, 128]
+                      # - [256, 256, 256]
+                  exploration_noise:
+                    values: [0.24, 0.28, 0.32]
+                  exploration_noise_final:
+                    values: [0.10, 0.12]
+                  exploration_noise_decay_episodes:
+                    values: [0, 10000]
+                  per_beta_start:
+                    values: [0.4, 0.5, 0.6]
+                  per_beta:
+                    values: [0.4, 0.5]
+                  warmup_steps:
+                    values: [100000, 150000, 200000]
+                  buffer_size:
+                    values: [150000, 200000]
+                  prevent_reverse_speed_index:
+                    values: [1, 2]
+early_terminate:
+  type: hyperband
+  max_iter: 15000
+  s: 2
+  eta: 3
