@@ -79,6 +79,7 @@ class FollowTheGapPolicy:
         self.secondary_target_agent = (str(secondary_target_agent).strip() if secondary_target_agent else None)
         self.secondary_lane_center = None if secondary_lane_center is None else float(secondary_lane_center)
         self.agent_slot: Optional[int] = None
+        self._secondary_lane_center: Optional[float] = None
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -296,7 +297,11 @@ class FollowTheGapPolicy:
         speed = float(self.max_speed)
         steering = 0.0
 
-        lane_center = self.secondary_lane_center if self.secondary_lane_center is not None else 0.0
+        lane_center = self.secondary_lane_center
+        if lane_center is None:
+            if self._secondary_lane_center is None and np.isfinite(y2):
+                self._secondary_lane_center = float(y2)
+            lane_center = self._secondary_lane_center if self._secondary_lane_center is not None else 0.0
         y_offset = y2 - lane_center
 
         if abs(y_offset) > self.secondary_hard_border:

@@ -12,27 +12,27 @@ scenario:
       v_max: 0.8
       v_min: 0.001
     spawn_points:
+      - spawn_0
       - spawn_1
-      - spawn_2
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_1
-          - spawn_3
+          - spawn_0
+          - spawn_2
       - id: offset_lane_b
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_1
-          - spawn_5
+          - spawn_0
+          - spawn_3
       - id: extended_gap
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_1
-          - spawn_6
+          - spawn_0
+          - spawn_4
     spawn_curriculum:
       min_episode: 600
       activation_samples: 150
