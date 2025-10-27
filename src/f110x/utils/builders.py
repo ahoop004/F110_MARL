@@ -998,6 +998,37 @@ def _build_algo_follow_gap(
     controller = FollowTheGapPolicy.from_config(assignment.spec.params)
     if ctx.map_data.centerline is not None:
         setattr(controller, "centerline", ctx.map_data.centerline)
+
+    # Convey roster context so convoy-style controllers can locate peers.
+    if hasattr(controller, "agent_slot"):
+        controller.agent_slot = assignment.slot
+
+    target_slot = getattr(controller, "secondary_target_slot", None)
+    if isinstance(target_slot, bool):  # guard against bool-as-int
+        target_slot = int(target_slot)
+    target_agent_id = getattr(controller, "secondary_target_agent", None)
+    resolved_target_slot = None
+    if target_agent_id:
+        for assn in roster.assignments:
+            if assn.agent_id == target_agent_id:
+                resolved_target_slot = assn.slot
+                break
+    if resolved_target_slot is not None:
+        controller.secondary_target_slot = resolved_target_slot
+    else:
+        try:
+            target_slot_int = int(target_slot) if target_slot is not None else None
+        except (TypeError, ValueError):
+            target_slot_int = None
+        if target_slot_int is None or target_slot_int == assignment.slot or target_slot_int < 0:
+            other_slots = [assn.slot for assn in roster.assignments if assn.slot != assignment.slot]
+            if other_slots:
+                controller.secondary_target_slot = other_slots[0]
+            else:
+                controller.secondary_target_slot = assignment.slot
+        else:
+            controller.secondary_target_slot = target_slot_int
+
     metadata: Dict[str, Any] = {"centerline": ctx.map_data.centerline}
     if assignment.spec.policy_curriculum:
         metadata["policy_curriculum"] = dict(assignment.spec.policy_curriculum)
