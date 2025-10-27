@@ -105,8 +105,8 @@ scenario:
             - 256
             - 256
             - 128
-          save_dir: checkpoints/td3_gaplock_v2
-          checkpoint_name: td3_gaplock.pt
+          save_dir: checkpoints/td3_convoy_lock_v2
+          checkpoint_name: td3_convoy_lock.pt
       reward:
         task: gaplock
         idle_speed_threshold: 0.02
