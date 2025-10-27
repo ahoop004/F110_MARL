@@ -1,15 +1,16 @@
-name: td3_gaplock_sweep
+name: td3_gaplock_core_params
 description: >
-  WandB sweep exploring TD3 hyperparameters for the gaplock scenario. Each run
-  reuses scenarios/gaplock_td3.yaml as the base configuration and overrides the
-  parameters defined below via the sweep-controlled wandb.config dictionary.
+  WandB sweep focusing on the TD3 hyperparameters that most strongly affect
+  learning dynamics in the gaplock scenario. Each run launches
+  experiments.main with scenarios/gaplock_td3.yaml as the base config and the
+  sweep-provided overrides injected via wandb.config.
 method: random
 metric:
   name: train/return_mean
   goal: maximize
 project: marl-f110
 entity: ahoop004-old-dominion-university
-run_cap: 36
+run_cap: 48
 command:
   - ${env}
   - python
@@ -24,13 +25,7 @@ parameters:
   env:
     parameters:
       seed:
-        values: [21, 42, 1337]
-  main:
-    parameters:
-      train_episodes:
-        values: [12000, 15000]
-      eval_interval:
-        values: [10, 20]
+        values: [11, 21, 42]
   agents:
     parameters:
       car_0:
@@ -40,33 +35,42 @@ parameters:
               params:
                 parameters:
                   actor_lr:
-                    values: [0.0002, 0.00025, 0.0003]
+                    values: [0.00018, 0.00024, 0.0003]
                   critic_lr:
-                    values: [0.0004, 0.00045, 0.0005]
+                    values: [0.0003, 0.00036, 0.00045]
                   tau:
-                    values: [0.003, 0.004, 0.005]
+                    values: [0.0025, 0.0035, 0.005]
+                  policy_delay:
+                    values: [1, 2, 3]
+                  policy_noise:
+                    values: [0.1, 0.15, 0.2]
+                  noise_clip:
+                    values: [0.2, 0.3, 0.4]
                   batch_size:
                     values: [128, 192, 256]
-                  hidden_dims:
-                    values:
-                      - [256, 256, 128]
-                      # - [256, 256, 256]
+                  updates_per_step:
+                    values: [1, 2]
+                  warmup_steps:
+                    values: [80000, 120000, 160000]
+                  buffer_size:
+                    values: [150000, 200000, 250000]
                   exploration_noise:
-                    values: [0.24, 0.28, 0.32]
+                    values: [0.22, 0.26, 0.3]
                   exploration_noise_final:
-                    values: [0.10, 0.12]
+                    values: [0.08, 0.1, 0.12]
                   exploration_noise_decay_episodes:
-                    values: [0, 10000]
+                    values: [0, 6000, 10000]
+                  per_alpha:
+                    values: [0.5, 0.6, 0.7]
                   per_beta_start:
                     values: [0.4, 0.5, 0.6]
                   per_beta:
-                    values: [0.4, 0.5]
-                  warmup_steps:
-                    values: [100000, 150000, 200000]
-                  buffer_size:
-                    values: [150000, 200000]
-                  prevent_reverse_speed_index:
-                    values: [1, 2]
+                    values: [0.4, 0.5, 0.6]
+                  hidden_dims:
+                    values:
+                      - [256, 256, 128]
+                      - [256, 256, 256]
+                      - [256, 512, 256]
 early_terminate:
   type: hyperband
   max_iter: 15000
