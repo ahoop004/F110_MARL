@@ -655,6 +655,12 @@ class WandbSink(LogSink):
                 payload[key] = float(value)
             else:
                 payload[key] = value
+        if phase in {"train", "eval"}:
+            keep_keys = {
+                "train": {"train/return", "train/return_mean"},
+                "eval": {"eval/return", "eval/return_mean"},
+            }[phase]
+            payload = {key: value for key, value in payload.items() if key in keep_keys}
         if not payload:
             return
 
