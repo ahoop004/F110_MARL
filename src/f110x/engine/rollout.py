@@ -333,6 +333,8 @@ def run_episode(
 
         actions, processed_obs, controller_infos = compute_actions(obs, done_map)
         if not actions:
+            if "no_actions" not in causes:
+                causes.append("no_actions")
             break
 
         publish_wrapped = getattr(env, "update_render_wrapped_observations", None)
@@ -398,6 +400,8 @@ def run_episode(
                 agent_info = infos.setdefault(agent_id, {})
                 agent_info["truncated"] = True
                 step_events_map.setdefault(agent_id, {})["truncated"] = True
+            if "term_any_done" not in causes:
+                causes.append("term_any_done")
 
         if idle_tracker.observe(step_speed_values, step_speed_present):
             idle_triggered = True
@@ -617,6 +621,8 @@ def run_episode(
             if "collision" not in causes:
                 causes.append("collision")
         if done_flags.all():
+            if "done_flags_all" not in causes:
+                causes.append("done_flags_all")
             break
 
         if render_condition and render_condition(episode_index, steps):
@@ -633,12 +639,17 @@ def run_episode(
     trunc_flags = {agent_id: bool(truncs.get(agent_id, False)) for agent_id in agent_order}
     done_map = {agent_id: bool(done_flags[id_to_index[agent_id]]) for agent_id in agent_order}
 
+    debug_events = []
     for agent_id, flagged in term_flags.items():
         if flagged:
-            causes.append(f"term:{agent_id}")
+            token = f"term:{agent_id}"
+            causes.append(token)
+            debug_events.append(token)
     for agent_id, flagged in trunc_flags.items():
         if flagged:
-            causes.append(f"trunc:{agent_id}")
+            token = f"trunc:{agent_id}"
+            causes.append(token)
+            debug_events.append(token)
 
     returns = {agent_id: float(totals_array[idx]) for idx, agent_id in enumerate(agent_order)}
     collisions = {agent_id: int(collision_counts_array[idx]) for idx, agent_id in enumerate(agent_order)}

@@ -313,7 +313,7 @@ class FollowTheGapPolicy:
                     angle = math.atan2(-self.secondary_warning_border - y1, x1 - x2)
                 else:
                     angle = math.atan2(self.secondary_warning_border - y1, x1 - x2)
-                angle = float(np.clip(angle, -self.secondary_max_turn, self.secondary_max_turn))
+                angle = float(max(-self.secondary_max_turn, min(angle,self.secondary_max_turn)))
                 steering = angle * self.secondary_turn_gain
             else:
                 steering = 0.0

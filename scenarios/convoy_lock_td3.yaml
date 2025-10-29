@@ -150,8 +150,8 @@ scenario:
           commit_bonus: 3.5
           escape_distance: 3.2
           escape_penalty: 3.5
-          success_border_radius: 0.5
-          success_border_lane_center: -0.426583
+          success_border_radius: 0.58
+          success_border_lane_center: -0.901583
           success_border_requires_pressure: true
           relative_reward:
             weights:
@@ -184,33 +184,14 @@ scenario:
               - id: ego_pose
                 type: ego_pose
                 params:
-                  angle_mode: sin_cos
-              - id: ego_velocity
-                type: velocity
+                  angle_mode: raw
+              - id: target_pose
+                type: target_pose
                 params:
-                  normalize: 10.0
-                  include_speed: true
-                  speed_scale: 10.0
-              - id: ego_collision
-                type: collision
-              - id: relative_pose
-                type: relative_pose
-                params:
-                  angle_mode: sin_cos
+                  angle_mode: raw
                 target:
                   agent: car_1
-              - id: relative_sector
-                type: relative_sector
-                params:
-                  preferred_radius: 0.7
-                  inner_tolerance: 0.1
-                  outer_tolerance: 0.2
-                target:
-                  agent: car_1
-              - id: target_collision
-                type: collision
-                target:
-                  agent: car_1
+              
 
     car_1:
       trainable: false
@@ -229,7 +210,7 @@ scenario:
           secondary_turn_gain: 1.5
           secondary_border_speed_scale: 0.5
           secondary_max_turn: 1.0
-          secondary_lane_center: -0.426583
+          secondary_lane_center: -0.901583
           secondary_target_agent: car_0
       defender_curriculum:
         min_episode: 3000
@@ -254,71 +235,22 @@ scenario:
               secondary_turn_gain: 1.5
               secondary_border_speed_scale: 0.5
               secondary_max_turn: 1.0
-              secondary_lane_center: -0.426583
+              secondary_lane_center: -0.901583
               secondary_target_agent: car_0
-          - name: pressure
-            enable_rate: 0.6
-            disable_rate: 0.5
-            params:
-              mode: secondary
-              max_speed: 1.0
-              min_speed: 0.0
-              steering_gain: 1.0
-              bubble_radius: 2.0
-              steer_smooth: 0.0
-              secondary_warning_border: 0.35
-              secondary_hard_border: 0.5
-              secondary_safe_distance: 1.0
-              secondary_turn_gain: 1.5
-              secondary_border_speed_scale: 0.5
-              secondary_max_turn: 1.0
-              secondary_lane_center: -0.426583
-              secondary_target_agent: car_0
-          - name: aggressive
-            enable_rate: 0.75
-            disable_rate: 0.6
-            params:
-              mode: secondary
-              max_speed: 1.1
-              min_speed: 0.0
-              steering_gain: 1.0
-              bubble_radius: 2.0
-              steer_smooth: 0.0
-              secondary_warning_border: 0.35
-              secondary_hard_border: 0.5
-              secondary_safe_distance: 1.0
-              secondary_turn_gain: 1.5
-              secondary_border_speed_scale: 0.5
-              secondary_max_turn: 1.0
-              secondary_lane_center: -0.426583
-              secondary_target_agent: car_0
-          - name: lockdown
-            enable_rate: 0.85
-            disable_rate: 0.7
-            params:
-              mode: secondary
-              max_speed: 1.2
-              min_speed: 0.0
-              steering_gain: 1.0
-              bubble_radius: 2.0
-              steer_smooth: 0.0
-              secondary_warning_border: 0.35
-              secondary_hard_border: 0.5
-              secondary_safe_distance: 1.0
-              secondary_turn_gain: 2.5
-              secondary_border_speed_scale: 0.5
-              secondary_max_turn: 1.0
-              secondary_lane_center: -0.426583
-              secondary_target_agent: car_0
+
       wrappers:
         - factory: obs
           params:
             max_scan: 30.0
             normalize: true
             components:
-              - id: lidar
-                type: lidar
+              - id: ego_pose
+                type: ego_pose
                 params:
-                  beams: 54
-                  max_range: 30.0
-                  normalize: true
+                  angle_mode: raw
+              - id: attacker_pose
+                type: target_pose
+                params:
+                  angle_mode: raw
+                target:
+                  agent: car_0

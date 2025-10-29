@@ -773,6 +773,7 @@ class TrainRunner:
                 "train/collision_rate": collision_rate,
                 "train/idle": bool(rollout.idle_triggered),
                 "train/reward_task": rollout.reward_task,
+                "train/episode_cause": rollout.cause,
             }
             if primary_id:
                 metrics["train/primary_agent"] = primary_id
@@ -864,6 +865,15 @@ class TrainRunner:
                     publish_metrics("train", metrics, step=episode_idx + 1)
                 except Exception:
                     pass
+
+            logger.info(
+                "Episode finished",
+                extra={
+                    "episode": episode_idx + 1,
+                    "steps": rollout.steps,
+                    "cause": rollout.cause or "unknown",
+                },
+            )
 
             results.append(episode_record)
 
