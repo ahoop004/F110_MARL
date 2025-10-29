@@ -5,51 +5,48 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1500
+    max_steps: 2500
     lidar_beams: 54
     terminate_on_any_done: true
+    # centerline_autoload: true
+    # centerline_render: true
     vehicle_params:
       v_max: 1.0
       v_min: -1.0
+      length: 0.32
+      width: 0.225
     spawn_points:
-      - spawn_0
+      - spawn_3
       - spawn_1
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
           spawn_option_id: spawn_random
         names:
+          - spawn_5
           - spawn_1
-          - spawn_3
       - id: offset_lane_b
         metadata:
           spawn_option_id: spawn_random
         names:
           - spawn_2
-          - spawn_5
+          - spawn_1
       - id: extended_gap
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_2
-          - spawn_7
+          - spawn_4
+          - spawn_1
     spawn_curriculum:
-      min_episode: 600
-      activation_samples: 150
-      success_window: 200
-      enable_rate: 0.72
-      enable_patience: 3
-      disable_rate: 0.55
-      disable_patience: 2
-      cooldown: 180
-      persist: false
-    #   min_episode: 1000
-    #   success_window: 200
-    #   enable_rate: 0.7
-    #   enable_patience: 3
-    #   disable_rate: 0.5
-    #   disable_patience: 2
-    #   cooldown: 200
+      min_episode: 0
+      activation_samples: 0
+      success_window: 0
+      enable_rate: 0.0
+      enable_patience: 0
+      disable_rate: 0.0
+      disable_patience: 0
+      cooldown: 0
+      persist: true
 
   main:
     mode: train_eval
@@ -120,52 +117,51 @@ scenario:
           reward_weight: null
           reward_decay: null
           reward_smoothing: null
-          step_reward: 0.015
+          step_reward: 0.0
           idle_speed_threshold: 0.002
           idle_penalty: -0.08
           idle_penalty_steps: 18
           idle_truncation_penalty: -35.0
-          pressure_distance: 1.1
-          pressure_timeout: 0.8
-          pressure_min_speed: 0.2
-          pressure_bonus: 0.25
-          pressure_bonus_interval: 5
-          proximity_penalty_distance: 2.0
-          proximity_penalty_value: -0.05
-          speed_bonus_coef: 0.012
-          speed_bonus_target: 4.0
-          brake_penalty: -0.07
-          brake_speed_threshold: 1.2
-          brake_drop_threshold: 0.5
-          heading_reward_coef: 0.02
-          distance_reward_near: 0.18
-          distance_reward_near_distance: 0.9
-          distance_reward_far_distance: 2.2
-          distance_penalty_far: 0.35
-          pressure_streak_bonus: 0.1
-          pressure_streak_cap: 6
-          commit_distance: 0.75
-          commit_heading_threshold: 0.65
-          commit_speed_threshold: 1.8
-          commit_bonus: 3.5
-          escape_distance: 3.2
-          escape_penalty: 3.5
-          success_border_radius: 0.58
-          success_border_lane_center: -0.901583
-          success_border_requires_pressure: true
+          pressure_distance: 0.0
+          pressure_timeout: 0.0
+          pressure_min_speed: 0.0
+          pressure_bonus: 0.0
+          pressure_bonus_interval: 0
+          proximity_penalty_distance: 0.0
+          proximity_penalty_value: 0.0
+          speed_bonus_coef: 0.0
+          speed_bonus_target: 0.0
+          brake_penalty: 0.0
+          brake_speed_threshold: 0.0
+          brake_drop_threshold: 0.0
+          heading_reward_coef: 0.0
+          distance_reward_near: 0.0
+          distance_reward_near_distance: 0.0
+          distance_reward_far_distance: 0.0
+          distance_penalty_far: 0.0
+          pressure_streak_bonus: 0.0
+          pressure_streak_cap: 0
+          commit_distance: 0.0
+          commit_heading_threshold: 0.0
+          commit_speed_threshold: 0.0
+          commit_bonus: 0.0
+          escape_distance: 0.0
+          escape_penalty: 0.0
+          success_border_radius: 1.1
+          success_border_lane_center: -0.724998
           relative_reward:
             weights:
-              front: 0.03
-              front_right: 0.025
-              right: 0.015
-              back_right: -0.015
-              back: -0.025
-              back_left: -0.015
-              left: 0.015
-              front_left: 0.025
-            preferred_radius: 0.9
-            inner_tolerance: 0.3
-            outer_tolerance: 0.1
+              front: 0.0
+              front_right: 0.0
+              right: 0.0
+              back_right: 0.0
+              back: 0.0
+              back_left: 0.0
+              left: 0.0
+              front_left: 0.0
+            preferred_radius: 0.0
+            inner_tolerance: 0.0
+            outer_tolerance: 0.0
             ignored_agents:
               - car_1
       wrappers:
@@ -196,53 +192,22 @@ scenario:
     car_1:
       trainable: false
       algorithm:
-        name: follow_gap
+        name: secondary_vicon
         params:
-          mode: secondary
-          max_speed: 2.8
-          min_speed: 1.6
-          steering_gain: 1.0
-          bubble_radius: 2.0
-          steer_smooth: 0.0
-          secondary_warning_border: 0.35
-          secondary_hard_border: 0.5
-          secondary_safe_distance: 1.0
-          secondary_turn_gain: 1.5
-          secondary_border_speed_scale: 0.5
-          secondary_max_turn: 1.0
-          secondary_lane_center: -0.901583
-          secondary_target_agent: car_0
-      defender_curriculum:
-        min_episode: 3000
-        success_window: 200
-        activation_samples: 200
-        enable_patience: 4
-        disable_patience: 2
-        cooldown: 300
-        persist: false
-        stages:
-          - name: baseline
-            params:
-              mode: secondary
-              max_speed: 1.8
-              min_speed: 0.6
-              steering_gain: 1.0
-              bubble_radius: 2.0
-              steer_smooth: 0.0
-              secondary_warning_border: 0.35
-              secondary_hard_border: 0.5
-              secondary_safe_distance: 1.0
-              secondary_turn_gain: 1.5
-              secondary_border_speed_scale: 0.5
-              secondary_max_turn: 1.0
-              secondary_lane_center: -0.901583
-              secondary_target_agent: car_0
+          max_speed: 0.8
+          warning_border: 0.55
+          hard_border: 1.2
+          safe_distance: 1.0
+          turn_gain: 1.5
+          border_speed_scale: 0.5
+          max_turn: 1.0
+          lane_center: -0.724998
+          target_agent: car_0
+      
 
       wrappers:
         - factory: obs
           params:
-            max_scan: 30.0
-            normalize: true
             components:
               - id: ego_pose
                 type: ego_pose

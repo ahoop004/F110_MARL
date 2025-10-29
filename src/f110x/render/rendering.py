@@ -38,7 +38,7 @@ except Exception as exc:  # pragma: no cover - headless fallback
 import numpy as np
 from array import array
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from PIL import Image
 import yaml
 import pandas as pd
@@ -53,8 +53,8 @@ ZOOM_IN_FACTOR = 1.2
 ZOOM_OUT_FACTOR = 1.0 / ZOOM_IN_FACTOR
 
 # vehicle shape constants (meters)
-CAR_LENGTH = 0.58
-CAR_WIDTH  = 0.31
+CAR_LENGTH = 0.32
+CAR_WIDTH  = 0.225
 
 # colors (normalized RGBA)
 def _rgba255(r: float, g: float, b: float, a: float = 255.0) -> tuple[float, float, float, float]:
@@ -154,6 +154,7 @@ else:
             self._reward_ring_inner_view = None
             self._reward_ring_pref_positions = None
             self._reward_ring_pref_view = None
+            self._lane_border_overlays: Dict[str, pyglet.graphics.vertexdomain.VertexList] = {}
 
             # options
             self.lidar_fov = lidar_fov
@@ -284,6 +285,13 @@ else:
                 self.map_vlist.color[:] = colors
             self._map_vertex_count = N
             self.map_points = pts
+            if self._lane_border_overlays:
+                for v in self._lane_border_overlays.values():
+                    try:
+                        v.delete()
+                    except Exception:
+                        pass
+                self._lane_border_overlays.clear()
 
             self.update_centerline(centerline_points, connect=centerline_connect)
 
@@ -372,6 +380,13 @@ else:
                 self._centerline_points_vlist = None
             self._clear_reward_ring_geometry()
             self._reward_ring_target = None
+            if self._lane_border_overlays:
+                for v in self._lane_border_overlays.values():
+                    try:
+                        v.delete()
+                    except Exception:
+                        pass
+                self._lane_border_overlays.clear()
 
         # ---------- Window / Camera ----------
 
@@ -1110,6 +1125,81 @@ else:
                     num, pyglet.gl.GL_POINTS, batch=env_renderer.batch, group=env_renderer.shader_group,
                     position=('f', pos), color=('B', colors)
                 )
+            return callback
+
+        @staticmethod
+        def make_lane_border_callback(
+            lane_center: float,
+            warning_border: float,
+            hard_border: float,
+            *,
+            color_warning: tuple[float, float, float, float] = _rgba255(255, 215, 0, 220),
+            color_hard: tuple[float, float, float, float] = _rgba255(255, 64, 64, 235),
+        ) -> Callable[["EnvRenderer"], None]:
+            lane_center = float(lane_center)
+            warning_border = abs(float(warning_border))
+            hard_border = abs(float(hard_border))
+
+            def callback(env_renderer: "EnvRenderer") -> None:
+                points = env_renderer.map_points
+                if points is None or points.size == 0:
+                    return
+                xs = points[:, 0]
+                if xs.size == 0:
+                    return
+                min_x = float(np.min(xs))
+                max_x = float(np.max(xs))
+                if not np.isfinite(min_x) or not np.isfinite(max_x) or max_x <= min_x:
+                    return
+
+                overlays = getattr(env_renderer, "_lane_border_overlays", None)
+                if overlays is None:
+                    overlays = {}
+                    setattr(env_renderer, "_lane_border_overlays", overlays)
+
+                def _update_line(key: str, offset: float, color: tuple[float, float, float, float]) -> None:
+                    y_world = lane_center + offset
+                    y_px = y_world * env_renderer.render_scale
+                    positions = [min_x, y_px, max_x, y_px]
+                    colors = list(color) * 2
+                    vlist = overlays.get(key)
+                    if vlist is None:
+                        overlays[key] = env_renderer.shader.vertex_list(
+                            2,
+                            pyglet.gl.GL_LINES,
+                            batch=env_renderer.batch,
+                            group=env_renderer.shader_group,
+                            position=('f', positions),
+                            color=('f', colors),
+                        )
+                    else:
+                        vlist.position[:] = positions
+                        vlist.color[:] = colors
+
+                if warning_border > 0.0:
+                    _update_line("warning_pos", warning_border, color_warning)
+                    _update_line("warning_neg", -warning_border, color_warning)
+                else:
+                    for key in ("warning_pos", "warning_neg"):
+                        vlist = overlays.pop(key, None)
+                        if vlist is not None:
+                            try:
+                                vlist.delete()
+                            except Exception:
+                                pass
+
+                if hard_border > 0.0:
+                    _update_line("hard_pos", hard_border, color_hard)
+                    _update_line("hard_neg", -hard_border, color_hard)
+                else:
+                    for key in ("hard_pos", "hard_neg"):
+                        vlist = overlays.pop(key, None)
+                        if vlist is not None:
+                            try:
+                                vlist.delete()
+                            except Exception:
+                                pass
+
             return callback
 
         # ---------- Reward Ring Overlay ----------

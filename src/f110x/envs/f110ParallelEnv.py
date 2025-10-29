@@ -1,6 +1,6 @@
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import gymnasium as gym
 from gymnasium import spaces
 import yaml
@@ -23,6 +23,7 @@ import numpy as np
 import os
 import time
 import math
+import logging
 
 # gl
 import pyglet
@@ -38,6 +39,8 @@ from f110x.wrappers.observation import _sector_from_angle, _radial_gain, _SECTOR
 # VIDEO_H = 400
 WINDOW_W = 1000
 WINDOW_H = 800
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_SENSORS = (
     "lidar",
@@ -175,6 +178,7 @@ class F110ParallelEnv(ParallelEnv):
             default_lidar_skip = 0
         self._render_lidar_skip_default = default_lidar_skip
         self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
+        self._render_callbacks: List[Callable[[EnvRenderer], None]] = []
 
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
@@ -930,6 +934,12 @@ class F110ParallelEnv(ParallelEnv):
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
+        if self.renderer is not None and self._render_callbacks:
+            for callback in list(self._render_callbacks):
+                try:
+                    callback(self.renderer)
+                except Exception:
+                    logger.exception("Render callback failed")
 
         self.renderer.dispatch_events()
         self.renderer.on_draw()
@@ -944,6 +954,15 @@ class F110ParallelEnv(ParallelEnv):
             data = img.get_data("RGB", -w * 3)
             frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3).copy()
             return frame
+
+    def add_render_callback(self, callback: Callable[[EnvRenderer], None]) -> None:
+        if not callable(callback):
+            raise TypeError("Render callback must be callable")
+        if callback not in self._render_callbacks:
+            self._render_callbacks.append(callback)
+
+    def clear_render_callbacks(self) -> None:
+        self._render_callbacks.clear()
 
     @staticmethod
     def _normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:

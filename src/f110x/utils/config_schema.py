@@ -27,8 +27,8 @@ def _default_vehicle_params() -> Dict[str, float]:
         "a_max": 9.51,
         "v_min": -5.0,
         "v_max": 10.0,
-        "width": 0.31,
-        "length": 0.58,
+        "width": 0.225,
+        "length": 0.32,
     }
 
 

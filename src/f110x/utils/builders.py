@@ -26,6 +26,7 @@ from f110x.wrappers.action import (
 )
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
+from f110x.policies.secondary_vicon import SecondaryViconPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.ppo.rec_ppo import RecurrentPPOAgent
 from f110x.policies.random_policy import random_policy
@@ -35,6 +36,7 @@ from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
 from f110x.policies.rainbow import RainbowDQNAgent
+from f110x.render import EnvRenderer
 from f110x.trainer.base import Trainer
 from f110x.trainer import registry as trainer_registry
 
@@ -1042,6 +1044,75 @@ def _build_algo_follow_gap(
     )
 
 
+def _build_algo_secondary_vicon(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    controller = SecondaryViconPolicy.from_config(assignment.spec.params)
+
+    if hasattr(controller, "agent_slot"):
+        controller.agent_slot = assignment.slot
+
+    target_agent_id = getattr(controller, "target_agent", None)
+    resolved_target_slot = None
+    if target_agent_id:
+        for assn in roster.assignments:
+            if assn.agent_id == target_agent_id:
+                resolved_target_slot = assn.slot
+                break
+
+    if resolved_target_slot is not None:
+        controller.target_slot = resolved_target_slot
+    else:
+        try:
+            raw_slot = getattr(controller, "target_slot", None)
+            target_slot_int = int(raw_slot) if raw_slot is not None else None
+        except (TypeError, ValueError):
+            target_slot_int = None
+        if target_slot_int is None or target_slot_int == assignment.slot or target_slot_int < 0:
+            other_slots = [assn.slot for assn in roster.assignments if assn.slot != assignment.slot]
+            controller.target_slot = other_slots[0] if other_slots else assignment.slot
+        else:
+            controller.target_slot = target_slot_int
+
+    if hasattr(ctx.env, "add_render_callback"):
+        cache: Dict[str, Any] = {"fn": None, "params": None}
+
+        def lane_border_callback(renderer: EnvRenderer, _cache=cache) -> None:
+            params = (
+                float(getattr(controller, "lane_center", 0.0)),
+                float(getattr(controller, "warning_border", 0.0)),
+                float(getattr(controller, "hard_border", 0.0)),
+            )
+            if _cache["fn"] is None or _cache["params"] != params:
+                _cache["fn"] = EnvRenderer.make_lane_border_callback(
+                    lane_center=params[0],
+                    warning_border=params[1],
+                    hard_border=params[2],
+                )
+                _cache["params"] = params
+            callback_fn = _cache["fn"]
+            if callable(callback_fn):
+                callback_fn(renderer)
+
+        ctx.env.add_render_callback(lane_border_callback)
+
+    metadata: Dict[str, Any] = {}
+    if assignment.spec.policy_curriculum:
+        metadata["policy_curriculum"] = dict(assignment.spec.policy_curriculum)
+
+    return AgentBundle(
+        assignment=assignment,
+        algo="secondary_vicon",
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=False),
+        metadata=metadata,
+    )
+
+
 def _build_algo_random(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -1127,6 +1198,7 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "follow_gap": _build_algo_follow_gap,
     "gap_follow": _build_algo_follow_gap,
     "followthegap": _build_algo_follow_gap,
+    "secondary_vicon": _build_algo_secondary_vicon,
     "random": _build_algo_random,
     "waypoint": _build_algo_waypoint,
     "centerline": _build_algo_centerline,
