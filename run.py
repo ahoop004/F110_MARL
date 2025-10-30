@@ -171,6 +171,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum concurrent runs when executing grids (1 = sequential).",
     )
     parser.add_argument(
+        "--collect-workers",
+        type=int,
+        help="Override main.collect_workers for the delegated experiments.",
+    )
+    parser.add_argument(
+        "--collect-prefetch",
+        type=int,
+        help="Override main.collect_prefetch for the delegated experiments.",
+    )
+    parser.add_argument(
+        "--collect-seed-stride",
+        type=int,
+        help="Override main.collect_seed_stride for the delegated experiments.",
+    )
+    parser.add_argument(
         "main_args",
         nargs=argparse.REMAINDER,
         help="Arguments forwarded verbatim to experiments/main.py (prefix with --).",
@@ -301,6 +316,9 @@ def _args_to_base_spec(args: argparse.Namespace) -> Dict[str, Any]:
         "wandb_group_template": args.wandb_group_template,
         "wandb_name_template": args.wandb_name_template,
         "main_args": list(args.main_args) if args.main_args else [],
+        "collect_workers": args.collect_workers,
+        "collect_prefetch": args.collect_prefetch,
+        "collect_seed_stride": args.collect_seed_stride,
     }
 
 
@@ -653,6 +671,16 @@ def _prepare_spec_runs(
         forwarded_args = ["--experiment", experiment_name] + forwarded_args
     forwarded_args = _inject_wandb_cli_args(forwarded_args, cfg_path, experiment_name)
 
+    collect_workers = spec.get("collect_workers")
+    if collect_workers is not None:
+        forwarded_args.extend(["--collect-workers", str(int(collect_workers))])
+    collect_prefetch = spec.get("collect_prefetch")
+    if collect_prefetch is not None:
+        forwarded_args.extend(["--collect-prefetch", str(int(collect_prefetch))])
+    collect_seed_stride = spec.get("collect_seed_stride")
+    if collect_seed_stride is not None:
+        forwarded_args.extend(["--collect-seed-stride", str(int(collect_seed_stride))])
+
     try:
         active_cfg, _, _ = load_config(
             cfg_path,
@@ -767,6 +795,12 @@ def _prepare_spec_runs(
         if federated_env:
             for key, value in federated_env.items():
                 env_overrides.setdefault(key, value)
+        if collect_workers is not None:
+            env_overrides.setdefault("COLLECT_WORKERS", str(int(collect_workers)))
+        if collect_prefetch is not None:
+            env_overrides.setdefault("COLLECT_PREFETCH", str(int(collect_prefetch)))
+        if collect_seed_stride is not None:
+            env_overrides.setdefault("COLLECT_SEED_STRIDE", str(int(collect_seed_stride)))
 
         requests.append(
             RunRequest(

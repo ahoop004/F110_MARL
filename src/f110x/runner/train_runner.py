@@ -616,6 +616,13 @@ class TrainRunner:
         metrics = dict(metrics)
         metrics.setdefault("federated/round", float(next_round))
         metrics.setdefault("federated/episode", float(episode))
+        if self._federated_cfg:
+            metrics.setdefault("federated/optimizer_strategy", self._federated_cfg.optimizer_strategy)
+            metrics.setdefault(
+                "federated/checkpoint_enabled",
+                1.0 if self._federated_cfg.checkpoint_after_sync else 0.0,
+            )
+            metrics.setdefault("federated/interval", float(self._federated_interval))
         try:
             self.team.reset_actions()
         except Exception:

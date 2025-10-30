@@ -111,6 +111,7 @@ def build_runner_context(
         primary_agent_id=primary_agent_id,
         metadata={
             "preferred_primary_algorithms": list(prefer_algorithms),
+            "collect": cfg.main.collect_settings,
         },
         logger=logger or Logger(),
     )

@@ -329,11 +329,13 @@ class RewardConfig:
 class MainConfig:
     schema: MainSchema = field(default_factory=MainSchema)
     _federated_cache: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _collect_cache: Dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MainConfig":
         instance = cls(schema=MainSchema.from_dict(data))
         instance._federated_cache = instance._sanitize_federated()
+        instance._collect_cache = instance._sanitize_collect()
         return instance
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -358,6 +360,26 @@ class MainConfig:
             cache = self._sanitize_federated()
             self._federated_cache = cache
         return dict(cache)
+
+    @property
+    def collect_settings(self) -> Dict[str, int]:
+        cache = getattr(self, "_collect_cache", None)
+        if not cache:
+            cache = self._sanitize_collect()
+            self._collect_cache = cache
+        return dict(cache)
+
+    @property
+    def collect_workers(self) -> int:
+        return int(self.collect_settings.get("collect_workers", 1))
+
+    @property
+    def collect_prefetch(self) -> int:
+        return int(self.collect_settings.get("collect_prefetch", 2))
+
+    @property
+    def collect_seed_stride(self) -> int:
+        return int(self.collect_settings.get("collect_seed_stride", 1))
 
     # ------------------------------------------------------------------
     def _sanitize_federated(self) -> Dict[str, Any]:
@@ -449,6 +471,33 @@ class MainConfig:
                 sanitized[key] = value
 
         self.schema.federated = dict(sanitized)
+        return sanitized
+
+    def _sanitize_collect(self) -> Dict[str, int]:
+        def _positive_int(value: Any, default: int, name: str) -> int:
+            if value is None:
+                return default
+            try:
+                result = int(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"main.{name} must be an integer") from None
+            if result <= 0:
+                raise ValueError(f"main.{name} must be greater than zero")
+            return result
+
+        workers = _positive_int(self.schema.collect_workers, 1, "collect_workers")
+        prefetch = _positive_int(self.schema.collect_prefetch, 2, "collect_prefetch")
+        stride = _positive_int(self.schema.collect_seed_stride, 1, "collect_seed_stride")
+
+        sanitized = {
+            "collect_workers": workers,
+            "collect_prefetch": prefetch,
+            "collect_seed_stride": stride,
+        }
+
+        self.schema.collect_workers = workers
+        self.schema.collect_prefetch = prefetch
+        self.schema.collect_seed_stride = stride
         return sanitized
 
 

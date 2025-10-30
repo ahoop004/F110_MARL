@@ -21,6 +21,8 @@ command:
   - --mode
   - train_eval
   - --wandb
+  - --wandb-group
+  - parallel-sweep
 parameters:
   env:
     parameters:

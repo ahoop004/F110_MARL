@@ -1,61 +1,71 @@
-# Federated MARL TD3 Averaging
+# F110 MARL Roadmap
 
-## 1. TD3 Policy & Trainer Interfaces
-- [x] Expose in-memory weight access helpers in `TD3Agent`
-  - [x] Implement `state_dict(self, *, include_optim: bool = True)` returning actor/critic state
-  - [x] Implement `load_state_dict(self, state, *, strict: bool = True, include_optim: bool = True)`
-  - [x] Update `save`/`load` to reuse the new helpers
-- [x] Extend `OffPolicyTrainer`
-  - [x] Add passthrough `state_dict()` / `load_state_dict()` methods
-  - [x] Guard with `hasattr` checks and raise helpful errors for unsupported agents
-  - [ ] Ensure TD3 tests cover the new surface
+## General Prerequisites (Do First)
+- [x] Strengthen configuration schema & CLI plumbing for new features
+- [x] Improve telemetry/metrics (collector throughput, aggregator diagnostics)
+- [x] Build synthetic test harnesses for parallel collectors and aggregators
+- [x] Expand documentation (README, design docs, demos) for emerging features
 
-## 2. Config Schema & Scenario Wiring
-- [x] Extend `ExperimentConfig.main` schema to include `federated` block
-  - [x] Fields: `enabled`, `interval`, `agents`, `root`, `mode`, `weights`, `timeout`
-  - [x] Propagate defaults and validation (positive interval, non-empty agents)
-- [x] Update `scenarios/convoy_lock_td3.yaml`
-  - [x] Add `main.federated` block mirroring the schema
-  - [x] Provide agent list (e.g. `["car_0"]` or both attack/defense)
-- [x] Adjust `run.py`
-  - [x] Inject `FED_CLIENT_ID` / `FED_TOTAL_CLIENTS` env vars per run
-  - [x] Surface optional overrides like `FED_INTERVAL` from config
+## Shared Replay / Centralised Buffers
+- [ ] Implement replay service manager (shared memory / IPC queues)
+  - [ ] Define replay RPC interface (enqueue transitions, fetch batches, stats)
+  - [ ] Build manager process with shared-memory ring buffers + priority queues
+  - [ ] Add graceful shutdown & failure recovery
+- [ ] Add per-agent prioritised sampling across clients
+  - [ ] Track client-specific priorities and weights
+  - [ ] Support dynamic reweighting (e.g., based on recent performance)
+- [ ] Integrate back-pressure and buffer metrics
+  - [ ] Enforce capacity limits with producer throttling
+  - [ ] Expose telemetry (buffer fill, wait times) via logger/W&B
+- [ ] Update trainers/tests to handle centralised sampling
+  - [ ] Refactor `TrajectoryBuffer` consumers to read from replay service
+  - [ ] Create synthetic multi-client tests to validate consistent sampling
 
-## 3. Federated Averager Component
-- [x] Create `src/f110x/federated/averager.py`
-  - [x] Define `FederatedAverager` class taking config + logger
-  - [x] Implement `sync(trainer_map, episode_idx)`
-    - [x] Serialize local trainer weights to `round_{k}/client_{id}.pt`
-    - [x] Wait for peer checkpoints (respect timeout)
-    - [x] Average tensors (weighted if configured)
-    - [x] Reload averaged weights into participating trainers
-    - [x] Return metrics (delta norms, duration)
-  - [x] Handle filesystem race safety (atomic writes, partial cleanup)
-  - [x] Add utility for weighted averaging (new module or helper function)
-- [x] Unit tests for averager
-  - [x] Temp dir with synthetic weights; verify averaging and reload
-  - [x] Timeout behaviour when peers absent
+## Advanced Averaging Strategies
+- [ ] Design pluggable `FederatedAggregator` interface
+  - [ ] Define aggregator base class with hooks for `accumulate`, `finalise`
+  - [ ] Refactor existing mean averaging to use the interface
+- [ ] Implement FedProx / adaptive weighting support
+  - [ ] Capture client-specific metrics (sample counts, reward deltas)
+  - [ ] Apply proximal regularisation when merging weights
+- [ ] Add robust aggregators (median, trimmed mean)
+  - [ ] Support coordinate-wise operations on tensors and optimizer state
+  - [ ] Handle fallbacks when fewer than N clients respond
+- [ ] Track per-round metadata to weight contributions
+  - [ ] Persist history of client participation & weight factors
+  - [ ] Surface diagnostics (variance, client dropouts) in logs/W&B
+- [ ] Validate compatibility with optimizer strategies (average/reset)
+  - [ ] Ensure aggregated optimizer state stays numerically stable
+  - [ ] Add regression tests for TD3/SAC/DQN with new aggregators
 
-## 4. Train Runner Integration
-- [x] Update `TrainRunner`
-  - [x] Instantiate `FederatedAverager` when `main.federated.enabled`
-  - [x] After update cycle, trigger `sync` when `(episode + 1) % interval == 0`
-  - [x] Merge returned metrics into logger events / W&B
-  - [x] Ensure env resets and trainer states remain consistent post-sync
-- [x] Optionally, coordinate with `BestReturnTracker`
-  - [x] Save averaged checkpoints when new best mean return observed
+## Expanded MARL / Federated Approaches
+- [ ] Prototype gossip / ring-allreduce communication
+  - [ ] Define peer-to-peer update protocol (ring schedule, gossip interval)
+  - [ ] Implement fault handling (peer dropout, retry)
+- [ ] Add policy distillation / ensemble aggregation option
+  - [ ] Create evaluator to compare/merge policies via KL minimisation
+- [ ] Explore meta-learning / continual-learning integration
+  - [ ] Investigate MAML/Reptile style inner/outer loops for federated agents
+- [ ] Implement adversarial update detection & mitigation
+  - [ ] Add outlier detection on weight deltas (norm checks, cosine similarity)
+- [ ] Investigate DP / secure aggregation hooks
+  - [ ] Research libraries (Opacus, PySyft) for privacy-aware training
+  - [ ] Scope encrypted/secure sum protocols
 
-## 5. Orchestration & Execution Flow
-- [x] Document required environment variables (`FED_CLIENT_ID`, `FED_TOTAL_CLIENTS`, optional `FED_ROUND`) in README
-- [x] Provide example command for spawning `n` parallel runs with shared averaging dir
-- [x] Update `scenarios/convoy_lock_td3_sweep.yaml` or new manifest to point to federated config
-
-## 6. Validation & Tooling
-- [x] Write integration script to launch two local runs and confirm convergence
-- [x] Capture metrics (delta norms, reward curves) for sanity check
-- [x] Update CI/test harness if available to cover new modules
-
-## 7. Stretch Goals / Follow-ups
-- [x] Extend averaging support to SAC/DQN once TD3 path solid
-- [ ] Add gossip or ring-allreduce mode for large client counts
-- [x] Explore optimizer state averaging vs. reinitialisation strategies
+## Intra-run Episode Parallelism
+- [ ] Implement rollout workers feeding a shared replay buffer
+  - [ ] Create `ParallelCollector` class (manager queues, worker pool, lifecycle)
+  - [ ] Build worker process entrypoint (env/team bootstrap, run loop, exception handling)
+  - [ ] Define serialisable transition payload and reconnect with existing `TrajectoryBuffer`
+- [ ] Integrate worker scheduling into `TrainRunner` (config flags, hooks)
+  - [ ] Extend config schema (`main.collect_workers`, `collect_prefetch`, etc.)
+  - [ ] Add CLI flags in `run.py` and propagate through sweep specs
+  - [ ] Replace direct `run_episode` loop with collector dispatch + gather logic
+- [ ] Ensure federated syncing remains correct with batched episodes
+  - [ ] Track global episode indices independent of worker completion order
+  - [ ] Trigger `FederatedAverager.sync` based on total episodes instead of per-worker counts
+  - [ ] Verify optimizer strategies (`average`, `reset`) behave with aggregated transitions
+- [ ] Instrument metrics/logging for per-worker throughput
+  - [ ] Emit collector metrics (`collector/eps_per_min`, latency stats)
+  - [ ] Surface worker health/heartbeat logs
+  - [ ] Update smoke/integration scripts to validate collector metrics

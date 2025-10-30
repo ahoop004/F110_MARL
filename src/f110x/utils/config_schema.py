@@ -267,6 +267,9 @@ class MainSchema(BaseSchema):
     eval_interval: int = 0
     eval_episodes: int = 5
     federated: Dict[str, Any] = field(default_factory=dict)
+    collect_workers: int = 1
+    collect_prefetch: int = 2
+    collect_seed_stride: int = 1
 
 
 @dataclass

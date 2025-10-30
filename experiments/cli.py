@@ -238,6 +238,9 @@ def build_main_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["train", "eval", "train_eval"], help="Override config mode")
     parser.add_argument("--episodes", type=int, help="Override training episodes")
     parser.add_argument("--eval-episodes", type=int, help="Override evaluation episodes")
+    parser.add_argument("--collect-workers", type=int, help="Override main.collect_workers")
+    parser.add_argument("--collect-prefetch", type=int, help="Override main.collect_prefetch")
+    parser.add_argument("--collect-seed-stride", type=int, help="Override main.collect_seed_stride")
     parser.add_argument("--render", action="store_true", help="Enable rendering")
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
     parser.add_argument("--map", type=str, help="Override map name")
@@ -274,6 +277,12 @@ def _build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
         overrides.setdefault("env", {}).update(env_override)
     if args.mode:
         overrides.setdefault("main", {})["mode"] = args.mode
+    if args.collect_workers is not None:
+        overrides.setdefault("main", {})["collect_workers"] = args.collect_workers
+    if args.collect_prefetch is not None:
+        overrides.setdefault("main", {})["collect_prefetch"] = args.collect_prefetch
+    if args.collect_seed_stride is not None:
+        overrides.setdefault("main", {})["collect_seed_stride"] = args.collect_seed_stride
     return overrides
 
 
