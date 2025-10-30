@@ -23,6 +23,8 @@ command:
   - --wandb
   - --wandb-group
   - parallel-sweep
+  - --wandb-tags
+  - parallel-sweep
 parameters:
   env:
     parameters:
