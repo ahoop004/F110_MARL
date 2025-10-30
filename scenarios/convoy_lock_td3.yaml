@@ -53,6 +53,14 @@ scenario:
     train_episodes: 5000
     eval_episodes: 5
     eval_interval: 10
+    federated:
+      enabled: true
+      interval: 50
+      agents:
+        - car_0
+      root: outputs/federated_convoy_lock
+      mode: mean
+      timeout: 600.0
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/td3_gaplock_v2/td3_gaplock.pt
@@ -106,7 +114,7 @@ scenario:
           checkpoint_name: td3_convoy_lock.pt
       reward:
         task: gaplock
-        idle_speed_threshold: 0.002
+        idle_speed_threshold: 0.02
         idle_patience_steps: 90
         features:
           - gaplock_offense
@@ -118,7 +126,7 @@ scenario:
           # reward_decay: null
           # reward_smoothing: null
           # step_reward: 0.0
-          idle_speed_threshold: 0.002
+          idle_speed_threshold: 0.02
           idle_penalty: -0.08
           idle_penalty_steps: 18
           idle_truncation_penalty: -35.0

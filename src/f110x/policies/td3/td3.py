@@ -1,7 +1,7 @@
 """TD3 agent built on top of shared replay utilities."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import numpy as np
 import torch
@@ -37,10 +37,13 @@ class TD3Agent:
         hard_update(self.critic_target1, self.critic1)
         hard_update(self.critic_target2, self.critic2)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=float(cfg.get("actor_lr", 1e-3)))
+        self.actor_lr = float(cfg.get("actor_lr", 1e-3))
+        self.critic_lr = float(cfg.get("critic_lr", 1e-3))
+
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
         self.critic_opt = torch.optim.Adam(
             list(self.critic1.parameters()) + list(self.critic2.parameters()),
-            lr=float(cfg.get("critic_lr", 1e-3)),
+            lr=self.critic_lr,
         )
 
         self.gamma = float(cfg.get("gamma", 0.99))
@@ -217,39 +220,89 @@ class TD3Agent:
 
     # -------------------- Persistence --------------------
 
-    def save(self, path: str) -> None:
-        torch.save(
-            {
-                "actor": self.actor.state_dict(),
-                "actor_target": self.actor_target.state_dict(),
-                "critic1": self.critic1.state_dict(),
-                "critic2": self.critic2.state_dict(),
-                "critic_target1": self.critic_target1.state_dict(),
-                "critic_target2": self.critic_target2.state_dict(),
-                "actor_opt": self.actor_opt.state_dict(),
-                "critic_opt": self.critic_opt.state_dict(),
-                "total_it": self.total_it,
-            },
-            path,
-        )
+    def state_dict(self, *, include_optim: bool = True) -> Dict[str, Any]:
+        """Return a serialisable snapshot of the agent."""
 
-    def load(self, path: str) -> None:
-        ckpt = safe_load(path, map_location=self.device)
-        self.actor.load_state_dict(ckpt["actor"])
-        self.actor_target.load_state_dict(ckpt.get("actor_target", ckpt["actor"]))
-        self.critic1.load_state_dict(ckpt["critic1"])
-        self.critic2.load_state_dict(ckpt["critic2"])
-        self.critic_target1.load_state_dict(ckpt.get("critic_target1", ckpt["critic1"]))
-        self.critic_target2.load_state_dict(ckpt.get("critic_target2", ckpt["critic2"]))
-        self.actor_opt.load_state_dict(ckpt["actor_opt"])
-        self.critic_opt.load_state_dict(ckpt["critic_opt"])
-        self.total_it = int(ckpt.get("total_it", 0))
+        state: Dict[str, Any] = {
+            "actor": self.actor.state_dict(),
+            "actor_target": self.actor_target.state_dict(),
+            "critic1": self.critic1.state_dict(),
+            "critic2": self.critic2.state_dict(),
+            "critic_target1": self.critic_target1.state_dict(),
+            "critic_target2": self.critic_target2.state_dict(),
+            "total_it": int(self.total_it),
+        }
+        if include_optim:
+            state["actor_opt"] = self.actor_opt.state_dict()
+            state["critic_opt"] = self.critic_opt.state_dict()
+        return state
+
+    def load_state_dict(
+        self,
+        snapshot: Mapping[str, Any],
+        *,
+        strict: bool = False,
+        include_optim: bool = True,
+    ) -> None:
+        """Restore agent parameters from :meth:`state_dict` output."""
+
+        modules = {
+            "actor": self.actor,
+            "actor_target": self.actor_target,
+            "critic1": self.critic1,
+            "critic2": self.critic2,
+            "critic_target1": self.critic_target1,
+            "critic_target2": self.critic_target2,
+        }
+        for key, module in modules.items():
+            weights = snapshot.get(key)
+            if weights is None:
+                if strict:
+                    raise KeyError(f"Missing weights for '{key}'")
+                if key.endswith("_target"):
+                    source_key = key.replace("_target", "")
+                    source_weights = snapshot.get(source_key)
+                    if source_weights is not None:
+                        module.load_state_dict(source_weights, strict=False)
+                continue
+            module.load_state_dict(weights, strict=strict)
+
+        self.total_it = int(snapshot.get("total_it", self.total_it))
+
+        if include_optim:
+            actor_opt_state = snapshot.get("actor_opt")
+            critic_opt_state = snapshot.get("critic_opt")
+            if actor_opt_state is None or critic_opt_state is None:
+                if strict:
+                    missing = ["actor_opt", "critic_opt"]
+                    raise KeyError(f"Missing optimizer state in snapshot: {missing}")
+            else:
+                self.actor_opt.load_state_dict(actor_opt_state)
+                self.critic_opt.load_state_dict(critic_opt_state)
+
+        # Ensure modules live on the configured device after loading.
         self.actor.to(self.device)
         self.actor_target.to(self.device)
         self.critic1.to(self.device)
         self.critic2.to(self.device)
         self.critic_target1.to(self.device)
         self.critic_target2.to(self.device)
+
+    def save(self, path: str) -> None:
+        torch.save(self.state_dict(include_optim=True), path)
+
+    def load(self, path: str) -> None:
+        ckpt = safe_load(path, map_location=self.device)
+        self.load_state_dict(ckpt, strict=False, include_optim=True)
+
+    def reset_optimizers(self) -> None:
+        """Reinitialise optimiser state while preserving learning rates."""
+
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
+        self.critic_opt = torch.optim.Adam(
+            list(self.critic1.parameters()) + list(self.critic2.parameters()),
+            lr=self.critic_lr,
+        )
 
     # -------------------- Helpers --------------------
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import numpy as np
 import torch
@@ -31,10 +31,11 @@ class SACAgent:
         hard_update(self.q1_target, self.q1)
         hard_update(self.q2_target, self.q2)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=float(cfg.get("actor_lr", 3e-4)))
-        critic_lr = float(cfg.get("critic_lr", 3e-4))
-        self.q1_opt = torch.optim.Adam(self.q1.parameters(), lr=critic_lr)
-        self.q2_opt = torch.optim.Adam(self.q2.parameters(), lr=critic_lr)
+        self.actor_lr = float(cfg.get("actor_lr", 3e-4))
+        self.critic_lr = float(cfg.get("critic_lr", 3e-4))
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
+        self.q1_opt = torch.optim.Adam(self.q1.parameters(), lr=self.critic_lr)
+        self.q2_opt = torch.optim.Adam(self.q2.parameters(), lr=self.critic_lr)
 
         self.gamma = float(cfg.get("gamma", 0.99))
         self.tau = float(cfg.get("tau", 0.005))
@@ -210,44 +211,77 @@ class SACAgent:
     # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
-        torch.save(
-            {
-                "actor": self.actor.state_dict(),
-                "q1": self.q1.state_dict(),
-                "q2": self.q2.state_dict(),
-                "q1_target": self.q1_target.state_dict(),
-                "q2_target": self.q2_target.state_dict(),
-                "actor_opt": self.actor_opt.state_dict(),
-                "q1_opt": self.q1_opt.state_dict(),
-                "q2_opt": self.q2_opt.state_dict(),
-                "log_alpha": None if self.log_alpha is None else self.log_alpha.detach().cpu().item(),
-                "alpha_opt": None if self.alpha_opt is None else self.alpha_opt.state_dict(),
-                "total_it": self.total_it,
-            },
-            path,
-        )
+        torch.save(self.state_dict(include_optim=True), path)
 
     def load(self, path: str) -> None:
         ckpt = safe_load(path, map_location=self.device)
-        self.actor.load_state_dict(ckpt["actor"])
-        self.q1.load_state_dict(ckpt["q1"])
-        self.q2.load_state_dict(ckpt["q2"])
-        self.q1_target.load_state_dict(ckpt.get("q1_target", ckpt["q1"]))
-        self.q2_target.load_state_dict(ckpt.get("q2_target", ckpt["q2"]))
-        self.actor_opt.load_state_dict(ckpt["actor_opt"])
-        self.q1_opt.load_state_dict(ckpt["q1_opt"])
-        self.q2_opt.load_state_dict(ckpt["q2_opt"])
-        log_alpha_val = ckpt.get("log_alpha")
+        self.load_state_dict(ckpt, strict=False, include_optim=True)
+
+    def state_dict(self, *, include_optim: bool = True) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "actor": self.actor.state_dict(),
+            "q1": self.q1.state_dict(),
+            "q2": self.q2.state_dict(),
+            "q1_target": self.q1_target.state_dict(),
+            "q2_target": self.q2_target.state_dict(),
+            "total_it": int(self.total_it),
+        }
+        if self.auto_alpha and self.log_alpha is not None:
+            payload["log_alpha"] = float(self.log_alpha.detach().cpu().item())
+        if include_optim:
+            payload["actor_opt"] = self.actor_opt.state_dict()
+            payload["q1_opt"] = self.q1_opt.state_dict()
+            payload["q2_opt"] = self.q2_opt.state_dict()
+            if self.auto_alpha and self.alpha_opt is not None:
+                payload["alpha_opt"] = self.alpha_opt.state_dict()
+        return payload
+
+    def load_state_dict(
+        self,
+        snapshot: Mapping[str, Any],
+        *,
+        strict: bool = False,
+        include_optim: bool = True,
+    ) -> None:
+        self.actor.load_state_dict(snapshot["actor"], strict=strict)
+        self.q1.load_state_dict(snapshot["q1"], strict=strict)
+        self.q2.load_state_dict(snapshot["q2"], strict=strict)
+        self.q1_target.load_state_dict(snapshot.get("q1_target", snapshot["q1"]), strict=strict)
+        self.q2_target.load_state_dict(snapshot.get("q2_target", snapshot["q2"]), strict=strict)
+
+        if include_optim:
+            actor_opt_state = snapshot.get("actor_opt")
+            if actor_opt_state is not None:
+                self.actor_opt.load_state_dict(actor_opt_state)
+            critic_opt_state = snapshot.get("q1_opt")
+            if critic_opt_state is not None:
+                self.q1_opt.load_state_dict(critic_opt_state)
+            critic2_opt_state = snapshot.get("q2_opt")
+            if critic2_opt_state is not None:
+                self.q2_opt.load_state_dict(critic2_opt_state)
+            if self.auto_alpha and self.alpha_opt is not None:
+                alpha_opt_state = snapshot.get("alpha_opt")
+                if alpha_opt_state is not None:
+                    self.alpha_opt.load_state_dict(alpha_opt_state)
+
+        log_alpha_val = snapshot.get("log_alpha")
         if self.auto_alpha and log_alpha_val is not None and self.log_alpha is not None:
             self.log_alpha.data = torch.tensor(float(log_alpha_val), dtype=torch.float32, device=self.device)
-            if ckpt.get("alpha_opt"):
-                self.alpha_opt.load_state_dict(ckpt["alpha_opt"])
-        self.total_it = int(ckpt.get("total_it", 0))
+
+        self.total_it = int(snapshot.get("total_it", self.total_it))
+
         self.actor.to(self.device)
         self.q1.to(self.device)
         self.q2.to(self.device)
         self.q1_target.to(self.device)
         self.q2_target.to(self.device)
+
+    def reset_optimizers(self) -> None:
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
+        self.q1_opt = torch.optim.Adam(self.q1.parameters(), lr=self.critic_lr)
+        self.q2_opt = torch.optim.Adam(self.q2.parameters(), lr=self.critic_lr)
+        if self.auto_alpha and self.log_alpha is not None:
+            self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.alpha_lr)
 
     # ------------------------------------------------------------------
     # Helpers

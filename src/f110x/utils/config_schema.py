@@ -266,6 +266,7 @@ class MainSchema(BaseSchema):
     output_root: str = "outputs"
     eval_interval: int = 0
     eval_episodes: int = 5
+    federated: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

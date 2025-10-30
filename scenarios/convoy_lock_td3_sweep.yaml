@@ -26,6 +26,13 @@ parameters:
     parameters:
       seed:
         values: [11, 21, 42]
+  main:
+    parameters:
+      federated:
+        parameters:
+          root:
+            values:
+              - outputs/federated_sweeps
   agents:
     parameters:
       car_0:

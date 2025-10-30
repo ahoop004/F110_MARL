@@ -1,0 +1,15 @@
+Defaults to review for federated MARL setup:
+- main.federated.enabled: false (scenario opt-in)
+- main.federated.interval: 100 episodes fallback (set to 50 in convoy_lock)
+- main.federated.agents: [] (must be overridden when enabled)
+- main.federated.root: unset (uses cwd if missing)
+- main.federated.mode: "mean"
+- main.federated.timeout: 600.0 seconds
+- main.federated.weights: None (uniform averaging)
+- main.federated.checkpoint_after_sync: true
+- main.federated.optimizer_strategy: "local"
+- run.py FED_* env injection relies on scenario config
+- FED_ROUND_INTERVAL env overrides interval when present
+- FED_CLIENT_ID / FED_TOTAL_CLIENTS default to 0 / 1 if not provided
+- FED_CHECKPOINT_AFTER_SYNC env toggles post-sync checkpointing
+- FED_OPTIMIZER_STRATEGY env selects `local`, `average`, or `reset`

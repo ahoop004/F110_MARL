@@ -502,6 +502,77 @@ def _prepare_env_overrides(spec: Dict[str, Any], parser: argparse.ArgumentParser
     return overrides
 
 
+def _resolve_federated_env(cfg: Any, run_idx: int, run_count: int) -> Dict[str, str]:
+    if cfg is None:
+        return {}
+    main_cfg = getattr(cfg, "main", None)
+    if main_cfg is None:
+        return {}
+    try:
+        federated = main_cfg.federated
+    except Exception:
+        return {}
+    if not isinstance(federated, Mapping):
+        return {}
+    if not federated.get("enabled"):
+        return {}
+
+    env: Dict[str, str] = {
+        "FED_ENABLED": "1",
+        "FED_TOTAL_CLIENTS": str(int(run_count)),
+        "FED_CLIENT_ID": str(int(run_idx - 1)),
+    }
+
+    interval = federated.get("interval")
+    if interval is not None:
+        try:
+            env["FED_ROUND_INTERVAL"] = str(int(interval))
+        except (TypeError, ValueError):
+            pass
+
+    root = federated.get("root")
+    if root:
+        env["FED_ROOT"] = str(root)
+
+    agents = federated.get("agents") or []
+    if isinstance(agents, (list, tuple, set)):
+        agent_tokens = [str(agent).strip() for agent in agents if str(agent).strip()]
+    else:
+        agent_tokens = [str(agents).strip()] if str(agents).strip() else []
+    if agent_tokens:
+        env["FED_AGENTS"] = ",".join(agent_tokens)
+
+    mode = federated.get("mode")
+    if mode:
+        env["FED_AVG_MODE"] = str(mode)
+
+    timeout = federated.get("timeout")
+    if timeout is not None:
+        try:
+            env["FED_TIMEOUT"] = str(float(timeout))
+        except (TypeError, ValueError):
+            pass
+
+    weights = federated.get("weights")
+    if isinstance(weights, Mapping):
+        items = [
+            f"{str(key).strip()}:{float(value)}"
+            for key, value in weights.items()
+            if str(key).strip()
+        ]
+        if items:
+            env["FED_WEIGHTS"] = ",".join(items)
+    elif isinstance(weights, (list, tuple)):
+        try:
+            env["FED_WEIGHTS"] = ",".join(str(float(item)) for item in weights)
+        except (TypeError, ValueError):
+            pass
+    elif weights is not None:
+        env["FED_WEIGHTS"] = str(weights)
+
+    return env
+
+
 def _prepare_spec_runs(
     parser: argparse.ArgumentParser,
     spec: Dict[str, Any],
@@ -581,6 +652,15 @@ def _prepare_spec_runs(
     if experiment_name:
         forwarded_args = ["--experiment", experiment_name] + forwarded_args
     forwarded_args = _inject_wandb_cli_args(forwarded_args, cfg_path, experiment_name)
+
+    try:
+        active_cfg, _, _ = load_config(
+            cfg_path,
+            default_path=cfg_path,
+            experiment=experiment_name,
+        )
+    except Exception:
+        active_cfg = None
 
     repeat_value = spec.get("repeat")
     repeat = _resolve_optional_int(repeat_value, "repeat", parser) or 1
@@ -683,6 +763,10 @@ def _prepare_spec_runs(
         if experiment_name:
             env_overrides.setdefault("F110_EXPERIMENT", experiment_name)
         env_overrides.setdefault("RUN_CONFIG_HASH", config_hash)
+        federated_env = _resolve_federated_env(active_cfg, run_idx, run_count)
+        if federated_env:
+            for key, value in federated_env.items():
+                env_overrides.setdefault(key, value)
 
         requests.append(
             RunRequest(

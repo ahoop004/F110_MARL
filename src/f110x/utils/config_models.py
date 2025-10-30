@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Mapping, Sequence
 import warnings
 
 from f110x.utils.config_schema import (
@@ -328,10 +328,13 @@ class RewardConfig:
 @dataclass
 class MainConfig:
     schema: MainSchema = field(default_factory=MainSchema)
+    _federated_cache: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MainConfig":
-        return cls(schema=MainSchema.from_dict(data))
+        instance = cls(schema=MainSchema.from_dict(data))
+        instance._federated_cache = instance._sanitize_federated()
+        return instance
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.schema.get(key, default)
@@ -347,6 +350,106 @@ class MainConfig:
     @property
     def checkpoint(self) -> Optional[str]:
         return self.schema.checkpoint
+
+    @property
+    def federated(self) -> Dict[str, Any]:
+        cache = getattr(self, "_federated_cache", None)
+        if not cache:
+            cache = self._sanitize_federated()
+            self._federated_cache = cache
+        return dict(cache)
+
+    # ------------------------------------------------------------------
+    def _sanitize_federated(self) -> Dict[str, Any]:
+        raw = self.schema.federated or {}
+        if not isinstance(raw, Mapping):
+            raw = {}
+
+        enabled = bool(raw.get("enabled", False))
+
+        interval_raw = raw.get("interval", 100)
+        try:
+            interval = int(interval_raw)
+        except (TypeError, ValueError):
+            raise ValueError("main.federated.interval must be an integer")
+        if interval <= 0:
+            if enabled:
+                raise ValueError("main.federated.interval must be a positive integer when federated training is enabled")
+            interval = 1
+
+        agents_raw = raw.get("agents", [])
+        if agents_raw is None:
+            agents_iter: Iterable[Any] = ()
+        elif isinstance(agents_raw, (list, tuple, set)):
+            agents_iter = agents_raw
+        elif isinstance(agents_raw, Mapping):
+            agents_iter = agents_raw.keys()
+        else:
+            agents_iter = (agents_raw,)
+        agents: List[str] = []
+        for entry in agents_iter:
+            text = str(entry).strip()
+            if text:
+                agents.append(text)
+        if enabled and not agents:
+            raise ValueError("main.federated.agents must list at least one trainable agent when federated training is enabled")
+
+        root_raw = raw.get("root")
+        root = None
+        if root_raw is not None:
+            text = str(root_raw).strip()
+            root = text or None
+
+        mode_raw = raw.get("mode", raw.get("strategy", "mean"))
+        mode = str(mode_raw).strip().lower() if mode_raw is not None else "mean"
+
+        timeout_raw = raw.get("timeout", 600.0)
+        try:
+            timeout = float(timeout_raw)
+        except (TypeError, ValueError):
+            raise ValueError("main.federated.timeout must be numeric")
+        if timeout <= 0.0:
+            raise ValueError("main.federated.timeout must be positive")
+
+        weights_raw = raw.get("weights")
+        weights: Any
+        if isinstance(weights_raw, Mapping):
+            weights = {
+                str(key).strip(): float(value)
+                for key, value in weights_raw.items()
+                if str(key).strip()
+            }
+        elif isinstance(weights_raw, (list, tuple)):
+            weights = [float(value) for value in weights_raw]
+        elif weights_raw is None:
+            weights = None
+        else:
+            weights = float(weights_raw)
+
+        checkpoint_flag = bool(raw.get("checkpoint_after_sync", True))
+        optimizer_strategy_raw = raw.get("optimizer_strategy", raw.get("optimizer_mode", "local"))
+        optimizer_strategy = str(optimizer_strategy_raw).strip().lower() if optimizer_strategy_raw is not None else "local"
+        if optimizer_strategy not in {"local", "average", "reset"}:
+            raise ValueError("main.federated.optimizer_strategy must be one of: 'local', 'average', 'reset'")
+
+        sanitized: Dict[str, Any] = {
+            "enabled": enabled,
+            "interval": interval,
+            "agents": agents,
+            "root": root,
+            "mode": mode or "mean",
+            "timeout": timeout,
+            "weights": weights,
+            "checkpoint_after_sync": checkpoint_flag,
+            "optimizer_strategy": optimizer_strategy,
+        }
+
+        for key, value in raw.items():
+            if key not in sanitized:
+                sanitized[key] = value
+
+        self.schema.federated = dict(sanitized)
+        return sanitized
 
 
 @dataclass

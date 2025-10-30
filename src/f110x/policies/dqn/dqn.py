@@ -1,7 +1,7 @@
 """Vanilla DQN agent operating on discrete action sets."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import numpy as np
 import torch
@@ -35,7 +35,8 @@ class DQNAgent(ActionValueAgent):
         self.target_q_net.load_state_dict(self.q_net.state_dict())
         self.register_target_networks(self.q_net, self.target_q_net)
 
-        self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=float(cfg.get("lr", 5e-4)))
+        self.lr = float(cfg.get("lr", 5e-4))
+        self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
         epsilon_decay_rate = float(cfg.get("epsilon_decay_rate", 0.0))
         if epsilon_decay_rate and not 0.0 < epsilon_decay_rate < 1.0:
             raise ValueError("epsilon_decay_rate must be in (0, 1) for multiplicative decay")
@@ -165,39 +166,53 @@ class DQNAgent(ActionValueAgent):
     # -------------------- Persistence --------------------
 
     def save(self, path: str) -> None:
-        torch.save(
-            {
-                "q_net": self.q_net.state_dict(),
-                "target_q_net": self.target_q_net.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "step_count": self.step_count,
-                "updates": self._updates,
-                "episode_count": self.episode_count,
-                "epsilon_value": self._epsilon_value,
-                "action_set": self.action_set,
-                "obs_dim": self.obs_dim,
-            },
-            path,
-        )
+        torch.save(self.state_dict(include_optim=True), path)
 
     def load(self, path: str) -> None:
         ckpt = safe_load(path, map_location=self.device)
-        stored_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
+        self.load_state_dict(ckpt, strict=True, include_optim=True)
+
+    def state_dict(self, *, include_optim: bool = True) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "q_net": self.q_net.state_dict(),
+            "target_q_net": self.target_q_net.state_dict(),
+            "step_count": self.step_count,
+            "updates": self._updates,
+            "episode_count": self.episode_count,
+            "epsilon_value": self._epsilon_value,
+            "action_set": self.action_set,
+            "obs_dim": self.obs_dim,
+        }
+        if include_optim:
+            payload["optimizer"] = self.optimizer.state_dict()
+        return payload
+
+    def load_state_dict(
+        self,
+        snapshot: Mapping[str, Any],
+        *,
+        strict: bool = True,
+        include_optim: bool = True,
+    ) -> None:
+        stored_obs_dim = int(snapshot.get("obs_dim", self.obs_dim))
         if stored_obs_dim != self.obs_dim:
             raise RuntimeError(
-                "Checkpoint observation size mismatch for "
-                f"'{path}': checkpoint obs_dim={stored_obs_dim}, "
-                f"expected {self.obs_dim}. "
-                "Ensure the observation wrapper configuration matches the saved model."
+                "Checkpoint observation size mismatch: "
+                f"checkpoint obs_dim={stored_obs_dim}, expected {self.obs_dim}."
             )
-        try:
-            self.q_net.load_state_dict(ckpt["q_net"])
-        except RuntimeError as exc:
-            raise RuntimeError(
-                "Failed to load DQN checkpoint '"
-                f"{path}' due to incompatible network shapes; "
-                "double-check the observation configuration before reusing this checkpoint."
-            ) from exc
+        self.q_net.load_state_dict(snapshot["q_net"], strict=strict)
+        self.target_q_net.load_state_dict(snapshot.get("target_q_net", snapshot["q_net"]), strict=strict)
+        if include_optim:
+            opt_state = snapshot.get("optimizer")
+            if opt_state is not None:
+                self.optimizer.load_state_dict(opt_state)
+        self.step_count = int(snapshot.get("step_count", self.step_count))
+        self._updates = float(snapshot.get("updates", self._updates))
+        self.episode_count = int(snapshot.get("episode_count", self.episode_count))
+        self._epsilon_value = float(snapshot.get("epsilon_value", self._epsilon_value))
+
+    def reset_optimizers(self) -> None:
+        self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
         self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.step_count = int(ckpt.get("step_count", 0))

@@ -57,6 +57,37 @@ class OffPolicyTrainer(Trainer):
         if callable(reset_fn):
             reset_fn()
 
+    def state_dict(self, *, include_optimizer: bool = True):
+        snapshot_fn = getattr(self._agent, "state_dict", None)
+        if not callable(snapshot_fn):
+            raise AttributeError("Underlying agent does not expose state_dict()")
+        try:
+            return snapshot_fn(include_optim=include_optimizer)
+        except TypeError:
+            # Fallback for agents that use include_optimizer naming
+            return snapshot_fn(include_optimizer=include_optimizer)
+
+    def load_state_dict(
+        self,
+        state,
+        *,
+        strict: bool = False,
+        include_optimizer: bool = True,
+    ) -> None:
+        restore_fn = getattr(self._agent, "load_state_dict", None)
+        if not callable(restore_fn):
+            raise AttributeError("Underlying agent does not expose load_state_dict()")
+        try:
+            restore_fn(state, strict=strict, include_optim=include_optimizer)
+        except TypeError:
+            # Older agents may accept include_optimizer keyword instead.
+            restore_fn(state, strict=strict, include_optimizer=include_optimizer)
+
+    def reset_optimizers(self) -> None:
+        reset_fn = getattr(self._agent, "reset_optimizers", None)
+        if callable(reset_fn):
+            reset_fn()
+
 
 DQNTrainer = OffPolicyTrainer
 TD3Trainer = OffPolicyTrainer

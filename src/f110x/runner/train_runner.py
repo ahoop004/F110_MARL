@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Mapping
 
+from f110x.federated import FederatedAverager, FederatedConfig
 from f110x.engine.rollout import (
     BestReturnTracker,
     IdleTerminationTracker,
@@ -394,6 +395,10 @@ class TrainRunner:
     _eval_interval: int = field(init=False, default=0)
     _eval_episodes: int = field(init=False, default=1)
     _eval_runner: Optional[EvalRunner] = field(init=False, default=None)
+    _federated_cfg: Optional[FederatedConfig] = field(init=False, default=None)
+    _federated: Optional[FederatedAverager] = field(init=False, default=None)
+    _federated_interval: int = field(init=False, default=0)
+    _federated_round: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -422,6 +427,218 @@ class TrainRunner:
             episodes_int = 1
         self._eval_episodes = max(episodes_int, 1)
         self._eval_runner = None
+        self._init_federated()
+
+    # ------------------------------------------------------------------
+    def _init_federated(self) -> None:
+        self._federated_cfg = None
+        self._federated = None
+        self._federated_interval = 0
+        self._federated_round = 0
+
+        try:
+            base_cfg = dict(self.context.cfg.main.federated or {})
+        except Exception:
+            base_cfg = {}
+
+        if not base_cfg or not base_cfg.get("enabled"):
+            return
+
+        env_enabled = os.environ.get("FED_ENABLED")
+        if env_enabled and env_enabled.strip().lower() in {"0", "false", "off", "no"}:
+            return
+
+        total_raw = os.environ.get("FED_TOTAL_CLIENTS")
+        client_raw = os.environ.get("FED_CLIENT_ID")
+        if total_raw is None or client_raw is None:
+            self._logger.warning(
+                "Federated averaging enabled but FED_TOTAL_CLIENTS or FED_CLIENT_ID not set; disabling federated sync.",
+                extra={"federated_enabled": True},
+            )
+            return
+
+        try:
+            total_clients = max(int(total_raw), 1)
+            client_id = int(client_raw)
+        except ValueError:
+            self._logger.warning(
+                "Invalid federated client identifiers; disabling federated sync.",
+                extra={"FED_TOTAL_CLIENTS": total_raw, "FED_CLIENT_ID": client_raw},
+            )
+            return
+
+        overrides = dict(base_cfg)
+        env_interval = os.environ.get("FED_ROUND_INTERVAL") or os.environ.get("FED_INTERVAL")
+        if env_interval:
+            try:
+                overrides["interval"] = int(env_interval)
+            except ValueError:
+                pass
+        env_root = os.environ.get("FED_ROOT")
+        if env_root:
+            overrides["root"] = env_root
+        env_agents = os.environ.get("FED_AGENTS")
+        if env_agents:
+            overrides["agents"] = [token.strip() for token in env_agents.split(",") if token.strip()]
+        env_mode = os.environ.get("FED_AVG_MODE")
+        if env_mode:
+            overrides["mode"] = env_mode
+        env_timeout = os.environ.get("FED_TIMEOUT")
+        if env_timeout:
+            try:
+                overrides["timeout"] = float(env_timeout)
+            except ValueError:
+                pass
+        env_weights = os.environ.get("FED_WEIGHTS")
+        if env_weights:
+            mapping: Dict[Any, float] = {}
+            ordered: List[float] = []
+            saw_mapping = False
+            for token in env_weights.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                if ":" in token:
+                    key, raw_val = token.split(":", 1)
+                    try:
+                        mapping[key.strip()] = float(raw_val)
+                        saw_mapping = True
+                    except ValueError:
+                        continue
+                else:
+                    try:
+                        ordered.append(float(token))
+                    except ValueError:
+                        continue
+            if saw_mapping and mapping:
+                overrides["weights"] = mapping
+            elif ordered:
+                overrides["weights"] = ordered
+        env_checkpoint = os.environ.get("FED_CHECKPOINT_AFTER_SYNC")
+        if env_checkpoint:
+            if env_checkpoint.strip().lower() in {"0", "false", "off", "no"}:
+                overrides["checkpoint_after_sync"] = False
+            else:
+                overrides["checkpoint_after_sync"] = True
+        env_opt_strategy = os.environ.get("FED_OPTIMIZER_STRATEGY")
+        if env_opt_strategy:
+            overrides["optimizer_strategy"] = env_opt_strategy
+
+        base_dir = getattr(self.context, "output_root", None)
+        if base_dir is None:
+            base_dir_path = self.checkpoint_dir.parent
+        else:
+            base_dir_path = Path(base_dir)
+
+        try:
+            fed_cfg = FederatedConfig.from_mapping(overrides, base_dir=base_dir_path)
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to initialise federated configuration",
+                extra={"error": str(exc)},
+            )
+            return
+
+        if fed_cfg.mode and fed_cfg.mode not in {"mean"}:
+            self._logger.warning(
+                f"Unsupported federated averaging mode '{fed_cfg.mode}'; defaulting to 'mean'."
+            )
+            fed_cfg = FederatedConfig(
+                enabled=fed_cfg.enabled,
+                interval=fed_cfg.interval,
+                agents=fed_cfg.agents,
+                root=fed_cfg.root,
+                mode="mean",
+                timeout=fed_cfg.timeout,
+                weights=fed_cfg.weights,
+            )
+
+        if not fed_cfg.agents:
+            self._logger.warning(
+                "Federated averaging enabled but no agents listed; disabling federated sync."
+            )
+            return
+
+        self._federated_cfg = fed_cfg
+        self._federated_interval = max(fed_cfg.interval, 1)
+        try:
+            self._federated = FederatedAverager(
+                fed_cfg,
+                client_id=client_id,
+                total_clients=total_clients,
+                logger=self._logger,
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to construct federated averager; disabling federated sync.",
+                extra={"error": str(exc)},
+            )
+            self._federated = None
+            self._federated_cfg = None
+            self._federated_interval = 0
+            return
+
+        self._logger.info(
+            "Federated averaging enabled",
+            extra={
+                "clients": total_clients,
+                "client_id": client_id,
+                "interval": self._federated_interval,
+                "agents": list(fed_cfg.agents),
+                "root": str(fed_cfg.root),
+            },
+        )
+
+    def _run_federated_sync(self, episode: int, trainers: Mapping[str, Trainer]) -> None:
+        if not self._federated or not self._federated_interval:
+            return
+
+        next_round = self._federated_round + 1
+        try:
+            metrics = self._federated.sync(trainers, next_round)
+        except TimeoutError as exc:
+            self._logger.warning(
+                "Federated averaging timed out",
+                extra={"episode": episode, "round": next_round, "error": str(exc)},
+            )
+            self._federated = None
+            return
+        except Exception as exc:
+            self._logger.warning(
+                "Federated averaging failed",
+                extra={"episode": episode, "round": next_round, "error": str(exc)},
+            )
+            return
+
+        self._federated_round = next_round
+        if not metrics:
+            return
+        metrics = dict(metrics)
+        metrics.setdefault("federated/round", float(next_round))
+        metrics.setdefault("federated/episode", float(episode))
+        try:
+            self.team.reset_actions()
+        except Exception:
+            pass
+        for trainer in trainers.values():
+            reset_fn = getattr(trainer, "reset_noise_schedule", None)
+            if callable(reset_fn):
+                try:
+                    reset_fn(restart=True)
+                except TypeError:
+                    reset_fn()
+        checkpoint_saved = False
+        if self._federated_cfg and self._federated_cfg.checkpoint_after_sync:
+            checkpoint_saved = self._save_primary_model()
+            if checkpoint_saved:
+                metrics.setdefault("federated/checkpoint_saved", 1.0)
+
+        if self._federated_cfg and self._federated_cfg.optimizer_strategy == "reset":
+            for trainer in trainers.values():
+                reset_opt = getattr(trainer, "reset_optimizers", None)
+                if callable(reset_opt):
+                    reset_opt()
+        self._logger.log_metrics("federated", metrics, step=episode)
 
     # ------------------------------------------------------------------
     # Public surface
@@ -908,6 +1125,14 @@ class TrainRunner:
                             "path": str(self.best_model_path),
                         },
                     )
+                    metrics.setdefault("federated/checkpoint_saved", 1.0)
+
+            if (
+                self._federated
+                and self._federated_interval > 0
+                and (episode_idx + 1) % self._federated_interval == 0
+            ):
+                self._run_federated_sync(episode_idx + 1, trainer_map)
 
             for trainer in trainer_map.values():
                 reset_noise = getattr(trainer, "reset_noise_schedule", None)
