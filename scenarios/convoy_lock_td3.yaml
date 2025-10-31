@@ -102,10 +102,10 @@ scenario:
           exploration_noise_final: 0.05
           exploration_noise_decay_steps: 400000
           # exploration_noise_decay_episodes: 4000
-          initial_speed: 0.8
-          prevent_reverse: true
-          prevent_reverse_min_speed: 0.01
-          prevent_reverse_speed_index: 1
+          initial_speed: 1.0
+          # prevent_reverse: true
+          # prevent_reverse_min_speed: 0.01
+          # prevent_reverse_speed_index: 1
           hidden_dims:
             - 256
             # - 256
