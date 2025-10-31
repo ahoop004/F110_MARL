@@ -1,5 +1,5 @@
 meta:
-  name: gaplock_td3
+  name: convoy_lock_td3
 
 scenario:
   env:
@@ -51,8 +51,8 @@ scenario:
   main:
     mode: train_eval
     train_episodes: 5000
-    eval_episodes: 5
-    eval_interval: 10
+    eval_episodes: 10
+    eval_interval: 100
     federated:
       enabled: true
       interval: 50
@@ -68,7 +68,7 @@ scenario:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: td3
+      group: single_runs
       tags:
         - td3
 
@@ -79,17 +79,17 @@ scenario:
         name: td3
         params:
           device: cpu
-          actor_lr: 0.00025
-          critic_lr: 0.0005
-          gamma: 0.99
+          actor_lr: 0.00045
+          critic_lr: 0.00055
+          gamma: 0.995
           tau: 0.005
-          policy_noise: 0.2
+          policy_noise: 0.0
           noise_clip: 0.4
           policy_delay: 2
-          batch_size: 256
-          buffer_size: 200000
-          warmup_steps: 8000
-          updates_per_step: 1
+          batch_size: 512
+          buffer_size: 50000
+          warmup_steps: 512
+          updates_per_step: 2
           include_truncation: true
           use_per: true
           per_alpha: 0.6
@@ -98,34 +98,34 @@ scenario:
           per_beta_increment: 0.000005
           per_min_priority: 0.0001
           per_epsilon: 0.000001
-          exploration_noise: 0.28
-          exploration_noise_final: 0.12
+          exploration_noise: 0.3
+          exploration_noise_final: 0.05
           exploration_noise_decay_steps: 400000
-          exploration_noise_decay_episodes: 0
-          initial_speed: 0.4
+          # exploration_noise_decay_episodes: 4000
+          initial_speed: 0.8
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           hidden_dims:
             - 256
-            - 256
+            # - 256
             - 128
           save_dir: checkpoints/td3_convoy_lock_v2
           checkpoint_name: td3_convoy_lock.pt
       reward:
         task: gaplock
         idle_speed_threshold: 0.02
-        idle_patience_steps: 90
+        idle_patience_steps: 180
         features:
           - gaplock_offense
           - idle_guard
         params:
-          target_crash_reward: 60.0
+          target_crash_reward: 100.0
           self_collision_penalty: -10.0
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          # step_reward: 0.0
+          step_reward: 0.01
           idle_speed_threshold: 0.02
           idle_penalty: -0.08
           idle_penalty_steps: 18
@@ -133,7 +133,7 @@ scenario:
           # pressure_distance: 0.0
           # pressure_timeout: 0.0
           # pressure_min_speed: 0.0
-          # pressure_bonus: 0.0
+          pressure_bonus: 0.01
           # pressure_bonus_interval: 0
           # proximity_penalty_distance: 0.0
           # proximity_penalty_value: 0.0
