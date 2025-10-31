@@ -1,0 +1,13 @@
+base:
+  scenario: scenarios/convoy_lock_td3.yaml
+  main:
+    federated:
+      root: outputs/federated_grid
+  wandb_prefix: grid-
+matrix:
+  env.seed: [11, 21, 42]
+  agents.car_0.algorithm.params.actor_lr: [0.00018, 0.00025, 0.00035]
+  agents.car_0.algorithm.params.critic_lr: [0.0003, 0.0005, 0.0007]
+  agents.car_0.algorithm.params.policy_noise: [0.12, 0.2, 0.28]
+  agents.car_0.algorithm.params.noise_clip: [0.24, 0.4, 0.56]
+  agents.car_0.algorithm.params.updates_per_step: [1, 2, 3]
