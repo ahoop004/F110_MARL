@@ -79,17 +79,17 @@ scenario:
         name: td3
         params:
           device: cpu
-          actor_lr: 0.00045
-          critic_lr: 0.00055
+          actor_lr: 0.0003
+          critic_lr: 0.0004
           gamma: 0.995
           tau: 0.005
           policy_noise: 0.08
           noise_clip: 0.16
           policy_delay: 2
-          batch_size: 512
+          batch_size: 256
           buffer_size: 50000
           warmup_steps: 512
-          updates_per_step: 2
+          updates_per_step: 1
           include_truncation: true
           use_per: true
           per_alpha: 0.6
