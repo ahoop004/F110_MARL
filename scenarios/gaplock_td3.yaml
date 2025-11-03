@@ -196,3 +196,51 @@ scenario:
                   angle_mode: raw
                 target:
                   agent: car_1
+
+    car_1:
+      trainable: false
+      algorithm:
+        name: follow_gap
+        params:
+          max_distance: 30.0
+          window_size: 4
+          bubble_radius: 2
+          max_steer: 0.32
+          min_speed: 0.0
+          max_speed: 0.8
+          steering_gain: 0.6
+          fov_deg: 270
+          normalized: true
+          steer_smooth: 0.4
+          mode: secondary
+          secondary_warning_border: 0.35
+          secondary_hard_border: 0.5
+          secondary_safe_distance: 1.0
+          secondary_turn_gain: 1.5
+          secondary_border_speed_scale: 0.5
+          secondary_max_turn: 1.0
+          secondary_target_agent: car_0
+          secondary_lane_center: -0.724998
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 54
+                  max_range: 30.0
+                  normalize: true
+                  clip: 1.0
+              - id: ego_pose
+                type: ego_pose
+                params:
+                  angle_mode: raw
+              - id: target_pose
+                type: target_pose
+                params:
+                  angle_mode: raw
+                target:
+                  agent: car_0
