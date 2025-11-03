@@ -453,21 +453,27 @@ class EvalRunner:
             bundle.metadata["config"] = bundle_cfg
 
     def _resolve_run_suffix(self) -> Optional[str]:
+        meta = getattr(self.context, "metadata", {})
         candidates = [
             os.environ.get("F110_RUN_SUFFIX"),
-            os.environ.get("WANDB_RUN_ID"),
+        ]
+        if isinstance(meta, dict):
+            candidates.append(meta.get("run_suffix"))
+        candidates.extend([
+            os.environ.get("WANDB_NAME"),
             os.environ.get("WANDB_RUN_NAME"),
+        ])
+        if isinstance(meta, dict):
+            candidates.append(meta.get("wandb_run_name"))
+        candidates.extend([
+            os.environ.get("RUN_CONFIG_HASH"),
             os.environ.get("WANDB_RUN_PATH"),
             os.environ.get("RUN_ITER"),
             os.environ.get("RUN_SEED"),
-        ]
-        meta = getattr(self.context, "metadata", {})
+            os.environ.get("WANDB_RUN_ID"),
+        ])
         if isinstance(meta, dict):
-            candidates.extend([
-                meta.get("wandb_run_id"),
-                meta.get("wandb_run_name"),
-                meta.get("run_suffix"),
-            ])
+            candidates.append(meta.get("wandb_run_id"))
         for candidate in candidates:
             if not candidate:
                 continue
