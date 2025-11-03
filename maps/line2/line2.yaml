@@ -11,8 +11,8 @@ annotations:
   spawn_points:
   - name: spawn_1
     pose:
-    - -50.2499
-    - -0.6375
+    - -48.2499
+    -  -0.724998
     - 0.0
   - name: spawn_2
     pose:

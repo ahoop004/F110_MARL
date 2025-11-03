@@ -18,35 +18,35 @@ scenario:
     spawn_points:
       - spawn_3
       - spawn_1
-    spawn_point_sets:
-      - id: offset_lane_a
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_5
-          - spawn_1
-      - id: offset_lane_b
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_2
-          - spawn_1
-      - id: extended_gap
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_4
-          - spawn_1
-    spawn_curriculum:
-      min_episode: 0
-      activation_samples: 0
-      success_window: 0
-      enable_rate: 0.0
-      enable_patience: 0
-      disable_rate: 0.0
-      disable_patience: 0
-      cooldown: 0
-      persist: true
+    # spawn_point_sets:
+    #   - id: offset_lane_a
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_5
+    #       - spawn_1
+    #   - id: offset_lane_b
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_2
+    #       - spawn_1
+    #   - id: extended_gap
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_4
+    #       - spawn_1
+    # spawn_curriculum:
+    #   min_episode: 0
+    #   activation_samples: 0
+    #   success_window: 0
+    #   enable_rate: 0.0
+    #   enable_patience: 0
+    #   disable_rate: 0.0
+    #   disable_patience: 0
+    #   cooldown: 0
+    #   persist: true
 
   main:
     mode: train_eval
@@ -54,7 +54,7 @@ scenario:
     eval_episodes: 10
     eval_interval: 100
     federated:
-      enabled: true
+      enabled: false
       interval: 50
       agents:
         - car_0
@@ -155,8 +155,8 @@ scenario:
           # commit_bonus: 0.0
           # escape_distance: 0.0
           # escape_penalty: 0.0
-          success_border_radius: 0.5
-          success_border_lane_center: -0.724998
+          # success_border_radius: 0.5
+          # success_border_lane_center: -0.724998
           truncation_penalty: -25.0
           relative_reward:
             weights:
@@ -169,8 +169,8 @@ scenario:
               left: 0.01
               front_left: 0.01
             preferred_radius: 0.75
-            inner_tolerance: 0.01
-            outer_tolerance: 0.01
+            inner_tolerance: 0.04
+            outer_tolerance: 0.04
             # ignored_agents:
             #   - car_1
       wrappers:
@@ -206,13 +206,13 @@ scenario:
           window_size: 4
           bubble_radius: 2
           max_steer: 0.32
-          min_speed: 0.0
+          min_speed: 0.2
           max_speed: 0.8
           steering_gain: 0.6
           fov_deg: 270
           normalized: true
           steer_smooth: 0.4
-          mode: secondary
+        
           secondary_warning_border: 0.35
           secondary_hard_border: 0.5
           secondary_safe_distance: 1.0
