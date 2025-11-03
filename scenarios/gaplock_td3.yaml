@@ -139,6 +139,8 @@ scenario:
           # proximity_penalty_value: 0.0
           # speed_bonus_coef: 0.0
           # speed_bonus_target: 0.0
+          reverse_penalty: 5.0
+          reverse_speed_threshold: 0.05
           # brake_penalty: 0.0
           # brake_speed_threshold: 0.0
           # brake_drop_threshold: 0.0

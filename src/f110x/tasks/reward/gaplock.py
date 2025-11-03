@@ -40,6 +40,8 @@ GAPLOCK_PARAM_KEYS = (
     "proximity_penalty_value",
     "speed_bonus_coef",
     "speed_bonus_target",
+    "reverse_penalty",
+    "reverse_speed_threshold",
     "brake_penalty",
     "brake_speed_threshold",
     "brake_drop_threshold",
@@ -97,6 +99,8 @@ class GaplockRewardStrategy(RewardStrategy):
         proximity_penalty_value: float = 0.0,
         speed_bonus_coef: float = 0.0,
         speed_bonus_target: float = 0.0,
+        reverse_penalty: float = 0.0,
+        reverse_speed_threshold: float = 0.0,
         brake_penalty: float = 0.0,
         brake_speed_threshold: float = 0.0,
         brake_drop_threshold: float = 0.0,
@@ -159,6 +163,8 @@ class GaplockRewardStrategy(RewardStrategy):
         self._pressure_streak_levels: Dict[str, int] = {}
         self.speed_bonus_coef = float(speed_bonus_coef)
         self.speed_bonus_target = max(float(speed_bonus_target), 0.0)
+        self.reverse_penalty = max(float(reverse_penalty), 0.0)
+        self.reverse_speed_threshold = max(float(reverse_speed_threshold), 0.0)
         self.brake_penalty = float(brake_penalty)
         self.brake_speed_threshold = max(float(brake_speed_threshold), 0.0)
         self.brake_drop_threshold = max(float(brake_drop_threshold), 0.0)
@@ -270,6 +276,26 @@ class GaplockRewardStrategy(RewardStrategy):
                 return None
         return self._coerce_speed_value(speed_val)
 
+    def _extract_forward_speed(self, obs: Dict[str, Any]) -> Optional[float]:
+        pose_arr = self._extract_pose(obs)
+        if pose_arr is None or pose_arr.size < 3:
+            return None
+        velocity = obs.get("velocity")
+        if velocity is None:
+            return None
+        try:
+            vel_vec = np.asarray(velocity, dtype=np.float32).flatten()
+        except Exception:
+            return None
+        if vel_vec.size < 2:
+            return None
+        heading = float(pose_arr[2])
+        forward_dir = np.array([math.cos(heading), math.sin(heading)], dtype=np.float32)
+        forward_component = float(np.dot(vel_vec[:2], forward_dir))
+        if not np.isfinite(forward_component):
+            return None
+        return forward_component
+
     def _apply_idle_penalty(self, acc: RewardAccumulator, agent_id: str, speed: Optional[float]) -> None:
         if speed is None or self.idle_speed_threshold <= 0.0:
             self._idle_counters.pop(agent_id, None)
@@ -339,6 +365,15 @@ class GaplockRewardStrategy(RewardStrategy):
             self._last_speed[step.agent_id] = float(speed)
         else:
             self._last_speed.pop(step.agent_id, None)
+
+        forward_speed = self._extract_forward_speed(ego_obs)
+        if (
+            self.reverse_penalty
+            and forward_speed is not None
+            and forward_speed < -self.reverse_speed_threshold
+        ):
+            penalty_value = -self.reverse_penalty * time_scale
+            acc.add("reverse_penalty", penalty_value)
 
         if self.step_reward:
             idle_threshold = self.idle_speed_threshold
