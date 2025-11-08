@@ -86,7 +86,7 @@ scenario:
           policy_noise: 0.08
           noise_clip: 0.16
           policy_delay: 2
-          batch_size: 256
+          batch_size: 128
           buffer_size: 50000
           warmup_steps: 512
           updates_per_step: 1
@@ -133,7 +133,7 @@ scenario:
           # pressure_distance: 0.0
           # pressure_timeout: 0.0
           # pressure_min_speed: 0.0
-          pressure_bonus: 0.01
+          pressure_bonus: 0.05
           # pressure_bonus_interval: 0
           # proximity_penalty_distance: 0.0
           # proximity_penalty_value: 0.0
@@ -198,6 +198,13 @@ scenario:
                   angle_mode: raw
                 target:
                   agent: car_1
+              - id: relative_pose
+                type: relative_pose
+                params:
+                  angle_mode: raw
+                target:
+                  agent: car_1
+
 
     car_1:
       trainable: false
@@ -215,14 +222,7 @@ scenario:
           normalized: true
           steer_smooth: 0.4
         
-          secondary_warning_border: 0.35
-          secondary_hard_border: 0.5
-          secondary_safe_distance: 1.0
-          secondary_turn_gain: 1.5
-          secondary_border_speed_scale: 0.5
-          secondary_max_turn: 1.0
-          secondary_target_agent: car_0
-          secondary_lane_center: -0.724998
+         
       wrappers:
         - factory: obs
           params:
