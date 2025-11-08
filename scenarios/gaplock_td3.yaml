@@ -6,7 +6,7 @@ scenario:
     map: line2
     seed: 42
     max_steps: 2500
-    lidar_beams: 54
+    lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
     # centerline_render: true
@@ -50,7 +50,7 @@ scenario:
 
   main:
     mode: train_eval
-    train_episodes: 5000
+    train_episodes: 2000
     eval_episodes: 10
     eval_interval: 100
     federated:
@@ -79,14 +79,14 @@ scenario:
         name: td3
         params:
           device: cpu
-          actor_lr: 0.0003
-          critic_lr: 0.0004
+          actor_lr: 0.00035
+          critic_lr: 0.00045
           gamma: 0.995
           tau: 0.005
           policy_noise: 0.08
           noise_clip: 0.16
           policy_delay: 2
-          batch_size: 128
+          batch_size: 64
           buffer_size: 50000
           warmup_steps: 512
           updates_per_step: 1
@@ -98,8 +98,8 @@ scenario:
           per_beta_increment: 0.000005
           per_min_priority: 0.0001
           per_epsilon: 0.000001
-          exploration_noise: 0.1
-          exploration_noise_final: 0.05
+          exploration_noise: 0.09
+          exploration_noise_final: 0.01
           exploration_noise_decay_steps: 400000
           # exploration_noise_decay_episodes: 4000
           initial_speed: 1.0
@@ -130,7 +130,7 @@ scenario:
           idle_penalty: -0.08
           idle_penalty_steps: 18
           idle_truncation_penalty: -35.0
-          pressure_distance: 2.5
+          pressure_distance: 1.5
           # pressure_timeout: 0.0
           # pressure_min_speed: 0.0
           pressure_bonus: 0.05
@@ -146,8 +146,8 @@ scenario:
           # brake_drop_threshold: 0.0
           heading_reward_coef: 0.05
           distance_reward_near: 0.2
-          distance_reward_near_distance: 3.0
-          distance_reward_far_distance: 8.0
+          distance_reward_near_distance: 1.5
+          distance_reward_far_distance: 3.0
           distance_penalty_far: 0.05
           # pressure_streak_bonus: 0.0
           # pressure_streak_cap: 0
@@ -170,9 +170,9 @@ scenario:
               back_left: 0.0
               left: 0.01
               front_left: 0.01
-            preferred_radius: 0.75
-            inner_tolerance: 0.04
-            outer_tolerance: 0.04
+            preferred_radius: 1.0
+            inner_tolerance: 0.5
+            outer_tolerance: 0.5
             # ignored_agents:
             #   - car_1
       wrappers:
@@ -184,26 +184,26 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 54
+                  beams: 108
                   max_range: 30.0
                   normalize: true
                   clip: 1.0
               - id: ego_pose
                 type: ego_pose
                 params:
-                  normalize_xy: 30.0
+                  # normalize_xy: 30.0
                   angle_mode: sin_cos
               - id: target_pose
                 type: target_pose
                 params:
-                  normalize_xy: 30.0
+                  # normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
                   agent: car_1
               - id: relative_pose
                 type: relative_pose
                 params:
-                  normalize_xy: 30.0
+                  # normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
                   agent: car_1
@@ -215,15 +215,15 @@ scenario:
         name: follow_gap
         params:
           max_distance: 30.0
-          window_size: 4
-          bubble_radius: 2
-          max_steer: 0.32
+          window_size: 6
+          bubble_radius: 3
+          max_steer: 0.28
           min_speed: 0.2
-          max_speed: 0.8
-          steering_gain: 0.6
+          max_speed: 0.7
+          steering_gain: 0.45
           fov_deg: 270
           normalized: true
-          steer_smooth: 0.4
+          steer_smooth: 0.75
         
          
       wrappers:
@@ -235,17 +235,8 @@ scenario:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 54
+                  beams: 108
                   max_range: 30.0
                   normalize: true
                   clip: 1.0
-              - id: ego_pose
-                type: ego_pose
-                params:
-                  angle_mode: raw
-              - id: target_pose
-                type: target_pose
-                params:
-                  angle_mode: raw
-                target:
-                  agent: car_0
+              
