@@ -152,6 +152,14 @@ class F110ParallelEnv(ParallelEnv):
         self._spawn_point_names: List[str] = sorted(self._spawn_points.keys())
         self._last_spawn_selection: Dict[str, str] = {}
 
+        self._finish_line_data = self._parse_finish_line(merged.get("finish_line"))
+        if self._finish_line_data is not None:
+            self._finish_signed_prev = np.zeros((self.n_agents,), dtype=np.float32)
+            self._finish_crossed = np.zeros((self.n_agents,), dtype=bool)
+        else:
+            self._finish_signed_prev = None
+            self._finish_crossed = None
+
         R = float(meta.get("resolution", 1.0))
         x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
         x_min = x0
@@ -801,12 +809,14 @@ class F110ParallelEnv(ParallelEnv):
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
         self._refresh_render_observations(obs)
+        self._reset_finish_line_tracking()
 
         infos = {aid: {} for aid in self.agents}
         if spawn_mapping:
             for aid, name in spawn_mapping.items():
                 if aid in infos:
                     infos[aid]["spawn_point"] = name
+        self._inject_finish_line_info(infos)
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -823,6 +833,7 @@ class F110ParallelEnv(ParallelEnv):
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
         self._refresh_render_observations(obs)
+        finish_completion = self._update_finish_line_progress()
 
         self.current_time += self.timestep
         lap_completion = self.start_state.update_progress(
@@ -833,6 +844,10 @@ class F110ParallelEnv(ParallelEnv):
             self.current_time,
             self.target_laps,
         )
+        if finish_completion:
+            for aid, done in finish_completion.items():
+                if done:
+                    lap_completion[aid] = True
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
@@ -848,12 +863,147 @@ class F110ParallelEnv(ParallelEnv):
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
         truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
         infos = {aid: {} for aid in self.possible_agents}
+        self._inject_finish_line_info(infos)
 
         # advance and cull finished agents
         self._elapsed_steps += 1
         self.agents = [aid for aid in self.possible_agents if not (terminations[aid] or truncations[aid])]
 
         return obs, rewards, terminations, truncations, infos
+
+    # ------------------------------------------------------------------
+    # Finish line helpers
+    # ------------------------------------------------------------------
+    def _parse_finish_line(self, cfg: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(cfg, Mapping):
+            return None
+        start_raw = cfg.get("start")
+        end_raw = cfg.get("end")
+        if start_raw is None or end_raw is None:
+            return None
+        try:
+            start = np.asarray(start_raw, dtype=np.float32).reshape(-1)
+            end = np.asarray(end_raw, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        if start.size < 2 or end.size < 2:
+            return None
+        start = start[:2]
+        end = end[:2]
+        segment = end - start
+        length = float(np.linalg.norm(segment))
+        if length <= 1e-6:
+            return None
+        segment_unit = segment / length
+        length_sq = float(length * length)
+        tol_value = cfg.get("tolerance", cfg.get("thickness", cfg.get("width", 1.0)))
+        try:
+            tolerance = max(float(tol_value), 1e-3)
+        except (TypeError, ValueError):
+            tolerance = 1.0
+        pad_value = cfg.get("padding", 0.5)
+        try:
+            padding = float(pad_value)
+        except (TypeError, ValueError):
+            padding = 0.5
+        dir_vec = cfg.get("direction")
+        direction_unit: Optional[np.ndarray] = None
+        if dir_vec is not None:
+            try:
+                dir_arr = np.asarray(dir_vec, dtype=np.float32).reshape(-1)
+                if dir_arr.size >= 2:
+                    norm = float(np.linalg.norm(dir_arr[:2]))
+                    if norm > 0.0:
+                        direction_unit = dir_arr[:2] / norm
+            except (TypeError, ValueError):
+                direction_unit = None
+        min_speed_raw = cfg.get("trigger_speed", cfg.get("min_speed", 0.0))
+        try:
+            min_speed = max(float(min_speed_raw), 0.0)
+        except (TypeError, ValueError):
+            min_speed = 0.0
+        return {
+            "start": start,
+            "end": end,
+            "segment": segment,
+            "segment_unit": segment_unit,
+            "segment_length": length,
+            "segment_length_sq": length_sq,
+            "tolerance": tolerance,
+            "padding": max(padding, 0.0),
+            "direction": direction_unit,
+            "min_speed": min_speed,
+        }
+
+    def _reset_finish_line_tracking(self) -> None:
+        if self._finish_line_data is None or self._finish_signed_prev is None or self._finish_crossed is None:
+            return
+        self._finish_crossed.fill(False)
+        for idx in range(self.n_agents):
+            point = np.array([self.poses_x[idx], self.poses_y[idx]], dtype=np.float32)
+            self._finish_signed_prev[idx] = self._signed_distance_to_finish(point)
+
+    def _signed_distance_to_finish(self, point: np.ndarray) -> float:
+        data = self._finish_line_data
+        if data is None:
+            return 0.0
+        rel = point - data["start"]
+        seg_unit = data["segment_unit"]
+        cross = seg_unit[0] * rel[1] - seg_unit[1] * rel[0]
+        return cross
+
+    def _update_finish_line_progress(self) -> Dict[str, bool]:
+        data = self._finish_line_data
+        if (
+            data is None
+            or self._finish_signed_prev is None
+            or self._finish_crossed is None
+            or not self.possible_agents
+        ):
+            return {}
+        completed: Dict[str, bool] = {}
+        segment = data["segment"]
+        len_sq = data["segment_length_sq"]
+        tolerance = data["tolerance"]
+        padding = data["padding"]
+        direction = data["direction"]
+        min_speed = data["min_speed"]
+        for idx, aid in enumerate(self.possible_agents):
+            if self._finish_crossed[idx]:
+                continue
+            point = np.array([self.poses_x[idx], self.poses_y[idx]], dtype=np.float32)
+            rel = point - data["start"]
+            proj = float(np.dot(rel, segment) / len_sq)
+            if proj < -padding or proj > 1.0 + padding:
+                self._finish_signed_prev[idx] = self._signed_distance_to_finish(point)
+                continue
+            curr_signed = self._signed_distance_to_finish(point)
+            prev_signed = self._finish_signed_prev[idx]
+            self._finish_signed_prev[idx] = curr_signed
+            sign_switch = (prev_signed <= 0.0 < curr_signed) or (prev_signed >= 0.0 > curr_signed)
+            if not sign_switch:
+                continue
+            if abs(curr_signed) > tolerance and abs(prev_signed) > tolerance:
+                continue
+            if direction is not None:
+                vel = np.array(
+                    [self.linear_vels_x_curr[idx], self.linear_vels_y_curr[idx]],
+                    dtype=np.float32,
+                )
+                if float(np.dot(vel, direction)) < min_speed:
+                    continue
+            self._finish_crossed[idx] = True
+            completed[aid] = True
+        return completed
+
+    def _inject_finish_line_info(self, infos: Mapping[str, Dict[str, Any]]) -> None:
+        if self._finish_line_data is None or self._finish_crossed is None:
+            return
+        for aid, idx in self._agent_id_to_index.items():
+            payload = infos.get(aid)
+            if payload is None:
+                continue
+            payload["finish_line"] = bool(self._finish_crossed[idx])
 
     def update_map(self, map_path, map_ext):
         path = Path(map_path).resolve()

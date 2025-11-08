@@ -13,6 +13,7 @@ class FollowTheGapPolicy:
         "normalized": False,
         "steer_smooth": 0.4,
         "mode": "lidar",
+        "center_bias_gain": 0.0,
     }
 
     def __init__(self,
@@ -26,7 +27,8 @@ class FollowTheGapPolicy:
                  fov=np.deg2rad(270),
                  normalized=False,
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
-                 mode="lidar"):
+                 mode="lidar",
+                 center_bias_gain=0.0):
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -38,6 +40,7 @@ class FollowTheGapPolicy:
         self.normalized = normalized
         self.steer_smooth = steer_smooth
         self.mode = str(mode).strip().lower()
+        self.center_bias_gain = float(center_bias_gain)
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -169,7 +172,15 @@ class FollowTheGapPolicy:
         offset = (best - center_idx) / center_idx
         steering = offset * self.steering_gain * self.max_steer
 
-        # 2. Sector-based danger weighting
+        # 2. Centering bias to avoid drifting in symmetric gaps
+        if self.center_bias_gain != 0.0 and center_idx > 0 and center_idx < N:
+            left_mean = float(np.mean(scan[:center_idx]))
+            right_mean = float(np.mean(scan[center_idx:]))
+            denom = max(self.max_distance, 1e-3)
+            bias = np.clip((right_mean - left_mean) / denom, -1.0, 1.0)
+            steering += self.center_bias_gain * bias * self.max_steer
+
+        # 3. Sector-based danger weighting
         left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
         right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
         min_scan = float(np.min(scan))
@@ -198,7 +209,7 @@ class FollowTheGapPolicy:
         steering = self.steer_smooth * self.last_steer + (1 - self.steer_smooth) * steering
         self.last_steer = steering
 
-        # 3. Speed schedule (more conservative)
+        # 4. Speed schedule (more conservative)
         free_ahead = scan[center_idx]
         if min_scan < 2.0:
             speed = max(self.min_speed, 0.8)

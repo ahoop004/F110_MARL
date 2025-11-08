@@ -68,6 +68,10 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env_cfg["map_yaml_path"] = str(map_data.yaml_path)
     env_cfg["map_ext"] = map_data.image_path.suffix or env_cfg.get("map_ext")
 
+    finish_line_meta = map_data.metadata.get("finish_line")
+    if isinstance(finish_line_meta, Mapping):
+        env_cfg["finish_line"] = dict(finish_line_meta)
+
     map_root_raw = env_cfg.get("map_dir")
     map_root_path: Optional[Path] = None
     if map_root_raw:
