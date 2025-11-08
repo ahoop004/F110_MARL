@@ -1,19 +1,6 @@
-import math
-from typing import Optional, Tuple
-
 import numpy as np
 
 class FollowTheGapPolicy:
-    CENTRAL_STATE_KEYS = (
-        "poses_x",
-        "poses_y",
-        "poses_theta",
-        "linear_vels_x",
-        "linear_vels_y",
-        "ang_vels_z",
-        "collisions",
-    )
-
     CONFIG_DEFAULTS = {
         "max_distance": 30.0,
         "window_size": 4,
@@ -26,15 +13,6 @@ class FollowTheGapPolicy:
         "normalized": False,
         "steer_smooth": 0.4,
         "mode": "lidar",
-        "secondary_warning_border": 0.35,
-        "secondary_hard_border": 0.5,
-        "secondary_safe_distance": 1.0,
-        "secondary_turn_gain": 1.5,
-        "secondary_border_speed_scale": 0.5,
-        "secondary_max_turn": 1.0,
-        "secondary_target_slot": 0,
-        "secondary_target_agent": None,
-        "secondary_lane_center": None,
     }
 
     def __init__(self,
@@ -48,16 +26,7 @@ class FollowTheGapPolicy:
                  fov=np.deg2rad(270),
                  normalized=False,
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
-                 mode="lidar",
-                 secondary_warning_border=0.35,
-                 secondary_hard_border=0.5,
-                 secondary_safe_distance=1.0,
-                 secondary_turn_gain=1.5,
-                 secondary_border_speed_scale=0.5,
-                 secondary_max_turn=1.0,
-                 secondary_target_slot=0,
-                 secondary_target_agent=None,
-                 secondary_lane_center=None):
+                 mode="lidar"):
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -69,16 +38,6 @@ class FollowTheGapPolicy:
         self.normalized = normalized
         self.steer_smooth = steer_smooth
         self.mode = str(mode).strip().lower()
-        self.secondary_warning_border = float(secondary_warning_border)
-        self.secondary_hard_border = float(secondary_hard_border)
-        self.secondary_safe_distance = float(secondary_safe_distance)
-        self.secondary_turn_gain = float(secondary_turn_gain)
-        self.secondary_border_speed_scale = float(secondary_border_speed_scale)
-        self.secondary_max_turn = float(secondary_max_turn)
-        self.secondary_target_slot = int(secondary_target_slot)
-        self.secondary_target_agent = (str(secondary_target_agent).strip() if secondary_target_agent else None)
-        self.secondary_lane_center = float(secondary_lane_center) if secondary_lane_center is not None else 0.0
-        self.agent_slot: Optional[int] = None
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -192,9 +151,6 @@ class FollowTheGapPolicy:
         return (gap[0] + gap[1]) // 2
 
     def get_action(self, action_space, obs: dict):
-        mode = getattr(self, "mode", "lidar")
-        if isinstance(mode, str) and mode.strip().lower() in {"secondary", "secondary_vicon", "convoy"}:
-            return self._get_action_secondary(action_space, obs)
         return self._get_action_lidar(action_space, obs)
 
     def _get_action_lidar(self, action_space, obs: dict):
@@ -257,97 +213,3 @@ class FollowTheGapPolicy:
         if action_space is not None:
             action = np.clip(action, action_space.low, action_space.high)
         return action
-
-    def _get_action_secondary(self, action_space, obs: dict):
-        state_raw = obs.get("state")
-        if state_raw is None:
-            return self._get_action_lidar(action_space, obs)
-
-        state_vec = np.asarray(state_raw, dtype=np.float32).flatten()
-        key_count = len(self.CENTRAL_STATE_KEYS)
-        if state_vec.size == 0 or state_vec.size % key_count != 0:
-            return self._get_action_lidar(action_space, obs)
-
-        n_agents = state_vec.size // key_count
-        if n_agents <= 0:
-            return self._get_action_lidar(action_space, obs)
-
-        ego_pose_arr = np.asarray(obs.get("pose", ()), dtype=np.float32).flatten()
-        agent_slot = self.agent_slot
-        if agent_slot is None or not (0 <= agent_slot < n_agents):
-            agent_slot = self._infer_agent_slot_from_state(ego_pose_arr, state_vec, n_agents)
-        if agent_slot is None or not (0 <= agent_slot < n_agents):
-            agent_slot = max(0, min(n_agents - 1, self.secondary_target_slot if 0 <= self.secondary_target_slot < n_agents else n_agents - 1))
-        self.agent_slot = agent_slot
-
-        target_slot = self.secondary_target_slot
-        if target_slot == agent_slot or not (0 <= target_slot < n_agents):
-            alternatives = [idx for idx in range(n_agents) if idx != agent_slot]
-            target_slot = alternatives[0] if alternatives else agent_slot
-
-        ego_pose = self._extract_pose_from_state(state_vec, agent_slot, n_agents)
-        target_pose = self._extract_pose_from_state(state_vec, target_slot, n_agents)
-        if ego_pose is None or target_pose is None:
-            return self._get_action_lidar(action_space, obs)
-
-        x2, y2, _ = ego_pose
-        x1, y1, _ = target_pose
-
-        speed = float(self.max_speed)
-        steering = 0.0
-
-        y_offset = y2 - self.secondary_lane_center
-
-        if abs(y_offset) > self.secondary_hard_border:
-            speed = 0.0
-            steering = 0.0
-        elif abs(y_offset) > self.secondary_warning_border:
-            speed = self.max_speed * self.secondary_border_speed_scale
-            turn_direction = -1.0 if y_offset > 0.0 else 1.0
-            steering = turn_direction * self.secondary_max_turn
-        else:
-            speed = self.max_speed
-            distance = float(math.hypot(x1 - x2, y1 - y2))
-            if distance < self.secondary_safe_distance:
-                if y1 > 0.0:
-                    angle = math.atan2(-self.secondary_warning_border - y1, x1 - x2)
-                else:
-                    angle = math.atan2(self.secondary_warning_border - y1, x1 - x2)
-                angle = float(max(-self.secondary_max_turn, min(angle,self.secondary_max_turn)))
-                steering = angle * self.secondary_turn_gain
-            else:
-                steering = 0.0
-
-        speed = max(0.0, speed)
-        action = np.array([steering, speed], dtype=np.float32)
-        if action_space is not None:
-            action = np.clip(action, action_space.low, action_space.high)
-        return action
-
-    def _infer_agent_slot_from_state(
-        self,
-        ego_pose: np.ndarray,
-        state_vec: np.ndarray,
-        n_agents: int,
-    ) -> Optional[int]:
-        if ego_pose.size < 2 or n_agents <= 0:
-            return None
-        px = state_vec[0:n_agents]
-        py = state_vec[n_agents:2 * n_agents]
-        diffs = np.column_stack((px - ego_pose[0], py - ego_pose[1]))
-        distances = np.sum(diffs ** 2, axis=1)
-        idx = int(np.argmin(distances))
-        return idx
-
-    def _extract_pose_from_state(
-        self,
-        state_vec: np.ndarray,
-        slot: int,
-        n_agents: int,
-    ) -> Optional[Tuple[float, float, float]]:
-        if not (0 <= slot < n_agents):
-            return None
-        px = state_vec[0:n_agents]
-        py = state_vec[n_agents:2 * n_agents]
-        headings = state_vec[2 * n_agents:3 * n_agents]
-        return float(px[slot]), float(py[slot]), float(headings[slot])
