@@ -46,6 +46,8 @@ scenario:
           inside_bias_gain: 0.2
           crawl_steer_ratio: 0.5
           steering_speed_scale: 1.0
+          preview_horizon: 1.0
+          preview_samples: 5
           centerline_weight: 0.6
           lookahead_distance: 2.5
           centerline_tracking_gain: 1.2

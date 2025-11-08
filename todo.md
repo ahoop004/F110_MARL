@@ -21,12 +21,12 @@
 - [x] Kinematic preview FTG
   - simulate short horizon for multiple steering candidates
   - pick steering whose projected path maintains best LiDAR clearance
-- [ ] Dynamic Window FTG
+- [x] Dynamic Window FTG
   - sample attainable speed/steer pairs given actuator limits
   - score each candidate by clearance + heading change and pick best
-- [ ] Enhanced gap scoring
+- [x] Enhanced gap scoring
   - cluster gaps and rank by curvature, distance-to-collision, historical risk
   - bias selection toward safer gaps without map data
-- [ ] LiDAR U-shape crawl heuristic
+- [x] LiDAR U-shape crawl heuristic
   - detect U-shaped patterns (both sides closing) via range derivatives
   - force crawl mode whenever the pattern indicates a switchback

@@ -19,6 +19,19 @@ class FollowTheGapPolicy:
         "steering_speed_scale": 1.0,
         "inside_bias_gain": 0.0,
         "crawl_steer_ratio": 0.6,
+        "preview_horizon": 0.0,
+        "preview_samples": 0,
+        "dwa_samples": 0,
+        "dwa_horizon": 0.5,
+        "dwa_heading_weight": 0.1,
+        "enhanced_gap_scoring": False,
+        "gap_score_width_weight": 1.0,
+        "gap_score_clearance_weight": 1.0,
+        "gap_score_center_weight": 0.5,
+        "gap_score_curvature_weight": 0.2,
+        "u_shape_enabled": False,
+        "u_shape_threshold": 0.5,
+        "u_shape_crawl_speed": 0.3,
     }
 
     def __init__(self,
@@ -34,9 +47,22 @@ class FollowTheGapPolicy:
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
                  mode="lidar",
                  center_bias_gain=0.0,
-                 steering_speed_scale: float = 1.0,
-                 inside_bias_gain: float = 0.0,
-                 crawl_steer_ratio: float = 0.6):
+                steering_speed_scale: float = 1.0,
+                inside_bias_gain: float = 0.0,
+                crawl_steer_ratio: float = 0.6,
+                preview_horizon: float = 0.0,
+                preview_samples: int = 0,
+                dwa_samples: int = 0,
+                dwa_horizon: float = 0.5,
+                dwa_heading_weight: float = 0.1,
+                enhanced_gap_scoring: bool = False,
+                gap_score_width_weight: float = 1.0,
+                gap_score_clearance_weight: float = 1.0,
+                gap_score_center_weight: float = 0.5,
+                gap_score_curvature_weight: float = 0.2,
+                u_shape_enabled: bool = False,
+                u_shape_threshold: float = 0.5,
+                u_shape_crawl_speed: float = 0.3):
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -52,6 +78,19 @@ class FollowTheGapPolicy:
         self.steering_speed_scale = max(float(steering_speed_scale), 1e-3)
         self.inside_bias_gain = float(inside_bias_gain)
         self.crawl_steer_ratio = float(np.clip(crawl_steer_ratio, 0.1, 1.0))
+        self.preview_horizon = max(float(preview_horizon), 0.0)
+        self.preview_samples = max(int(preview_samples), 0)
+        self.dwa_samples = max(int(dwa_samples), 0)
+        self.dwa_horizon = max(float(dwa_horizon), 0.0)
+        self.dwa_heading_weight = float(dwa_heading_weight)
+        self.enhanced_gap_scoring = bool(enhanced_gap_scoring)
+        self.gap_score_width_weight = float(gap_score_width_weight)
+        self.gap_score_clearance_weight = float(gap_score_clearance_weight)
+        self.gap_score_center_weight = float(gap_score_center_weight)
+        self.gap_score_curvature_weight = float(gap_score_curvature_weight)
+        self.u_shape_enabled = bool(u_shape_enabled)
+        self.u_shape_threshold = float(np.clip(u_shape_threshold, 0.1, 1.0))
+        self.u_shape_crawl_speed = float(np.clip(u_shape_crawl_speed, 0.1, 1.0))
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -162,6 +201,55 @@ class FollowTheGapPolicy:
             return 0, len(proc)-1
         return max(gaps, key=lambda g: g[1]-g[0])
 
+    def _select_gap(self, proc: np.ndarray, raw_scan: np.ndarray) -> tuple:
+        gaps, start = [], None
+        mask = proc > 2.5
+        for i, v in enumerate(mask):
+            if v and start is None:
+                start = i
+            elif not v and start is not None:
+                gaps.append((start, i - 1))
+                start = None
+        if start is not None:
+            gaps.append((start, len(proc) - 1))
+        if not gaps:
+            return 0, len(proc) - 1
+        if not getattr(self, "enhanced_gap_scoring", False):
+            return max(gaps, key=lambda g: g[1] - g[0])
+
+        center_idx = len(raw_scan) // 2
+        best_gap = gaps[0]
+        best_score = -np.inf
+        for gap in gaps:
+            score = self._score_gap(gap, raw_scan, center_idx)
+            if score > best_score:
+                best_score = score
+                best_gap = gap
+        return best_gap
+
+    def _score_gap(self, gap: tuple, scan: np.ndarray, center_idx: int) -> float:
+        start, end = gap
+        width = end - start + 1
+        midpoint = (start + end) / 2.0
+        center_offset = abs(midpoint - center_idx) / max(center_idx, 1)
+        min_clearance = float(np.min(scan[start:end + 1])) if end >= start else 0.0
+        curvature_penalty = 0.0
+        if start > 0 and end < len(scan) - 1:
+            left_trend = scan[start] - scan[max(0, start - 1)]
+            right_trend = scan[min(len(scan) - 1, end + 1)] - scan[end]
+            curvature_penalty = abs(left_trend - right_trend)
+        width_weight = getattr(self, "gap_score_width_weight", 1.0)
+        clearance_weight = getattr(self, "gap_score_clearance_weight", 1.0)
+        center_weight = getattr(self, "gap_score_center_weight", 0.5)
+        curvature_weight = getattr(self, "gap_score_curvature_weight", 0.2)
+        score = (
+            width_weight * width
+            + clearance_weight * min_clearance
+            - center_weight * center_offset
+            - curvature_weight * curvature_penalty
+        )
+        return float(score)
+
     def best_point_midgap(self, gap):
         """Return the midpoint of the widest gap."""
         return (gap[0] + gap[1]) // 2
@@ -182,13 +270,14 @@ class FollowTheGapPolicy:
         # 1. Base gap-following
         proc = self.preprocess_lidar(scan, min_scan=min_scan)
         proc = self.create_bubble(proc, min_scan=min_scan)
-        gap = self.find_max_gap(proc)
+        gap = self._select_gap(proc, scan)
         best = self.best_point_midgap(gap)
         offset = (best - center_idx) / center_idx
         steering = offset * self.steering_gain * self.max_steer
 
         steering = self._apply_lookahead_guard(steering, scan, min_scan, center_idx, obs)
         steering = self._apply_kinematic_preview(steering, scan, obs)
+        steering = self._apply_dynamic_window(steering, scan, obs)
 
         # 2. Centering bias to avoid drifting in symmetric gaps
         left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
@@ -310,6 +399,33 @@ class FollowTheGapPolicy:
             min_margin = min(min_margin, float(scan[beam_idx]))
         return min_margin
 
+    def _apply_dynamic_window(self, steering: float, scan: np.ndarray, obs: Dict[str, Any]) -> float:
+        dwa_samples = int(getattr(self, "dwa_samples", 0))
+        if dwa_samples <= 0:
+            return steering
+        horizon = float(getattr(self, "dwa_horizon", 0.5))
+        heading_weight = float(getattr(self, "dwa_heading_weight", 0.1))
+        velocity_vec = obs.get("velocity")
+        if velocity_vec is None:
+            speed_state = float(obs.get("speed", 0.0))
+        else:
+            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
+            speed_state = float(arr[0]) if arr.size else 0.0
+
+        steer_candidates = np.linspace(-self.max_steer, self.max_steer, dwa_samples)
+        speed_candidates = np.linspace(self.min_speed, max(self.min_speed, speed_state), dwa_samples)
+        best_score = -np.inf
+        best = steering
+        for s in speed_candidates:
+            for st in steer_candidates:
+                clearance = self._simulate_preview(st, s, scan, horizon)
+                heading_penalty = abs(st)
+                score = clearance - heading_weight * heading_penalty
+                if score > best_score:
+                    best_score = score
+                    best = st
+        return best
+
     def _compute_speed(
         self,
         scan: np.ndarray,
@@ -336,7 +452,14 @@ class FollowTheGapPolicy:
         elif forward < 6.0 or spread > 1.0:
             speed = 0.8 * self.max_speed
 
-        return float(np.clip(speed, self.min_speed, self.max_speed))
+        speed = float(np.clip(speed, self.min_speed, self.max_speed))
+        if (
+            getattr(self, "u_shape_enabled", False)
+            and self._detect_u_shape(scan, center_idx, min_scan)
+        ):
+            speed = min(speed, max(self.min_speed, self.u_shape_crawl_speed * self.max_speed))
+
+        return speed
 
     def _apply_lookahead_guard(
         self,
@@ -363,3 +486,13 @@ class FollowTheGapPolicy:
         if lookahead_range < max(1.2, 0.4 * min_scan):
             steering *= 0.5
         return steering
+
+    def _detect_u_shape(self, scan: np.ndarray, center_idx: int, min_scan: float) -> bool:
+        threshold = getattr(self, "u_shape_threshold", 0.5)
+        if min_scan > threshold * self.max_distance:
+            return False
+        window = max(center_idx // 4, 1)
+        left = float(np.min(scan[max(0, center_idx - window):center_idx])) if center_idx > 0 else np.inf
+        right = float(np.min(scan[center_idx:center_idx + window])) if center_idx < len(scan) else np.inf
+        front = float(scan[center_idx])
+        return left < threshold * self.max_distance and right < threshold * self.max_distance and front < threshold * self.max_distance
