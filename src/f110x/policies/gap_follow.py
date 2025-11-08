@@ -28,7 +28,8 @@ class FollowTheGapPolicy:
                  normalized=False,
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
                  mode="lidar",
-                 center_bias_gain=0.0):
+                 center_bias_gain=0.0,
+                 steering_speed_scale: float = 1.0):
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -41,6 +42,7 @@ class FollowTheGapPolicy:
         self.steer_smooth = steer_smooth
         self.mode = str(mode).strip().lower()
         self.center_bias_gain = float(center_bias_gain)
+        self.steering_speed_scale = max(float(steering_speed_scale), 1e-3)
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -205,7 +207,14 @@ class FollowTheGapPolicy:
             steering = np.clip(steering, -0.5 * self.max_steer, 0.5 * self.max_steer)
 
         # Clip and smooth steering
-        steering = np.clip(steering, -self.max_steer, self.max_steer)
+        velocity_vec = obs.get("velocity")
+        if velocity_vec is None:
+            speed = float(obs.get("speed", 0.0))
+        else:
+            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
+            speed = float(arr[0]) if arr.size else 0.0
+        speed_cap = self._steering_cap_from_speed(abs(speed))
+        steering = np.clip(steering, -speed_cap, speed_cap)
         steering = self.steer_smooth * self.last_steer + (1 - self.steer_smooth) * steering
         self.last_steer = steering
 
@@ -224,3 +233,9 @@ class FollowTheGapPolicy:
         if action_space is not None:
             action = np.clip(action, action_space.low, action_space.high)
         return action
+
+    def _steering_cap_from_speed(self, speed: float) -> float:
+        if speed <= 0.0:
+            return self.max_steer
+        limit = self.steering_speed_scale / (speed + 1e-6)
+        return float(np.clip(limit, 0.1 * self.max_steer, self.max_steer))

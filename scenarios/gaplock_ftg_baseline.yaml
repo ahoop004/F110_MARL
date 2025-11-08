@@ -3,7 +3,8 @@ meta:
 
 scenario:
   env:
-    map: line2
+    map: Shanghai_map
+    # map: line2
     seed: 42
     max_steps: 25000
     lidar_beams: 108
@@ -30,10 +31,10 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_distance: 30.0
-          window_size: 4
+          max_distance: 10.0
+          window_size: 3
           bubble_radius: 2
-          max_steer: 0.32
+          max_steer: 0.38
           min_speed: 0.2
           max_speed: 0.8
           steering_gain: 0.4
@@ -44,13 +45,13 @@ scenario:
       wrappers:
         - factory: obs
           params:
-            max_scan: 30.0
+            max_scan: 10.0
             normalize: true
             components:
               - id: lidar
                 type: lidar
                 params:
                   beams: 108
-                  max_range: 30.0
-                  normalize: true
+                  max_range: 10.0
+                  # normalize: true
                   clip: 1.0
