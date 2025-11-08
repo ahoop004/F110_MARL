@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 
 class FollowTheGapPolicy:
@@ -116,10 +118,11 @@ class FollowTheGapPolicy:
                 snapshot[key] = getattr(self, key)
         return snapshot
 
-    def preprocess_lidar(self, ranges):
+    def preprocess_lidar(self, ranges, min_scan: Optional[float] = None):
         """Smooth LiDAR with moving average + clip to max_distance."""
         N = len(ranges)
-        half = self.window_size // 2
+        window = self._adaptive_window_size(min_scan)
+        half = window // 2
         proc = []
         for i in range(N):
             start = max(0, i - half)
@@ -128,11 +131,12 @@ class FollowTheGapPolicy:
             proc.append(avg)
         return np.array(proc)
 
-    def create_bubble(self, proc):
+    def create_bubble(self, proc, min_scan: Optional[float] = None):
         """Zero out a bubble around the closest obstacle."""
         closest = np.argmin(proc)
-        start = max(0, closest - self.bubble_radius)
-        end = min(len(proc) - 1, closest + self.bubble_radius)
+        radius = self._adaptive_bubble_radius(min_scan)
+        start = max(0, closest - radius)
+        end = min(len(proc) - 1, closest + radius)
         proc[start:end+1] = 0
         return proc
 
@@ -166,16 +170,25 @@ class FollowTheGapPolicy:
         N = len(scan)
         center_idx = N // 2
 
+        min_scan = float(np.min(scan))
+
         # 1. Base gap-following
-        proc = self.preprocess_lidar(scan)
-        proc = self.create_bubble(proc)
+        proc = self.preprocess_lidar(scan, min_scan=min_scan)
+        proc = self.create_bubble(proc, min_scan=min_scan)
         gap = self.find_max_gap(proc)
         best = self.best_point_midgap(gap)
         offset = (best - center_idx) / center_idx
         steering = offset * self.steering_gain * self.max_steer
 
         # 2. Centering bias to avoid drifting in symmetric gaps
-        if self.center_bias_gain != 0.0 and center_idx > 0 and center_idx < N:
+        left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
+        right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
+        if (
+            self.center_bias_gain != 0.0
+            and center_idx > 0
+            and center_idx < N
+            and min_scan > 3.0
+        ):
             left_mean = float(np.mean(scan[:center_idx]))
             right_mean = float(np.mean(scan[center_idx:]))
             denom = max(self.max_distance, 1e-3)
@@ -183,10 +196,6 @@ class FollowTheGapPolicy:
             steering += self.center_bias_gain * bias * self.max_steer
 
         # 3. Sector-based danger weighting
-        left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
-        right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
-        min_scan = float(np.min(scan))
-
         # Gentler panic scaling keeps the policy committed to the current heading longer
         panic_factor = 1.0
         if min_scan < 4.0:
@@ -219,15 +228,7 @@ class FollowTheGapPolicy:
         self.last_steer = steering
 
         # 4. Speed schedule (more conservative)
-        free_ahead = scan[center_idx]
-        if min_scan < 2.0:
-            speed = max(self.min_speed, 0.8)
-        elif free_ahead > 8.0:
-            speed = self.max_speed
-        elif free_ahead > 4.0:
-            speed = 0.7 * self.max_speed
-        else:
-            speed = self.min_speed
+        speed = self._compute_speed(scan, center_idx, min_scan)
 
         action = np.array([steering, speed], dtype=np.float32)
         if action_space is not None:
@@ -239,3 +240,39 @@ class FollowTheGapPolicy:
             return self.max_steer
         limit = self.steering_speed_scale / (speed + 1e-6)
         return float(np.clip(limit, 0.1 * self.max_steer, self.max_steer))
+
+    def _adaptive_window_size(self, min_scan: Optional[float]) -> int:
+        base = max(int(round(self.window_size)), 1)
+        if min_scan is None or not np.isfinite(min_scan) or self.max_distance <= 0:
+            size = base
+        else:
+            ratio = np.clip(min_scan / self.max_distance, 0.2, 1.0)
+            size = max(1, int(round(base * ratio)))
+        if size % 2 == 0:
+            size = max(1, size - 1)
+        return size
+
+    def _adaptive_bubble_radius(self, min_scan: Optional[float]) -> int:
+        base = max(int(round(self.bubble_radius)), 0)
+        if base == 0 or min_scan is None or not np.isfinite(min_scan) or self.max_distance <= 0:
+            return base
+        ratio = np.clip(min_scan / self.max_distance, 0.2, 1.0)
+        radius = max(1, int(round(base * ratio)))
+        return radius
+
+    def _compute_speed(self, scan: np.ndarray, center_idx: int, min_scan: float) -> float:
+        forward = float(scan[center_idx])
+        lateral_window = max(center_idx // 4, 1)
+        left_band = scan[max(0, center_idx - lateral_window):center_idx]
+        right_band = scan[center_idx:center_idx + lateral_window]
+        spread = float(np.std(np.concatenate([left_band, right_band]))) if left_band.size + right_band.size > 0 else 0.0
+
+        speed = self.max_speed
+        if min_scan < 1.5:
+            speed = max(self.min_speed, 0.5 * self.max_speed)
+        elif forward < 3.0 or spread > 2.0:
+            speed = max(self.min_speed, 0.6 * self.max_speed)
+        elif forward < 6.0 or spread > 1.0:
+            speed = 0.8 * self.max_speed
+
+        return float(np.clip(speed, self.min_speed, self.max_speed))
