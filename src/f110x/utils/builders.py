@@ -26,6 +26,7 @@ from f110x.wrappers.action import (
 )
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
+from f110x.policies.ftg_centerline import FollowTheGapCenterlinePolicy
 from f110x.policies.secondary_vicon import SecondaryViconPolicy
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.ppo.rec_ppo import RecurrentPPOAgent
@@ -1048,6 +1049,26 @@ def _build_algo_follow_gap(
     )
 
 
+def _build_algo_ftg_centerline(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    controller = FollowTheGapCenterlinePolicy.from_config(assignment.spec.params)
+    if ctx.map_data.centerline is not None:
+        controller.set_centerline(ctx.map_data.centerline)
+    metadata: Dict[str, Any] = {"centerline": ctx.map_data.centerline}
+    return AgentBundle(
+        assignment=assignment,
+        algo="ftg_c",
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=False),
+        metadata=metadata,
+    )
+
+
 def _build_algo_secondary_vicon(
     assignment: AgentAssignment,
     ctx: AgentBuildContext,
@@ -1202,6 +1223,7 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "follow_gap": _build_algo_follow_gap,
     "gap_follow": _build_algo_follow_gap,
     "followthegap": _build_algo_follow_gap,
+    "ftg_c": _build_algo_ftg_centerline,
     "secondary_vicon": _build_algo_secondary_vicon,
     "random": _build_algo_random,
     "waypoint": _build_algo_waypoint,

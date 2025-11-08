@@ -1,16 +1,17 @@
 meta:
-  name: gaplock_ftg_baseline
+  name: gaplock_ftg_centerline
 
 scenario:
   env:
     map: Shanghai_map
-    # map: line2
+    centerline_autoload: true
+    centerline_render: true
     seed: 42
     max_steps: 25000
     lidar_beams: 108
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 0.9
+      v_max: 0.8
       v_min: -1.0
       length: 0.32
       width: 0.225
@@ -29,34 +30,36 @@ scenario:
     car_0:
       trainable: false
       algorithm:
-        name: follow_gap
+        name: ftg_c
         params:
-          max_distance: 10.0
-          window_size: 2
-          bubble_radius: 1
+          max_distance: 30.0
+          window_size: 4
+          bubble_radius: 2
           max_steer: 0.4
           min_speed: 0.2
-          max_speed: 0.8
-          steering_gain: 0.45
+          max_speed: 0.6
+          steering_gain: 0.4
           fov_deg: 270
           normalized: true
-          steer_smooth: 0.35
-          center_bias_gain: 0.2
-          inside_bias_gain: 0.8
-          crawl_steer_ratio: 0.4
+          steer_smooth: 0.3
+          center_bias_gain: 0.15
+          inside_bias_gain: 0.2
+          crawl_steer_ratio: 0.5
           steering_speed_scale: 1.0
-          preview_horizon: 1.0
-          preview_samples: 5
+          centerline_weight: 0.6
+          lookahead_distance: 2.5
+          centerline_tracking_gain: 1.2
+          centerline_obstacle_min: 5.0
       wrappers:
         - factory: obs
           params:
-            max_scan: 10.0
+            max_scan: 30.0
             normalize: true
             components:
               - id: lidar
                 type: lidar
                 params:
                   beams: 108
-                  max_range: 10.0
-                  # normalize: true
+                  max_range: 30.0
+                  normalize: true
                   clip: 1.0

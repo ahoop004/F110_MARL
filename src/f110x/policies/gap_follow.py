@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -16,6 +16,9 @@ class FollowTheGapPolicy:
         "steer_smooth": 0.4,
         "mode": "lidar",
         "center_bias_gain": 0.0,
+        "steering_speed_scale": 1.0,
+        "inside_bias_gain": 0.0,
+        "crawl_steer_ratio": 0.6,
     }
 
     def __init__(self,
@@ -31,7 +34,9 @@ class FollowTheGapPolicy:
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
                  mode="lidar",
                  center_bias_gain=0.0,
-                 steering_speed_scale: float = 1.0):
+                 steering_speed_scale: float = 1.0,
+                 inside_bias_gain: float = 0.0,
+                 crawl_steer_ratio: float = 0.6):
         self.max_distance = max_distance
         self.window_size = window_size
         self.bubble_radius = bubble_radius
@@ -45,6 +50,8 @@ class FollowTheGapPolicy:
         self.mode = str(mode).strip().lower()
         self.center_bias_gain = float(center_bias_gain)
         self.steering_speed_scale = max(float(steering_speed_scale), 1e-3)
+        self.inside_bias_gain = float(inside_bias_gain)
+        self.crawl_steer_ratio = float(np.clip(crawl_steer_ratio, 0.1, 1.0))
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -180,20 +187,22 @@ class FollowTheGapPolicy:
         offset = (best - center_idx) / center_idx
         steering = offset * self.steering_gain * self.max_steer
 
+        steering = self._apply_lookahead_guard(steering, scan, min_scan, center_idx, obs)
+        steering = self._apply_kinematic_preview(steering, scan, obs)
+
         # 2. Centering bias to avoid drifting in symmetric gaps
         left_min = np.min(scan[:center_idx]) if center_idx > 0 else np.inf
         right_min = np.min(scan[center_idx:]) if center_idx < N else np.inf
-        if (
-            self.center_bias_gain != 0.0
-            and center_idx > 0
-            and center_idx < N
-            and min_scan > 3.0
-        ):
+        if center_idx > 0 and center_idx < N:
             left_mean = float(np.mean(scan[:center_idx]))
             right_mean = float(np.mean(scan[center_idx:]))
             denom = max(self.max_distance, 1e-3)
-            bias = np.clip((right_mean - left_mean) / denom, -1.0, 1.0)
-            steering += self.center_bias_gain * bias * self.max_steer
+            if self.center_bias_gain != 0.0 and min_scan > 3.0:
+                bias = np.clip((right_mean - left_mean) / denom, -1.0, 1.0)
+                steering += self.center_bias_gain * bias * self.max_steer
+            if self.inside_bias_gain != 0.0 and min_scan <= 4.0:
+                hug_bias = np.clip((left_mean - right_mean) / denom, -1.0, 1.0)
+                steering += self.inside_bias_gain * hug_bias * self.max_steer
 
         # 3. Sector-based danger weighting
         # Gentler panic scaling keeps the policy committed to the current heading longer
@@ -228,7 +237,9 @@ class FollowTheGapPolicy:
         self.last_steer = steering
 
         # 4. Speed schedule (more conservative)
-        speed = self._compute_speed(scan, center_idx, min_scan)
+        speed = self._compute_speed(scan, center_idx, min_scan, steering, obs)
+        if abs(steering) > self.crawl_steer_ratio * self.max_steer:
+            speed = min(speed, max(self.min_speed, 0.4 * self.max_speed))
 
         action = np.array([steering, speed], dtype=np.float32)
         if action_space is not None:
@@ -260,7 +271,53 @@ class FollowTheGapPolicy:
         radius = max(1, int(round(base * ratio)))
         return radius
 
-    def _compute_speed(self, scan: np.ndarray, center_idx: int, min_scan: float) -> float:
+    def _apply_kinematic_preview(self, steering: float, scan: np.ndarray, obs: Dict[str, Any]) -> float:
+        preview_cfg = (
+            float(getattr(self, "preview_horizon", 0.0)),
+            int(getattr(self, "preview_samples", 0)),
+        )
+        if preview_cfg[0] <= 0.0 or preview_cfg[1] <= 0:
+            return steering
+        scan_res = scan * self.max_distance if self.normalized else scan
+        proposals = np.linspace(-self.max_steer, self.max_steer, preview_cfg[1])
+        velocity_vec = obs.get("velocity")
+        if velocity_vec is None:
+            speed = float(obs.get("speed", 0.0))
+        else:
+            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
+            speed = float(arr[0]) if arr.size else 0.0
+        best = steering
+        best_margin = -np.inf
+        for candidate in proposals:
+            margin = self._simulate_preview(candidate, speed, scan_res, preview_cfg[0])
+            if margin > best_margin:
+                best_margin = margin
+                best = candidate
+        return best
+
+    def _simulate_preview(self, steering: float, speed: float, scan: np.ndarray, horizon: float) -> float:
+        dt = 0.1
+        steps = max(int(horizon / dt), 1)
+        pos = np.array([0.0, 0.0], dtype=np.float32)
+        heading = 0.0
+        min_margin = np.inf
+        for _ in range(steps):
+            heading += (speed / max(speed, 1e-3)) * steering * dt
+            pos[0] += speed * dt * np.cos(heading)
+            pos[1] += speed * dt * np.sin(heading)
+            beam_idx = int(len(scan) / 2 + heading / self.fov * len(scan))
+            beam_idx = int(np.clip(beam_idx, 0, len(scan) - 1))
+            min_margin = min(min_margin, float(scan[beam_idx]))
+        return min_margin
+
+    def _compute_speed(
+        self,
+        scan: np.ndarray,
+        center_idx: int,
+        min_scan: float,
+        steering: float,
+        obs: Dict[str, Any],
+    ) -> float:
         forward = float(scan[center_idx])
         lateral_window = max(center_idx // 4, 1)
         left_band = scan[max(0, center_idx - lateral_window):center_idx]
@@ -268,11 +325,41 @@ class FollowTheGapPolicy:
         spread = float(np.std(np.concatenate([left_band, right_band]))) if left_band.size + right_band.size > 0 else 0.0
 
         speed = self.max_speed
-        if min_scan < 1.5:
+        lookahead_idx = int(center_idx + np.sign(steering) * max(abs(steering) / max(self.max_steer, 1e-3), 0.1) * center_idx)
+        lookahead_idx = int(np.clip(lookahead_idx, 0, len(scan) - 1))
+        lookahead_range = float(scan[lookahead_idx])
+
+        if min_scan < 1.5 or lookahead_range < 2.0:
             speed = max(self.min_speed, 0.5 * self.max_speed)
-        elif forward < 3.0 or spread > 2.0:
+        elif forward < 3.0 or spread > 2.0 or lookahead_range < 3.0:
             speed = max(self.min_speed, 0.6 * self.max_speed)
         elif forward < 6.0 or spread > 1.0:
             speed = 0.8 * self.max_speed
 
         return float(np.clip(speed, self.min_speed, self.max_speed))
+
+    def _apply_lookahead_guard(
+        self,
+        steering: float,
+        scan: np.ndarray,
+        min_scan: float,
+        center_idx: int,
+        obs: Dict[str, Any],
+    ) -> float:
+        if min_scan < 1.5 or not np.isfinite(min_scan):
+            return steering
+        velocity_vec = obs.get("velocity")
+        if velocity_vec is None:
+            speed = float(obs.get("speed", 0.0))
+        else:
+            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
+            speed = float(arr[0]) if arr.size else 0.0
+        dt = 0.15
+        curvature = steering / max(self.max_steer, 1e-3)
+        yaw_change = curvature * dt
+        lookahead_idx = int(center_idx + yaw_change * center_idx)
+        lookahead_idx = int(np.clip(lookahead_idx, 0, len(scan) - 1))
+        lookahead_range = float(scan[lookahead_idx])
+        if lookahead_range < max(1.2, 0.4 * min_scan):
+            steering *= 0.5
+        return steering
