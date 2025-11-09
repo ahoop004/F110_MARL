@@ -32,13 +32,13 @@ scenario:
         name: blocker
         params:
           target_agent: car_1
-          target_forward: 0.7         # longitudinal distance (m) to hold ahead of defender
-          target_lateral: -0.45       # signed lateral offset (m): negative keeps blocker on inside wall
+          target_forward: 0.5         # longitudinal distance (m) to hold ahead of defender
+          target_lateral: 0.01       # signed lateral offset (m): negative keeps blocker on inside wall
           speed_offset: -0.08        # bias slower than defender so it can pin without overshooting
-          forward_gain: 0.15         # how aggressively it closes the longitudinal gap
+          forward_gain: 0.05         # how aggressively it closes the longitudinal gap
           lateral_gain: 0.09         # lateral correction strength (lower = gentler pinch)
           heading_gain: 0.07         # keeps heading aligned with defender
-          speed_gain: 0.1            # responsiveness when matching speed
+          speed_gain: 0.01            # responsiveness when matching speed
           max_speed: 0.7
           max_steer: 0.18
           pressure_margin: 0.22       # slack before wall guardrails engage

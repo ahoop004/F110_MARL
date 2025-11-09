@@ -121,17 +121,20 @@ class BlockingPolicy:
 
         forward_rel, lateral_rel = self._relative_components(self_pose, target_pose)
         effective_lateral = self._effective_target_lateral()
-        heading_error = self._heading_error_clamped(
-            target_pose[2],
-            self_pose[2],
+        heading_error, lateral_error = self._compute_errors(
+            target_pose,
+            self_pose,
+            forward_rel,
             lateral_rel,
             effective_lateral,
         )
         forward_error = self.config.target_forward - forward_rel
-        lateral_error = effective_lateral - lateral_rel
         self._update_pressure_ramp(forward_error, lateral_error)
         effective_lateral = self._effective_target_lateral()
-        lateral_error = effective_lateral - lateral_rel
+        if np.sign(lateral_rel) == np.sign(effective_lateral):
+            lateral_error = effective_lateral - lateral_rel
+        else:
+            lateral_error = 0.0
 
         steering = (
             self.config.lateral_gain * lateral_error
@@ -214,7 +217,29 @@ class BlockingPolicy:
         if not same_side:
             limit = np.deg2rad(15.0)
             raw = float(np.clip(raw, -limit, limit))
+        else:
+            raw = float(np.clip(raw, -np.deg2rad(25.0), np.deg2rad(25.0)))
         return raw
+
+    def _compute_errors(
+        self,
+        target_pose: np.ndarray,
+        self_pose: np.ndarray,
+        forward_rel: float,
+        lateral_rel: float,
+        effective_lateral: float,
+    ) -> tuple[float, float]:
+        lateral_error = effective_lateral - lateral_rel
+        same_side = np.sign(lateral_rel) == np.sign(effective_lateral)
+        if not same_side:
+            lateral_error = 0.0
+        heading_error = self._heading_error_clamped(
+            target_pose[2],
+            self_pose[2],
+            lateral_rel,
+            effective_lateral,
+        )
+        return heading_error, lateral_error
 
     def _wall_pressure_penalty(self, lateral_rel: float, effective_lateral: float) -> float:
         if self.config.pressure_gain <= 0.0:
