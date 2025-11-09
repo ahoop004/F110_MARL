@@ -50,7 +50,7 @@ scenario:
 
   main:
     mode: train_eval
-    train_episodes: 2000
+    train_episodes: 10000
     eval_episodes: 10
     eval_interval: 100
     federated:
@@ -78,35 +78,35 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
-          actor_lr: 0.0002
-          critic_lr: 0.0003
-          gamma: 0.995
-          tau: 0.002
+          device: cuda
+          actor_lr: 0.00025
+          critic_lr: 0.00035
+          gamma: 0.97
+          tau: 0.004
           policy_noise: 0.08
-          noise_clip: 0.16
-          policy_delay: 2
-          batch_size: 128
-          buffer_size: 75000
+          noise_clip: 0.2
+          policy_delay: 1
+          batch_size: 256
+          buffer_size: 50000
           warmup_steps: 1024
-          updates_per_step: 2
+          updates_per_step: 3
           include_truncation: true
           use_per: true
-          per_alpha: 0.6
-          per_beta_start: 0.5
-          per_beta: 0.5
-          per_beta_final: 1.0
-          per_beta_increment: 0.00001
-          per_min_priority: 0.0001
-          per_epsilon: 0.000001
-          exploration_noise: 0.12
-          exploration_noise_final: 0.03
-          exploration_noise_decay_steps: 400000
+          per_alpha: 0.7
+          per_beta_start: 0.4
+          # per_beta: 0.5
+          per_beta_final: 0.95
+          per_beta_increment: 0.00002
+          per_min_priority: 0.0005
+          per_epsilon: 0.000002
+          exploration_noise: 0.2
+          exploration_noise_final: 0.02
+          exploration_noise_decay_steps: 4000000
           # exploration_noise_decay_episodes: 4000
-          initial_speed: 1.0
-          # prevent_reverse: true
-          # prevent_reverse_min_speed: 0.01
-          # prevent_reverse_speed_index: 1
+          initial_speed: 0.8
+          prevent_reverse: true
+          prevent_reverse_min_speed: 0.01
+          prevent_reverse_speed_index: 1
           hidden_dims:
             - 256
             # - 256
@@ -119,7 +119,7 @@ scenario:
         idle_patience_steps: 180
         features:
           - gaplock_offense
-          - idle_guard
+          # - idle_guard
         params:
           target_crash_reward: 100.0
           self_collision_penalty: -10.0
@@ -166,11 +166,11 @@ scenario:
               front: 0.25
               front_right: 0.2
               right: 0.1
-              back_right: 0.02
+              back_right: 0.00
               back: 0.0
               back_left: 0.0
-              left: 0.02
-              front_left: 0.05
+              left: 0.1
+              front_left: 0.2
             preferred_radius: 0.5
             inner_tolerance: 0.25
             outer_tolerance: 0.25
@@ -180,7 +180,7 @@ scenario:
         - factory: obs
           params:
             max_scan: 30.0
-            normalize: true
+            # normalize: true
             components:
               - id: lidar
                 type: lidar
@@ -239,7 +239,7 @@ scenario:
           fov_deg: 270
           normalized: true
           steer_smooth: 0.35
-          center_bias_gain: 0.25
+          center_bias_gain: 0.025
           inside_bias_gain: 0.2
           crawl_steer_ratio: 0.35
           steering_speed_scale: 1.0
@@ -254,4 +254,6 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
+        
+         
 
