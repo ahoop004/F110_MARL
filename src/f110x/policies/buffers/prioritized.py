@@ -20,6 +20,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         alpha: float = 0.6,
         beta: float = 0.4,
         beta_increment_per_sample: float = 1e-4,
+        beta_final: float = 1.0,
         min_priority: float = 1e-3,
         epsilon: float = 1e-6,
         dtype: np.dtype = np.float32,
@@ -38,9 +39,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             raise ValueError("alpha must be in [0, 1]")
         if not 0.0 <= beta <= 1.0:
             raise ValueError("beta must be in [0, 1]")
+        if not 0.0 <= beta_final <= 1.0:
+            raise ValueError("beta_final must be in [0, 1]")
+        if beta_final < beta:
+            raise ValueError("beta_final must be greater than or equal to beta")
         self.alpha = float(alpha)
         self.beta = float(beta)
         self.beta_increment_per_sample = float(max(beta_increment_per_sample, 0.0))
+        self.beta_target = float(beta_final)
         self.min_priority = float(max(min_priority, 1e-12))
         self.epsilon = float(max(epsilon, 0.0))
 
@@ -110,7 +116,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         batch["weights"] = weights.astype(np.float32).reshape(-1, 1)
         batch["indices"] = indices.astype(np.int64)
 
-        self.beta = min(1.0, self.beta + self.beta_increment_per_sample)
+        self.beta = min(self.beta_target, self.beta + self.beta_increment_per_sample)
         return batch
 
     def update_priorities(self, indices: np.ndarray, td_errors: np.ndarray) -> None:

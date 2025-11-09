@@ -323,6 +323,7 @@ class DQNConfigSchema(BaseSchema):
     prioritized_replay: bool = True
     per_alpha: float = 0.6
     per_beta_start: float = 0.4
+    per_beta_final: float = 1.0
     per_beta_increment: float = 0.0001
     per_min_priority: float = 0.001
     per_epsilon: float = 1e-6
