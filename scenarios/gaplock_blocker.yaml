@@ -32,23 +32,29 @@ scenario:
         name: blocker
         params:
           target_agent: car_1
-          target_forward: 2.0         # longitudinal distance (m) to hold ahead of defender
-          target_lateral: -0.28       # signed lateral offset (m): negative keeps blocker on inside wall
-          speed_offset: -0.03         # bias slower than defender so it can pin without overshooting
-          forward_gain: 0.45          # how aggressively it closes the longitudinal gap
-          lateral_gain: 1.1           # lateral correction strength
-          heading_gain: 0.6           # keeps heading aligned with defender
-          speed_gain: 0.85            # responsiveness when matching speed
-          max_speed: 1.0
-          max_steer: 0.25
-          pressure_margin: 0.18       # slack before wall guardrails engage
-          pressure_gain: 0.4          # slowdown when squeezing toward wall
-          cruise_speed: 0.65          # minimum speed when comfortably ahead
-          catchup_limit: 0.12         # cap on longitudinal catch-up boost
-          damping_gain: 0.35          # smoothing on steering corrections (0=no damping, 1=heavy)
+          target_forward: 0.7         # longitudinal distance (m) to hold ahead of defender
+          target_lateral: -0.45       # signed lateral offset (m): negative keeps blocker on inside wall
+          speed_offset: -0.08        # bias slower than defender so it can pin without overshooting
+          forward_gain: 0.15         # how aggressively it closes the longitudinal gap
+          lateral_gain: 0.09         # lateral correction strength (lower = gentler pinch)
+          heading_gain: 0.07         # keeps heading aligned with defender
+          speed_gain: 0.1            # responsiveness when matching speed
+          max_speed: 0.7
+          max_steer: 0.18
+          pressure_margin: 0.22       # slack before wall guardrails engage
+          pressure_gain: 0.3         # slowdown when squeezing toward wall
+          cruise_speed: 0.6           # minimum speed when comfortably ahead
+          catchup_limit: 0.04         # cap on longitudinal catch-up boost
+          damping_gain: 0.45          # smoothing on steering corrections (0=no damping, 1=heavy)
           accel_limit: 0.3            # limit on speed command increase per step
-          decel_limit: 0.45           # limit on speed command decrease per step
-          guard_speed_penalty: 0.25   # how much to slow when breaching wall guard
+          decel_limit: 0.4            # limit on speed command decrease per step
+          guard_speed_penalty: 0.2    # how much to slow when breaching wall guard
+          min_block_speed: 0.2        # never go below this, so blocker doesn't stall
+          pressure_ramp_steps: 60     # steps to hold formation before tightening the squeeze
+          pressure_ramp_delta: 0.01   # amount to move inward each ramp event (m)
+          pressure_ramp_limit: 0.15   # maximum additional inward offset applied by ramp
+          band_forward_tol: 0.2       # forward error (m) allowed while counting toward ramp
+          band_lateral_tol: 0.04      # lateral error (m) allowed while counting toward ramp
 
     car_1:
       trainable: false

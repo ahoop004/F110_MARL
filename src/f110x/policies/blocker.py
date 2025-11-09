@@ -10,8 +10,8 @@ import numpy as np
 class BlockingControllerConfig:
     target_forward: float = 1.8
     target_lateral: float = -0.25
-    speed_offset: float = -0.05
-    forward_gain: float = 0.45
+    speed_offset: float = -0.08
+    forward_gain: float = 0.35
     lateral_gain: float = 1.0
     heading_gain: float = 0.5
     speed_gain: float = 0.9
@@ -25,6 +25,12 @@ class BlockingControllerConfig:
     accel_limit: float = 0.4
     decel_limit: float = 0.6
     guard_speed_penalty: float = 0.3
+    min_block_speed: float = 0.15
+    pressure_ramp_steps: int = 50
+    pressure_ramp_delta: float = 0.01
+    pressure_ramp_limit: float = 0.25
+    band_forward_tol: float = 0.25
+    band_lateral_tol: float = 0.05
 
 
 class BlockingPolicy:
@@ -50,6 +56,12 @@ class BlockingPolicy:
         "accel_limit": 0.4,
         "decel_limit": 0.6,
         "guard_speed_penalty": 0.3,
+        "min_block_speed": 0.15,
+        "pressure_ramp_steps": 50,
+        "pressure_ramp_delta": 0.01,
+        "pressure_ramp_limit": 0.25,
+        "band_forward_tol": 0.25,
+        "band_lateral_tol": 0.05,
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -63,6 +75,8 @@ class BlockingPolicy:
         self.total_agents: int = 0
         self._prev_steer: float = 0.0
         self._last_speed_cmd: float = 0.0
+        self._pressure_timer: int = 0
+        self._pressure_offset: float = 0.0
 
     @classmethod
     def from_config(cls, params: Optional[Dict[str, Any]]) -> "BlockingPolicy":
@@ -106,10 +120,18 @@ class BlockingPolicy:
             return np.zeros(2, dtype=np.float32)
 
         forward_rel, lateral_rel = self._relative_components(self_pose, target_pose)
-        heading_error = self._wrap_angle(target_pose[2] - self_pose[2])
-
+        effective_lateral = self._effective_target_lateral()
+        heading_error = self._heading_error_clamped(
+            target_pose[2],
+            self_pose[2],
+            lateral_rel,
+            effective_lateral,
+        )
         forward_error = self.config.target_forward - forward_rel
-        lateral_error = self.config.target_lateral - lateral_rel
+        lateral_error = effective_lateral - lateral_rel
+        self._update_pressure_ramp(forward_error, lateral_error)
+        effective_lateral = self._effective_target_lateral()
+        lateral_error = effective_lateral - lateral_rel
 
         steering = (
             self.config.lateral_gain * lateral_error
@@ -119,7 +141,13 @@ class BlockingPolicy:
         steering = float(np.clip(steering, -self.config.max_steer, self.config.max_steer))
 
         defender_speed = float(np.hypot(target_pose[3], target_pose[4]))
-        target_speed = self._desired_speed(target_pose, forward_error, lateral_rel, defender_speed)
+        target_speed = self._desired_speed(
+            target_pose,
+            forward_error,
+            lateral_rel,
+            defender_speed,
+            effective_lateral,
+        )
         current_speed = self._current_speed(self_pose)
         speed_cmd = current_speed + self.config.speed_gain * (target_speed - current_speed)
         steering, speed_cmd = self._apply_guardrails(
@@ -127,7 +155,9 @@ class BlockingPolicy:
             speed_cmd,
             lateral_rel,
             defender_speed,
+            effective_lateral,
         )
+        speed_cmd = max(speed_cmd, self.config.min_block_speed)
         speed_cmd = self._limit_speed_change(speed_cmd)
         speed_cmd = float(np.clip(speed_cmd, 0.0, self.config.max_speed))
 
@@ -142,13 +172,15 @@ class BlockingPolicy:
         forward_error: float,
         lateral_rel: float,
         defender_speed: float,
+        effective_lateral: float,
     ) -> float:
         catchup = self.config.forward_gain * forward_error
         catchup = float(np.clip(catchup, -self.config.catchup_limit, self.config.catchup_limit))
         speed = defender_speed + self.config.speed_offset + catchup
-        speed -= self._wall_pressure_penalty(lateral_rel)
+        speed -= self._wall_pressure_penalty(lateral_rel, effective_lateral)
         if forward_error <= 0.0:
             speed = max(speed, self.config.cruise_speed)
+        speed = max(speed, self.config.min_block_speed)
         return float(np.clip(speed, 0.0, self.config.max_speed))
 
     def _relative_components(self, self_pose: np.ndarray, target_pose: np.ndarray) -> np.ndarray:
@@ -170,11 +202,25 @@ class BlockingPolicy:
     def _wrap_angle(angle: float) -> float:
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
-    def _wall_pressure_penalty(self, lateral_rel: float) -> float:
+    def _heading_error_clamped(
+        self,
+        target_heading: float,
+        self_heading: float,
+        lateral_rel: float,
+        effective_lateral: float,
+    ) -> float:
+        raw = self._wrap_angle(target_heading - self_heading)
+        same_side = np.sign(lateral_rel) == np.sign(effective_lateral)
+        if not same_side:
+            limit = np.deg2rad(15.0)
+            raw = float(np.clip(raw, -limit, limit))
+        return raw
+
+    def _wall_pressure_penalty(self, lateral_rel: float, effective_lateral: float) -> float:
         if self.config.pressure_gain <= 0.0:
             return 0.0
         margin = max(self.config.pressure_margin, 1e-3)
-        desired = self.config.target_lateral
+        desired = effective_lateral
         if desired < 0.0:
             limit = desired - margin
             excess = max(0.0, limit - lateral_rel)
@@ -212,15 +258,54 @@ class BlockingPolicy:
         speed_cmd: float,
         lateral_rel: float,
         defender_speed: float,
+        effective_lateral: float,
     ) -> tuple[float, float]:
         margin = max(self.config.pressure_margin, 0.05)
-        desired = self.config.target_lateral
+        desired = effective_lateral
         guard_penalty = max(self.config.guard_speed_penalty, 0.0)
+        min_guard_speed = max(0.1, defender_speed * 0.25)
 
         if desired < 0.0 and lateral_rel < desired - margin:
             steering = max(steering, 0.0)
-            speed_cmd = min(speed_cmd, defender_speed - guard_penalty)
+            allowed = max(min_guard_speed, defender_speed - guard_penalty)
+            speed_cmd = min(max(speed_cmd, min_guard_speed), allowed)
         elif desired > 0.0 and lateral_rel > desired + margin:
             steering = min(steering, 0.0)
-            speed_cmd = min(speed_cmd, defender_speed - guard_penalty)
+            allowed = max(min_guard_speed, defender_speed - guard_penalty)
+            speed_cmd = min(max(speed_cmd, min_guard_speed), allowed)
         return steering, speed_cmd
+
+    def _update_pressure_ramp(self, forward_error: float, lateral_error: float) -> None:
+        tol_f = max(self.config.band_forward_tol, 1e-3)
+        tol_l = max(self.config.band_lateral_tol, 1e-3)
+        in_band = abs(forward_error) <= tol_f and abs(lateral_error) <= tol_l
+        if not in_band:
+            self._pressure_timer = 0
+            self._pressure_offset = 0.0
+            return
+        self._pressure_timer += 1
+        if self._pressure_timer < max(int(self.config.pressure_ramp_steps), 1):
+            return
+        delta = self.config.pressure_ramp_delta
+        if self.config.target_lateral <= 0.0:
+            delta = -abs(delta)
+        else:
+            delta = abs(delta)
+        self._pressure_offset = float(
+            np.clip(
+                self._pressure_offset + delta,
+                -abs(self.config.pressure_ramp_limit),
+                abs(self.config.pressure_ramp_limit),
+            )
+        )
+        self._pressure_timer = 0
+
+    def _effective_target_lateral(self) -> float:
+        base = self.config.target_lateral
+        adjusted = base + self._pressure_offset
+        # Ensure we do not cross over to opposite side
+        if base <= 0.0:
+            adjusted = min(adjusted, -1e-3)
+        else:
+            adjusted = max(adjusted, 1e-3)
+        return adjusted
