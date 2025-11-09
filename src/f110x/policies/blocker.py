@@ -33,6 +33,14 @@ class BlockingControllerConfig:
     pressure_ramp_limit: float = 0.25
     band_forward_tol: float = 0.25
     band_lateral_tol: float = 0.05
+    alignment_bias_deg: float = 5.0
+    alignment_bias_enabled: bool = True
+    alignment_lateral_window: float = 0.1
+    alignment_wall_margin: float = 0.08
+    alignment_lidar_threshold: float = 0.3
+    alignment_lidar_front_fraction: float = 0.2
+    alignment_lidar_side_fraction: float = 0.15
+    debug_lidar: bool = False
 
 
 class BlockingPolicy:
@@ -66,6 +74,14 @@ class BlockingPolicy:
         "pressure_ramp_limit": 0.25,
         "band_forward_tol": 0.25,
         "band_lateral_tol": 0.05,
+        "alignment_bias_deg": 5.0,
+        "alignment_bias_enabled": True,
+        "alignment_lateral_window": 0.1,
+        "alignment_wall_margin": 0.08,
+        "alignment_lidar_threshold": 0.3,
+        "alignment_lidar_front_fraction": 0.2,
+        "alignment_lidar_side_fraction": 0.15,
+        "debug_lidar": False,
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -125,6 +141,8 @@ class BlockingPolicy:
 
         forward_rel, lateral_rel = self._relative_components(self_pose, target_pose)
         effective_lateral = self._effective_target_lateral()
+        lidar_ranges = self._extract_lidar(obs)
+
         heading_error, lateral_error = self._compute_errors(
             target_pose,
             self_pose,
@@ -139,6 +157,13 @@ class BlockingPolicy:
             lateral_error = effective_lateral - lateral_rel
         else:
             lateral_error = 0.0
+        heading_error = self._apply_alignment_bias(
+            heading_error,
+            lateral_rel,
+            effective_lateral,
+            forward_rel,
+            lidar_ranges,
+        )
 
         steering = (
             self.config.lateral_gain * lateral_error
@@ -250,6 +275,161 @@ class BlockingPolicy:
             effective_lateral,
         )
         return heading_error, lateral_error
+
+    def _apply_alignment_bias(
+        self,
+        heading_error: float,
+        lateral_rel: float,
+        effective_lateral: float,
+        forward_rel: float,
+        lidar_ranges: Optional[np.ndarray],
+    ) -> float:
+        if not self.config.alignment_bias_enabled:
+            return heading_error
+
+        pinch_bias = self._lidar_alignment_bias(lidar_ranges)
+        if pinch_bias is not None:
+            heading_error = (heading_error + pinch_bias) * 0.5
+
+        same_side = np.sign(lateral_rel) == np.sign(effective_lateral)
+        if not same_side:
+            escape_bias = self._lidar_escape_bias(lidar_ranges)
+            if escape_bias is not None:
+                target_bias, blend = escape_bias
+                blend = float(np.clip(blend, 0.0, 1.0))
+                heading_error = (1.0 - blend) * heading_error + blend * target_bias
+            return heading_error
+
+        lateral_window = max(self.config.alignment_lateral_window, 1e-3)
+        close_to_target_offset = abs(lateral_rel - effective_lateral) <= lateral_window
+        if close_to_target_offset:
+            bias = np.deg2rad(self.config.alignment_bias_deg)
+            if effective_lateral < 0.0:
+                heading_error = max(heading_error, -bias)
+            elif effective_lateral > 0.0:
+                heading_error = min(heading_error, bias)
+        escape_bias = self._lidar_escape_bias(lidar_ranges)
+        if escape_bias is not None:
+            target_bias, blend = escape_bias
+            blend = float(np.clip(blend, 0.0, 1.0))
+            heading_error = (1.0 - blend) * heading_error + blend * target_bias
+        return heading_error
+
+    def _extract_lidar(self, obs: Dict[str, Any]) -> Optional[np.ndarray]:
+        scan = obs.get("lidar")
+        if scan is None:
+            scan = obs.get("scans")
+        if scan is None:
+            return None
+        arr = np.asarray(scan, dtype=np.float32).flatten()
+        if arr.size == 0:
+            return None
+        return arr
+
+    def _lidar_sector_distances(
+        self,
+        lidar_ranges: Optional[np.ndarray],
+    ) -> Optional[tuple[float, float, float]]:
+        if lidar_ranges is None or lidar_ranges.size == 0:
+            return None
+        arr = np.asarray(lidar_ranges, dtype=np.float32)
+        n = arr.size
+        mid = n // 2
+        front_frac = float(np.clip(self.config.alignment_lidar_front_fraction, 0.05, 1.0))
+        front_window = max(1, int(n * front_frac * 0.5))
+        start = max(0, mid - front_window)
+        end = min(n, mid + front_window)
+        front_slice = arr[start:end] if start < end else arr
+        if front_slice.size == 0:
+            front_slice = arr
+        if front_slice.size == 0:
+            return None
+        front_min = float(np.nanmin(front_slice))
+
+        side_frac = float(np.clip(self.config.alignment_lidar_side_fraction, 0.0, 1.0))
+        if side_frac > 0.0:
+            side_window = max(1, int(n * side_frac * 0.5))
+            left_end = start
+            left_start = max(0, left_end - side_window * 2)
+            left_slice = arr[left_start:left_end] if left_start < left_end else np.array([], dtype=np.float32)
+            right_start = end
+            right_end = min(n, right_start + side_window * 2)
+            right_slice = arr[right_start:right_end] if right_start < right_end else np.array([], dtype=np.float32)
+        else:
+            half = front_slice.size // 2
+            if half == 0:
+                left_slice = front_slice
+                right_slice = front_slice
+            else:
+                left_slice = front_slice[:half]
+                right_slice = front_slice[half:]
+
+        left_min = float(np.nanmin(left_slice)) if left_slice.size else float("inf")
+        right_min = float(np.nanmin(right_slice)) if right_slice.size else float("inf")
+        return front_min, left_min, right_min
+
+    @staticmethod
+    def _closest_wall_side(left_min: float, right_min: float, tol: float = 1e-3) -> int:
+        if not np.isfinite(left_min) and not np.isfinite(right_min):
+            return 0
+        if not np.isfinite(left_min):
+            return 1
+        if not np.isfinite(right_min):
+            return -1
+        if left_min + tol < right_min:
+            return -1
+        if right_min + tol < left_min:
+            return 1
+        return 0
+
+    def _lidar_alignment_bias(
+        self,
+        lidar_ranges: Optional[np.ndarray],
+    ) -> Optional[float]:
+        profile = self._lidar_sector_distances(lidar_ranges)
+        if profile is None:
+            return None
+        front_min, left_min, right_min = profile
+        threshold = max(self.config.alignment_lidar_threshold, 1e-3)
+        if not np.isfinite(front_min) or front_min > threshold:
+            return None
+        side = self._closest_wall_side(left_min, right_min, tol=0.01)
+        if side == 0:
+            return None
+        self._log_lidar_debug("pinch", front_min, left_min, right_min)
+        bias = np.deg2rad(self.config.alignment_bias_deg)
+        return side * bias
+
+    def _lidar_escape_bias(
+        self,
+        lidar_ranges: Optional[np.ndarray],
+    ) -> Optional[tuple[float, float]]:
+        profile = self._lidar_sector_distances(lidar_ranges)
+        if profile is None:
+            return None
+        front_min, left_min, right_min = profile
+        wall_margin = max(self.config.alignment_wall_margin, 1e-3)
+        side = self._closest_wall_side(left_min, right_min, tol=0.005)
+        if side == 0:
+            return None
+        wall_distance = left_min if side < 0 else right_min
+        if not np.isfinite(wall_distance):
+            return None
+        if wall_distance >= wall_margin:
+            return None
+        proximity = float(np.clip((wall_margin - wall_distance) / wall_margin, 0.0, 1.0))
+        self._log_lidar_debug("escape", wall_distance, left_min, right_min)
+        bias_limit = np.deg2rad(self.config.alignment_bias_deg)
+        target_bias = side * bias_limit
+        return target_bias, proximity
+
+    def _log_lidar_debug(self, label: str, front: float, left: float, right: float) -> None:
+        if not getattr(self.config, "debug_lidar", False):
+            return
+        print(
+            f"[Blocker LIDAR] {label}: front={front:.3f} left={left:.3f} right={right:.3f}",
+            flush=True,
+        )
 
     def _wall_pressure_penalty(self, lateral_rel: float, effective_lateral: float) -> float:
         if self.config.pressure_gain <= 0.0:
