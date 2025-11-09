@@ -3,7 +3,9 @@ meta:
 
 scenario:
   env:
-    map: line2
+    map: Budapest_map
+    
+    # map: line2
     seed: 42
     max_steps: 5000
     lidar_beams: 108

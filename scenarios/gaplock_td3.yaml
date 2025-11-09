@@ -86,10 +86,10 @@ scenario:
           policy_noise: 0.08
           noise_clip: 0.16
           policy_delay: 2
-          batch_size: 64
-          buffer_size: 50000
-          warmup_steps: 512
-          updates_per_step: 1
+          batch_size: 128
+          buffer_size: 100000
+          warmup_steps: 1024
+          updates_per_step: 2
           include_truncation: true
           use_per: true
           per_alpha: 0.6
@@ -98,9 +98,9 @@ scenario:
           per_beta_increment: 0.000005
           per_min_priority: 0.0001
           per_epsilon: 0.000001
-          exploration_noise: 0.09
-          exploration_noise_final: 0.01
-          exploration_noise_decay_steps: 400000
+          exploration_noise: 0.12
+          exploration_noise_final: 0.02
+          exploration_noise_decay_steps: 200000
           # exploration_noise_decay_episodes: 4000
           initial_speed: 1.0
           # prevent_reverse: true
@@ -125,16 +125,16 @@ scenario:
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          step_reward: 0.01
+          step_reward: 0.0
           idle_speed_threshold: 0.02
-          idle_penalty: -0.08
-          idle_penalty_steps: 18
+          idle_penalty: -0.15
+          idle_penalty_steps: 10
           idle_truncation_penalty: -35.0
-          pressure_distance: 1.5
-          # pressure_timeout: 0.0
-          # pressure_min_speed: 0.0
-          pressure_bonus: 0.05
-          pressure_bonus_interval: 5
+          pressure_distance: 1.2
+          pressure_timeout: 0.5
+          pressure_min_speed: 0.15
+          pressure_bonus: 0.15
+          pressure_bonus_interval: 3
           # proximity_penalty_distance: 0.0
           # proximity_penalty_value: 0.0
           # speed_bonus_coef: 0.0
@@ -144,11 +144,11 @@ scenario:
           # brake_penalty: 0.0
           # brake_speed_threshold: 0.0
           # brake_drop_threshold: 0.0
-          heading_reward_coef: 0.05
-          distance_reward_near: 0.2
-          distance_reward_near_distance: 1.5
-          distance_reward_far_distance: 3.0
-          distance_penalty_far: 0.05
+          heading_reward_coef: 0.08
+          distance_reward_near: 0.3
+          distance_reward_near_distance: 1.0
+          distance_reward_far_distance: 2.0
+          distance_penalty_far: 0.08
           # pressure_streak_bonus: 0.0
           # pressure_streak_cap: 0
           # commit_distance: 0.0
@@ -162,17 +162,17 @@ scenario:
           truncation_penalty: -25.0
           relative_reward:
             weights:
-              front: 0.1
-              front_right: 0.1
-              right: 0.01
-              back_right: 0.0
+              front: 0.25
+              front_right: 0.2
+              right: 0.1
+              back_right: 0.02
               back: 0.0
               back_left: 0.0
-              left: 0.01
-              front_left: 0.01
-            preferred_radius: 1.0
-            inner_tolerance: 0.5
-            outer_tolerance: 0.5
+              left: 0.02
+              front_left: 0.05
+            preferred_radius: 0.5
+            inner_tolerance: 0.25
+            outer_tolerance: 0.25
             # ignored_agents:
             #   - car_1
       wrappers:
@@ -193,11 +193,25 @@ scenario:
                 params:
                   # normalize_xy: 30.0
                   angle_mode: sin_cos
+              - id: ego_vel
+                type: velocity
+                params:
+                  normalize: 1.0
+                  include_speed: true
+                  speed_scale: 1.0
               - id: target_pose
                 type: target_pose
                 params:
                   # normalize_xy: 30.0
                   angle_mode: sin_cos
+                target:
+                  agent: car_1
+              - id: target_vel
+                type: velocity
+                params:
+                  normalize: 1.0
+                  include_speed: true
+                  speed_scale: 1.0
                 target:
                   agent: car_1
               - id: relative_pose
@@ -215,32 +229,30 @@ scenario:
         name: follow_gap
         params:
           max_distance: 30.0
-          window_size: 4
-          bubble_radius: 2
-          max_steer: 0.3
+          window_size: 2
+          bubble_radius: 1
+          max_steer: 0.35
           min_speed: 0.2
           max_speed: 0.8
           steering_gain: 0.4
           fov_deg: 270
           normalized: true
           steer_smooth: 0.35
-          center_bias_gain: 0.2
+          center_bias_gain: 0.25
           inside_bias_gain: 0.2
-          crawl_steer_ratio: 0.55
+          crawl_steer_ratio: 0.35
           steering_speed_scale: 1.0
           preview_horizon: 1.5
           preview_samples: 7
           dwa_samples: 5
-          dwa_horizon: 0.6
-          dwa_heading_weight: 0.2
+          dwa_horizon: 0.5
+          dwa_heading_weight: 0.15
           enhanced_gap_scoring: true
           gap_score_width_weight: 1.0
-          gap_score_clearance_weight: 1.3
-          gap_score_center_weight: 0.6
-          gap_score_curvature_weight: 0.25
-          u_shape_enabled: true
-          u_shape_threshold: 0.35
-          u_shape_crawl_speed: 0.35
+          gap_score_clearance_weight: 1.2
+          gap_score_center_weight: 0.5
+          gap_score_curvature_weight: 0.2
+          u_shape_enabled: false
         
          
       wrappers:
