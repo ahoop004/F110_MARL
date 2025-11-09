@@ -79,15 +79,15 @@ scenario:
         name: td3
         params:
           device: cpu
-          actor_lr: 0.00035
-          critic_lr: 0.00045
+          actor_lr: 0.0002
+          critic_lr: 0.0003
           gamma: 0.995
-          tau: 0.005
+          tau: 0.002
           policy_noise: 0.08
           noise_clip: 0.16
           policy_delay: 2
           batch_size: 128
-          buffer_size: 100000
+          buffer_size: 75000
           warmup_steps: 1024
           updates_per_step: 2
           include_truncation: true
@@ -95,12 +95,13 @@ scenario:
           per_alpha: 0.6
           per_beta_start: 0.5
           per_beta: 0.5
-          per_beta_increment: 0.000005
+          per_beta_final: 1.0
+          per_beta_increment: 0.00001
           per_min_priority: 0.0001
           per_epsilon: 0.000001
           exploration_noise: 0.12
-          exploration_noise_final: 0.02
-          exploration_noise_decay_steps: 200000
+          exploration_noise_final: 0.03
+          exploration_noise_decay_steps: 400000
           # exploration_noise_decay_episodes: 4000
           initial_speed: 1.0
           # prevent_reverse: true
@@ -125,7 +126,7 @@ scenario:
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          step_reward: 0.0
+          step_reward: -0.005
           idle_speed_threshold: 0.02
           idle_penalty: -0.15
           idle_penalty_steps: 10
@@ -133,8 +134,8 @@ scenario:
           pressure_distance: 1.2
           pressure_timeout: 0.5
           pressure_min_speed: 0.15
-          pressure_bonus: 0.15
-          pressure_bonus_interval: 3
+          pressure_bonus: 0.05
+          pressure_bonus_interval: 15
           # proximity_penalty_distance: 0.0
           # proximity_penalty_value: 0.0
           # speed_bonus_coef: 0.0
