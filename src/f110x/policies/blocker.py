@@ -41,6 +41,7 @@ class BlockingControllerConfig:
     alignment_lidar_front_fraction: float = 0.2
     alignment_lidar_side_fraction: float = 0.15
     debug_lidar: bool = False
+    escape_steer_gain: float = 1.5
 
 
 class BlockingPolicy:
@@ -82,6 +83,7 @@ class BlockingPolicy:
         "alignment_lidar_front_fraction": 0.2,
         "alignment_lidar_side_fraction": 0.15,
         "debug_lidar": False,
+        "escape_steer_gain": 1.5,
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -97,6 +99,8 @@ class BlockingPolicy:
         self._last_speed_cmd: float = 0.0
         self._pressure_timer: int = 0
         self._pressure_offset: float = 0.0
+        self._escape_override_active: bool = False
+        self._escape_steer_command: Optional[float] = None
 
     @classmethod
     def from_config(cls, params: Optional[Dict[str, Any]]) -> "BlockingPolicy":
@@ -169,6 +173,8 @@ class BlockingPolicy:
             self.config.lateral_gain * lateral_error
             + self.config.heading_gain * heading_error
         )
+        if getattr(self, "_escape_override_active", False) and self._escape_steer_command is not None:
+            steering = self._escape_steer_command
         steering = self._apply_damping(steering)
         steering = float(np.clip(steering, -self.config.max_steer, self.config.max_steer))
 
@@ -292,12 +298,23 @@ class BlockingPolicy:
             heading_error = (heading_error + pinch_bias) * 0.5
 
         same_side = np.sign(lateral_rel) == np.sign(effective_lateral)
+        escape_bias = self._lidar_escape_bias(lidar_ranges)
+        if escape_bias is not None:
+            escape_target, escape_blend = escape_bias
+            escape_blend = float(np.clip(escape_blend, 0.0, 1.0))
+            # Escape bias overrides other logic; blend directly and record flag.
+            heading_error = (1.0 - escape_blend) * heading_error + escape_blend * escape_target
+            self._escape_override_active = True
+            steer_dir = np.sign(escape_target) or 1.0
+            steer_mag = float(
+                np.clip(self.config.escape_steer_gain * self.config.max_steer, 0.0, self.config.max_steer)
+            )
+            self._escape_steer_command = steer_dir * steer_mag
+            return heading_error
+        self._escape_override_active = False
+        self._escape_steer_command = None
+
         if not same_side:
-            escape_bias = self._lidar_escape_bias(lidar_ranges)
-            if escape_bias is not None:
-                target_bias, blend = escape_bias
-                blend = float(np.clip(blend, 0.0, 1.0))
-                heading_error = (1.0 - blend) * heading_error + blend * target_bias
             return heading_error
 
         lateral_window = max(self.config.alignment_lateral_window, 1e-3)
@@ -308,11 +325,6 @@ class BlockingPolicy:
                 heading_error = max(heading_error, -bias)
             elif effective_lateral > 0.0:
                 heading_error = min(heading_error, bias)
-        escape_bias = self._lidar_escape_bias(lidar_ranges)
-        if escape_bias is not None:
-            target_bias, blend = escape_bias
-            blend = float(np.clip(blend, 0.0, 1.0))
-            heading_error = (1.0 - blend) * heading_error + blend * target_bias
         return heading_error
 
     def _extract_lidar(self, obs: Dict[str, Any]) -> Optional[np.ndarray]:
@@ -364,8 +376,12 @@ class BlockingPolicy:
                 left_slice = front_slice[:half]
                 right_slice = front_slice[half:]
 
-        left_min = float(np.nanmin(left_slice)) if left_slice.size else float("inf")
-        right_min = float(np.nanmin(right_slice)) if right_slice.size else float("inf")
+        left_raw = float(np.nanmin(left_slice)) if left_slice.size else float("inf")
+        right_raw = float(np.nanmin(right_slice)) if right_slice.size else float("inf")
+        # Simulator uses 0° at front and increases counter-clockwise, so indices below mid
+        # correspond to the vehicle's right side. Swap to keep names intuitive.
+        left_min = right_raw
+        right_min = left_raw
         return front_min, left_min, right_min
 
     @staticmethod
@@ -396,7 +412,7 @@ class BlockingPolicy:
         side = self._closest_wall_side(left_min, right_min, tol=0.01)
         if side == 0:
             return None
-        self._log_lidar_debug("pinch", front_min, left_min, right_min)
+        self._log_lidar_debug("pinch", front_min, left_min, right_min, side)
         bias = np.deg2rad(self.config.alignment_bias_deg)
         return side * bias
 
@@ -418,16 +434,24 @@ class BlockingPolicy:
         if wall_distance >= wall_margin:
             return None
         proximity = float(np.clip((wall_margin - wall_distance) / wall_margin, 0.0, 1.0))
-        self._log_lidar_debug("escape", wall_distance, left_min, right_min)
+        self._log_lidar_debug("escape", wall_distance, left_min, right_min, side)
         bias_limit = np.deg2rad(self.config.alignment_bias_deg)
         target_bias = side * bias_limit
         return target_bias, proximity
 
-    def _log_lidar_debug(self, label: str, front: float, left: float, right: float) -> None:
+    def _log_lidar_debug(
+        self,
+        label: str,
+        front: float,
+        left: float,
+        right: float,
+        side: int,
+    ) -> None:
         if not getattr(self.config, "debug_lidar", False):
             return
+        side_str = "left" if side > 0 else "right" if side < 0 else "none"
         print(
-            f"[Blocker LIDAR] {label}: front={front:.3f} left={left:.3f} right={right:.3f}",
+            f"[Blocker LIDAR] {label}: wall_side={side_str} front={front:.3f} left={left:.3f} right={right:.3f}",
             flush=True,
         )
 
@@ -462,6 +486,9 @@ class BlockingPolicy:
         return speed_cmd
 
     def _apply_damping(self, steering: float) -> float:
+        if getattr(self, "_escape_override_active", False):
+            self._prev_steer = steering
+            return steering
         alpha = float(np.clip(self.config.damping_gain, 0.0, 1.0))
         filtered = self._prev_steer + alpha * (steering - self._prev_steer)
         self._prev_steer = filtered
@@ -481,11 +508,13 @@ class BlockingPolicy:
         min_guard_speed = max(0.1, defender_speed * 0.25)
 
         if desired < 0.0 and lateral_rel < desired - margin:
-            steering = max(steering, 0.0)
+            if not getattr(self, "_escape_override_active", False):
+                steering = max(steering, 0.0)
             allowed = max(min_guard_speed, defender_speed - guard_penalty)
             speed_cmd = min(max(speed_cmd, min_guard_speed), allowed)
         elif desired > 0.0 and lateral_rel > desired + margin:
-            steering = min(steering, 0.0)
+            if not getattr(self, "_escape_override_active", False):
+                steering = min(steering, 0.0)
             allowed = max(min_guard_speed, defender_speed - guard_penalty)
             speed_cmd = min(max(speed_cmd, min_guard_speed), allowed)
         return steering, speed_cmd
