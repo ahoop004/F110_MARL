@@ -26,6 +26,7 @@ from f110x.wrappers.action import (
 )
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
+from f110x.policies.blocker import BlockingPolicy
 from f110x.policies.ftg_centerline import FollowTheGapCenterlinePolicy
 from f110x.policies.secondary_vicon import SecondaryViconPolicy
 from f110x.policies.ppo.ppo import PPOAgent
@@ -1217,6 +1218,37 @@ def _build_algo_centerline(
         },
     )
 
+
+def _build_algo_blocker(
+    assignment: AgentAssignment,
+    ctx: AgentBuildContext,
+    roster: RosterLayout,
+    pipeline: ObservationPipeline,
+) -> AgentBundle:
+    controller = BlockingPolicy.from_config(assignment.spec.params)
+    controller.total_agents = ctx.env.n_agents
+    controller.agent_slot = assignment.slot
+    params = assignment.spec.params if isinstance(assignment.spec.params, dict) else {}
+    target_id = params.get("target_agent")
+    target_slot = None
+    if target_id is not None:
+        for assn in roster.assignments:
+            if assn.agent_id == str(target_id):
+                target_slot = assn.slot
+                break
+    else:
+        other_slots = [assn.slot for assn in roster.assignments if assn.slot != assignment.slot]
+        target_slot = other_slots[0] if other_slots else None
+    controller.target_slot = target_slot
+    return AgentBundle(
+        assignment=assignment,
+        algo="blocker",
+        controller=controller,
+        obs_pipeline=pipeline,
+        trainable=_is_trainable(assignment.spec, default=False),
+        metadata={"target_slot": target_slot},
+    )
+
 AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "ppo": _build_algo_ppo,
     "rec_ppo": _build_algo_rec_ppo,
@@ -1224,6 +1256,7 @@ AGENT_BUILDERS: Dict[str, AgentBuilderFn] = {
     "gap_follow": _build_algo_follow_gap,
     "followthegap": _build_algo_follow_gap,
     "ftg_c": _build_algo_ftg_centerline,
+    "blocker": _build_algo_blocker,
     "secondary_vicon": _build_algo_secondary_vicon,
     "random": _build_algo_random,
     "waypoint": _build_algo_waypoint,

@@ -1,0 +1,77 @@
+meta:
+  name: gaplock_blocker
+
+scenario:
+  env:
+    map: line2
+    seed: 42
+    max_steps: 5000
+    lidar_beams: 108
+    terminate_on_any_done: true
+    vehicle_params:
+      v_max: 1.0
+      v_min: -1.0
+      length: 0.32
+      width: 0.225
+    spawn_points:
+      - spawn_3
+      - spawn_1
+
+  main:
+    mode: eval
+    eval_episodes: 10
+    save_eval_rollouts: false
+    eval_rollout_dir: eval_rollouts
+    wandb:
+      enabled: false
+
+  agents:
+    car_0:
+      trainable: false
+      algorithm:
+        name: blocker
+        params:
+          target_agent: car_1
+          target_forward: 2.2         # longitudinal distance (m) to hold ahead of defender
+          target_lateral: -0.25       # lateral offset (m) in defender frame (negative = hugging inside)
+          speed_offset: -0.02         # slow slightly compared to defender
+          forward_gain: 0.5           # aggression when correcting forward error
+          lateral_gain: 1.2           # aggression when correcting lateral error
+          heading_gain: 0.6           # aligns heading with defender heading
+          speed_gain: 0.9             # responsiveness when matching speed
+          max_speed: 1.0
+          max_steer: 0.25
+          pressure_margin: 0.2        # extra slowdown if lateral error exceeds this
+          pressure_gain: 0.4          # amount of slowdown applied when squeezing
+          cruise_speed: 0.7           # minimum speed when comfortably ahead
+
+    car_1:
+      trainable: false
+      algorithm:
+        name: follow_gap
+        params:
+          max_distance: 30.0
+          window_size: 2
+          bubble_radius: 1
+          max_steer: 0.35
+          min_speed: 0.2
+          max_speed: 0.8
+          steering_gain: 0.4
+          fov_deg: 270
+          normalized: true
+          steer_smooth: 0.35
+          center_bias_gain: 0.25
+          inside_bias_gain: 0.2
+          crawl_steer_ratio: 0.35
+          steering_speed_scale: 1.0
+          preview_horizon: 1.5
+          preview_samples: 7
+          dwa_samples: 5
+          dwa_horizon: 0.5
+          dwa_heading_weight: 0.15
+          enhanced_gap_scoring: true
+          gap_score_width_weight: 1.0
+          gap_score_clearance_weight: 1.2
+          gap_score_center_weight: 0.5
+          gap_score_curvature_weight: 0.2
+          u_shape_enabled: false
