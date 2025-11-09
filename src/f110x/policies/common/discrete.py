@@ -294,10 +294,12 @@ def build_replay_buffer(
     if prioritized:
         beta_value = cfg.get("per_beta_start", cfg.get("per_beta", 0.4))
         beta_increment = cfg.get("per_beta_increment", cfg.get("per_beta_step", 1e-4))
+        beta_final = cfg.get("per_beta_final", 1.0)
         per_args = dict(
             alpha=float(cfg.get("per_alpha", 0.6)),
             beta=float(beta_value),
             beta_increment_per_sample=float(beta_increment),
+            beta_final=float(beta_final),
             min_priority=float(cfg.get("per_min_priority", 1e-3)),
             epsilon=float(cfg.get("per_epsilon", 1e-6)),
         )
