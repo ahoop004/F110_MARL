@@ -33,7 +33,7 @@ scenario:
         params:
           target_agent: car_1
           target_forward: 2.2         # longitudinal distance (m) to hold ahead of defender
-          target_lateral: -0.25       # lateral offset (m) in defender frame (negative = hugging inside)
+          target_lateral: -0.25       # signed lateral offset (m): negative=inside wall, positive=outside
           speed_offset: -0.02         # slow slightly compared to defender
           forward_gain: 0.5           # aggression when correcting forward error
           lateral_gain: 1.2           # aggression when correcting lateral error
@@ -44,6 +44,16 @@ scenario:
           pressure_margin: 0.2        # extra slowdown if lateral error exceeds this
           pressure_gain: 0.4          # amount of slowdown applied when squeezing
           cruise_speed: 0.7           # minimum speed when comfortably ahead
+          predict_horizon: 0.6        # seconds used to project defender pose forward
+          lateral_flip_threshold: 0.25 # switch blocking side if defender slides laterally faster than this (m/s)
+          lidar_flip_threshold: 0.2    # minimum left/right LiDAR clearance difference before swapping sides
+          min_separation: 0.65        # minimum gap to maintain before braking
+          accel_limit: 0.35           # limit on speed command increase per step
+          decel_limit: 0.5            # limit on speed command decrease per step
+          steering_blend: 0.7         # interpolate between pure pursuit (0) and lateral-hold controller (1)
+          catchup_limit: 0.15         # max +/- speed delta applied while closing the longitudinal gap
+          allow_side_switch: false    # keep the chosen side unless explicitly enabled
+          side_hysteresis_steps: 25   # number of steps a new side preference must persist before switching
 
     car_1:
       trainable: false
