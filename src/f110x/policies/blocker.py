@@ -25,7 +25,9 @@ class BlockingControllerConfig:
     accel_limit: float = 0.4
     decel_limit: float = 0.6
     guard_speed_penalty: float = 0.3
-    min_block_speed: float = 0.15
+    min_block_speed: float = 0.22
+    separation_guard_distance: float = 0.28
+    separation_guard_speed: float = 0.08
     pressure_ramp_steps: int = 50
     pressure_ramp_delta: float = 0.01
     pressure_ramp_limit: float = 0.25
@@ -57,6 +59,8 @@ class BlockingPolicy:
         "decel_limit": 0.6,
         "guard_speed_penalty": 0.3,
         "min_block_speed": 0.15,
+        "separation_guard_distance": 0.35,
+        "separation_guard_speed": 0.05,
         "pressure_ramp_steps": 50,
         "pressure_ramp_delta": 0.01,
         "pressure_ramp_limit": 0.25,
@@ -147,6 +151,7 @@ class BlockingPolicy:
         target_speed = self._desired_speed(
             target_pose,
             forward_error,
+            forward_rel,
             lateral_rel,
             defender_speed,
             effective_lateral,
@@ -173,6 +178,7 @@ class BlockingPolicy:
         self,
         target_pose: np.ndarray,
         forward_error: float,
+        forward_rel: float,
         lateral_rel: float,
         defender_speed: float,
         effective_lateral: float,
@@ -183,7 +189,11 @@ class BlockingPolicy:
         speed -= self._wall_pressure_penalty(lateral_rel, effective_lateral)
         if forward_error <= 0.0:
             speed = max(speed, self.config.cruise_speed)
-        speed = max(speed, self.config.min_block_speed)
+        guard_dist = max(self.config.separation_guard_distance, 1e-3)
+        if forward_rel < guard_dist:
+            speed = min(speed, max(self.config.separation_guard_speed, 0.0))
+        else:
+            speed = max(speed, self.config.min_block_speed)
         return float(np.clip(speed, 0.0, self.config.max_speed))
 
     def _relative_components(self, self_pose: np.ndarray, target_pose: np.ndarray) -> np.ndarray:
