@@ -254,19 +254,4 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
-        
-         
-      wrappers:
-        - factory: obs
-          params:
-            max_scan: 30.0
-            normalize: true
-            components:
-              - id: lidar
-                type: lidar
-                params:
-                  beams: 108
-                  max_range: 30.0
-                  normalize: true
-                  clip: 1.0
-              
+

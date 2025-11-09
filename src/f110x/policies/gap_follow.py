@@ -314,13 +314,8 @@ class FollowTheGapPolicy:
             steering = np.clip(steering, -0.5 * self.max_steer, 0.5 * self.max_steer)
 
         # Clip and smooth steering
-        velocity_vec = obs.get("velocity")
-        if velocity_vec is None:
-            speed = float(obs.get("speed", 0.0))
-        else:
-            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
-            speed = float(arr[0]) if arr.size else 0.0
-        speed_cap = self._steering_cap_from_speed(abs(speed))
+        speed = self._extract_speed(obs)
+        speed_cap = self._steering_cap_from_speed(speed)
         steering = np.clip(steering, -speed_cap, speed_cap)
         steering = self.steer_smooth * self.last_steer + (1 - self.steer_smooth) * steering
         self.last_steer = steering
@@ -340,6 +335,27 @@ class FollowTheGapPolicy:
             return self.max_steer
         limit = self.steering_speed_scale / (speed + 1e-6)
         return float(np.clip(limit, 0.1 * self.max_steer, self.max_steer))
+
+    def _extract_speed(self, obs: Dict[str, Any]) -> float:
+        velocity_vec = obs.get("velocity")
+        speed = 0.0
+        if velocity_vec is not None:
+            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
+            if arr.size >= 2:
+                speed = float(np.linalg.norm(arr[:2]))
+            elif arr.size == 1:
+                speed = float(abs(arr[0]))
+        else:
+            raw_speed = obs.get("speed")
+            if raw_speed is not None:
+                try:
+                    speed = float(raw_speed)
+                except (TypeError, ValueError):
+                    arr = np.asarray(raw_speed, dtype=np.float32).reshape(-1)
+                    speed = float(arr[0]) if arr.size else 0.0
+        if not np.isfinite(speed):
+            return 0.0
+        return abs(float(speed))
 
     def _adaptive_window_size(self, min_scan: Optional[float]) -> int:
         base = max(int(round(self.window_size)), 1)
@@ -369,12 +385,7 @@ class FollowTheGapPolicy:
             return steering
         scan_res = scan * self.max_distance if self.normalized else scan
         proposals = np.linspace(-self.max_steer, self.max_steer, preview_cfg[1])
-        velocity_vec = obs.get("velocity")
-        if velocity_vec is None:
-            speed = float(obs.get("speed", 0.0))
-        else:
-            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
-            speed = float(arr[0]) if arr.size else 0.0
+        speed = self._extract_speed(obs)
         best = steering
         best_margin = -np.inf
         for candidate in proposals:
@@ -405,12 +416,7 @@ class FollowTheGapPolicy:
             return steering
         horizon = float(getattr(self, "dwa_horizon", 0.5))
         heading_weight = float(getattr(self, "dwa_heading_weight", 0.1))
-        velocity_vec = obs.get("velocity")
-        if velocity_vec is None:
-            speed_state = float(obs.get("speed", 0.0))
-        else:
-            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
-            speed_state = float(arr[0]) if arr.size else 0.0
+        speed_state = self._extract_speed(obs)
 
         steer_candidates = np.linspace(-self.max_steer, self.max_steer, dwa_samples)
         speed_candidates = np.linspace(self.min_speed, max(self.min_speed, speed_state), dwa_samples)
@@ -471,12 +477,7 @@ class FollowTheGapPolicy:
     ) -> float:
         if min_scan < 1.5 or not np.isfinite(min_scan):
             return steering
-        velocity_vec = obs.get("velocity")
-        if velocity_vec is None:
-            speed = float(obs.get("speed", 0.0))
-        else:
-            arr = np.asarray(velocity_vec, dtype=np.float32).reshape(-1)
-            speed = float(arr[0]) if arr.size else 0.0
+        speed = self._extract_speed(obs)
         dt = 0.15
         curvature = steering / max(self.max_steer, 1e-3)
         yaw_change = curvature * dt
