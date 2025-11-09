@@ -61,6 +61,7 @@ GAPLOCK_PARAM_KEYS = (
     "success_border_radius",
     "success_border_lane_center",
     "success_border_requires_pressure",
+    "success_requires_pressure",
 )
 
 
@@ -120,6 +121,7 @@ class GaplockRewardStrategy(RewardStrategy):
         success_border_radius: float = 0.0,
         success_border_lane_center: float = 0.0,
         success_border_requires_pressure: bool = False,
+        success_requires_pressure: bool = True,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -188,6 +190,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self.success_border_radius = max(float(success_border_radius), 0.0)
         self.success_border_lane_center = float(success_border_lane_center)
         self.success_border_requires_pressure = bool(success_border_requires_pressure)
+        self.success_requires_pressure = bool(success_requires_pressure)
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -515,16 +518,16 @@ class GaplockRewardStrategy(RewardStrategy):
                                 border_hit = True
 
             if target_crashed and not ego_crashed:
-                if overlay_target_id and pressure_recent:
+                pressure_gate = pressure_recent or not self.success_requires_pressure
+                if overlay_target_id and pressure_gate:
                     if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
                         acc.add("success_reward", self.target_crash_reward)
                         self._clear_pressure(step.agent_id, overlay_target_id)
                 self._commit_active.pop(step.agent_id, None)
                 self._commit_awarded.discard(step.agent_id)
             elif border_hit and not ego_crashed:
-                if overlay_target_id and (
-                    not self.success_border_requires_pressure or pressure_recent
-                ):
+                border_pressure_gate = pressure_recent or not self.success_border_requires_pressure
+                if overlay_target_id and border_pressure_gate:
                     if not self.success_once or not self._has_awarded(step.agent_id, overlay_target_id):
                         acc.add("success_reward", self.target_crash_reward)
                         self._clear_pressure(step.agent_id, overlay_target_id)
