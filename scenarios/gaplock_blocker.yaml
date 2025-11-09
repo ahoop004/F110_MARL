@@ -32,28 +32,23 @@ scenario:
         name: blocker
         params:
           target_agent: car_1
-          target_forward: 2.2         # longitudinal distance (m) to hold ahead of defender
-          target_lateral: -0.25       # signed lateral offset (m): negative=inside wall, positive=outside
-          speed_offset: -0.02         # slow slightly compared to defender
-          forward_gain: 0.5           # aggression when correcting forward error
-          lateral_gain: 1.2           # aggression when correcting lateral error
-          heading_gain: 0.6           # aligns heading with defender heading
-          speed_gain: 0.9             # responsiveness when matching speed
+          target_forward: 2.0         # longitudinal distance (m) to hold ahead of defender
+          target_lateral: -0.28       # signed lateral offset (m): negative keeps blocker on inside wall
+          speed_offset: -0.03         # bias slower than defender so it can pin without overshooting
+          forward_gain: 0.45          # how aggressively it closes the longitudinal gap
+          lateral_gain: 1.1           # lateral correction strength
+          heading_gain: 0.6           # keeps heading aligned with defender
+          speed_gain: 0.85            # responsiveness when matching speed
           max_speed: 1.0
           max_steer: 0.25
-          pressure_margin: 0.2        # extra slowdown if lateral error exceeds this
-          pressure_gain: 0.4          # amount of slowdown applied when squeezing
-          cruise_speed: 0.7           # minimum speed when comfortably ahead
-          predict_horizon: 0.6        # seconds used to project defender pose forward
-          lateral_flip_threshold: 0.25 # switch blocking side if defender slides laterally faster than this (m/s)
-          lidar_flip_threshold: 0.2    # minimum left/right LiDAR clearance difference before swapping sides
-          min_separation: 0.65        # minimum gap to maintain before braking
-          accel_limit: 0.35           # limit on speed command increase per step
-          decel_limit: 0.5            # limit on speed command decrease per step
-          steering_blend: 0.7         # interpolate between pure pursuit (0) and lateral-hold controller (1)
-          catchup_limit: 0.15         # max +/- speed delta applied while closing the longitudinal gap
-          allow_side_switch: false    # keep the chosen side unless explicitly enabled
-          side_hysteresis_steps: 25   # number of steps a new side preference must persist before switching
+          pressure_margin: 0.18       # slack before wall guardrails engage
+          pressure_gain: 0.4          # slowdown when squeezing toward wall
+          cruise_speed: 0.65          # minimum speed when comfortably ahead
+          catchup_limit: 0.12         # cap on longitudinal catch-up boost
+          damping_gain: 0.35          # smoothing on steering corrections (0=no damping, 1=heavy)
+          accel_limit: 0.3            # limit on speed command increase per step
+          decel_limit: 0.45           # limit on speed command decrease per step
+          guard_speed_penalty: 0.25   # how much to slow when breaching wall guard
 
     car_1:
       trainable: false
