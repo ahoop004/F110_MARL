@@ -25,15 +25,33 @@
 - [ ] Ensure the new map overlay notebook highlights success points so qualitative plots match the metrics.
 ## Code cleanup
 
-- [ ] Audit overall modularity: revisit layered separation between env wrappers, policies, rewards, and logging to ensure responsibilities are clear.
-- [ ] Prune the legacy idle-guard plumbing (duplicate thresholds, unused config fields) so scenarios only define the active path.
-- [ ] Consolidate reward parameters (top-level vs `params`) and document the precedence to avoid double-defining truncation penalties.
-- [ ] Normalize spawn/curriculum metadata by extracting shared snippets and removing commented scaffolding in scenarios.
-- [ ] Document and refactor the new path logging so the hooks live in a dedicated module instead of being scattered through `TrainRunner`.
-- [ ] Extract common FTG parameter presets/curricula into shared configs to reduce duplication across scenarios.
-- [ ] Review observation/reward/task wrappers for redundancy and consider collapsing or relocating them into clearer modules.
-- [ ] Standardize parameter handling/passing (env, agent, reward) and clean up the `f110x` core so config plumbing is obvious.
-- [ ] Propose a tidy file layout/categorization (policies, runners, utilities) and document creation/structural patterns for contributors.
+- [ ] **Target pattern:** move toward hexagonal architecture with registries. Composition root builds env/team/trainers/rollout from a frozen `ExperimentConfig`. Domain = env + rollout engine. Adapters = policies, trainers, wrappers, maps, IO.
+- [ ] **Phase 1 – Groundwork**
+  - Create `docs/architecture.md` describing the target diagram/lifecycle.
+  - Add a minimal registry utility with tests.
+  - Add a config validator that freezes section views (`env_cfg`, `agents_cfg`, etc.) and enforces invariants; tests ensure immutability.
+- [ ] **Phase 2 – Composition root**
+  - New module assembles environment, roster, trainers, rollout engine, and returns bundle metadata (obs_dim, act_dim, bounds, device, seeds).
+  - One entrypoint must call only the root; builders stop importing each other.
+- [ ] **Phase 3 – Registries everywhere**
+  - Standard registries for policies, wrappers, reward shapers, maps (trainers already have one).
+  - Builders resolve via registry calls; swapping algorithms becomes config-only.
+- [ ] **Phase 4 – Rollout refactor**
+  - Split concerns: `StepEngine` (env stepping), `RewardApplier`, `Instrumentation`.
+  - Trainers own buffers; engine is trainer-agnostic; add a no-trainer eval path.
+- [ ] **Phase 5 – Scenario API**
+  - Promote scenario config (map, spawn rules, laps/timeouts) into a `Scenario` object to derive deterministic starts from seeds.
+- [ ] **Phase 6 – Observation contracts**
+  - Define component interface with `out_shape/bounds/describe`, normalize units centrally, and record final shape/bounds in bundle metadata; property tests ensure per-map consistency.
+- [ ] **Phase 7 – Reproducibility surface**
+  - Emit a manifest per run (registry choices, versions, seeds, shapes, bounds, scenario hash). Optional trajectory snapshot toggle for eval.
+- [ ] **Phase 8 – Public entrypoints**
+  - Thin modules (`train.py`, `eval.py`, `rollout.py`) call the composition root only. Update docs/examples accordingly.
+- [ ] **Phase 9 – CI & quality gates**
+  - Add pre-commit (formatter/linter/type-check). CI runs unit + smoke tests on CPU; GPU optional.
+- [ ] **Phase 10 – Docs & migration**
+  - Update README + new architecture doc; add migration notes so users know about registries/entrypoints.
+- [ ] Definition of done: single composition root, registries for adapters, frozen config, separated rollout concerns, manifests per run, public entrypoints only, CI enforcing tests/style.
 
 ## FTG improvements
 
