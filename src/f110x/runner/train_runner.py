@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 from datetime import datetime
 from collections import deque
@@ -402,6 +403,11 @@ class TrainRunner:
     _federated_interval: int = field(init=False, default=0)
     _federated_round: int = field(init=False, default=0)
     _path_log_dir: Path = field(init=False)
+    _path_log_file: Path = field(init=False)
+    _path_log_header_written: bool = field(init=False, default=False)
+    _run_suffix: Optional[str] = field(init=False, default=None)
+    _path_run_label: str = field(init=False, default="")
+    _path_timestamp: str = field(init=False, default="")
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -430,7 +436,12 @@ class TrainRunner:
             episodes_int = 1
         self._eval_episodes = max(episodes_int, 1)
         self._eval_runner = None
+        self._run_suffix = self._resolve_run_suffix()
         self._path_log_dir = self._init_plot_dir()
+        run_label = self._path_run_label or "run"
+        self._path_log_file = self._path_log_dir / f"paths_{run_label}.csv"
+        self._path_log_header_written = self._path_log_file.exists() and self._path_log_file.stat().st_size > 0
+        self._write_run_config_snapshot()
         self._init_federated()
 
     # ------------------------------------------------------------------
@@ -823,7 +834,7 @@ class TrainRunner:
         )
 
         for episode_idx in range(int(episodes)):
-            path_points: List[Tuple[int, str, float, float, float]] = []
+            path_points: List[Tuple[int, int, str, float, float, float]] = []
             rollout = run_episode(
                 env=env,
                 team=team,
@@ -841,7 +852,7 @@ class TrainRunner:
                 path_logger=path_points,
                 reward_sharing=reward_sharing_cfg,
             )
-            self._write_episode_path_csv(path_points, episode_idx)
+            self._append_path_log(path_points)
 
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
@@ -1374,7 +1385,10 @@ class TrainRunner:
                 scenario_name = None
         slug = self._slugify(scenario_name or "scenario")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = Path("plots") / slug / timestamp
+        self._path_timestamp = timestamp
+        run_label = self._run_suffix or timestamp
+        self._path_run_label = run_label
+        path = Path("plots") / slug / run_label / timestamp
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -1384,21 +1398,45 @@ class TrainRunner:
         cleaned = cleaned.strip("-")
         return cleaned or "scenario"
 
-    def _write_episode_path_csv(
+    def _append_path_log(
         self,
-        points: List[Tuple[int, str, float, float, float]],
-        episode_index: int,
+        points: List[Tuple[int, int, str, float, float, float]],
     ) -> None:
         if not points:
             return
-        csv_path = self._path_log_dir / f"episode_{episode_index + 1:05d}.csv"
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with csv_path.open("w", newline="") as handle:
+        self._path_log_file.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a"
+        with self._path_log_file.open(mode, newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["episode", "step", "agent_id", "x", "y", "theta"])
-            ep_num = episode_index + 1
-            for step_idx, agent_id, x_val, y_val, theta_val in points:
+            if not self._path_log_header_written:
+                writer.writerow(["episode", "step", "agent_id", "x", "y", "theta"])
+                self._path_log_header_written = True
+            for ep_num, step_idx, agent_id, x_val, y_val, theta_val in points:
                 writer.writerow([ep_num, step_idx, agent_id, x_val, y_val, theta_val])
+
+    def _write_run_config_snapshot(self) -> None:
+        try:
+            raw_cfg = getattr(self.context.cfg, "raw", {}) or {}
+        except Exception:
+            raw_cfg = {}
+        payload = {
+            "run_suffix": self._run_suffix,
+            "timestamp": self._path_timestamp,
+            "scenario": raw_cfg,
+        }
+        config_path = self._path_log_dir / f"run_config_{self._path_run_label}.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with config_path.open("w") as handle:
+            json.dump(payload, handle, indent=2, default=self._json_default)
+
+    @staticmethod
+    def _json_default(value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        try:
+            return value.__dict__
+        except Exception:
+            return str(value)
 
     @staticmethod
     def _resolve_reward_value(cfg: Dict[str, Any], key: str) -> float:
