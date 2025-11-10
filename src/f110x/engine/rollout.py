@@ -248,7 +248,7 @@ def run_episode(
     render_condition: Optional[Callable[[int, int], bool]] = None,
     on_offpolicy_flush: Optional[Callable[[str, Trainer, TrajectoryBuffer], None]] = None,
     trace_buffer: Optional[List[EpisodeTraceStep]] = None,
-    path_logger: Optional[List[Tuple[int, int, str, float, float, float]]] = None,
+    path_logger: Optional[List[Tuple[int, int, str, float, float, float, float]]] = None,
     reward_sharing: Optional[Mapping[str, Any]] = None,
 ) -> EpisodeRollout:
     """Execute a single environment episode and gather rollout statistics."""
@@ -366,7 +366,9 @@ def run_episode(
                 x_val = float(pose_arr[0])
                 y_val = float(pose_arr[1])
                 theta_val = float(pose_arr[2]) if pose_arr.size >= 3 else 0.0
-                path_logger.append((ep_num, steps, agent_id, x_val, y_val, theta_val))
+                agent_idx = id_to_index.get(agent_id)
+                step_reward = float(shaped_rewards[agent_idx]) if agent_idx is not None else 0.0
+                path_logger.append((ep_num, steps, agent_id, x_val, y_val, theta_val, step_reward))
 
         idle_triggered = False
         step_events_map: Dict[str, Dict[str, Any]] = {aid: {} for aid in agent_order}

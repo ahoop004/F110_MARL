@@ -852,7 +852,6 @@ class TrainRunner:
                 path_logger=path_points,
                 reward_sharing=reward_sharing_cfg,
             )
-            self._append_path_log(path_points)
 
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
@@ -927,6 +926,14 @@ class TrainRunner:
                 if success_reward_val > 0.0:
                     success = True
                     assisted_success = True
+
+            cause_code = self._resolve_episode_cause_code(
+                success=bool(success),
+                attacker_crashed=bool(attacker_crashed),
+                defender_crashed=bool(defender_crashed),
+                truncated=any(rollout.truncations.values()) or rollout.idle_triggered,
+            )
+            self._append_path_log(path_points, cause_code)
 
             if success:
                 total_successes += 1
@@ -1400,7 +1407,8 @@ class TrainRunner:
 
     def _append_path_log(
         self,
-        points: List[Tuple[int, int, str, float, float, float]],
+        points: List[Tuple[int, int, str, float, float, float, float]],
+        cause_code: int,
     ) -> None:
         if not points:
             return
@@ -1409,10 +1417,10 @@ class TrainRunner:
         with self._path_log_file.open(mode, newline="") as handle:
             writer = csv.writer(handle)
             if not self._path_log_header_written:
-                writer.writerow(["episode", "step", "agent_id", "x", "y", "theta"])
+                writer.writerow(["episode", "step", "agent_id", "x", "y", "theta", "step_reward", "cause_code"])
                 self._path_log_header_written = True
-            for ep_num, step_idx, agent_id, x_val, y_val, theta_val in points:
-                writer.writerow([ep_num, step_idx, agent_id, x_val, y_val, theta_val])
+            for ep_num, step_idx, agent_id, x_val, y_val, theta_val, step_reward in points:
+                writer.writerow([ep_num, step_idx, agent_id, x_val, y_val, theta_val, step_reward, cause_code])
 
     def _write_run_config_snapshot(self) -> None:
         try:
@@ -1437,6 +1445,24 @@ class TrainRunner:
             return value.__dict__
         except Exception:
             return str(value)
+
+    @staticmethod
+    def _resolve_episode_cause_code(
+        *,
+        success: bool,
+        attacker_crashed: bool,
+        defender_crashed: bool,
+        truncated: bool,
+    ) -> int:
+        if success:
+            return 0
+        if attacker_crashed and defender_crashed:
+            return 2
+        if attacker_crashed:
+            return 1
+        if truncated:
+            return 3
+        return 4
 
     @staticmethod
     def _resolve_reward_value(cfg: Dict[str, Any], key: str) -> float:

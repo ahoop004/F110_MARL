@@ -1,11 +1,12 @@
 """TD3 agent built on top of shared replay utilities."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
 from torch import nn
+from torch.optim import lr_scheduler
 import torch.nn.functional as F
 
 # try:  # optional dependency for rich logging
@@ -40,11 +41,21 @@ class TD3Agent:
         self.actor_lr = float(cfg.get("actor_lr", 1e-3))
         self.critic_lr = float(cfg.get("critic_lr", 1e-3))
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
-        self.critic_opt = torch.optim.Adam(
-            list(self.critic1.parameters()) + list(self.critic2.parameters()),
-            lr=self.critic_lr,
+        self.actor_opt = self._init_optimizer(
+            self.actor.parameters(),
+            cfg,
+            prefix="actor",
+            default_lr=self.actor_lr,
         )
+        self.critic_opt = self._init_optimizer(
+            list(self.critic1.parameters()) + list(self.critic2.parameters()),
+            cfg,
+            prefix="critic",
+            default_lr=self.critic_lr,
+        )
+
+        self.actor_scheduler = self._init_scheduler(self.actor_opt, cfg.get("actor_lr_scheduler"))
+        self.critic_scheduler = self._init_scheduler(self.critic_opt, cfg.get("critic_lr_scheduler"))
 
         self.gamma = float(cfg.get("gamma", 0.99))
         self.tau = float(cfg.get("tau", 0.005))
@@ -171,6 +182,7 @@ class TD3Agent:
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
         self.critic_opt.step()
+        self._step_scheduler(self.critic_scheduler)
 
         actor_loss = torch.tensor(0.0, device=self.device)
         if self.total_it % self.policy_delay == 0:
@@ -180,6 +192,7 @@ class TD3Agent:
             self.actor_opt.zero_grad(set_to_none=True)
             actor_loss.backward()
             self.actor_opt.step()
+            self._step_scheduler(self.actor_scheduler)
 
             soft_update(self.actor_target, self.actor, self.tau)
             soft_update(self.critic_target1, self.critic1, self.tau)
@@ -199,6 +212,88 @@ class TD3Agent:
             "actor_loss": float(actor_loss.detach().cpu().item()),
             "update_it": float(self.total_it),
         }
+
+    def _init_optimizer(
+        self,
+        params: Iterable[torch.nn.Parameter],
+        cfg: Mapping[str, Any],
+        *,
+        prefix: str,
+        default_lr: float,
+    ) -> torch.optim.Optimizer:
+        opt_name = str(cfg.get(f"{prefix}_optimizer", cfg.get("optimizer", "adam"))).lower()
+        lr_value = float(cfg.get(f"{prefix}_lr", default_lr))
+        weight_decay = float(cfg.get(f"{prefix}_weight_decay", 0.0))
+        betas = cfg.get(f"{prefix}_betas")
+        eps = cfg.get(f"{prefix}_eps")
+
+        opt_kwargs: Dict[str, Any] = {"lr": lr_value, "weight_decay": weight_decay}
+        if betas is not None:
+            if isinstance(betas, (list, tuple)) and len(betas) == 2:
+                opt_kwargs["betas"] = (float(betas[0]), float(betas[1]))
+        if eps is not None:
+            try:
+                opt_kwargs["eps"] = float(eps)
+            except (TypeError, ValueError):
+                pass
+
+        if opt_name == "adamw":
+            return torch.optim.AdamW(params, **opt_kwargs)
+        if opt_name == "sgd":
+            momentum = float(cfg.get(f"{prefix}_momentum", 0.0))
+            opt_kwargs.setdefault("momentum", momentum)
+            return torch.optim.SGD(params, **opt_kwargs)
+        if opt_name == "rmsprop":
+            alpha = cfg.get(f"{prefix}_alpha", 0.99)
+            opt_kwargs.setdefault("alpha", float(alpha))
+            momentum = cfg.get(f"{prefix}_momentum")
+            if momentum is not None:
+                opt_kwargs["momentum"] = float(momentum)
+            return torch.optim.RMSprop(params, **opt_kwargs)
+        # default Adam
+        return torch.optim.Adam(params, **opt_kwargs)
+
+    def _init_scheduler(
+        self,
+        optimizer: torch.optim.Optimizer,
+        config: Optional[Mapping[str, Any]],
+    ) -> Optional[lr_scheduler._LRScheduler]:
+        if not config:
+            return None
+        sched_type = str(config.get("type", "")).lower()
+        if not sched_type:
+            return None
+
+        if sched_type == "steplr":
+            step_size = int(config.get("step_size", 1000))
+            gamma = float(config.get("gamma", 0.5))
+            return lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+        if sched_type == "multistep":
+            milestones = config.get("milestones", [])
+            milestones = [int(m) for m in milestones] if isinstance(milestones, Sequence) else []
+            gamma = float(config.get("gamma", 0.5))
+            if not milestones:
+                return None
+            return lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
+        if sched_type == "exponential":
+            gamma = float(config.get("gamma", 0.99))
+            return lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+        if sched_type == "cosine":
+            t_max = int(config.get("t_max", 1000))
+            eta_min = float(config.get("eta_min", 0.0))
+            return lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max, eta_min=eta_min)
+        if sched_type == "cosine_restarts":
+            t_0 = int(config.get("t_0", 1000))
+            t_mult = int(config.get("t_mult", 1))
+            eta_min = float(config.get("eta_min", 0.0))
+            return lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=t_0, T_mult=t_mult, eta_min=eta_min)
+        return None
+
+    @staticmethod
+    def _step_scheduler(scheduler_obj: Optional[lr_scheduler._LRScheduler]) -> None:
+        if scheduler_obj is None:
+            return
+        scheduler_obj.step()
 
     def _current_exploration_noise(self) -> float:
         if self.exploration_noise_decay_episodes > 0:

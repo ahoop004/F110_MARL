@@ -81,6 +81,16 @@ scenario:
           device: cpu
           actor_lr: 0.0004
           critic_lr: 0.0005
+          actor_optimizer: adamw
+          actor_weight_decay: 0.0001
+          actor_lr_scheduler:
+            type: cosine
+            t_max: 200000
+            eta_min: 0.00002
+          critic_lr_scheduler:
+            type: step
+            step_size: 150000
+            gamma: 0.5
           gamma: 0.99
           tau: 0.004
           policy_noise: 0.08
