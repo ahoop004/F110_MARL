@@ -248,6 +248,7 @@ def run_episode(
     render_condition: Optional[Callable[[int, int], bool]] = None,
     on_offpolicy_flush: Optional[Callable[[str, Trainer, TrajectoryBuffer], None]] = None,
     trace_buffer: Optional[List[EpisodeTraceStep]] = None,
+    path_logger: Optional[List[Tuple[int, str, float, float, float]]] = None,
     reward_sharing: Optional[Mapping[str, Any]] = None,
 ) -> EpisodeRollout:
     """Execute a single environment episode and gather rollout statistics."""
@@ -347,6 +348,24 @@ def run_episode(
         obs_snapshot = {aid: obs.get(aid) for aid in agent_order if aid in obs}
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         steps += 1
+
+        if path_logger is not None:
+            for agent_id, agent_obs in obs_snapshot.items():
+                if not isinstance(agent_obs, Mapping):
+                    continue
+                pose = agent_obs.get("pose")
+                if pose is None:
+                    continue
+                try:
+                    pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
+                except Exception:
+                    continue
+                if pose_arr.size < 2:
+                    continue
+                x_val = float(pose_arr[0])
+                y_val = float(pose_arr[1])
+                theta_val = float(pose_arr[2]) if pose_arr.size >= 3 else 0.0
+                path_logger.append((steps, agent_id, x_val, y_val, theta_val))
 
         idle_triggered = False
         step_events_map: Dict[str, Dict[str, Any]] = {aid: {} for aid in agent_order}

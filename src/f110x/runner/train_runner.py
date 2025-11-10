@@ -1,11 +1,13 @@
 """Training runner orchestrating engine rollouts and trainer updates."""
 from __future__ import annotations
 
+import csv
 import os
+from datetime import datetime
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Mapping
+from typing import Any, Callable, Deque, Dict, List, Optional, Mapping, Tuple
 
 from f110x.federated import FederatedAverager, FederatedConfig
 from f110x.engine.rollout import (
@@ -399,6 +401,7 @@ class TrainRunner:
     _federated: Optional[FederatedAverager] = field(init=False, default=None)
     _federated_interval: int = field(init=False, default=0)
     _federated_round: int = field(init=False, default=0)
+    _path_log_dir: Path = field(init=False)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -427,6 +430,7 @@ class TrainRunner:
             episodes_int = 1
         self._eval_episodes = max(episodes_int, 1)
         self._eval_runner = None
+        self._path_log_dir = self._init_plot_dir()
         self._init_federated()
 
     # ------------------------------------------------------------------
@@ -819,6 +823,7 @@ class TrainRunner:
         )
 
         for episode_idx in range(int(episodes)):
+            path_points: List[Tuple[int, str, float, float, float]] = []
             rollout = run_episode(
                 env=env,
                 team=team,
@@ -833,8 +838,10 @@ class TrainRunner:
                 agent_ids=agent_ids,
                 render_condition=should_render,
                 on_offpolicy_flush=on_offpolicy_flush,
+                path_logger=path_points,
                 reward_sharing=reward_sharing_cfg,
             )
+            self._write_episode_path_csv(path_points, episode_idx)
 
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
@@ -1352,6 +1359,46 @@ class TrainRunner:
         if stem.endswith(f"_{suffix}"):
             return base.name
         return f"{stem}_{suffix}{base.suffix}"
+
+    def _init_plot_dir(self) -> Path:
+        raw_cfg = getattr(self.context.cfg, "raw", {}) or {}
+        scenario_name: Optional[str] = None
+        if isinstance(raw_cfg, Mapping):
+            meta = raw_cfg.get("meta")
+            if isinstance(meta, Mapping):
+                scenario_name = meta.get("name")
+        if not scenario_name:
+            try:
+                scenario_name = str(self.context.cfg.main.get("experiment_name"))
+            except Exception:
+                scenario_name = None
+        slug = self._slugify(scenario_name or "scenario")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = Path("plots") / slug / timestamp
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _slugify(value: str) -> str:
+        cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
+        cleaned = cleaned.strip("-")
+        return cleaned or "scenario"
+
+    def _write_episode_path_csv(
+        self,
+        points: List[Tuple[int, str, float, float, float]],
+        episode_index: int,
+    ) -> None:
+        if not points:
+            return
+        csv_path = self._path_log_dir / f"episode_{episode_index + 1:05d}.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["episode", "step", "agent_id", "x", "y", "theta"])
+            ep_num = episode_index + 1
+            for step_idx, agent_id, x_val, y_val, theta_val in points:
+                writer.writerow([ep_num, step_idx, agent_id, x_val, y_val, theta_val])
 
     @staticmethod
     def _resolve_reward_value(cfg: Dict[str, Any], key: str) -> float:
