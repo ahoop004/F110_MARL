@@ -7,6 +7,26 @@
 - [ ] Ablation studies for attacker reward shaping (disable pressure/relative terms) to attribute ASR gains.
 - [ ] Cross-play robustness: evaluate attacker against FTG parameter variants (sensor noise, bubble radius, etc.).
 - [ ] Resource/latency profiling comparing FTG vs TD3 inference cost for real-time viability claims.
+- [ ] Align success metrics for FTG baselines with finish-line completion (load finish line from map YAML on corridor tracks).
+- [ ] Fix notebooks so trajectory overlays use the correct map coordinate frame for all map bundles.
+- [ ] Build clean FTG-only baselines on line2, Budapest, and Shanghai (straight, S-curve, hairpin) with consistent logging.
+- [ ] Repeat the same three-map suite for FTG vs FTG to capture natural interference.
+- [ ] Run RL attacker vs FTG defender experiments on the three benchmark maps and gather plots/metrics.
+- [ ] Final sweeps on line2 (corridor) targeting success rate vs. curriculum tiers / hyperparameter variations.
+- [ ] Refresh CLI output to reflect scenario type (solo FTG, FTG vs FTG, FTG vs TD3) and remove stale idle warnings.
+- [ ] Untangle training vs eval wandb logging; add per-episode metrics (success, cause, reward breakdown) alongside step-level stats.
+
+## Code cleanup
+
+- [ ] Audit overall modularity: revisit layered separation between env wrappers, policies, rewards, and logging to ensure responsibilities are clear.
+- [ ] Prune the legacy idle-guard plumbing (duplicate thresholds, unused config fields) so scenarios only define the active path.
+- [ ] Consolidate reward parameters (top-level vs `params`) and document the precedence to avoid double-defining truncation penalties.
+- [ ] Normalize spawn/curriculum metadata by extracting shared snippets and removing commented scaffolding in scenarios.
+- [ ] Document and refactor the new path logging so the hooks live in a dedicated module instead of being scattered through `TrainRunner`.
+- [ ] Extract common FTG parameter presets/curricula into shared configs to reduce duplication across scenarios.
+- [ ] Review observation/reward/task wrappers for redundancy and consider collapsing or relocating them into clearer modules.
+- [ ] Standardize parameter handling/passing (env, agent, reward) and clean up the `f110x` core so config plumbing is obvious.
+- [ ] Propose a tidy file layout/categorization (policies, runners, utilities) and document creation/structural patterns for contributors.
 
 ## FTG improvements
 

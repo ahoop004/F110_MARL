@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1000
+    max_steps: 2000
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -38,13 +38,13 @@ scenario:
           - spawn_4
           - spawn_1
     spawn_curriculum:
-      min_episode: 0
+      min_episode: 150
       activation_samples: 40
       success_window: 8
-      enable_rate: 0.3
+      enable_rate: 0.7
       enable_patience: 2
-      disable_rate: 0.2
-      disable_patience: 3
+      disable_rate: 0.3
+      disable_patience: 2
       cooldown: 10
       persist: true
 
@@ -78,7 +78,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cuda
+          device: cpu
           actor_lr: 0.0004
           critic_lr: 0.0005
           actor_optimizer: adamw
@@ -93,25 +93,25 @@ scenario:
             gamma: 0.5
           gamma: 0.99
           tau: 0.01
-          policy_noise: 0.05
-          noise_clip: 0.1
-          policy_delay: 1
-          batch_size: 128
-          buffer_size: 50000
-          warmup_steps: 2000
-          updates_per_step: 2
+          policy_noise: 0.2
+          noise_clip: 0.5
+          policy_delay: 2
+          batch_size: 256
+          buffer_size: 100000
+          warmup_steps: 5000
+          updates_per_step: 1
           include_truncation: true
           use_per: true
-          per_alpha: 0.55
+          per_alpha: 0.6
           per_beta_start: 0.4
           # per_beta: 0.5
           per_beta_final: 1.0
-          per_beta_increment: 0.0001
+          per_beta_increment: 0.000001
           per_min_priority: 0.00001
           per_epsilon: 0.00001
           exploration_noise: 0.2
           exploration_noise_final: 0.05
-          exploration_noise_decay_steps: 120000
+          exploration_noise_decay_steps: 300000
           # exploration_noise_decay_episodes: 1500
           initial_speed: 0.8
           prevent_reverse: true
@@ -137,7 +137,7 @@ scenario:
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          step_reward: -0.008
+          step_reward: -0.000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
           idle_penalty_steps: 0
@@ -145,8 +145,8 @@ scenario:
           pressure_distance: 1.0
           pressure_timeout: 0.5
           pressure_min_speed: 0.25
-          pressure_bonus: 0.1
-          pressure_bonus_interval: 8
+          pressure_bonus: 0.05
+          pressure_bonus_interval: 4
           # # proximity_penalty_distance: 0.0
           # # proximity_penalty_value: 0.0
           speed_bonus_coef: 0.05
@@ -159,8 +159,8 @@ scenario:
           # heading_reward_coef: 0.08
           distance_reward_near: 0.04
           distance_reward_near_distance: 0.8
-          # distance_reward_far_distance: 2.0
-          # distance_penalty_far: 0.02
+          distance_reward_far_distance: 2.0
+          distance_penalty_far: 0.01
           # pressure_streak_bonus: 0.01
           # pressure_streak_cap: 0
           # commit_distance: 0.4
@@ -208,7 +208,7 @@ scenario:
               - id: ego_vel
                 type: velocity
                 params:
-                  normalize: 1.0
+                  normalize: 2.0
                   include_speed: true
                   speed_scale: 1.0
               - id: target_pose
@@ -221,7 +221,7 @@ scenario:
               - id: target_vel
                 type: velocity
                 params:
-                  normalize: 1.0
+                  normalize: 2.0
                   include_speed: true
                   speed_scale: 1.0
                 target:
