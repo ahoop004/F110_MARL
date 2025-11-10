@@ -330,6 +330,17 @@ if _HAS_RICH:
                     elif metric_name == "lap_count":
                         entry["lap_count"] = formatted
 
+            finish_hits: Dict[str, bool] = {}
+            finish_prefix = f"{phase}/finish_line_hit/"
+            for key, value in metrics.items():
+                if key.startswith(finish_prefix):
+                    agent_id = key[len(finish_prefix) :]
+                    hit = _format_bool(value)
+                    if hit is not None:
+                        finish_hits[agent_id] = hit
+            if finish_hits:
+                tracked["finish_line_hits"] = finish_hits
+
             self._refresh()
 
         def log_event(
@@ -416,6 +427,10 @@ if _HAS_RICH:
                 summary_lines.append(f"Success rate: {success_rate * 100:.1f}%")
             if success_total is not None and success_total > 0:
                 summary_lines.append(f"Success total: {int(success_total)}")
+            finish_hits = state.get("finish_line_hits")
+            if finish_hits:
+                labels = ", ".join(f"{aid}={'yes' if hit else 'no'}" for aid, hit in finish_hits.items())
+                summary_lines.append(f"Finish line: {labels}")
 
             spawn_enabled = state.get("spawn_enabled")
             spawn_stage = state.get("spawn_stage")

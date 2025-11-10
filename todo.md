@@ -16,6 +16,13 @@
 - [ ] Refresh CLI output to reflect scenario type (solo FTG, FTG vs FTG, FTG vs TD3) and remove stale idle warnings.
 - [ ] Untangle training vs eval wandb logging; add per-episode metrics (success, cause, reward breakdown) alongside step-level stats.
 
+## Success metrics & logging
+
+- [ ] Corridor maps (line2, etc.): load finish-line annotations from map YAML and trigger success when FTG crosses the segment.
+- [ ] Looped tracks: double-check lap-completion logic and align success conditions (defender lap or attacker crash) with logging.
+- [ ] Update CLI output to report scenario-specific success (finish-line hit, lap completion, crash, timeout) without idle noise.
+- [ ] wandb: add per-episode success metrics (type, time to finish, distance closed) and separate train vs eval logs.
+- [ ] Ensure the new map overlay notebook highlights success points so qualitative plots match the metrics.
 ## Code cleanup
 
 - [ ] Audit overall modularity: revisit layered separation between env wrappers, policies, rewards, and logging to ensure responsibilities are clear.

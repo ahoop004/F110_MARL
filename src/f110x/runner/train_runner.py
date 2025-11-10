@@ -855,6 +855,7 @@ class TrainRunner:
 
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
+            finish_line_hits = dict(rollout.finish_line_hits or {})
 
             if truncation_penalty:
                 for agent_id, truncated in rollout.truncations.items():
@@ -904,6 +905,7 @@ class TrainRunner:
                 success = not attacker_crashed
 
             assisted_success: Optional[bool] = None
+            episode_record_finish_agent: Optional[str] = None
             if success and attacker_id is not None:
                 attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
@@ -926,6 +928,13 @@ class TrainRunner:
                 if success_reward_val > 0.0:
                     success = True
                     assisted_success = True
+
+            if success is None:
+                finish_agent = defender_id or primary_id or (agent_ids[0] if agent_ids else None)
+                if finish_agent and finish_line_hits.get(finish_agent):
+                    success = True
+                    assisted_success = False
+                    episode_record_finish_agent = finish_agent
 
             cause_code = self._resolve_episode_cause_code(
                 success=bool(success),
@@ -960,7 +969,10 @@ class TrainRunner:
                 "assisted_success": assisted_success,
                 "collisions_total": collisions_total,
                 "idle_truncated": rollout.idle_triggered,
+                "finish_line_hits": finish_line_hits,
             }
+            if episode_record_finish_agent:
+                episode_record["finish_line_agent"] = episode_record_finish_agent
 
             if defender_crashed is not None:
                 episode_record["defender_crashed"] = defender_crashed
@@ -1106,6 +1118,10 @@ class TrainRunner:
             for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
                     metrics[f"train/reward/{aid}/{name}"] = float(value)
+            if finish_line_hits:
+                metrics["train/finish_line_any"] = float(any(finish_line_hits.values()))
+                for aid, hit in finish_line_hits.items():
+                    metrics[f"train/finish_line_hit/{aid}"] = 1.0 if hit else 0.0
 
             logger.log_metrics("train", metrics, step=episode_idx + 1)
             publish_metrics = getattr(env, "update_render_metrics", None)

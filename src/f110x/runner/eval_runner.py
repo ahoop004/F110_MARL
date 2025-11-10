@@ -227,6 +227,7 @@ class EvalRunner:
             reward_breakdown = {
                 aid: dict(components) for aid, components in rollout.reward_breakdown.items()
             }
+            finish_line_hits = dict(rollout.finish_line_hits or {})
             collision_total = int(sum(rollout.collisions.values()))
             collision_steps = {
                 aid: (step if step >= 0 else None)
@@ -260,6 +261,7 @@ class EvalRunner:
                 success = not attacker_crashed
 
             assisted_success: Optional[bool] = None
+            record_finish_agent: Optional[str] = None
             if success and attacker_id is not None:
                 attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
@@ -271,6 +273,12 @@ class EvalRunner:
                 if success_reward_val > 0.0:
                     success = True
                     assisted_success = True
+            if success is None:
+                finish_agent = defender_id or primary_id or (agent_ids[0] if agent_ids else None)
+                if finish_agent and finish_line_hits.get(finish_agent):
+                    success = True
+                    assisted_success = False
+                    record_finish_agent = finish_agent
 
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
@@ -283,6 +291,9 @@ class EvalRunner:
                 record["success"] = success
             record["assisted_success"] = assisted_success
             record["reward_breakdown"] = reward_breakdown
+            record["finish_line_hits"] = finish_line_hits
+            if record_finish_agent:
+                record["finish_line_agent"] = record_finish_agent
             if rollout.spawn_points:
                 record["spawn_points"] = dict(rollout.spawn_points)
             if rollout.spawn_option is not None:
@@ -376,6 +387,10 @@ class EvalRunner:
             for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
                     metrics[f"eval/reward/{aid}/{name}"] = float(value)
+            if finish_line_hits:
+                metrics["eval/finish_line_any"] = float(any(finish_line_hits.values()))
+                for aid, hit in finish_line_hits.items():
+                    metrics[f"eval/finish_line_hit/{aid}"] = 1.0 if hit else 0.0
 
             logger.log_metrics("eval", metrics, step=ep_index + 1)
             publish_metrics = getattr(env, "update_render_metrics", None)

@@ -171,6 +171,7 @@ class EpisodeRollout:
     spawn_option: Optional[str]
     average_speeds: Dict[str, float]
     causes: List[str] = field(default_factory=list)
+    finish_line_hits: Dict[str, bool] = field(default_factory=dict)
     trace: Optional[List[EpisodeTraceStep]] = None
 
     @property
@@ -291,6 +292,7 @@ def run_episode(
     reward_wrapper = reward_wrapper_factory(episode_index)
     components_extractor = getattr(reward_wrapper, "get_last_components", None)
     reward_breakdown: Dict[str, Dict[str, float]] = {agent_id: {} for agent_id in agent_order}
+    finish_line_hits: Dict[str, bool] = {agent_id: False for agent_id in agent_order}
 
     if reward_sharing and not isinstance(reward_sharing, Mapping):
         # Support simple truthy flags for sharing behaviour.
@@ -479,7 +481,11 @@ def run_episode(
                         if not terms.get(other_id, False) and not truncs.get(other_id, False):
                             truncs[other_id] = True
                             infos.setdefault(other_id, {})["truncated"] = True
-                            step_events_map.setdefault(other_id, {})["truncated"] = True
+                    step_events_map.setdefault(other_id, {})["truncated"] = True
+        for agent_id in agent_order:
+            info_entry = infos.get(agent_id)
+            if info_entry and info_entry.get("finish_line"):
+                finish_line_hits[agent_id] = True
 
         if reward_share_enabled and reward_share_agents:
             active_mask = np.array(
@@ -708,6 +714,7 @@ def run_episode(
         spawn_option=spawn_option_id,
         average_speeds=avg_speeds,
         causes=list(dict.fromkeys(causes)),
+        finish_line_hits=finish_line_hits,
         trace=trace_buffer,
     )
     return rollout
