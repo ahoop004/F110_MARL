@@ -4,7 +4,8 @@ meta:
 scenario:
   env:
     # map: Shanghai_map
-    map: line2
+    map: Budapest_map
+    # map: line2
     seed: 42
     max_steps: 25000
     lidar_beams: 108
@@ -14,6 +15,8 @@ scenario:
       v_min: -1.0
       length: 0.32
       width: 0.225
+    # spawn_points:
+    #   - spawn_1
     spawn_points:
       - spawn_9
 
