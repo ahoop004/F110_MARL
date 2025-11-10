@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 800
+    max_steps: 1000
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -39,7 +39,7 @@ scenario:
           - spawn_1
     spawn_curriculum:
       min_episode: 0
-      activation_samples: 20
+      activation_samples: 40
       success_window: 8
       enable_rate: 0.3
       enable_patience: 2
@@ -78,7 +78,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
+          device: cuda
           actor_lr: 0.0004
           critic_lr: 0.0005
           actor_optimizer: adamw
@@ -92,11 +92,11 @@ scenario:
             step_size: 150000
             gamma: 0.5
           gamma: 0.99
-          tau: 0.004
-          policy_noise: 0.08
-          noise_clip: 0.2
+          tau: 0.01
+          policy_noise: 0.05
+          noise_clip: 0.1
           policy_delay: 1
-          batch_size: 256
+          batch_size: 128
           buffer_size: 50000
           warmup_steps: 2000
           updates_per_step: 2
@@ -113,7 +113,7 @@ scenario:
           exploration_noise_final: 0.05
           exploration_noise_decay_steps: 120000
           # exploration_noise_decay_episodes: 1500
-          initial_speed: 0.65
+          initial_speed: 0.8
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -131,13 +131,13 @@ scenario:
           - gaplock_offense
 
         params:
-          target_crash_reward: 25.0
-          self_collision_penalty: -12.0
-          truncation_penalty: -10.0
+          target_crash_reward: 55.0
+          self_collision_penalty: -45.0
+          truncation_penalty: -45.0
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          step_reward: -0.0005
+          step_reward: -0.008
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
           idle_penalty_steps: 0
@@ -145,7 +145,7 @@ scenario:
           pressure_distance: 1.0
           pressure_timeout: 0.5
           pressure_min_speed: 0.25
-          pressure_bonus: 0.2
+          pressure_bonus: 0.1
           pressure_bonus_interval: 8
           # # proximity_penalty_distance: 0.0
           # # proximity_penalty_value: 0.0
@@ -157,10 +157,10 @@ scenario:
           # brake_speed_threshold: 0.05
           # brake_drop_threshold: 0.2
           # heading_reward_coef: 0.08
-          distance_reward_near: 0.08
-          distance_reward_near_distance: 1.0
-          distance_reward_far_distance: 2.0
-          distance_penalty_far: 0.02
+          distance_reward_near: 0.04
+          distance_reward_near_distance: 0.8
+          # distance_reward_far_distance: 2.0
+          # distance_penalty_far: 0.02
           # pressure_streak_bonus: 0.01
           # pressure_streak_cap: 0
           # commit_distance: 0.4
@@ -174,17 +174,17 @@ scenario:
     
           relative_reward:
             weights:
-              front: 0.25
-              front_right: 0.65
+              front: 0.15
+              front_right: 0.35
               right: 0.0
               back_right: 0.00
               back: 0.0
               back_left: 0.0
               left: 0.0
-              front_left: 0.65
+              front_left: 0.35
             preferred_radius: 0.6
             inner_tolerance: 0.25
-            outer_tolerance: 0.4
+            outer_tolerance: 0.35
             # ignored_agents:
             #   - car_1
       wrappers:
