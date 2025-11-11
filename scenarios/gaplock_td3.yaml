@@ -161,6 +161,19 @@ scenario:
           distance_reward_near_distance: 0.8
           distance_reward_far_distance: 2.0
           distance_penalty_far: 0.01
+          distance_gradient:
+            points:
+              - distance: 0.4
+                value: 0.08
+              - distance: 1.5
+                value: 0.0
+              - distance: 2.5
+                value: -0.04
+            scale: 1.0
+            time_scaled: true
+            clip:
+              - -0.1
+              - 0.1
           # pressure_streak_bonus: 0.01
           # pressure_streak_cap: 0
           # commit_distance: 0.4

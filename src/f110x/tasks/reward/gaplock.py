@@ -50,6 +50,7 @@ GAPLOCK_PARAM_KEYS = (
     "distance_reward_near_distance",
     "distance_reward_far_distance",
     "distance_penalty_far",
+    "distance_gradient",
     "pressure_streak_bonus",
     "pressure_streak_cap",
     "commit_distance",
@@ -110,6 +111,7 @@ class GaplockRewardStrategy(RewardStrategy):
         distance_reward_near_distance: float = 0.0,
         distance_reward_far_distance: float = 0.0,
         distance_penalty_far: float = 0.0,
+        distance_gradient: Optional[Dict[str, Any]] = None,
         pressure_streak_bonus: float = 0.0,
         pressure_streak_cap: int = 0,
         commit_distance: float = 0.0,
@@ -175,6 +177,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self.distance_reward_near_distance = max(float(distance_reward_near_distance), 0.0)
         self.distance_reward_far_distance = max(float(distance_reward_far_distance), 0.0)
         self.distance_penalty_far = max(float(distance_penalty_far), 0.0)
+        self.distance_gradient_cfg = self._prepare_distance_gradient(distance_gradient)
         self.pressure_streak_bonus = max(float(pressure_streak_bonus), 0.0)
         self.pressure_streak_cap = max(int(pressure_streak_cap), 0)
         self.commit_distance = max(float(commit_distance), 0.0)
@@ -445,6 +448,8 @@ class GaplockRewardStrategy(RewardStrategy):
                         penalty_value = -abs(self.distance_penalty_far) * time_scale
                         acc.add("distance_penalty", max(penalty_value, -0.5))
 
+                    self._apply_distance_gradient(acc, distance, time_scale)
+
                     if self.proximity_penalty_distance > 0.0 and self.proximity_penalty_value:
                         if distance > self.proximity_penalty_distance:
                             acc.add("proximity_penalty", -abs(self.proximity_penalty_value))
@@ -555,6 +560,88 @@ class GaplockRewardStrategy(RewardStrategy):
 
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
         return total, components
+
+    def _prepare_distance_gradient(self, cfg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not cfg:
+            return None
+        points_raw = cfg.get("points") if isinstance(cfg, dict) else None
+        if not points_raw:
+            return None
+        points: List[Tuple[float, float]] = []
+        for entry in points_raw:
+            if isinstance(entry, dict):
+                dist = entry.get("distance")
+                value = entry.get("value")
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                dist, value = entry[0], entry[1]
+            else:
+                continue
+            try:
+                dist_val = float(dist)
+                value_val = float(value)
+            except (TypeError, ValueError):
+                continue
+            points.append((max(dist_val, 0.0), value_val))
+        if not points:
+            return None
+        points.sort(key=lambda item: item[0])
+        clip_cfg = cfg.get("clip")
+        clip_range: Optional[Tuple[float, float]] = None
+        if isinstance(clip_cfg, (list, tuple)) and len(clip_cfg) >= 2:
+            try:
+                clip_min = float(clip_cfg[0])
+                clip_max = float(clip_cfg[1])
+                if clip_min > clip_max:
+                    clip_min, clip_max = clip_max, clip_min
+                clip_range = (clip_min, clip_max)
+            except (TypeError, ValueError):
+                clip_range = None
+        scale = float(cfg.get("scale", 1.0))
+        time_scaled = bool(cfg.get("time_scaled", True))
+        label = str(cfg.get("label", "distance_gradient")) or "distance_gradient"
+        return {
+            "points": points,
+            "clip": clip_range,
+            "scale": scale,
+            "time_scaled": time_scaled,
+            "label": label,
+        }
+
+    def _apply_distance_gradient(
+        self,
+        acc: RewardAccumulator,
+        distance: Optional[float],
+        time_scale: float,
+    ) -> None:
+        cfg = self.distance_gradient_cfg
+        if cfg is None or distance is None:
+            return
+        points: List[Tuple[float, float]] = cfg["points"]
+        if not points:
+            return
+        if distance <= points[0][0]:
+            value = points[0][1]
+        elif distance >= points[-1][0]:
+            value = points[-1][1]
+        else:
+            value = points[-1][1]
+            for idx in range(1, len(points)):
+                left = points[idx - 1]
+                right = points[idx]
+                if distance <= right[0]:
+                    span = max(right[0] - left[0], 1e-6)
+                    ratio = (distance - left[0]) / span
+                    ratio = min(max(ratio, 0.0), 1.0)
+                    value = left[1] + (right[1] - left[1]) * ratio
+                    break
+        value *= cfg["scale"]
+        if cfg["time_scaled"]:
+            value *= time_scale
+        clip_range = cfg.get("clip")
+        if clip_range is not None:
+            value = min(max(value, clip_range[0]), clip_range[1])
+        if abs(value) > 1e-9:
+            acc.add(cfg.get("label", "distance_gradient"), float(value))
 
     def _prepare_relative_reward(self, cfg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not cfg:
