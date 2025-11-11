@@ -75,3 +75,9 @@
 - [x] LiDAR U-shape crawl heuristic
   - detect U-shaped patterns (both sides closing) via range derivatives
   - force crawl mode whenever the pattern indicates a switchback
+
+## Reward scheduling
+
+- [ ] Episode/step-based reward ramps for gaplock components
+  - allow YAML schedules to scale reward terms by episode progress (0→max train episodes)
+  - add per-episode step ramps using env.max_steps to taper intra-episode bonuses/penalties
