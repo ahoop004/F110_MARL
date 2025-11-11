@@ -8,174 +8,83 @@ command:
   - run.py
   - --scenario
   - scenarios/gaplock_td3.yaml
+  - --auto-seed
+  
 parameters:
-  actor_lr:
-    distribution: log_uniform_values
-    min: 0.00012
-    max: 0.00055
-  critic_lr:
-    distribution: log_uniform_values
-    min: 0.00012
-    max: 0.00055
-  actor_weight_decay:
-    distribution: log_uniform_values
-    min: 1e-5
-    max: 3e-4
-  critic_weight_decay:
-    distribution: log_uniform_values
-    min: 1e-5
-    max: 3e-4
-  gamma:
-    distribution: uniform
-    min: 0.97
-    max: 0.999
-  tau:
-    distribution: log_uniform_values
-    min: 0.002
-    max: 0.02
-  policy_noise:
-    distribution: uniform
-    min: 0.02
-    max: 0.15
-  noise_clip:
-    distribution: uniform
-    min: 0.05
-    max: 0.5
-  policy_delay:
-    values: [1, 2]
-  exploration_noise:
-    distribution: uniform
-    min: 0.05
-    max: 0.3
-  exploration_noise_final:
-    distribution: uniform
-    min: 0.01
-    max: 0.1
-  exploration_noise_decay_steps:
-    distribution: q_log_uniform_values
-    min: 60000
-    max: 330000
-    q: 500
-  warmup_steps:
-    distribution: q_log_uniform_values
-    min: 1500
-    max: 5000
-    q: 100
-  buffer_size:
-    distribution: q_log_uniform_values
-    min: 50000
-    max: 150000
-    q: 1000
-  batch_size:
-    values: [128, 192, 256]
-  updates_per_step:
-    values: [1, 2, 3]
-  initial_speed:
-    distribution: uniform
-    min: 0.4
-    max: 1.0
-  prevent_reverse:
-    values: [true, false]
-  prevent_reverse_min_speed:
-    distribution: uniform
-    min: 0.0
-    max: 0.05
-  use_per:
-    values: [true, false]
-  per_alpha:
-    distribution: uniform
-    min: 0.45
-    max: 0.65
-  per_beta_start:
-    distribution: uniform
-    min: 0.3
-    max: 0.5
-  per_beta_final:
-    values: [0.9, 1.0]
-  per_beta_increment:
-    distribution: log_uniform_values
-    min: 1e-5
-    max: 2e-4
-  per_min_priority:
-    distribution: log_uniform_values
-    min: 1e-5
-    max: 1e-3
-  per_epsilon:
-    distribution: log_uniform_values
-    min: 1e-6
-    max: 1e-3
-  hidden_dims:
-    values:
-      - [256, 256, 128]
-      - [512, 256, 128]
-      - [256, 256, 256]
-  target_crash_reward:
-    distribution: uniform
-    min: 35.0
-    max: 75.0
-  self_collision_penalty:
-    distribution: uniform
-    min: -70.0
-    max: -25.0
-  truncation_penalty:
-    distribution: uniform
-    min: -60.0
-    max: -20.0
-  pressure_distance:
-    distribution: uniform
-    min: 0.7
-    max: 1.3
-  pressure_timeout:
-    distribution: uniform
-    min: 0.2
-    max: 0.8
-  pressure_min_speed:
-    distribution: uniform
-    min: 0.15
-    max: 0.4
-  pressure_bonus:
-    distribution: uniform
-    min: 0.01
-    max: 0.12
-  pressure_bonus_interval:
-    values: [2, 4, 6]
-  speed_bonus_coef:
-    distribution: uniform
-    min: 0.02
-    max: 0.08
-  speed_bonus_target:
-    distribution: uniform
-    min: 0.3
-    max: 0.8
-  distance_reward_near:
-    distribution: uniform
-    min: 0.02
-    max: 0.07
-  distance_reward_near_distance:
-    distribution: uniform
-    min: 0.4
-    max: 1.0
-  distance_reward_far_distance:
-    distribution: uniform
-    min: 1.3
-    max: 3.0
-  distance_penalty_far:
-    distribution: uniform
-    min: 0.0
-    max: 0.03
-  distance_gradient_scale:
-    distribution: uniform
-    min: 0.4
-    max: 1.6
-  distance_gradient_inner_value:
-    distribution: uniform
-    min: 0.04
-    max: 0.12
-  distance_gradient_outer_value:
-    distribution: uniform
-    min: -0.08
-    max: -0.02
-  step_reward:
-    distribution: uniform
-    min: -0.0015
-    max: 0.0015
+    actor_lr:
+      values: [0.0004, 0.0008, 0.0015, 0.003, 0.004]
+    critic_lr:
+      values: [0.0004, 0.0008, 0.0015, 0.003, 0.005]
+    actor_weight_decay:
+      values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
+    critic_weight_decay:
+      values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
+    gamma:
+      values: [0.97, 0.98, 0.99, 0.995, 0.999]
+    tau:
+      values: [0.005, 0.01, 0.02, 0.03]
+    policy_noise:
+      values: [0.1, 0.15, 0.2, 0.25, 0.3]
+    noise_clip:
+      values: [0.3, 0.4, 0.5, 0.6]
+    policy_delay:
+      values: [1, 2]
+    exploration_noise:
+      values: [0.1, 0.15, 0.2, 0.25, 0.3]
+    exploration_noise_final:
+      values: [0.02, 0.05, 0.08, 0.1]
+    warmup_steps:
+      values: [3000, 5000, 8000, 10000]
+    buffer_size:
+      values: [80000, 100000, 150000, 200000]
+    initial_speed:
+      values: [0.5, 0.6, 0.7, 0.8]
+    # Episode‑level rewards/penalties
+    # target_crash_reward:
+    #   values: [45.0, 55.0, 65.0, 70.0, 75.0]
+    # self_collision_penalty:
+    #   values: [-60.0, -50.0, -45.0, -35.0, -25.0]
+    # truncation_penalty:
+    #   values: [-60.0, -50.0, -45.0, -35.0, -25.0]
+    
+    # # Pressure / commit mechanics
+    # pressure_distance:
+    #   values: [0.75, 0.90, 1.05, 1.20]    # baseline ~1.0:contentReference[oaicite:1]{index=1}
+    # pressure_timeout:
+    #   values: [0.30, 0.50, 0.70]          # baseline 0.5:contentReference[oaicite:2]{index=2}
+    # pressure_min_speed:
+    #   values: [0.15, 0.25, 0.35, 0.40]    # baseline 0.25:contentReference[oaicite:3]{index=3}
+    # pressure_bonus:
+    #   values: [0.02, 0.05, 0.08, 0.11]    # baseline 0.025:contentReference[oaicite:4]{index=4}
+    # pressure_bonus_interval:
+    #   values: [2, 4, 6]
+    
+    # # Speed and control bonuses
+    # speed_bonus_coef:
+    #   values: [0.02, 0.04, 0.06, 0.08]    # baseline 0.05:contentReference[oaicite:5]{index=5}
+    # speed_bonus_target:
+    #   values: [0.40, 0.60, 0.80]          # baseline 0.6:contentReference[oaicite:6]{index=6}
+    
+    # # Distance & relative geometry shaping
+    # distance_reward_near:
+    #   values: [0.02, 0.04, 0.06]          # baseline 0.04:contentReference[oaicite:7]{index=7}
+    # distance_reward_near_distance:
+    #   values: [0.50, 0.70, 0.90]          # baseline 0.8:contentReference[oaicite:8]{index=8}
+    # distance_reward_far_distance:
+    #   values: [1.50, 2.00, 2.50, 3.00]    # baseline 2.0:contentReference[oaicite:9]{index=9}
+    # distance_penalty_far:
+    #   values: [0.00, 0.015, 0.03]         # baseline 0.01:contentReference[oaicite:10]{index=10}
+    
+    # # Distance gradient parameters (continuous shaping)
+    # distance_gradient_scale:
+    #   values: [0.5, 1.0, 1.5]             # baseline 1.0:contentReference[oaicite:11]{index=11}
+    # distance_gradient_inner_value:
+    #   values: [0.04, 0.08, 0.12]          # baseline ≈0.08:contentReference[oaicite:12]{index=12}
+    # distance_gradient_outer_value:
+    #   values: [-0.08, -0.05, -0.02]       # baseline ≈‑0.04:contentReference[oaicite:13]{index=13}
+    
+    # # Step‑level reward/penalty (dense)
+    # step_reward:
+    #   values: [-0.0015, -0.00075, 0.0, 0.00075, 0.0015]  # baseline −1e‑4:contentReference[oaicite:14]{index=14}
+
+

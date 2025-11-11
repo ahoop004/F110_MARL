@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 800
+    max_steps: 2000
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -16,8 +16,8 @@ scenario:
       length: 0.32
       width: 0.225
     spawn_points:
-      - spawn_3
       - spawn_1
+      - spawn_3
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
@@ -50,7 +50,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 500
+    train_episodes: 1500
     eval_episodes: 0
     eval_interval: 0
     federated:
@@ -131,13 +131,13 @@ scenario:
           - gaplock_offense
 
         params:
-          target_crash_reward: 65.0
-          self_collision_penalty: -45.0
-          truncation_penalty: -45.0
+          target_crash_reward: 50.0
+          self_collision_penalty: -30.0
+          truncation_penalty: -30.0
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null
-          step_reward: -0.0001
+          step_reward: -0.0000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
           idle_penalty_steps: 0
@@ -176,9 +176,9 @@ scenario:
               - distance: 0.4
                 value: 0.08
               - distance: 1.5
-                value: 0.0
-              - distance: 3.5
-                value: -0.04
+                value: 0.04
+              - distance: 5.5
+                value: -0.00
             scale: 1.0
             time_scaled: true
             clip:

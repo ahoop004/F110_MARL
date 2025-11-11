@@ -647,6 +647,16 @@ class WandbSink(LogSink):
         _ = context
         self._train_step_max = 0.0
         self._phase_counters.clear()
+        if self._run is not None:
+            try:
+                self._run.define_metric("train/episode")
+                self._run.define_metric("train/return", step_metric="train/episode")
+                self._run.define_metric("train/return_mean", step_metric="train/episode")
+                self._run.define_metric("eval/episode")
+                self._run.define_metric("eval/return", step_metric="eval/episode")
+                self._run.define_metric("eval/return_mean", step_metric="eval/episode")
+            except Exception:
+                pass
 
     def stop(self) -> None:
         if self._run is not None:
@@ -672,8 +682,8 @@ class WandbSink(LogSink):
                 payload[key] = value
         if phase in {"train", "eval"}:
             keep_keys = {
-                "train": {"train/return", "train/return_mean"},
-                "eval": {"eval/return", "eval/return_mean"},
+                "train": {"train/return", "train/return_mean", "train/episode"},
+                "eval": {"eval/return", "eval/return_mean", "eval/episode"},
             }[phase]
             payload = {key: value for key, value in payload.items() if key in keep_keys}
         if not payload:
