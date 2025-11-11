@@ -8,33 +8,31 @@ command:
   - run.py
   - --scenario
   - scenarios/gaplock_td3.yaml
-  - --sweep
-  - ${wandb.config_name}
 parameters:
   actor_lr:
-    distribution: log_uniform
-    min: -9.0          # exp(-9)  ≈ 1.2e-4
-    max: -7.5         # exp(-7.5) ≈ 5.5e-4
+    distribution: log_uniform_values
+    min: 0.00012
+    max: 0.00055
   critic_lr:
-    distribution: log_uniform
-    min: -9.0
-    max: -7.5
+    distribution: log_uniform_values
+    min: 0.00012
+    max: 0.00055
   actor_weight_decay:
-    distribution: log_uniform
-    min: -12.0
-    max: -8.5
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 3e-4
   critic_weight_decay:
-    distribution: log_uniform
-    min: -12.0
-    max: -8.5
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 3e-4
   gamma:
     distribution: uniform
     min: 0.97
     max: 0.999
   tau:
-    distribution: log_uniform
-    min: -6.0          # ≈0.0025
-    max: -4.0          # ≈0.018
+    distribution: log_uniform_values
+    min: 0.002
+    max: 0.02
   policy_noise:
     distribution: uniform
     min: 0.02
@@ -54,20 +52,20 @@ parameters:
     min: 0.01
     max: 0.1
   exploration_noise_decay_steps:
-    distribution: q_log_uniform
-    min: 11.0          # ≈ 6e4
-    max: 12.7          # ≈ 3.3e5
-    q: 1.0
+    distribution: q_log_uniform_values
+    min: 60000
+    max: 330000
+    q: 500
   warmup_steps:
-    distribution: q_log_uniform
-    min: 7.3           # ≈ 1500
-    max: 8.5           # ≈ 4900
-    q: 1.0
+    distribution: q_log_uniform_values
+    min: 1500
+    max: 5000
+    q: 100
   buffer_size:
-    distribution: q_log_uniform
-    min: 10.8          # ≈ 50k
-    max: 11.9          # ≈ 147k
-    q: 1.0
+    distribution: q_log_uniform_values
+    min: 50000
+    max: 150000
+    q: 1000
   batch_size:
     values: [128, 192, 256]
   updates_per_step:
@@ -95,17 +93,17 @@ parameters:
   per_beta_final:
     values: [0.9, 1.0]
   per_beta_increment:
-    distribution: log_uniform
-    min: -12.0
-    max: -8.5
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 2e-4
   per_min_priority:
-    distribution: log_uniform
-    min: -12.0
-    max: -9.0
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 1e-3
   per_epsilon:
-    distribution: log_uniform
-    min: -14.0
-    max: -10.0
+    distribution: log_uniform_values
+    min: 1e-6
+    max: 1e-3
   hidden_dims:
     values:
       - [256, 256, 128]

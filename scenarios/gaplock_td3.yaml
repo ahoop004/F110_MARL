@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1000
+    max_steps: 800
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -16,7 +16,7 @@ scenario:
       length: 0.32
       width: 0.225
     spawn_points:
-      - spawn_2
+      - spawn_3
       - spawn_1
     spawn_point_sets:
       - id: offset_lane_a
@@ -50,7 +50,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 1500
+    train_episodes: 500
     eval_episodes: 0
     eval_interval: 0
     federated:
@@ -78,7 +78,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
+          device: cuda
           actor_lr: 0.004
           critic_lr: 0.005
           actor_optimizer: adamw
@@ -113,7 +113,7 @@ scenario:
           exploration_noise_final: 0.05
           exploration_noise_decay_steps: 3000000
           # exploration_noise_decay_episodes: 1500
-          initial_speed: 0.7
+          initial_speed: 0.65
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -195,7 +195,7 @@ scenario:
               back_left: 0.05
               left: 0.15
               front_left: 0.35
-            preferred_radius: 0.3
+            preferred_radius: 0.6
             inner_tolerance: 0.0
             outer_tolerance: 0.3
             # ignored_agents:
@@ -286,8 +286,8 @@ scenario:
         stages:
           - name: tier0_dumb_defender
             params:
-              max_speed: 8.0
-              min_speed: 0.30
+              max_speed: 1.0
+              min_speed: 0.35
               steering_gain: 0.25
               steer_smooth: 0.5
               crawl_steer_ratio: 0.55
