@@ -650,11 +650,9 @@ class WandbSink(LogSink):
         if self._run is not None:
             try:
                 self._run.define_metric("train/episode")
-                self._run.define_metric("train/return", step_metric="train/episode")
-                self._run.define_metric("train/return_mean", step_metric="train/episode")
+                self._run.define_metric("train/*", step_metric="train/episode")
                 self._run.define_metric("eval/episode")
-                self._run.define_metric("eval/return", step_metric="eval/episode")
-                self._run.define_metric("eval/return_mean", step_metric="eval/episode")
+                self._run.define_metric("eval/*", step_metric="eval/episode")
             except Exception:
                 pass
 
