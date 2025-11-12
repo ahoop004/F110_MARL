@@ -217,6 +217,30 @@ def _apply_spawn_point_config(env_cfg: Dict[str, Any], map_data: MapData) -> Non
         }
         start_pose_options_cfg.append({"poses": placeholder, "metadata": metadata})
 
+    profile_id_raw = env_cfg.pop("spawn_profile", None)
+    if profile_id_raw and start_pose_options_cfg:
+        profile_id = str(profile_id_raw).strip().lower()
+        preferred_ids = [profile_id]
+        if profile_id in {"baseline", "default", "default_spawn"}:
+            preferred_ids.append("default_spawn")
+        selected_option = None
+        for option in start_pose_options_cfg:
+            metadata = option.get("metadata") or {}
+            option_id_raw = metadata.get("spawn_option_id") or metadata.get("id")
+            option_id = str(option_id_raw).strip().lower() if option_id_raw is not None else ""
+            if option_id and option_id in preferred_ids:
+                selected_option = option
+                break
+        if selected_option is None:
+            available_ids = [
+                (opt.get("metadata") or {}).get("spawn_option_id")
+                for opt in start_pose_options_cfg
+            ]
+            raise ValueError(
+                f"spawn_profile '{profile_id_raw}' not found; available options: {available_ids}"
+            )
+        env_cfg["start_poses"] = selected_option["poses"]
+
     if start_pose_options_cfg:
         env_cfg["start_pose_options"] = start_pose_options_cfg
 

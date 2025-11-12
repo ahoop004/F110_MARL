@@ -244,6 +244,7 @@ def build_main_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render", action="store_true", help="Enable rendering")
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
     parser.add_argument("--map", type=str, help="Override map name")
+    parser.add_argument("--spawn-profile", type=str, help="Select a named spawn profile")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", type=str)
     parser.add_argument("--wandb-entity", type=str)
@@ -272,9 +273,11 @@ def _build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
     overrides: Dict[str, Any] = {}
     if args.map:
         env_override: Dict[str, Any] = {"map": args.map}
-        if Path(args.map).suffix in {"", ".yaml", ".yml"} and not args.map.endswith(('.yaml', '.yml')):
+        if Path(args.map).suffix in {"", ".yaml", ".yml"} and not str(args.map).endswith((".yaml", ".yml")):
             env_override["map_yaml"] = f"{args.map}.yaml"
         overrides.setdefault("env", {}).update(env_override)
+    if args.spawn_profile:
+        overrides.setdefault("env", {})["spawn_profile"] = args.spawn_profile
     if args.mode:
         overrides.setdefault("main", {})["mode"] = args.mode
     if args.collect_workers is not None:

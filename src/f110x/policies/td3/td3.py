@@ -132,6 +132,10 @@ class TD3Agent:
                 self.exploration_noise_decay_episodes,
             )
 
+    def current_exploration_noise(self) -> float:
+        """Return the exploration noise scale currently applied to actions."""
+        return float(self._current_exploration_noise())
+
     def store_transition(
         self,
         obs: np.ndarray,

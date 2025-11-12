@@ -1,90 +1,93 @@
-program: run.py
+name: gaplock_td3_hyperband
+description: >
+  Bayesian sweep for the gaplock TD3 attacker. Runs the training entrypoint
+  directly under wandb so Hyperband early termination can pause/kill runs based
+  on the live train/return metric.
 method: bayes
+project: marl-f110
+entity: ahoop004-old-dominion-university
 metric:
   name: train/return
   goal: maximize
+
 command:
+  - ${env}
   - python
-  - run.py
-  - --scenario
+  - -m
+  - experiments.main
+  - --config
   - scenarios/gaplock_td3.yaml
-  - --auto-seed
-  
+  - --mode
+  - train
+  - --wandb
+  - --wandb-project
+  - marl-f110
+  - --wandb-entity
+  - ahoop004-old-dominion-university
+  - --wandb-group
+  - gaplock-td3-hyperband
+  - --wandb-tags
+  - gaplock
+  - td3
+  - hyperband
+
+early_terminate:
+  type: hyperband
+  min_iter: 50         # wait for a bit of signal before pruning
+  max_iter: 500        # roughly matches main.train_episodes
+  s: 2
+  eta: 3
+
 parameters:
-    actor_lr:
-      values: [0.0004, 0.0008, 0.0015, 0.003, 0.004]
-    critic_lr:
-      values: [0.0004, 0.0008, 0.0015, 0.003, 0.005]
-    actor_weight_decay:
-      values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
-    critic_weight_decay:
-      values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
-    gamma:
-      values: [0.97, 0.98, 0.99, 0.995, 0.999]
-    tau:
-      values: [0.005, 0.01, 0.02, 0.03]
-    policy_noise:
-      values: [0.1, 0.15, 0.2, 0.25, 0.3]
-    noise_clip:
-      values: [0.3, 0.4, 0.5, 0.6]
-    policy_delay:
-      values: [1, 2]
-    exploration_noise:
-      values: [0.1, 0.15, 0.2, 0.25, 0.3]
-    exploration_noise_final:
-      values: [0.02, 0.05, 0.08, 0.1]
-    warmup_steps:
-      values: [3000, 5000, 8000, 10000]
-    buffer_size:
-      values: [80000, 100000, 150000, 200000]
-    initial_speed:
-      values: [0.5, 0.6, 0.7, 0.8]
-    # Episode‑level rewards/penalties
-    # target_crash_reward:
-    #   values: [45.0, 55.0, 65.0, 70.0, 75.0]
-    # self_collision_penalty:
-    #   values: [-60.0, -50.0, -45.0, -35.0, -25.0]
-    # truncation_penalty:
-    #   values: [-60.0, -50.0, -45.0, -35.0, -25.0]
-    
-    # # Pressure / commit mechanics
-    # pressure_distance:
-    #   values: [0.75, 0.90, 1.05, 1.20]    # baseline ~1.0:contentReference[oaicite:1]{index=1}
-    # pressure_timeout:
-    #   values: [0.30, 0.50, 0.70]          # baseline 0.5:contentReference[oaicite:2]{index=2}
-    # pressure_min_speed:
-    #   values: [0.15, 0.25, 0.35, 0.40]    # baseline 0.25:contentReference[oaicite:3]{index=3}
-    # pressure_bonus:
-    #   values: [0.02, 0.05, 0.08, 0.11]    # baseline 0.025:contentReference[oaicite:4]{index=4}
-    # pressure_bonus_interval:
-    #   values: [2, 4, 6]
-    
-    # # Speed and control bonuses
-    # speed_bonus_coef:
-    #   values: [0.02, 0.04, 0.06, 0.08]    # baseline 0.05:contentReference[oaicite:5]{index=5}
-    # speed_bonus_target:
-    #   values: [0.40, 0.60, 0.80]          # baseline 0.6:contentReference[oaicite:6]{index=6}
-    
-    # # Distance & relative geometry shaping
-    # distance_reward_near:
-    #   values: [0.02, 0.04, 0.06]          # baseline 0.04:contentReference[oaicite:7]{index=7}
-    # distance_reward_near_distance:
-    #   values: [0.50, 0.70, 0.90]          # baseline 0.8:contentReference[oaicite:8]{index=8}
-    # distance_reward_far_distance:
-    #   values: [1.50, 2.00, 2.50, 3.00]    # baseline 2.0:contentReference[oaicite:9]{index=9}
-    # distance_penalty_far:
-    #   values: [0.00, 0.015, 0.03]         # baseline 0.01:contentReference[oaicite:10]{index=10}
-    
-    # # Distance gradient parameters (continuous shaping)
-    # distance_gradient_scale:
-    #   values: [0.5, 1.0, 1.5]             # baseline 1.0:contentReference[oaicite:11]{index=11}
-    # distance_gradient_inner_value:
-    #   values: [0.04, 0.08, 0.12]          # baseline ≈0.08:contentReference[oaicite:12]{index=12}
-    # distance_gradient_outer_value:
-    #   values: [-0.08, -0.05, -0.02]       # baseline ≈‑0.04:contentReference[oaicite:13]{index=13}
-    
-    # # Step‑level reward/penalty (dense)
-    # step_reward:
-    #   values: [-0.0015, -0.00075, 0.0, 0.00075, 0.0015]  # baseline −1e‑4:contentReference[oaicite:14]{index=14}
-
-
+  agents:
+    parameters:
+      car_0:
+        parameters:
+          algorithm:
+            parameters:
+              params:
+                parameters:
+                  actor_lr:
+                    values: [0.0004, 0.0008, 0.0015, 0.003, 0.004]
+                  critic_lr:
+                    values: [0.0004, 0.0008, 0.0015, 0.003, 0.005]
+                  actor_weight_decay:
+                    values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
+                  critic_weight_decay:
+                    values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
+                  gamma:
+                    values: [0.97, 0.98, 0.99, 0.995, 0.999]
+                  tau:
+                    values: [0.005, 0.01, 0.02, 0.03]
+                  policy_noise:
+                    values: [0.1, 0.15, 0.2, 0.25, 0.3]
+                  noise_clip:
+                    values: [0.3, 0.4, 0.5, 0.6]
+                  exploration_noise:
+                    values: [0.1, 0.15, 0.2, 0.25, 0.3]
+                  exploration_noise_final:
+                    values: [0.02, 0.05, 0.08, 0.1]
+                  initial_speed:
+                    values: [0.5, 0.6, 0.7, 0.8]
+          reward:
+            parameters:
+              params:
+                parameters:
+                  pressure_distance:
+                    values: [0.75, 0.90, 1.05, 1.20]    # baseline ~1.0
+                  pressure_timeout:
+                    values: [0.30, 0.50, 0.70]          # baseline 0.5
+                  pressure_min_speed:
+                    values: [0.15, 0.25, 0.35, 0.40]    # baseline 0.25
+                  pressure_bonus:
+                    values: [0.02, 0.05, 0.08, 0.11]    # baseline 0.025
+                  pressure_bonus_interval:
+                    values: [4, 6, 8]
+                  speed_bonus_coef:
+                    values: [0.02, 0.04, 0.06, 0.08]    # baseline 0.05
+                  speed_bonus_target:
+                    values: [0.40, 0.60, 0.80]          # baseline 0.6
+                  distance_reward_near:
+                    values: [0.02, 0.04, 0.06]          # baseline 0.04
+                  distance_reward_near_distance:
+                    values: [0.50, 0.70, 0.90]          # baseline 0.8

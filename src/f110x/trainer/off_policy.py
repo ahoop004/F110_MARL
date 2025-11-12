@@ -57,6 +57,19 @@ class OffPolicyTrainer(Trainer):
         if callable(reset_fn):
             reset_fn()
 
+    def exploration_noise(self) -> Optional[float]:
+        accessor = getattr(self._agent, "current_exploration_noise", None)
+        if callable(accessor):
+            try:
+                value = accessor()
+            except Exception:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+
     def state_dict(self, *, include_optimizer: bool = True):
         snapshot_fn = getattr(self._agent, "state_dict", None)
         if not callable(snapshot_fn):

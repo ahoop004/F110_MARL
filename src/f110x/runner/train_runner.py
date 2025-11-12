@@ -881,6 +881,7 @@ class TrainRunner:
                 )
 
             epsilon_val = self._resolve_primary_epsilon()
+            exploration_noise = self._resolve_primary_exploration_noise()
 
             defender_crashed: Optional[bool] = None
             defender_survival_steps: Optional[int] = None
@@ -987,6 +988,8 @@ class TrainRunner:
                 episode_record["spawn_option"] = rollout.spawn_option
             if epsilon_val is not None:
                 episode_record["epsilon"] = epsilon_val
+            if exploration_noise is not None:
+                episode_record["exploration_noise"] = exploration_noise
 
             for aid in agent_ids:
                 episode_record[f"collision_count_{aid}"] = int(rollout.collisions.get(aid, 0))
@@ -1048,6 +1051,8 @@ class TrainRunner:
             metrics["train/success_total"] = float(total_successes)
             if epsilon_val is not None:
                 metrics["train/epsilon"] = float(epsilon_val)
+            if exploration_noise is not None:
+                metrics["train/exploration_noise"] = float(exploration_noise)
             if attacker_crashed is not None:
                 metrics["train/attacker_crashed"] = bool(attacker_crashed)
             if defender_crashed is not None:
@@ -1060,6 +1065,23 @@ class TrainRunner:
             if buffer_fraction is not None:
                 metrics["train/buffer_fraction"] = float(buffer_fraction)
                 episode_record["buffer_fraction"] = float(buffer_fraction)
+
+            for agent_id, trainer in self.trainer_map.items():
+                accessor = getattr(trainer, "exploration_noise", None)
+                if not callable(accessor):
+                    continue
+                try:
+                    value = accessor()
+                except Exception:
+                    continue
+                if value is None:
+                    continue
+                try:
+                    noise_value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                metrics[f"train/agent/{agent_id}/exploration_noise"] = noise_value
+                episode_record[f"exploration_noise_{agent_id}"] = noise_value
             if spawn_state is not None:
                 metrics["train/random_spawn_enabled"] = bool(spawn_state.get("enabled", False))
                 stage_value = spawn_state.get("stage")
@@ -1273,6 +1295,24 @@ class TrainRunner:
             try:
                 value = accessor()
             except Exception:  # pragma: no cover - defensive guard around custom trainers
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _resolve_primary_exploration_noise(self) -> Optional[float]:
+        trainer = self.primary_trainer
+        if trainer is None:
+            return None
+        accessor = getattr(trainer, "exploration_noise", None)
+        if callable(accessor):
+            try:
+                value = accessor()
+            except Exception:
+                return None
+            if value is None:
                 return None
             try:
                 return float(value)
