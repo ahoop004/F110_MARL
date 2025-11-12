@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 2000
+    max_steps: 1500
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -16,8 +16,8 @@ scenario:
       length: 0.32
       width: 0.225
     spawn_points:
-      - spawn_1
       - spawn_2
+      - spawn_1
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
@@ -114,6 +114,8 @@ scenario:
           # exploration_noise_decay_steps: 3000000
           exploration_noise_decay_episodes: 1500
           initial_speed: 0.9
+          initial_speed_warmup_steps: 150
+          initial_speed_warmup_throttle: 0.8
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -286,7 +288,7 @@ scenario:
         stages:
           - name: tier0_dumb_defender
             params:
-              max_speed: 0.70
+              max_speed: 01.0
               min_speed: 0.35
               steering_gain: 0.25
               steer_smooth: 0.5

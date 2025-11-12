@@ -203,6 +203,8 @@ class PreventReverseContinuousWrapper:
         *,
         min_speed: float = 0.0,
         speed_index: int = 1,
+        warmup_steps: int = 0,
+        warmup_speed: Optional[float] = None,
     ) -> None:
         self.low = to_numpy(low, copy=True)
         self.high = to_numpy(high, copy=True)
@@ -210,8 +212,26 @@ class PreventReverseContinuousWrapper:
             raise ValueError("low/high must have matching shapes for PreventReverseContinuousWrapper")
         self.min_speed = float(min_speed)
         self.speed_index = int(speed_index)
+        self.warmup_steps = max(int(warmup_steps), 0)
+        self.warmup_speed = None
+        if warmup_speed is not None:
+            try:
+                self.warmup_speed = float(warmup_speed)
+            except (TypeError, ValueError):
+                self.warmup_speed = None
+        self._step_counters: Dict[str, int] = {}
 
-    def transform(self, _agent_id: str, action: Any) -> np.ndarray:
+    def _active_warmup_lower_bound(self, agent_id: str) -> Optional[float]:
+        if self.warmup_steps <= 0:
+            return None
+        steps = self._step_counters.get(agent_id, 0)
+        if steps >= self.warmup_steps:
+            return None
+        if self.warmup_speed is not None:
+            return self.warmup_speed
+        return self.min_speed
+
+    def transform(self, agent_id: str, action: Any) -> np.ndarray:
         action_arr = to_numpy(action, copy=True)
         if action_arr.shape != self.low.shape:
             action_arr = action_arr.reshape(self.low.shape)
@@ -220,10 +240,19 @@ class PreventReverseContinuousWrapper:
         idx = self.speed_index
         if 0 <= idx < clipped.shape[0]:
             lower_bound = max(self.min_speed, float(self.low[idx]))
+            # ensure early episodes keep positive throttle
+            warmup_bound = self._active_warmup_lower_bound(agent_id)
+            if warmup_bound is not None:
+                lower_bound = max(lower_bound, warmup_bound)
             max_speed = float(self.high[idx])
             min_speed = lower_bound if lower_bound <= max_speed else max_speed
             clipped[idx] = float(np.clip(clipped[idx], min_speed, max_speed))
+            if self.warmup_steps > 0:
+                self._step_counters[agent_id] = self._step_counters.get(agent_id, 0) + 1
         return clipped
 
-    def reset(self, _agent_id: str) -> None:  # pragma: no cover - stateless
-        return
+    def reset(self, agent_id: str) -> None:
+        if self.warmup_steps > 0:
+            self._step_counters[agent_id] = 0
+        else:
+            self._step_counters.pop(agent_id, None)

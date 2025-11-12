@@ -287,6 +287,8 @@ class TD3ConfigSchema(BaseSchema):
     warmup_steps: int = 1_000
     exploration_noise: float = 0.1
     initial_speed: float = 0.0
+    initial_speed_warmup_steps: int = 0
+    initial_speed_warmup_throttle: float = 0.0
     hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
     device: str = "cpu"
 

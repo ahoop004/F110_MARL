@@ -715,15 +715,37 @@ def _continuous_prevent_reverse_factory(action_space: spaces.Box, algo_cfg: Dict
     except (TypeError, ValueError):
         speed_index_val = 1
 
+    warmup_steps_raw = algo_cfg.get("initial_speed_warmup_steps")
+    if warmup_steps_raw is None:
+        warmup_steps_raw = algo_cfg.get("prevent_reverse_warmup_steps")
+    try:
+        warmup_steps = max(int(warmup_steps_raw), 0)
+    except (TypeError, ValueError):
+        warmup_steps = 0
+
+    warmup_speed_raw = algo_cfg.get("initial_speed_warmup_throttle")
+    if warmup_speed_raw is None:
+        warmup_speed_raw = algo_cfg.get("initial_speed_warmup_min_speed")
+    try:
+        warmup_speed = float(warmup_speed_raw)
+    except (TypeError, ValueError):
+        warmup_speed = None
+
     algo_cfg["prevent_reverse"] = True
     algo_cfg["prevent_reverse_min_speed"] = min_speed_val
     algo_cfg["prevent_reverse_speed_index"] = speed_index_val
+    if warmup_steps > 0:
+        algo_cfg["initial_speed_warmup_steps"] = warmup_steps
+        if warmup_speed is not None:
+            algo_cfg["initial_speed_warmup_throttle"] = warmup_speed
 
     return PreventReverseContinuousWrapper(
         action_space.low,
         action_space.high,
         min_speed=min_speed_val,
         speed_index=speed_index_val,
+        warmup_steps=warmup_steps,
+        warmup_speed=warmup_speed,
     )
 
 
