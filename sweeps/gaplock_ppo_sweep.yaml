@@ -1,0 +1,102 @@
+name: gaplock_ppo_hyperband
+description: >
+  PPO attacker sweep for the gaplock scenario. Tunes learning rates, clip range,
+  entropy coeffs, and rollout sizes under Hyperband early termination.
+method: bayes
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: train/return
+  goal: maximize
+
+command:
+  - ${env}
+  - python
+  - -m
+  - experiments.main
+  - --config
+  - scenarios/gaplock_ppo.yaml
+  - --mode
+  - train
+  - --wandb
+  - --wandb-project
+  - marl-f110
+  - --wandb-entity
+  - ahoop004-old-dominion-university
+  - --wandb-group
+  - gaplock-ppo-sweep
+  - --wandb-tags
+  - gaplock
+  - ppo
+  - hyperband
+
+early_terminate:
+  type: hyperband
+  min_iter: 50
+  max_iter: 500
+  s: 2
+  eta: 3
+
+parameters:
+  agents:
+    parameters:
+      car_0:
+        parameters:
+          algorithm:
+            parameters:
+              params:
+                parameters:
+                  actor_lr:
+                    distribution: log_uniform
+                    min: 0.0001
+                    max: 0.0005
+                  critic_lr:
+                    distribution: log_uniform
+                    min: 0.0001
+                    max: 0.0005
+                  clip_eps:
+                    values: [0.15, 0.2, 0.25]
+                  ent_coef:
+                    values: [0.005, 0.01, 0.02]
+                  update_epochs:
+                    values: [3, 5, 7]
+                  batch_size:
+                    values: [12288, 16384, 20480]
+                  minibatch_size:
+                    values: [768, 1024, 1280]
+                  max_grad_norm:
+                    values: [0.3, 0.5, 0.7]
+                  target_kl:
+                    values: [0.015, 0.02, 0.03]
+                  entropy_schedule:
+                    parameters:
+                      start:
+                        values: [0.015, 0.02, 0.03]
+                      end:
+                        values: [0.003, 0.005, 0.008]
+                  learning_rate_schedule:
+                    parameters:
+                      start:
+                        values: [0.0003, 0.0004, 0.0005]
+                      end:
+                        values: [0.00003, 0.00005, 0.00008]
+                  initial_speed_warmup_throttle:
+                    values: [0.5, 0.7, 0.9]
+                  initial_speed_warmup_steps:
+                    values: [60, 120, 180]
+          reward:
+            parameters:
+              params:
+                parameters:
+                  target_crash_reward:
+                    values: [80.0, 100.0, 120.0]
+                  truncation_penalty:
+                    values: [-1.0, -5.0, -10.0]
+                  pressure_timeout:
+                    values: [0.35, 0.5, 0.65]
+                  pressure_min_speed:
+                    values: [0.2, 0.25, 0.35]
+                  pressure_bonus:
+                    values: [0.01, 0.015, 0.02]
+                  distance_reward_near:
+                    values: [0.02, 0.025, 0.03]
