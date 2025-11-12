@@ -1,5 +1,5 @@
 meta:
-  name: gaplock_td3
+  name: gaplock_rainbow_dqn
 
 scenario:
   env:
@@ -8,8 +8,6 @@ scenario:
     max_steps: 1500
     lidar_beams: 108
     terminate_on_any_done: true
-    # centerline_autoload: true
-    # centerline_render: true
     vehicle_params:
       v_max: 1.0
       v_min: -1.0
@@ -63,82 +61,71 @@ scenario:
       timeout: 600.0
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
-    checkpoint: checkpoints/td3_gaplock/td3_gaplock.pt
+    checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
     wandb:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: gaplock_runs
+      group: gaplock_rainbow_dqn
       tags:
-        - td3
+        - rainbow_dqn
 
   agents:
     car_0:
       trainable: true
       algorithm:
-        name: td3
+        name: r_dqn
         params:
           device: cpu
-          actor_lr: 0.004
-          critic_lr: 0.005
-          actor_optimizer: adamw
-          actor_weight_decay: 0.0001
-          actor_lr_scheduler:
-            type: cosine
-            t_max: 200000
-            eta_min: 0.00002
-          critic_lr_scheduler:
-            type: step
-            step_size: 150000
-            gamma: 0.5
+          lr: 0.0005
           gamma: 0.99
-          tau: 0.01
-          policy_noise: 0.2
-          noise_clip: 0.5
-          policy_delay: 2
-          batch_size: 256
-          buffer_size: 100000
-          warmup_steps: 5000
-          updates_per_step: 2
-          include_truncation: true
-          use_per: true
+          batch_size: 128
+          buffer_size: 200000
+          target_update_interval: 750
+          prioritized_replay: true
           per_alpha: 0.6
           per_beta_start: 0.4
-          # per_beta: 0.5
           per_beta_final: 1.0
-          per_beta_increment: 0.000001
-          per_min_priority: 0.00001
-          per_epsilon: 0.00001
-          exploration_noise: 0.2
-          exploration_noise_final: 0.05
-          # exploration_noise_decay_steps: 3000000
-          exploration_noise_decay_episodes: 2500
-          initial_speed: 0.9
-          initial_speed_warmup_steps: 150
-          initial_speed_warmup_throttle: 0.8
-          prevent_reverse: true
-          prevent_reverse_min_speed: 0.01
-          prevent_reverse_speed_index: 1
+          per_beta_increment: 0.00005
+          per_min_priority: 0.0001
+          per_epsilon: 0.0001
+          epsilon_start: 1.0
+          epsilon_end: 0.05
+          epsilon_decay: 300000
+          noisy_std: 0.4
           hidden_dims:
             - 512
-            - 256
-            - 128
-          save_dir: checkpoints/td3_gaplock
-          checkpoint_name: td3_gaplock.pt
+            - 512
+          n_atoms: 51
+          v_min: -50.0
+          v_max: 50.0
+          action_mode: absolute
+          action_repeat: 2
+          action_set:
+            - [-0.35, 0.90]
+            - [-0.15, 0.80]
+            - [0.00, 0.80]
+            - [0.15, 0.80]
+            - [0.35, 0.90]
+            - [-0.20, 0.30]
+            - [0.00, 0.30]
+            - [0.20, 0.30]
+            - [0.00, 0.00]
+            - [0.00, -0.50]
+          prevent_reverse: true
+          prevent_reverse_min_speed: 0.0
+          prevent_reverse_speed_index: 1
+          include_truncation: true
       reward:
         task: gaplock
         idle_speed_threshold: 0
         idle_patience_steps: 0
         features:
           - gaplock_offense
-
         params:
           target_crash_reward: 100.0
           self_collision_penalty: -1.0
-          truncation_penalty: -1.0
-          # reward_weight: null
-          # reward_decay: null
-          # reward_smoothing: null
+          truncation_penalty: -5.0
           step_reward: -0.0000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
@@ -149,30 +136,12 @@ scenario:
           pressure_min_speed: 0.25
           pressure_bonus: 0.015
           pressure_bonus_interval: 4
-          # # proximity_penalty_distance: 0.0
-          # # proximity_penalty_value: 0.0
-          # speed_bonus_coef: 0.05
-          # speed_bonus_target: 0.6
-          # reverse_penalty: 15.0
-          # reverse_speed_threshold: 0.01
-          # brake_penalty: 0.2
-          # brake_speed_threshold: 0.05
-          # brake_drop_threshold: 0.2
-          # heading_reward_coef: 0.08
           distance_reward_near: 0.025
           distance_reward_near_distance: 0.8
           distance_reward_far_distance: 2.0
           distance_penalty_far: 0.01
           pressure_streak_bonus: 0.01
           pressure_streak_cap: 0
-          # commit_distance: 0.4
-          # commit_heading_threshold: 0.2
-          # commit_speed_threshold: 0.3
-          # commit_bonus: 0.5
-          # escape_distance: 0.0
-          # escape_penalty: 0.0
-          # success_border_radius: 0.5
-          # success_border_lane_center: -0.724998
           distance_gradient:
             points:
               - distance: 0.4
@@ -186,7 +155,6 @@ scenario:
             clip:
               - -0.1
               - 0.1
-    
           relative_reward:
             weights:
               front: 0.25
@@ -200,13 +168,10 @@ scenario:
             preferred_radius: 0.3
             inner_tolerance: 0.0
             outer_tolerance: 0.5
-            # ignored_agents:
-            #   - car_1
       wrappers:
         - factory: obs
           params:
             max_scan: 30.0
-            # normalize: true
             components:
               - id: lidar
                 type: lidar
@@ -218,7 +183,6 @@ scenario:
               - id: ego_pose
                 type: ego_pose
                 params:
-                  # normalize_xy: 30.0
                   angle_mode: sin_cos
               - id: ego_vel
                 type: velocity
@@ -229,7 +193,6 @@ scenario:
               - id: target_pose
                 type: target_pose
                 params:
-                  # normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
                   agent: car_1
@@ -244,11 +207,9 @@ scenario:
               - id: relative_pose
                 type: relative_pose
                 params:
-                  # normalize_xy: 30.0
                   angle_mode: sin_cos
                 target:
                   agent: car_1
-
 
     car_1:
       trainable: false
@@ -288,7 +249,7 @@ scenario:
         stages:
           - name: tier0_dumb_defender
             params:
-              max_speed: 01.0
+              max_speed: 1.0
               min_speed: 0.35
               steering_gain: 0.25
               steer_smooth: 0.5
