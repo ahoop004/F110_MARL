@@ -17,7 +17,7 @@ scenario:
       width: 0.225
     spawn_points:
       - spawn_1
-      - spawn_3
+      - spawn_2
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
@@ -113,14 +113,14 @@ scenario:
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 3000000
           exploration_noise_decay_episodes: 1500
-          initial_speed: 0.8
+          initial_speed: 0.9
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           hidden_dims:
+            - 512
             - 256
             - 128
-            
           save_dir: checkpoints/td3_gaplock
           checkpoint_name: td3_gaplock.pt
       reward:
@@ -195,9 +195,9 @@ scenario:
               back_left: 0.05
               left: 0.15
               front_left: 0.35
-            preferred_radius: 0.6
+            preferred_radius: 0.3
             inner_tolerance: 0.0
-            outer_tolerance: 0.3
+            outer_tolerance: 0.5
             # ignored_agents:
             #   - car_1
       wrappers:
