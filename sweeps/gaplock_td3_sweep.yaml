@@ -7,7 +7,7 @@ method: bayes
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: train/return
+  name: train/return_mean
   goal: maximize
 
 command:
@@ -34,7 +34,7 @@ command:
 early_terminate:
   type: hyperband
   min_iter: 50         # wait for a bit of signal before pruning
-  max_iter: 500        # roughly matches main.train_episodes
+  max_iter: 800        # roughly matches main.train_episodes
   s: 2
   eta: 3
 
