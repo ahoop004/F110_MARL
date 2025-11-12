@@ -48,9 +48,9 @@ parameters:
               params:
                 parameters:
                   lr:
-                    distribution: log_uniform
-                    min: 0.00025
-                    max: 0.001
+                    distribution: uniform
+                    min: 1e-5
+                    max: 3e-3
                   gamma:
                     values: [0.97, 0.99, 0.995]
                   batch_size:

@@ -48,13 +48,13 @@ parameters:
               params:
                 parameters:
                   actor_lr:
-                    distribution: log_uniform
-                    min: 0.0004
-                    max: 0.002
+                    distribution: uniform
+                    min: 1e-5
+                    max: 1e-3
                   critic_lr:
-                    distribution: log_uniform
-                    min: 0.0004
-                    max: 0.003
+                    distribution: uniform
+                    min: 1e-5
+                    max: 1e-3
                   actor_weight_decay:
                     values: [1e-5, 5e-5, 1e-4, 2e-4, 5e-4]
                   critic_weight_decay:

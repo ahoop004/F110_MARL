@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1500
+    max_steps: 800
     lidar_beams: 108
     terminate_on_any_done: true
     # centerline_autoload: true
@@ -50,7 +50,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 1500
+    train_episodes: 800
     eval_episodes: 0
     eval_interval: 0
     federated:
@@ -78,7 +78,7 @@ scenario:
       algorithm:
         name: td3
         params:
-          device: cpu
+          device: cuda
           actor_lr: 0.004
           critic_lr: 0.005
           actor_optimizer: adamw
@@ -134,8 +134,8 @@ scenario:
 
         params:
           target_crash_reward: 100.0
-          self_collision_penalty: -1.0
-          truncation_penalty: -1.0
+          self_collision_penalty: -10.0
+          truncation_penalty: -10.0
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null

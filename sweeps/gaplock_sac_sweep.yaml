@@ -48,17 +48,17 @@ parameters:
               params:
                 parameters:
                   actor_lr:
-                    distribution: log_uniform
-                    min: 0.0002
-                    max: 0.001
+                    distribution: uniform
+                    min: 1e-5
+                    max: 3e-3
                   critic_lr:
-                    distribution: log_uniform
-                    min: 0.0003
-                    max: 0.002
+                    distribution: uniform
+                    min: 1e-5
+                    max: 3e-3
                   alpha_lr:
-                    distribution: log_uniform
-                    min: 0.0001
-                    max: 0.0007
+                    distribution: uniform
+                    min: 1e-5
+                    max: 3e-3
                   tau:
                     values: [0.0025, 0.005, 0.01]
                   batch_size:
@@ -83,11 +83,33 @@ parameters:
                     values: [80.0, 100.0, 120.0]
                   truncation_penalty:
                     values: [-1.0, -5.0, -10.0]
+                  pressure_distance:
+                    values: [0.75, 0.90, 1.05, 1.20]    # baseline ~1.0
                   pressure_timeout:
                     values: [0.35, 0.5, 0.65]
                   pressure_min_speed:
                     values: [0.2, 0.25, 0.35]
                   pressure_bonus:
                     values: [0.01, 0.015, 0.02]
+                  pressure_bonus_interval:
+                    values: [4, 6, 8]
+                  speed_bonus_coef:
+                    values: [0.02, 0.04, 0.06, 0.08]    # baseline 0.05
+                  speed_bonus_target:
+                    values: [0.40, 0.60, 0.80]          # baseline 0.6
                   distance_reward_near:
                     values: [0.02, 0.025, 0.03]
+                  distance_reward_near_distance:
+                    values: [0.50, 0.70, 0.90]          # baseline 0.8
+                  distance_penalty_far:
+                    values: [0.005, 0.01, 0.02]
+                  distance_gradient:
+                    parameters:
+                      scale:
+                        values: [0.75, 1.0, 1.25]
+                  relative_reward:
+                    parameters:
+                      preferred_radius:
+                        values: [0.25, 0.3, 0.4]
+                      outer_tolerance:
+                        values: [0.4, 0.5, 0.6]

@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1500
+    max_steps: 800
     lidar_beams: 108
     terminate_on_any_done: true
     vehicle_params:
@@ -48,7 +48,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 1500
+    train_episodes: 800
     eval_episodes: 0
     eval_interval: 0
     federated:
@@ -76,7 +76,7 @@ scenario:
       algorithm:
         name: r_dqn
         params:
-          device: cpu
+          device: cuda
           lr: 0.0005
           gamma: 0.99
           batch_size: 128
@@ -95,7 +95,8 @@ scenario:
           noisy_std: 0.4
           hidden_dims:
             - 512
-            - 512
+            - 256
+            - 128
           n_atoms: 51
           v_min: -50.0
           v_max: 50.0
@@ -124,8 +125,8 @@ scenario:
           - gaplock_offense
         params:
           target_crash_reward: 100.0
-          self_collision_penalty: -1.0
-          truncation_penalty: -5.0
+          self_collision_penalty: -10.0
+          truncation_penalty: -10.0
           step_reward: -0.0000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
