@@ -5,7 +5,7 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 800
+    max_steps: 1500
     lidar_beams: 108
     terminate_on_any_done: true
     vehicle_params:
@@ -36,7 +36,7 @@ scenario:
           - spawn_4
           - spawn_1
     spawn_curriculum:
-      min_episode: 150
+      min_episode: 0
       activation_samples: 40
       success_window: 8
       enable_rate: 0.7
@@ -45,12 +45,13 @@ scenario:
       disable_patience: 2
       cooldown: 20
       persist: true
+      start_enabled: true
 
   main:
     mode: train
-    train_episodes: 800
-    eval_episodes: 0
-    eval_interval: 0
+    train_episodes: 1500
+    eval_episodes: 10
+    eval_interval: 150
     federated:
       enabled: false
       interval: 50
@@ -62,6 +63,7 @@ scenario:
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/sac_gaplock/sac_gaplock.pt
+    warm_start_checkpoint: warm_starts/sac_best_eager-sweep-5.pt
     wandb:
       enabled: true
       project: marl-f110
@@ -77,26 +79,26 @@ scenario:
         name: sac
         params:
           device: cuda
-          actor_lr: 0.0005
-          critic_lr: 0.0007
-          alpha_lr: 0.0003
+          actor_lr: 0.03811428414947935
+          critic_lr: 0.05080882954947798
+          alpha_lr: 0.03180716614848562
           gamma: 0.99
           tau: 0.005
-          batch_size: 256
+          batch_size: 512
           buffer_size: 200000
           warmup_steps: 5000
           auto_alpha: true
-          target_entropy: -2.0
+          target_entropy: -2.5
           hidden_dims:
             - 512
             - 256
             - 128
           exploration_noise: 0.2
           exploration_noise_final: 0.05
-          exploration_noise_decay_steps: 500000
+          exploration_noise_decay_steps: 300000
           initial_speed: 0.9
-          initial_speed_warmup_steps: 150
-          initial_speed_warmup_throttle: 0.8
+          initial_speed_warmup_steps: 120
+          initial_speed_warmup_throttle: 0.4
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
@@ -108,21 +110,21 @@ scenario:
         features:
           - gaplock_offense
         params:
-          target_crash_reward: 100.0
-          self_collision_penalty: -50.0
-          truncation_penalty: -50.0
+          target_crash_reward: 80.0
+          self_collision_penalty: -1.0
+          truncation_penalty: -5.0
           step_reward: -0.0000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0
           idle_penalty_steps: 0
           idle_truncation_penalty: 0.0
-          pressure_distance: 1.0
-          pressure_timeout: 0.5
+          pressure_distance: 0.9
+          pressure_timeout: 0.65
           pressure_min_speed: 0.25
-          pressure_bonus: 0.015
-          pressure_bonus_interval: 4
-          distance_reward_near: 0.025
-          distance_reward_near_distance: 0.8
+          pressure_bonus: 0.02
+          pressure_bonus_interval: 6
+          distance_reward_near: 0.02
+          distance_reward_near_distance: 0.9
           distance_reward_far_distance: 2.0
           distance_penalty_far: 0.01
           pressure_streak_bonus: 0.01
@@ -135,7 +137,7 @@ scenario:
                 value: 0.5
               - distance: 10.0
                 value: -0.00
-            scale: 1.0
+            scale: 1.25
             time_scaled: true
             clip:
               - -0.1
@@ -152,7 +154,7 @@ scenario:
               front_left: 0.35
             preferred_radius: 0.3
             inner_tolerance: 0.0
-            outer_tolerance: 0.5
+            outer_tolerance: 0.6
       wrappers:
         - factory: obs
           params:

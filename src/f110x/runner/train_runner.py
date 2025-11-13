@@ -420,6 +420,7 @@ class TrainRunner:
         self.trainer_map = dict(self.context.trainer_map)
         self._configure_output_paths()
         self._logger = self.context.logger
+        self._apply_warm_start()
         self._trainer_stats: Dict[str, Dict[str, Any]] = {
             trainer_id: {} for trainer_id in self.trainer_map
         }
@@ -443,6 +444,47 @@ class TrainRunner:
         self._path_log_header_written = self._path_log_file.exists() and self._path_log_file.stat().st_size > 0
         self._write_run_config_snapshot()
         self._init_federated()
+
+    def _apply_warm_start(self) -> None:
+        try:
+            warm_start_path = self.context.cfg.main.get("warm_start_checkpoint")
+        except Exception:
+            warm_start_path = None
+        if not warm_start_path:
+            return
+        candidate = Path(warm_start_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (Path.cwd() / candidate).resolve()
+        if not candidate.exists():
+            self._logger.warning(
+                "Warm-start checkpoint not found",
+                extra={"path": str(candidate)},
+            )
+            return
+        target_ids = list(self.context.trainable_agent_ids or self.trainer_map.keys())
+        loaded_any = False
+        for agent_id in target_ids:
+            trainer = self.trainer_map.get(agent_id)
+            if trainer is None:
+                continue
+            try:
+                trainer.load(str(candidate))
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to warm start trainer",
+                    extra={"agent_id": agent_id, "path": str(candidate), "error": str(exc)},
+                )
+                continue
+            loaded_any = True
+            self._logger.info(
+                "Warm-started trainer from checkpoint",
+                extra={"agent_id": agent_id, "path": str(candidate)},
+            )
+        if not loaded_any:
+            self._logger.warning(
+                "Warm-start checkpoint ignored; no trainable trainers available",
+                extra={"path": str(candidate)},
+            )
 
     # ------------------------------------------------------------------
     def _init_federated(self) -> None:
