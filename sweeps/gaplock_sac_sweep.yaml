@@ -47,31 +47,21 @@ parameters:
             parameters:
               params:
                 parameters:
-                  critic_lr:
-                    distribution: log_uniform_values
+                  actor_lr:
+                    distribution: uniform
                     min: 1e-3
-                    max: 6e-2
+                    max: 6e-3
+                  critic_lr:
+                    distribution: uniform
+                    min: 2e-3
+                    max: 8e-3
+                  warmup_steps:
+                    values: [12000, 15000, 20000]
                   buffer_size:
-                    values: [180000, 200000, 240000]
+                    values: [220000, 250000, 280000]
                   target_entropy:
-                    values: [-2.8, -2.6, -2.4, -2.2]
+                    values: [-2.4, -2.2, -2.0]
                   exploration_noise_decay_steps:
-                    values: [200000, 300000, 400000]
+                    values: [350000, 450000, 550000]
                   initial_speed_warmup_steps:
-                    values: [60, 90, 120, 150]
-          reward:
-            parameters:
-              params:
-                parameters:
-                  truncation_penalty:
-                    values: [-2.0, -5.0, -8.0]
-                  pressure_distance:
-                    values: [0.85, 0.90, 0.95, 1.0]
-                  distance_reward_near:
-                    values: [0.018, 0.02, 0.022, 0.025]
-                  distance_reward_near_distance:
-                    values: [0.8, 0.9, 1.0]
-                  relative_reward:
-                    parameters:
-                      outer_tolerance:
-                        values: [0.5, 0.6, 0.7]
+                    values: [150, 180, 210]

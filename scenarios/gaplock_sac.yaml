@@ -79,30 +79,37 @@ scenario:
         name: sac
         params:
           device: cuda
-          actor_lr: 0.03811428414947935
-          critic_lr: 0.05080882954947798
-          alpha_lr: 0.03180716614848562
+          actor_lr: 0.003
+          critic_lr: 0.0045
+          alpha_lr: 0.003
           gamma: 0.99
           tau: 0.005
-          batch_size: 512
-          buffer_size: 200000
-          warmup_steps: 5000
+          batch_size: 256
+          buffer_size: 250000
+          warmup_steps: 15000
           auto_alpha: true
-          target_entropy: -2.5
+          target_entropy: -2.2
           hidden_dims:
             - 512
             - 256
             - 128
           exploration_noise: 0.2
           exploration_noise_final: 0.05
-          exploration_noise_decay_steps: 300000
+          exploration_noise_decay_steps: 450000
           initial_speed: 0.9
-          initial_speed_warmup_steps: 120
-          initial_speed_warmup_throttle: 0.4
+          initial_speed_warmup_steps: 180
+          initial_speed_warmup_throttle: 0.5
           prevent_reverse: true
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           include_truncation: true
+          use_per: true
+          per_alpha: 0.6
+          per_beta_start: 0.4
+          per_beta_final: 1.0
+          per_beta_increment: 1e-6
+          per_min_priority: 1e-3
+          per_epsilon: 1e-6
       reward:
         task: gaplock
         idle_speed_threshold: 0
@@ -110,51 +117,11 @@ scenario:
         features:
           - gaplock_offense
         params:
-          target_crash_reward: 80.0
+          target_crash_reward: 120.0
           self_collision_penalty: -1.0
-          truncation_penalty: -5.0
-          step_reward: -0.0000
-          idle_speed_threshold: 0.0
-          idle_penalty: 0.0
-          idle_penalty_steps: 0
-          idle_truncation_penalty: 0.0
-          pressure_distance: 0.9
-          pressure_timeout: 0.65
-          pressure_min_speed: 0.25
-          pressure_bonus: 0.02
-          pressure_bonus_interval: 6
-          distance_reward_near: 0.02
-          distance_reward_near_distance: 0.9
-          distance_reward_far_distance: 2.0
-          distance_penalty_far: 0.01
-          pressure_streak_bonus: 0.01
-          pressure_streak_cap: 0
-          distance_gradient:
-            points:
-              - distance: 0.4
-                value: 0.1
-              - distance: 5.0
-                value: 0.5
-              - distance: 10.0
-                value: -0.00
-            scale: 1.25
-            time_scaled: true
-            clip:
-              - -0.1
-              - 0.1
-          relative_reward:
-            weights:
-              front: 0.25
-              front_right: 0.35
-              right: 0.15
-              back_right: 0.05
-              back: 0.01
-              back_left: 0.05
-              left: 0.15
-              front_left: 0.35
-            preferred_radius: 0.3
-            inner_tolerance: 0.0
-            outer_tolerance: 0.6
+          truncation_penalty: -2.0
+          step_reward: -0.0005
+          # All other shaping terms fall back to the Gaplock defaults to keep the reward sparse.
       wrappers:
         - factory: obs
           params:
