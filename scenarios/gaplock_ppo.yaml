@@ -121,8 +121,8 @@ scenario:
           - gaplock_offense
         params:
           target_crash_reward: 100.0
-          self_collision_penalty: -10.0
-          truncation_penalty: -10.0
+          self_collision_penalty: -50.0
+          truncation_penalty: -50.0
           step_reward: -0.0000
           idle_speed_threshold: 0.0
           idle_penalty: 0.0

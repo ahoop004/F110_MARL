@@ -134,8 +134,8 @@ scenario:
 
         params:
           target_crash_reward: 100.0
-          self_collision_penalty: -10.0
-          truncation_penalty: -10.0
+          self_collision_penalty: -50.0
+          truncation_penalty: -50.0
           # reward_weight: null
           # reward_decay: null
           # reward_smoothing: null

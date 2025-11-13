@@ -87,8 +87,10 @@ parameters:
                 parameters:
                   target_crash_reward:
                     values: [80.0, 100.0, 120.0]
+                  self_collision_penalty:
+                    values: [-10.0, -50.0, -75.0]
                   truncation_penalty:
-                    values: [-1.0, -5.0, -10.0]
+                    values: [-10.0, -50.0, -75.0]
                   pressure_distance:
                     values: [0.75, 0.90, 1.05, 1.20]    # baseline ~1.0
                   pressure_timeout:

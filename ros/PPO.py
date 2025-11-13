@@ -9,7 +9,7 @@ Place alongside your PPO checkpoint (ppo_gaplock.pt) inside your ROS package.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 import rospy
@@ -29,8 +29,26 @@ from gaplock_utils import (
 )
 
 
+def _infer_hidden_dims(state_dict: Dict[str, torch.Tensor]) -> Tuple[int, ...]:
+    dims = []
+    idx = 0
+    while True:
+        key = f"body.{idx}.weight"
+        tensor = state_dict.get(key)
+        if tensor is None:
+            break
+        dims.append(int(tensor.shape[0]))
+        idx += 2  # skip ReLU layers
+    return tuple(dims)
+
+
 class PPOActor(nn.Module):
-    def __init__(self, obs_dim: int = OBS_DIM, hidden_dims=(256, 256), act_dim: int = 2) -> None:
+    def __init__(
+        self,
+        obs_dim: int = OBS_DIM,
+        hidden_dims: Tuple[int, ...] = (256, 256),
+        act_dim: int = 2,
+    ) -> None:
         super().__init__()
         layers = []
         prev = obs_dim
@@ -42,23 +60,37 @@ class PPOActor(nn.Module):
         self.log_std = nn.Parameter(torch.zeros(act_dim))
 
     def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self.body(obs)
-        mu = self.mu_head(x)
+        features = self.body(obs)
+        mu = self.mu_head(features)
         log_std = torch.clamp(self.log_std, -5.0, 2.0)
         std = torch.exp(log_std)
         return mu, std
 
 
-def load_ppo_actor(ckpt_path: str, model: nn.Module, device: str) -> nn.Module:
+def load_ppo_actor(ckpt_path: str, *, device: str) -> PPOActor:
     ckpt = torch.load(ckpt_path, map_location=device)
-    if isinstance(ckpt, dict):
-        if "actor" in ckpt and isinstance(ckpt["actor"], dict):
-            model.load_state_dict(ckpt["actor"], strict=False)
-            return model
-        if all(isinstance(k, str) for k in ckpt):
-            model.load_state_dict(ckpt, strict=False)
-            return model
-    raise RuntimeError(f"PPO checkpoint format unsupported: keys={list(ckpt.keys())}")
+    state: Optional[Dict[str, torch.Tensor]]
+    if isinstance(ckpt, nn.Module):
+        state = ckpt.state_dict()
+    elif isinstance(ckpt, dict):
+        actor_state = ckpt.get("actor")
+        if isinstance(actor_state, dict):
+            state = actor_state
+        elif all(isinstance(k, str) for k in ckpt):
+            state = ckpt  # flat state dict
+        else:
+            state = None
+    else:
+        state = None
+    if state is None:
+        raise RuntimeError(f"PPO checkpoint format unsupported: keys={list(ckpt.keys())}")
+
+    hidden_dims = _infer_hidden_dims(state)
+    if not hidden_dims:
+        hidden_dims = (256, 256)
+    model = PPOActor(hidden_dims=hidden_dims).to(device)
+    model.load_state_dict(state, strict=False)
+    return model
 
 
 class RLActorNode:
@@ -94,7 +126,7 @@ class RLActorNode:
             rospy.logfatal("PPO checkpoint not found: %s", self.ckpt_path)
             raise FileNotFoundError(self.ckpt_path)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.actor = load_ppo_actor(self.ckpt_path, PPOActor().to(self.device), device=self.device).eval()
+        self.actor = load_ppo_actor(self.ckpt_path, device=self.device).eval()
 
         self.timer = rospy.Timer(rospy.Duration(1.0 / self.rate_hz), self.on_tick)
         rospy.loginfo("PPO ROS actor ready | ckpt=%s | device=%s", self.ckpt_path, self.device)

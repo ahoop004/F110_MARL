@@ -9,7 +9,7 @@ Place alongside sac_gaplock.pt inside your ROS package scripts directory.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Optional, Dict, Tuple
 
 import numpy as np
 import rospy
@@ -29,31 +29,62 @@ from gaplock_utils import (
 )
 
 
+def _infer_actor_arch(state_dict: Dict[str, torch.Tensor]) -> Tuple[Tuple[int, ...], int]:
+    dims: list[int] = []
+    idx = 0
+    while True:
+        key = f"net.{idx}.weight"
+        tensor = state_dict.get(key)
+        if tensor is None:
+            break
+        dims.append(int(tensor.shape[0]))
+        idx += 2  # skip ReLU layers
+    if not dims:
+        raise RuntimeError("Unable to infer SAC actor architecture from checkpoint")
+    final_out = dims[-1]
+    if final_out % 2 != 0:
+        raise RuntimeError(
+            f"SAC actor final layer size {final_out} is not even; expected mu/log_std pairs"
+        )
+    act_dim = final_out // 2
+    hidden_dims = tuple(dims[:-1])
+    return hidden_dims, act_dim
+
+
 class GaussianPolicy(nn.Module):
-    def __init__(self, obs_dim: int = OBS_DIM, hidden_dims=(512, 256, 128), act_dim: int = 2) -> None:
+    def __init__(
+        self,
+        obs_dim: int = OBS_DIM,
+        hidden_dims: Tuple[int, ...] = (512, 256, 128),
+        act_dim: int = 2,
+    ) -> None:
         super().__init__()
         layers = []
         prev = obs_dim
         for hid in hidden_dims:
             layers.extend([nn.Linear(prev, hid), nn.ReLU()])
             prev = hid
+        layers.append(nn.Linear(prev, act_dim * 2))
         self.net = nn.Sequential(*layers)
-        self.mu_head = nn.Linear(prev, act_dim)
-        self.log_std_head = nn.Linear(prev, act_dim)
+        self.act_dim = int(act_dim)
 
     def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self.net(obs)
-        mu = self.mu_head(x)
-        log_std = torch.clamp(self.log_std_head(x), -5.0, 2.0)
+        raw = self.net(obs)
+        mu, log_std = torch.split(raw, self.act_dim, dim=-1)
         return mu, log_std
 
 
-def load_sac_actor(ckpt_path: str, model: nn.Module, device: str) -> nn.Module:
+def load_sac_actor(ckpt_path: str, *, device: str) -> GaussianPolicy:
     ckpt = torch.load(ckpt_path, map_location=device)
-    if isinstance(ckpt, dict) and "actor" in ckpt and isinstance(ckpt["actor"], dict):
-        model.load_state_dict(ckpt["actor"], strict=False)
-        return model
-    raise RuntimeError(f"SAC checkpoint format unsupported: keys={list(ckpt.keys())}")
+    actor_state = ckpt.get("actor") if isinstance(ckpt, dict) else None
+    if not isinstance(actor_state, dict):
+        raise RuntimeError(f"SAC checkpoint format unsupported: keys={list(ckpt.keys())}")
+    hidden_dims, act_dim = _infer_actor_arch(actor_state)
+    if not hidden_dims:
+        hidden_dims = (512, 256, 128)
+    policy = GaussianPolicy(hidden_dims=hidden_dims, act_dim=act_dim).to(device)
+    policy.load_state_dict(actor_state, strict=True)
+    return policy
 
 
 class RLActorNode:
@@ -89,7 +120,7 @@ class RLActorNode:
             rospy.logfatal("SAC checkpoint not found: %s", self.ckpt_path)
             raise FileNotFoundError(self.ckpt_path)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.actor = load_sac_actor(self.ckpt_path, GaussianPolicy().to(self.device), device=self.device).eval()
+        self.actor = load_sac_actor(self.ckpt_path, device=self.device).eval()
 
         self.timer = rospy.Timer(rospy.Duration(1.0 / self.rate_hz), self.on_tick)
         rospy.loginfo("SAC ROS actor ready | ckpt=%s | device=%s", self.ckpt_path, self.device)

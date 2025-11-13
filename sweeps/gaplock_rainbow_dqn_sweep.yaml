@@ -7,7 +7,7 @@ method: bayes
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: train/return
+  name: train/return_mean
   goal: maximize
 
 command:
@@ -34,7 +34,7 @@ command:
 early_terminate:
   type: hyperband
   min_iter: 50
-  max_iter: 500
+  max_iter: 800
   s: 2
   eta: 3
 
@@ -85,8 +85,10 @@ parameters:
                 parameters:
                   target_crash_reward:
                     values: [80.0, 100.0, 120.0]
+                  self_collision_penalty:
+                    values: [-10.0, -50.0, -75.0]
                   truncation_penalty:
-                    values: [-1.0, -5.0, -10.0]
+                    values: [-10.0, -50.0, -75.0]
                   pressure_timeout:
                     values: [0.35, 0.5, 0.65]
                   pressure_min_speed:
