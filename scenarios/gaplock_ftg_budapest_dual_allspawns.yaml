@@ -1,0 +1,105 @@
+meta:
+  name: gaplock_ftg_budapest_dual_allspawns
+
+scenario:
+  env:
+    map: Budapest_map
+    seed: 123
+    max_steps: 25000
+    lidar_beams: 108
+    terminate_on_any_done: true
+    spawn_cycle: true
+    spawn_point_sets:
+      - id: budapest_pair_1
+        names:
+          - spawn_1
+          - spawn_3
+      - id: budapest_pair_2
+        names:
+          - spawn_2
+          - spawn_3
+      - id: budapest_pair_3
+        names:
+          - spawn_3
+          - spawn_1
+      - id: budapest_pair_4
+        names:
+          - spawn_4
+          - spawn_1
+      - id: budapest_pair_5
+        names:
+          - spawn_9
+          - spawn_2
+
+  main:
+    mode: eval
+    eval_episodes: 5
+    save_eval_rollouts: false
+    eval_rollout_dir: eval_rollouts
+    wandb:
+      enabled: false
+
+  agents:
+    car_0:
+      trainable: false
+      algorithm:
+        name: follow_gap
+        params:
+          max_distance: 30.0
+          window_size: 4
+          bubble_radius: 2
+          max_steer: 0.32
+          min_speed: 0.2
+          max_speed: 0.85
+          steering_gain: 0.4
+          fov_deg: 270
+          normalized: true
+          steer_smooth: 0.35
+          center_bias_gain: 0.2
+          inside_bias_gain: 0.25
+          crawl_steer_ratio: 0.55
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 108
+                  max_range: 30.0
+                  normalize: true
+                  clip: 1.0
+
+    car_1:
+      trainable: false
+      algorithm:
+        name: follow_gap
+        params:
+          max_distance: 30.0
+          window_size: 3
+          bubble_radius: 2
+          max_steer: 0.3
+          min_speed: 0.2
+          max_speed: 0.7
+          steering_gain: 0.38
+          fov_deg: 270
+          normalized: true
+          steer_smooth: 0.3
+          center_bias_gain: 0.15
+          inside_bias_gain: 0.2
+          crawl_steer_ratio: 0.55
+      wrappers:
+        - factory: obs
+          params:
+            max_scan: 30.0
+            normalize: true
+            components:
+              - id: lidar
+                type: lidar
+                params:
+                  beams: 108
+                  max_range: 30.0
+                  normalize: true
+                  clip: 1.0

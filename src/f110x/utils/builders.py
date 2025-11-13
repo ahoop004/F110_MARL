@@ -64,6 +64,7 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
     env_cfg["_centerline_autoload_user_override"] = "centerline_autoload" in raw_env_cfg
 
     _apply_spawn_point_config(env_cfg, map_data)
+    spawn_cycle_flag = bool(env_cfg.pop("spawn_cycle", False))
     env_cfg["map_meta"] = map_data.metadata
     env_cfg["map_image_path"] = str(map_data.image_path)
     env_cfg["map_image_size"] = map_data.image_size
@@ -95,6 +96,8 @@ def build_env(cfg: ExperimentConfig) -> Tuple[F110ParallelEnv, MapData, Optional
             env_cfg[meta_key] = map_data.metadata[meta_key]
 
     env = F110ParallelEnv(map_data=map_data, **env_cfg)
+    if spawn_cycle_flag:
+        setattr(env, "_spawn_cycle_enabled", True)
     env.set_centerline(map_data.centerline, path=map_data.centerline_path)
     start_pose_options = parse_start_pose_options(env_cfg.get("start_pose_options"))
     return env, map_data, start_pose_options

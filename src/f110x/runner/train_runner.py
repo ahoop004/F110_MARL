@@ -405,9 +405,12 @@ class TrainRunner:
     _path_log_dir: Path = field(init=False)
     _path_log_file: Path = field(init=False)
     _path_log_header_written: bool = field(init=False, default=False)
+    _episode_metrics_file: Path = field(init=False)
+    _episode_metrics_header_written: bool = field(init=False, default=False)
     _run_suffix: Optional[str] = field(init=False, default=None)
     _path_run_label: str = field(init=False, default="")
     _path_timestamp: str = field(init=False, default="")
+    _pressure_metric_distance: float = field(init=False, default=1.0)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour described in class docstring
         self._ensure_primary_agent()
@@ -442,7 +445,21 @@ class TrainRunner:
         run_label = self._path_run_label or "run"
         self._path_log_file = self._path_log_dir / f"paths_{run_label}.csv"
         self._path_log_header_written = self._path_log_file.exists() and self._path_log_file.stat().st_size > 0
+        self._episode_metrics_file = self._path_log_dir / f"metrics_{run_label}.csv"
+        self._episode_metrics_header_written = (
+            self._episode_metrics_file.exists() and self._episode_metrics_file.stat().st_size > 0
+        )
         self._write_run_config_snapshot()
+        reward_params = self.context.reward_cfg.get("params")
+        if not isinstance(reward_params, Mapping):
+            reward_params = {}
+        pressure_distance = reward_params.get("pressure_distance", 1.0)
+        try:
+            self._pressure_metric_distance = float(pressure_distance)
+        except (TypeError, ValueError):
+            self._pressure_metric_distance = 1.0
+        if self._pressure_metric_distance <= 0:
+            self._pressure_metric_distance = 1.0
         self._init_federated()
 
     def _apply_warm_start(self) -> None:
@@ -876,7 +893,7 @@ class TrainRunner:
         )
 
         for episode_idx in range(int(episodes)):
-            path_points: List[Tuple[int, int, str, float, float, float]] = []
+            path_points: List[Tuple[int, int, str, float, float, float, float, Optional[float], Optional[float]]] = []
             rollout = run_episode(
                 env=env,
                 team=team,
@@ -893,6 +910,7 @@ class TrainRunner:
                 on_offpolicy_flush=on_offpolicy_flush,
                 path_logger=path_points,
                 reward_sharing=reward_sharing_cfg,
+                pressure_metric_distance=self._pressure_metric_distance,
             )
 
             returns = dict(rollout.returns)
@@ -1069,6 +1087,7 @@ class TrainRunner:
                         buffer_fraction = candidate
                         break
 
+            success_rate_total = float(total_successes) / float(episode_idx + 1)
             metrics: Dict[str, Any] = {
                 "train/episode": float(episode_idx + 1),
                 "train/episodes_total": float(total_episodes),
@@ -1080,6 +1099,8 @@ class TrainRunner:
                 "train/idle": bool(rollout.idle_triggered),
                 "train/reward_task": rollout.reward_task,
                 "train/episode_cause": rollout.cause,
+                "train/success_total": float(total_successes),
+                "train/success_rate_total": success_rate_total,
             }
             if primary_id:
                 metrics["train/primary_agent"] = primary_id
@@ -1090,7 +1111,6 @@ class TrainRunner:
                 metrics["train/assisted_success"] = bool(assisted_success)
             if success_rate is not None:
                 metrics["train/success_rate"] = success_rate
-            metrics["train/success_total"] = float(total_successes)
             if epsilon_val is not None:
                 metrics["train/epsilon"] = float(epsilon_val)
             if exploration_noise is not None:
@@ -1101,6 +1121,21 @@ class TrainRunner:
                 metrics["train/defender_crashed"] = bool(defender_crashed)
             if defender_survival_steps is not None:
                 metrics["train/defender_survival_steps"] = float(defender_survival_steps)
+            attacker_metrics_id = attacker_id or primary_id
+            avg_relative_distance = None
+            pressure_ratio = None
+            if attacker_metrics_id:
+                avg_relative_distance = rollout.average_relative_distance.get(attacker_metrics_id)
+                pressure_ratio = rollout.pressure_coverage.get(attacker_metrics_id)
+            if avg_relative_distance is not None:
+                metrics["train/avg_relative_distance"] = float(avg_relative_distance)
+                episode_record["avg_relative_distance"] = float(avg_relative_distance)
+            if pressure_ratio is not None:
+                metrics["train/pressure_coverage"] = float(pressure_ratio)
+                episode_record["pressure_coverage"] = float(pressure_ratio)
+            if defender_survival_steps is not None:
+                episode_record["defender_survival_steps"] = defender_survival_steps
+            episode_record["success_rate_total"] = success_rate_total
             if best_average is not None:
                 metrics["train/return_best"] = float(best_average)
             metrics["train/return_window"] = float(recent_returns.maxlen)
@@ -1194,6 +1229,20 @@ class TrainRunner:
                     publish_metrics("train", metrics, step=episode_idx + 1)
                 except Exception:
                     pass
+            self._append_episode_metrics(
+                {
+                    "episode": episode_idx + 1,
+                    "steps": rollout.steps,
+                    "success": int(success) if success is not None else "",
+                    "success_rate_window": success_rate if success_rate is not None else "",
+                    "success_rate_total": success_rate_total,
+                    "defender_survival_steps": defender_survival_steps if defender_survival_steps is not None else "",
+                    "avg_relative_distance": avg_relative_distance if avg_relative_distance is not None else "",
+                    "pressure_coverage": pressure_ratio if pressure_ratio is not None else "",
+                    "collisions": collisions_total,
+                    "cause_code": cause_code,
+                }
+            )
 
             logger.info(
                 "Episode finished",
@@ -1505,7 +1554,7 @@ class TrainRunner:
 
     def _append_path_log(
         self,
-        points: List[Tuple[int, int, str, float, float, float, float]],
+        points: List[Tuple[int, int, str, float, float, float, float, Optional[float], Optional[float]]],
         cause_code: int,
     ) -> None:
         if not points:
@@ -1515,10 +1564,82 @@ class TrainRunner:
         with self._path_log_file.open(mode, newline="") as handle:
             writer = csv.writer(handle)
             if not self._path_log_header_written:
-                writer.writerow(["episode", "step", "agent_id", "x", "y", "theta", "step_reward", "cause_code"])
+                writer.writerow(
+                    [
+                        "episode",
+                        "step",
+                        "agent_id",
+                        "x",
+                        "y",
+                        "theta",
+                        "step_reward",
+                        "cause_code",
+                        "target_distance",
+                        "pressure_active",
+                    ]
+                )
                 self._path_log_header_written = True
-            for ep_num, step_idx, agent_id, x_val, y_val, theta_val, step_reward in points:
-                writer.writerow([ep_num, step_idx, agent_id, x_val, y_val, theta_val, step_reward, cause_code])
+            for (
+                ep_num,
+                step_idx,
+                agent_id,
+                x_val,
+                y_val,
+                theta_val,
+                step_reward,
+                target_distance,
+                pressure_active,
+            ) in points:
+                writer.writerow(
+                    [
+                        ep_num,
+                        step_idx,
+                        agent_id,
+                        x_val,
+                        y_val,
+                        theta_val,
+                        step_reward,
+                        cause_code,
+                        "" if target_distance is None else target_distance,
+                        "" if pressure_active is None else pressure_active,
+                    ]
+                )
+
+    def _append_episode_metrics(self, row: Mapping[str, Any]) -> None:
+        self._episode_metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a"
+        with self._episode_metrics_file.open(mode, newline="") as handle:
+            writer = csv.writer(handle)
+            if not self._episode_metrics_header_written:
+                writer.writerow(
+                    [
+                        "episode",
+                        "steps",
+                        "success",
+                        "success_rate_window",
+                        "success_rate_total",
+                        "defender_survival_steps",
+                        "avg_relative_distance",
+                        "pressure_coverage",
+                        "collisions",
+                        "cause_code",
+                    ]
+                )
+                self._episode_metrics_header_written = True
+            writer.writerow(
+                [
+                    row.get("episode", ""),
+                    row.get("steps", ""),
+                    row.get("success", ""),
+                    row.get("success_rate_window", ""),
+                    row.get("success_rate_total", ""),
+                    row.get("defender_survival_steps", ""),
+                    row.get("avg_relative_distance", ""),
+                    row.get("pressure_coverage", ""),
+                    row.get("collisions", ""),
+                    row.get("cause_code", ""),
+                ]
+            )
 
     def _write_run_config_snapshot(self) -> None:
         try:

@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+import math
 import numpy as np
 
 from f110x.envs import F110ParallelEnv
@@ -170,6 +171,8 @@ class EpisodeRollout:
     spawn_points: Dict[str, str]
     spawn_option: Optional[str]
     average_speeds: Dict[str, float]
+    average_relative_distance: Dict[str, float] = field(default_factory=dict)
+    pressure_coverage: Dict[str, float] = field(default_factory=dict)
     causes: List[str] = field(default_factory=list)
     finish_line_hits: Dict[str, bool] = field(default_factory=dict)
     trace: Optional[List[EpisodeTraceStep]] = None
@@ -249,8 +252,9 @@ def run_episode(
     render_condition: Optional[Callable[[int, int], bool]] = None,
     on_offpolicy_flush: Optional[Callable[[str, Trainer, TrajectoryBuffer], None]] = None,
     trace_buffer: Optional[List[EpisodeTraceStep]] = None,
-    path_logger: Optional[List[Tuple[int, int, str, float, float, float, float]]] = None,
+    path_logger: Optional[List[Tuple[int, int, str, float, float, float, float, Optional[float], Optional[float]]]] = None,
     reward_sharing: Optional[Mapping[str, Any]] = None,
+    pressure_metric_distance: float = 1.0,
 ) -> EpisodeRollout:
     """Execute a single environment episode and gather rollout statistics."""
 
@@ -282,6 +286,10 @@ def run_episode(
     speed_sums_array = np.zeros(agent_count, dtype=np.float32)
     speed_counts_array = np.zeros(agent_count, dtype=np.int32)
     done_flags = np.zeros(agent_count, dtype=bool)
+    distance_sums_array = np.zeros(agent_count, dtype=np.float32)
+    distance_counts_array = np.zeros(agent_count, dtype=np.int32)
+    pressure_active_counts_array = np.zeros(agent_count, dtype=np.int32)
+    pressure_total_counts_array = np.zeros(agent_count, dtype=np.int32)
 
     step_collision_mask = np.zeros(agent_count, dtype=bool)
     step_speed_values = np.zeros(agent_count, dtype=np.float32)
@@ -328,6 +336,18 @@ def run_episode(
     truncs: Dict[str, bool] = {}
     causes: List[str] = []
 
+    pressure_metric_distance = float(pressure_metric_distance) if pressure_metric_distance > 0 else 1.0
+    attacker_id = team.primary_role("attacker")
+    defender_id = team.primary_role("defender")
+    fallback_defender = None
+    if attacker_id:
+        for candidate in agent_order:
+            if candidate != attacker_id:
+                fallback_defender = candidate
+                break
+    if defender_id is None:
+        defender_id = fallback_defender
+
     while True:
         step_collision_mask.fill(False)
         step_speed_present.fill(False)
@@ -352,7 +372,7 @@ def run_episode(
         steps += 1
 
         if path_logger is not None:
-            ep_num = episode_index + 1
+            agent_positions: Dict[str, Tuple[float, float, float]] = {}
             for agent_id, agent_obs in obs_snapshot.items():
                 if not isinstance(agent_obs, Mapping):
                     continue
@@ -368,9 +388,43 @@ def run_episode(
                 x_val = float(pose_arr[0])
                 y_val = float(pose_arr[1])
                 theta_val = float(pose_arr[2]) if pose_arr.size >= 3 else 0.0
-                agent_idx = id_to_index.get(agent_id)
-                step_reward = float(shaped_rewards[agent_idx]) if agent_idx is not None else 0.0
-                path_logger.append((ep_num, steps, agent_id, x_val, y_val, theta_val, step_reward))
+                agent_positions[agent_id] = (x_val, y_val, theta_val)
+            if agent_positions:
+                ep_num = episode_index + 1
+                for agent_id, (x_val, y_val, theta_val) in agent_positions.items():
+                    agent_idx = id_to_index.get(agent_id)
+                    step_reward = float(shaped_rewards[agent_idx]) if agent_idx is not None else 0.0
+                    nearest_dist: Optional[float] = None
+                    for other_id, (ox, oy, _) in agent_positions.items():
+                        if other_id == agent_id:
+                            continue
+                        dist = math.hypot(x_val - ox, y_val - oy)
+                        if nearest_dist is None or dist < nearest_dist:
+                            nearest_dist = dist
+                    pressure_flag: Optional[float] = None
+                    if agent_idx is not None and nearest_dist is not None:
+                        distance_sums_array[agent_idx] += nearest_dist
+                        distance_counts_array[agent_idx] += 1
+                        if attacker_id and agent_id == attacker_id and pressure_metric_distance > 0.0:
+                            pressure_total_counts_array[agent_idx] += 1
+                            if nearest_dist <= pressure_metric_distance:
+                                pressure_active_counts_array[agent_idx] += 1
+                                pressure_flag = 1.0
+                            else:
+                                pressure_flag = 0.0
+                    path_logger.append(
+                        (
+                            ep_num,
+                            steps,
+                            agent_id,
+                            x_val,
+                            y_val,
+                            theta_val,
+                            step_reward,
+                            nearest_dist,
+                            pressure_flag,
+                        )
+                    )
 
         idle_triggered = False
         step_events_map: Dict[str, Dict[str, Any]] = {aid: {} for aid in agent_order}
@@ -692,6 +746,16 @@ def run_episode(
         for agent_id, components in reward_breakdown.items()
     }
 
+    avg_relative_distance: Dict[str, float] = {}
+    pressure_coverage: Dict[str, float] = {}
+    for idx, agent_id in enumerate(agent_order):
+        dist_count = distance_counts_array[idx]
+        if dist_count > 0:
+            avg_relative_distance[agent_id] = float(distance_sums_array[idx] / dist_count)
+        pressure_count = pressure_total_counts_array[idx]
+        if pressure_count > 0:
+            pressure_coverage[agent_id] = float(pressure_active_counts_array[idx] / pressure_count)
+
     rollout = EpisodeRollout(
         episode_index=episode_index,
         reward_task=str(
@@ -713,6 +777,8 @@ def run_episode(
         spawn_points=spawn_selection,
         spawn_option=spawn_option_id,
         average_speeds=avg_speeds,
+        average_relative_distance=avg_relative_distance,
+        pressure_coverage=pressure_coverage,
         causes=list(dict.fromkeys(causes)),
         finish_line_hits=finish_line_hits,
         trace=trace_buffer,

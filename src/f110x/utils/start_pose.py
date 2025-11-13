@@ -169,6 +169,10 @@ def reset_with_start_poses(
     if option_count == 0:
         return env.reset()
 
+    cycle_enabled = bool(getattr(env, "_spawn_cycle_enabled", False))
+    if cycle_enabled and not hasattr(env, "_spawn_cycle_index"):
+        setattr(env, "_spawn_cycle_index", 0)
+
     agent_ids = list(getattr(env, "possible_agents", []))
 
     def _agent_id(idx: int) -> str:
@@ -176,7 +180,12 @@ def reset_with_start_poses(
             return agent_ids[idx]
         return f"car_{idx}"
 
-    indices = np.random.permutation(option_count)
+    if cycle_enabled:
+        cycle_start = int(getattr(env, "_spawn_cycle_index", 0)) % option_count
+        ordered = list(range(option_count))
+        indices = ordered[cycle_start:] + ordered[:cycle_start]
+    else:
+        indices = np.random.permutation(option_count).tolist()
 
     def _sample_option(option: StartPoseOption) -> Optional[Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]]:
         metadata = dict(option.metadata or {})
@@ -214,6 +223,7 @@ def reset_with_start_poses(
 
     max_tries = max_attempts if max_attempts and max_attempts > 0 else option_count
     attempt_idx = 0
+    cycle_start_index = indices[0] if cycle_enabled and indices else 0
     while attempt_idx < max_tries:
         option = options[indices[attempt_idx % option_count]]
         sampled = _sample_option(option)
@@ -236,6 +246,9 @@ def reset_with_start_poses(
 
         collisions = [obs.get(aid, {}).get("collision", False) for aid in obs.keys()]
         if not any(collisions):
+            if cycle_enabled:
+                next_index = (cycle_start_index + 1) % option_count
+                setattr(env, "_spawn_cycle_index", next_index)
             return obs, infos
 
         attempt_idx += 1
