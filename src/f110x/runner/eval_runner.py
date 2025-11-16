@@ -5,13 +5,13 @@ import pickle
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
-import os
 
 from f110x.engine.rollout import IdleTerminationTracker, collect_trajectory, run_episode
 from f110x.runner.context import RunnerContext
+from f110x.runner.plot_logger import PlotArtifactLogger, resolve_episode_cause_code, resolve_run_suffix
 from f110x.runner.rollout_helpers import build_rollout_hooks
 from f110x.trainer.base import Trainer
 from f110x.utils.builders import AgentBundle, AgentTeam
@@ -31,13 +31,20 @@ class EvalRunner:
     save_rollouts_default: bool = field(init=False, default=False)
     _primary_bundle: Optional[AgentBundle] = field(init=False, default=None)
     _logger: Logger = field(init=False)
+    _run_suffix: Optional[str] = field(init=False, default=None)
+    _plot_logger: PlotArtifactLogger = field(init=False)
+    _pressure_metric_distance: float = field(init=False, default=1.0)
 
     def __post_init__(self) -> None:  # noqa: D401 - behaviour captured in class docstring
         self._ensure_primary_agent()
         self.trainer_map = dict(self.context.trainer_map)
+        self._run_suffix = resolve_run_suffix(getattr(self.context, "metadata", {}))
         self._primary_bundle = self._resolve_primary_bundle()
         self._configure_paths()
         self._logger = self.context.logger
+        self._plot_logger = PlotArtifactLogger(self.context, run_suffix=self._run_suffix)
+        self._plot_logger.write_run_config_snapshot(self._run_suffix)
+        self._pressure_metric_distance = self._resolve_pressure_distance()
 
     # ------------------------------------------------------------------
     # Public surface
@@ -199,6 +206,7 @@ class EvalRunner:
 
         for ep_index in range(int(episodes)):
             trace_buffer: Optional[List[Any]] = [] if save_rollouts_flag and rollout_dir_path else None
+            path_points: List[Tuple[int, int, str, float, float, float, float, Optional[float], Optional[float]]] = []
 
             if render_enabled:
                 def render_condition(_episode: int, _step: int) -> bool:
@@ -221,6 +229,8 @@ class EvalRunner:
                 render_condition=render_condition,
                 trace_buffer=trace_buffer,
                 reward_sharing=reward_sharing_cfg,
+                path_logger=path_points,
+                pressure_metric_distance=self._pressure_metric_distance,
             )
 
             returns = dict(rollout.returns)
@@ -279,6 +289,14 @@ class EvalRunner:
                     success = True
                     assisted_success = False
                     record_finish_agent = finish_agent
+
+            cause_code = resolve_episode_cause_code(
+                success=bool(success),
+                attacker_crashed=bool(attacker_crashed),
+                defender_crashed=bool(defender_crashed),
+                truncated=any(rollout.truncations.values()) or rollout.idle_triggered,
+            )
+            self._plot_logger.log_path_points(path_points, cause_code)
 
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
@@ -467,39 +485,24 @@ class EvalRunner:
             bundle_cfg["checkpoint_name"] = checkpoint_name
             bundle.metadata["config"] = bundle_cfg
 
-    def _resolve_run_suffix(self) -> Optional[str]:
-        meta = getattr(self.context, "metadata", {})
-        candidates = [
-            os.environ.get("F110_RUN_SUFFIX"),
-        ]
-        if isinstance(meta, dict):
-            candidates.append(meta.get("run_suffix"))
-        candidates.extend([
-            os.environ.get("WANDB_NAME"),
-            os.environ.get("WANDB_RUN_NAME"),
-        ])
-        if isinstance(meta, dict):
-            candidates.append(meta.get("wandb_run_name"))
-        candidates.extend([
-            os.environ.get("RUN_CONFIG_HASH"),
-            os.environ.get("WANDB_RUN_PATH"),
-            os.environ.get("RUN_ITER"),
-            os.environ.get("RUN_SEED"),
-            os.environ.get("WANDB_RUN_ID"),
-        ])
-        if isinstance(meta, dict):
-            candidates.append(meta.get("wandb_run_id"))
-        for candidate in candidates:
-            if not candidate:
-                continue
-            cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(candidate))
-            cleaned = cleaned.strip("-")
-            if cleaned:
-                return cleaned
-        return None
+    def _resolve_pressure_distance(self) -> float:
+        reward_params = self.context.reward_cfg.get("params")
+        if not isinstance(reward_params, Mapping):
+            reward_params = {}
+        distance = reward_params.get("pressure_distance", 1.0)
+        try:
+            value = float(distance)
+        except (TypeError, ValueError):
+            value = 1.0
+        if value <= 0:
+            value = 1.0
+        return value
 
     def _apply_run_suffix(self, checkpoint_name: str) -> str:
-        suffix = self._resolve_run_suffix()
+        suffix = self._run_suffix
+        if not suffix:
+            suffix = resolve_run_suffix(getattr(self.context, "metadata", {}))
+            self._run_suffix = suffix
         if not suffix:
             return checkpoint_name
         base = Path(checkpoint_name)
