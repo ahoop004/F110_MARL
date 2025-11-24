@@ -1,96 +1,42 @@
 meta:
-  name: sac_buda
+  name: kamikaze_sac
 
 scenario:
   env:
-    map: Budapest_map
-    seed: 42
-    max_steps: 15000
+    map: line2
+    seed: 7
+    max_steps: 1500
     lidar_beams: 108
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 10.0
+      v_max: 1.0
       v_min: -1.0
       length: 0.32
       width: 0.225
     spawn_points:
-      - spawn_1
       - spawn_2
+      - spawn_1
     spawn_point_sets:
-      - id: a
+      - id: offset_lane_a
         metadata:
           spawn_option_id: spawn_random
         names:
-          - spawn_1
           - spawn_3
-      - id: b
+          - spawn_1
+      - id: offset_lane_b
         metadata:
           spawn_option_id: spawn_random
         names:
+          - spawn_2
           - spawn_1
+      - id: extended_gap
+        metadata:
+          spawn_option_id: spawn_random
+        names:
           - spawn_4
-      - id: c
-        metadata:
-          spawn_option_id: spawn_random
-        names:
           - spawn_1
-          - spawn_5
-      - id: d
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_6
-      - id: e
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_7
-      - id: f
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_8
-      - id: g
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_9
-      - id: h
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_10
-      - id: i
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_11
-      - id: j
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_12
-      - id: k
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_13
-      - id: l
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_1
-          - spawn_14
     spawn_curriculum:
-      min_episode: 100
+      min_episode: 0
       activation_samples: 40
       success_window: 8
       enable_rate: 0.7
@@ -104,27 +50,28 @@ scenario:
   main:
     mode: train
     train_episodes: 1500
-    eval_episodes: 0
-    eval_interval: 0
+    eval_episodes: 10
+    eval_interval: 150
     federated:
       enabled: false
       interval: 50
       agents:
         - car_0
-      root: outputs/buda_sac
+      root: outputs/kamikaze_sac
       mode: mean
       timeout: 600.0
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
-    checkpoint: checkpoints/buda_sac/buda_sac.pt
+    checkpoint: checkpoints/kamikaze_sac/kamikaze_sac.pt
     warm_start_checkpoint: warm_starts/sac_best_eager-sweep-5.pt
     wandb:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: buda_sac
+      group: kamikaze_sac
       tags:
-        - buda_sac
+        - sac
+        - kamikaze
 
   agents:
     car_0:
@@ -132,7 +79,7 @@ scenario:
       algorithm:
         name: sac
         params:
-          device: cpu
+          device: cuda
           actor_lr: 0.003
           critic_lr: 0.0045
           alpha_lr: 0.003
@@ -167,36 +114,21 @@ scenario:
       reward:
         task: kamikaze
         params:
-          # Target agent ID that should be forced to crash; defaults to "car_1".
           target_agent: car_1
-          # Reward bonus granted once the target collides (even if the attacker does too).
           success_reward: 150.0
-          # When true, only award the bonus the first time this attacker tags the target.
-          success_once: true
-          # Small per-step shaping term to discourage long chases (negative values penalise time).
           step_penalty: -0.001
-          # Penalty applied if the attacker crashes without the target going down.
           self_collision_penalty: -5.0
-          # Per-second shaping bonus when staying within 2 m of the defender (linearly fades until far distance).
-          distance_reward_near: 0.04
-          distance_reward_near_distance: 2.0
-          # Per-second penalty when the defender opens up more than 5 m of space.
-          distance_penalty_far: 0.03
-          distance_reward_far_distance: 5.0
-          # One-time bonus for breaching a 0.5 m bubble around the defender (encourages final dive).
-          radius_bonus_reward: 35.0
-          radius_bonus_distance: 0.5
-          radius_bonus_once: true
+          success_once: true
       wrappers:
         - factory: obs
           params:
-            max_scan: 10.0
+            max_scan: 30.0
             components:
               - id: lidar
                 type: lidar
                 params:
                   beams: 108
-                  max_range: 10.0
+                  max_range: 30.0
                   normalize: true
                   clip: 1.0
               - id: ego_pose
@@ -235,7 +167,7 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_distance: 10.0
+          max_distance: 30.0
           window_size: 2
           bubble_radius: 1
           max_steer: 0.35
@@ -260,4 +192,70 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
-     
+      policy_curriculum:
+        success_window: 40
+        activation_samples: 30
+        cooldown: 25
+        persist: true
+        stages:
+          - name: tier0_dumb_defender
+            params:
+              max_speed: 1.0
+              min_speed: 0.35
+              steering_gain: 0.25
+              steer_smooth: 0.5
+              crawl_steer_ratio: 0.55
+              center_bias_gain: 0.0
+              inside_bias_gain: 0.0
+              preview_horizon: 0.0
+              preview_samples: 0
+              dwa_samples: 0
+              enhanced_gap_scoring: false
+              u_shape_enabled: false
+          - name: tier1_preview_defender
+            enable_rate: 0.3
+            enable_patience: 3
+            params:
+              max_speed: 1.0
+              min_speed: 0.3
+              steering_gain: 0.32
+              steer_smooth: 0.42
+              crawl_steer_ratio: 0.45
+              center_bias_gain: 0.05
+              inside_bias_gain: 0.1
+              preview_horizon: 0.8
+              preview_samples: 5
+              dwa_samples: 0
+              enhanced_gap_scoring: true
+              dwa_horizon: 0.5
+              dwa_heading_weight: 0.2
+              u_shape_enabled: false
+          - name: tier2_top_defender
+            enable_rate: 0.55
+            enable_patience: 4
+            params:
+              max_distance: 30.0
+              window_size: 2
+              bubble_radius: 1
+              max_steer: 0.35
+              min_speed: 0.2
+              max_speed: 1.0
+              steering_gain: 0.4
+              fov_deg: 270
+              normalized: true
+              steer_smooth: 0.35
+              center_bias_gain: 0.09
+              inside_bias_gain: 0.2
+              crawl_steer_ratio: 0.35
+              steering_speed_scale: 1.0
+              preview_horizon: 1.5
+              preview_samples: 7
+              dwa_samples: 5
+              dwa_horizon: 0.5
+              dwa_heading_weight: 0.15
+              enhanced_gap_scoring: true
+              gap_score_width_weight: 1.0
+              gap_score_clearance_weight: 1.2
+              gap_score_center_weight: 0.5
+              gap_score_curvature_weight: 0.2
+              u_shape_enabled: false
