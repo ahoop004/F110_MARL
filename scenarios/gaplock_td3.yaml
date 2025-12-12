@@ -5,19 +5,20 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 800
-    lidar_beams: 108
+    max_steps: 25000
+    lidar_beams: 720
+    lidar_dist: 0.103
     terminate_on_any_done: true
-    # centerline_autoload: true
-    # centerline_render: true
     vehicle_params:
       v_max: 1.0
       v_min: -1.0
       length: 0.32
       width: 0.225
+      s_min: -0.46
+      s_max: 0.46
     spawn_points:
-      - spawn_2
       - spawn_1
+      - spawn_2
     spawn_point_sets:
       - id: offset_lane_a
         metadata:
@@ -106,13 +107,13 @@ scenario:
           per_beta_start: 0.4
           # per_beta: 0.5
           per_beta_final: 1.0
-          per_beta_increment: 0.000001
+          per_beta_increment: 0.00075
           per_min_priority: 0.00001
           per_epsilon: 0.00001
           exploration_noise: 0.2
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 3000000
-          exploration_noise_decay_episodes: 2500
+          exploration_noise_decay_episodes: 600
           initial_speed: 0.9
           initial_speed_warmup_steps: 150
           initial_speed_warmup_throttle: 0.8
@@ -177,15 +178,24 @@ scenario:
             points:
               - distance: 0.4
                 value: 0.1
+              - distance: 2.0
+                value: 0.02
               - distance: 5.0
-                value: 0.5
-              - distance: 10.0
-                value: -0.00
+                value: -0.1
             scale: 1.0
             time_scaled: true
             clip:
               - -0.1
               - 0.1
+
+          target_offsets:
+            - forward: 0.55
+              left: 0.22
+            - forward: 0.55
+              left: -0.22
+          target_offset_radius: 0.15
+          target_offset_falloff: 0.05
+          target_offset_marker_radius: 0.15
     
           relative_reward:
             weights:
@@ -205,14 +215,14 @@ scenario:
       wrappers:
         - factory: obs
           params:
-            max_scan: 30.0
+            max_scan: 8.0
             # normalize: true
             components:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 108
-                  max_range: 30.0
+                  beams: 720
+                  max_range: 8.0
                   normalize: true
                   clip: 1.0
               - id: ego_pose
@@ -255,15 +265,15 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_distance: 30.0
+          max_distance: 8.0
           window_size: 2
           bubble_radius: 1
           max_steer: 0.35
           min_speed: 0.2
-          max_speed: 1.0
+          max_speed: 0.80
           steering_gain: 0.4
-          fov_deg: 270
-          normalized: true
+          fov_deg: 240
+          # normalized: true
           steer_smooth: 0.35
           center_bias_gain: 0.09
           inside_bias_gain: 0.2
@@ -280,70 +290,70 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
-      policy_curriculum:
-        success_window: 40
-        activation_samples: 30
-        cooldown: 25
-        persist: true
-        stages:
-          - name: tier0_dumb_defender
-            params:
-              max_speed: 01.0
-              min_speed: 0.35
-              steering_gain: 0.25
-              steer_smooth: 0.5
-              crawl_steer_ratio: 0.55
-              center_bias_gain: 0.0
-              inside_bias_gain: 0.0
-              preview_horizon: 0.0
-              preview_samples: 0
-              dwa_samples: 0
-              enhanced_gap_scoring: false
-              u_shape_enabled: false
-          - name: tier1_preview_defender
-            enable_rate: 0.3
-            enable_patience: 3
-            params:
-              max_speed: 1.0
-              min_speed: 0.3
-              steering_gain: 0.32
-              steer_smooth: 0.42
-              crawl_steer_ratio: 0.45
-              center_bias_gain: 0.05
-              inside_bias_gain: 0.1
-              preview_horizon: 0.8
-              preview_samples: 5
-              dwa_samples: 0
-              enhanced_gap_scoring: true
-              dwa_horizon: 0.5
-              dwa_heading_weight: 0.2
-              u_shape_enabled: false
-          - name: tier2_top_defender
-            enable_rate: 0.55
-            enable_patience: 4
-            params:
-              max_distance: 30.0
-              window_size: 2
-              bubble_radius: 1
-              max_steer: 0.35
-              min_speed: 0.2
-              max_speed: 1.0
-              steering_gain: 0.4
-              fov_deg: 270
-              normalized: true
-              steer_smooth: 0.35
-              center_bias_gain: 0.09
-              inside_bias_gain: 0.2
-              crawl_steer_ratio: 0.35
-              steering_speed_scale: 1.0
-              preview_horizon: 1.5
-              preview_samples: 7
-              dwa_samples: 5
-              dwa_horizon: 0.5
-              dwa_heading_weight: 0.15
-              enhanced_gap_scoring: true
-              gap_score_width_weight: 1.0
-              gap_score_clearance_weight: 1.2
-              gap_score_center_weight: 0.5
-              gap_score_curvature_weight: 0.2
-              u_shape_enabled: false
+      # policy_curriculum:
+      #   success_window: 40
+      #   activation_samples: 30
+      #   cooldown: 25
+      #   persist: true
+      #   stages:
+      #     - name: tier0_dumb_defender
+      #       params:
+      #         max_speed: 0.80
+      #         min_speed: 0.35
+      #         steering_gain: 0.25
+      #         steer_smooth: 0.5
+      #         crawl_steer_ratio: 0.55
+      #         center_bias_gain: 0.0
+      #         inside_bias_gain: 0.0
+      #         preview_horizon: 0.0
+      #         preview_samples: 0
+      #         dwa_samples: 0
+      #         enhanced_gap_scoring: false
+      #         u_shape_enabled: false
+      #     - name: tier1_preview_defender
+      #       enable_rate: 0.3
+      #       enable_patience: 3
+      #       params:
+      #         max_speed: 0.80
+      #         min_speed: 0.3
+      #         steering_gain: 0.32
+      #         steer_smooth: 0.42
+      #         crawl_steer_ratio: 0.45
+      #         center_bias_gain: 0.05
+      #         inside_bias_gain: 0.1
+      #         preview_horizon: 0.8
+      #         preview_samples: 5
+      #         dwa_samples: 0
+      #         enhanced_gap_scoring: true
+      #         dwa_horizon: 0.5
+      #         dwa_heading_weight: 0.2
+      #         u_shape_enabled: false
+      #     - name: tier2_top_defender
+      #       enable_rate: 0.55
+      #       enable_patience: 4
+      #       params:
+      #         max_distance: 8.0
+      #         window_size: 2
+      #         bubble_radius: 1
+      #         max_steer: 0.35
+      #         min_speed: 0.2
+      #         max_speed: 0.80
+      #         steering_gain: 0.4
+      #         fov_deg: 240
+      #         # normalized: true
+      #         steer_smooth: 0.35
+      #         center_bias_gain: 0.09
+      #         inside_bias_gain: 0.2
+      #         crawl_steer_ratio: 0.35
+      #         steering_speed_scale: 1.0
+      #         preview_horizon: 1.5
+      #         preview_samples: 7
+      #         dwa_samples: 5
+      #         dwa_horizon: 0.5
+      #         dwa_heading_weight: 0.15
+      #         enhanced_gap_scoring: true
+      #         gap_score_width_weight: 1.0
+      #         gap_score_clearance_weight: 1.2
+      #         gap_score_center_weight: 0.5
+      #         gap_score_curvature_weight: 0.2
+      #         u_shape_enabled: false

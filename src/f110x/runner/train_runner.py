@@ -5,7 +5,7 @@ import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Mapping, Tuple
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Mapping, Tuple
 
 from f110x.federated import FederatedAverager, FederatedConfig
 from f110x.engine.rollout import (
@@ -63,9 +63,20 @@ class SpawnCurriculumManager:
             self._baseline_options = list(all_options)
 
         self.random_capable = bool(self._random_options)
-        initial_state = self.start_enabled and self.random_capable
+        self.stage_configs = self._compile_stage_configs(self.config.get("stages"))
+        if self.stage_configs and not self.random_capable:
+            self.stage_configs = []
+        self.stage_mode = bool(self.stage_configs)
+        self.current_stage_index = 0
+        self._stage_histories: Dict[int, Deque[float]] = {}
+        self._promote_streak = 0
+        self._regress_streak = 0
         self.random_enabled = False
-        self._apply_state(initial_state, force=True)
+        if self.stage_mode:
+            self._apply_stage(0, force=True)
+        else:
+            initial_state = self.start_enabled and self.random_capable
+            self._apply_state(initial_state, force=True)
 
     @staticmethod
     def _is_random_option(option: StartPoseOption) -> bool:
@@ -113,7 +124,188 @@ class SpawnCurriculumManager:
         self.context.start_pose_options = selected or None
         return state_changed and not force
 
+    def _compile_stage_configs(self, raw_stages: Any) -> List[Dict[str, Any]]:
+        configs: List[Dict[str, Any]] = []
+        if raw_stages is None:
+            return configs
+        if isinstance(raw_stages, Mapping):
+            raw_iter = [raw_stages]
+        elif isinstance(raw_stages, Iterable):
+            raw_iter = raw_stages
+        else:
+            return configs
+        for idx, entry in enumerate(raw_iter):
+            if not isinstance(entry, Mapping):
+                continue
+            option_ids_raw = entry.get("option_ids") or entry.get("options") or entry.get("ids")
+            if option_ids_raw is None:
+                option_ids = ()
+            elif isinstance(option_ids_raw, (list, tuple, set)):
+                option_ids = tuple(
+                    str(value).strip()
+                    for value in option_ids_raw
+                    if isinstance(value, (str, int, float)) and str(value).strip()
+                )
+            else:
+                option_ids = (str(option_ids_raw).strip(),)
+            if option_ids == ("",):
+                option_ids = ()
+            max_stage_raw = entry.get("max_stage", entry.get("stage"))
+            try:
+                max_stage = int(max_stage_raw) if max_stage_raw is not None else None
+            except (TypeError, ValueError):
+                max_stage = None
+            include_baseline = bool(entry.get("include_baseline", True))
+            configs.append(
+                {
+                    "name": entry.get("name") or f"stage_{idx + 1}",
+                    "option_ids": tuple(value for value in option_ids if value),
+                    "max_stage": max_stage,
+                    "include_baseline": include_baseline,
+                    "enable_rate": entry.get("enable_rate"),
+                    "enable_patience": entry.get("enable_patience"),
+                    "disable_rate": entry.get("disable_rate"),
+                    "disable_patience": entry.get("disable_patience"),
+                }
+            )
+        return configs
+
+    @staticmethod
+    def _option_stage_id(option: StartPoseOption) -> Optional[str]:
+        metadata = getattr(option, "metadata", {}) or {}
+        if not isinstance(metadata, Mapping):
+            return None
+        for key in ("spawn_curriculum_id", "curriculum_id", "option_id", "id"):
+            value = metadata.get(key)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+        option_id = metadata.get("spawn_option_id")
+        if (
+            isinstance(option_id, str)
+            and option_id.strip()
+            and option_id.strip().lower() not in {"spawn_random"}
+        ):
+            return option_id.strip()
+        return None
+
+    @staticmethod
+    def _option_stage_level(option: StartPoseOption) -> Optional[int]:
+        metadata = getattr(option, "metadata", {}) or {}
+        if not isinstance(metadata, Mapping):
+            return None
+        value = metadata.get("spawn_curriculum_stage", metadata.get("curriculum_stage"))
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _match_stage_option(self, option: StartPoseOption, stage_cfg: Mapping[str, Any]) -> bool:
+        option_ids: Tuple[str, ...] = tuple(stage_cfg.get("option_ids") or ())
+        max_stage = stage_cfg.get("max_stage")
+        if option_ids:
+            stage_id = self._option_stage_id(option)
+            if stage_id and stage_id in option_ids:
+                return True
+        if max_stage is not None:
+            try:
+                threshold = int(max_stage)
+            except (TypeError, ValueError):
+                threshold = None
+            if threshold is not None:
+                stage_level = self._option_stage_level(option)
+                if stage_level is not None and stage_level <= threshold:
+                    return True
+        if not option_ids and max_stage is None:
+            return True
+        return False
+
+    def _options_for_stage(self, index: int) -> List[StartPoseOption]:
+        if not self.stage_configs or index <= 0:
+            return list(self._baseline_options or self._all_options)
+        stage_cfg = self.stage_configs[index - 1]
+        include_baseline = bool(stage_cfg.get("include_baseline", True))
+        selected: List[StartPoseOption] = []
+        if include_baseline and self._baseline_options:
+            selected.extend(self._baseline_options)
+        matched = [
+            opt
+            for opt in self._random_options
+            if self._match_stage_option(opt, stage_cfg)
+        ]
+        if not matched and not selected:
+            matched = list(self._random_options or self._baseline_options or self._all_options)
+        selected.extend(matched)
+        if not selected:
+            return list(self._all_options)
+        return selected
+
+    def _stage_history(self, index: int) -> Deque[float]:
+        history = self._stage_histories.get(index)
+        if history is None:
+            history = deque(maxlen=self.success_window)
+            self._stage_histories[index] = history
+        return history
+
+    def _stage_name(self, index: int) -> str:
+        if index <= 0:
+            return "structured"
+        if 0 < index <= len(self.stage_configs):
+            return str(self.stage_configs[index - 1].get("name") or f"stage_{index}")
+        return f"stage_{index}"
+
+    def _stage_state(
+        self,
+        changed: bool,
+        *,
+        success_rate: Optional[float],
+        stage_success_rate: Optional[float],
+    ) -> Dict[str, Any]:
+        return {
+            "changed": changed,
+            "enabled": self.current_stage_index > 0,
+            "stage": self._stage_name(self.current_stage_index),
+            "stage_index": self.current_stage_index,
+            "success_rate": success_rate,
+            "stage_success_rate": stage_success_rate,
+            "structured_success_rate": None,
+            "random_success_rate": None,
+        }
+
+    def _apply_stage(self, index: int, *, episode: Optional[int] = None, force: bool = False) -> None:
+        index = max(0, min(index, len(self.stage_configs)))
+        previous = getattr(self, "current_stage_index", 0)
+        self.current_stage_index = index
+        selected = self._options_for_stage(index)
+        self.context.start_pose_options = selected or None
+        self.random_enabled = index > 0
+        self._stage_history(index).clear()
+        if not force and index != previous:
+            self.logger.info(
+                "Spawn curriculum stage transition",
+                extra={
+                    "episode": episode,
+                    "stage": self._stage_name(index),
+                    "stage_index": index,
+                },
+            )
+            self._last_toggle_episode = episode
+        self._promote_streak = 0
+        self._regress_streak = 0
+
+    def _cooldown_ready(self, episode: int) -> bool:
+        if self.cooldown <= 0:
+            return True
+        if self._last_toggle_episode is None:
+            return True
+        return (episode - self._last_toggle_episode) >= self.cooldown
+
     def observe(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
+        if self.stage_mode:
+            return self._observe_stage(episode, success)
         if success is not None:
             value = 1.0 if success else 0.0
             self._success_history.append(value)
@@ -161,11 +353,7 @@ class SpawnCurriculumManager:
                 else:
                     self._disable_streak = 0
 
-                cooldown_ready = (
-                    self.cooldown <= 0
-                    or self._last_toggle_episode is None
-                    or (episode - self._last_toggle_episode) >= self.cooldown
-                )
+                cooldown_ready = self._cooldown_ready(episode)
                 if cooldown_ready and self._disable_streak >= self.disable_patience:
                     changed = self._apply_state(False)
                     self._last_toggle_episode = episode
@@ -191,6 +379,73 @@ class SpawnCurriculumManager:
             "random_success_rate": random_rate,
             "stage": "random" if self.random_enabled else "structured",
         }
+
+    def _observe_stage(self, episode: int, success: Optional[bool]) -> Dict[str, Any]:
+        if success is not None:
+            value = 1.0 if success else 0.0
+            self._success_history.append(value)
+            self._stage_history(self.current_stage_index).append(value)
+
+        success_rate = self.success_rate
+        stage_history = self._stage_history(self.current_stage_index)
+        stage_success_rate = self._rate(stage_history)
+        history_ready = len(self._success_history) >= self.activation_samples
+        changed = False
+
+        if not self.random_capable:
+            return self._stage_state(
+                changed,
+                success_rate=success_rate,
+                stage_success_rate=stage_success_rate,
+            )
+
+        if episode < self.min_episode or not history_ready or success_rate is None:
+            self._promote_streak = 0
+            self._regress_streak = 0
+            return self._stage_state(
+                changed,
+                success_rate=success_rate,
+                stage_success_rate=stage_success_rate,
+            )
+
+        if self.current_stage_index < len(self.stage_configs):
+            next_index = self.current_stage_index + 1
+            next_cfg = self.stage_configs[next_index - 1]
+            enable_rate = float(next_cfg.get("enable_rate", self.enable_rate))
+            enable_patience = int(next_cfg.get("enable_patience", self.enable_patience) or self.enable_patience)
+            enable_patience = max(1, enable_patience)
+            if success_rate >= enable_rate:
+                self._promote_streak += 1
+            else:
+                self._promote_streak = 0
+            if self._promote_streak >= enable_patience and self._cooldown_ready(episode):
+                prev_index = self.current_stage_index
+                self._apply_stage(next_index, episode=episode)
+                changed = changed or (self.current_stage_index != prev_index)
+
+        if (
+            not self.persist
+            and self.current_stage_index > 0
+            and self.current_stage_index <= len(self.stage_configs)
+        ):
+            current_cfg = self.stage_configs[self.current_stage_index - 1]
+            disable_rate = float(current_cfg.get("disable_rate", self.disable_rate))
+            disable_patience = int(current_cfg.get("disable_patience", self.disable_patience) or self.disable_patience)
+            disable_patience = max(1, disable_patience)
+            if success_rate < disable_rate:
+                self._regress_streak += 1
+            else:
+                self._regress_streak = 0
+            if self._regress_streak >= disable_patience and self._cooldown_ready(episode):
+                prev_index = self.current_stage_index
+                self._apply_stage(self.current_stage_index - 1, episode=episode)
+                changed = changed or (self.current_stage_index != prev_index)
+
+        return self._stage_state(
+            changed,
+            success_rate=success_rate,
+            stage_success_rate=stage_success_rate,
+        )
 
 
 class DefenderCurriculumManager:
@@ -950,12 +1205,13 @@ class TrainRunner:
             elif attacker_crashed is not None:
                 success = not attacker_crashed
 
+            attacker_components = reward_breakdown.get(attacker_id, {}) if attacker_id is not None else {}
             assisted_success: Optional[bool] = None
             episode_record_finish_agent: Optional[str] = None
             if success and attacker_id is not None:
-                attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
-                assisted_success = success_reward_val > 0.0
+                kamikaze_reward_val = float(attacker_components.get("kamikaze_success", 0.0) or 0.0)
+                assisted_success = (success_reward_val > 0.0) or (kamikaze_reward_val > 0.0)
                 if not assisted_success:
                     logger.log_event(
                         "debug",
@@ -969,9 +1225,9 @@ class TrainRunner:
                     )
 
             if not success and attacker_id is not None:
-                attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
-                if success_reward_val > 0.0:
+                kamikaze_reward_val = float(attacker_components.get("kamikaze_success", 0.0) or 0.0)
+                if success_reward_val > 0.0 or kamikaze_reward_val > 0.0:
                     success = True
                     assisted_success = True
 

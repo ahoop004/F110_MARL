@@ -1,6 +1,6 @@
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
 import gymnasium as gym
 from gymnasium import spaces
 import yaml
@@ -176,6 +176,7 @@ class F110ParallelEnv(ParallelEnv):
         self._reward_ring_target: Optional[str] = None
         self._reward_ring_dirty: bool = False
         self._reward_ring_target_dirty: bool = False
+        self._reward_ring_marker_states: Dict[str, List[bool]] = {}
         self._render_metrics_payload: Optional[Dict[str, Any]] = None
         self._render_metrics_dirty: bool = False
         self._render_ticker: deque[str] = deque(maxlen=64)
@@ -687,6 +688,9 @@ class F110ParallelEnv(ParallelEnv):
             "inner_tolerance": max(float(config.get("inner_tolerance", 0.0)), 0.0),
             "outer_tolerance": max(float(config.get("outer_tolerance", 0.0)), 0.0),
             "segments": max(int(config.get("segments", 96) or 96), 8),
+            "marker_radius": max(float(config.get("marker_radius", 0.0)), 0.0),
+            "marker_segments": max(int(config.get("marker_segments", 12) or 12), 4),
+            "offsets_only": bool(config.get("offsets_only", False)),
         }
         for key in ("fill_color", "border_color", "preferred_color"):
             if key in config and isinstance(config[key], (list, tuple)):
@@ -694,6 +698,26 @@ class F110ParallelEnv(ParallelEnv):
         falloff_val = config.get("falloff")
         if falloff_val is not None:
             stored["falloff"] = str(falloff_val).lower()
+        marker_color_val = config.get("marker_color")
+        if isinstance(marker_color_val, (list, tuple)):
+            stored["marker_color"] = tuple(float(component) for component in marker_color_val)
+        offsets_val = config.get("offsets")
+        if offsets_val:
+            cleaned_offsets: List[Tuple[float, float]] = []
+            for entry in offsets_val:
+                if entry is None:
+                    continue
+                try:
+                    pair = tuple(float(v) for v in entry)  # type: ignore[arg-type]
+                except Exception:
+                    continue
+                if len(pair) >= 2:
+                    cleaned_offsets.append((pair[0], pair[1]))
+            if cleaned_offsets:
+                stored["offsets"] = cleaned_offsets
+        marker_color_active_val = config.get("marker_color_active")
+        if isinstance(marker_color_active_val, (list, tuple)):
+            stored["marker_color_active"] = tuple(float(component) for component in marker_color_active_val)
         weights_val = config.get("weights")
         if isinstance(weights_val, Mapping):
             safe_weights: Dict[str, float] = {}
@@ -726,6 +750,21 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_ring_target = normalized
             self._reward_ring_target_dirty = True
 
+    def update_reward_ring_markers(self, agent_id: str, states: Optional[Sequence[bool]]) -> None:
+        if self._reward_ring_config is None or self.renderer is None:
+            return
+        focus = self._reward_ring_focus_agent
+        if focus is not None and agent_id != focus:
+            return
+        if states is None:
+            self._reward_ring_marker_states.pop(agent_id, None)
+        else:
+            self._reward_ring_marker_states[agent_id] = [bool(s) for s in states]
+        try:
+            self.renderer.set_reward_ring_marker_state(agent_id, self._reward_ring_marker_states.get(agent_id))
+        except Exception:
+            pass
+
     def _apply_reward_ring_to_renderer(self) -> None:
         if self.renderer is None:
             return
@@ -739,10 +778,15 @@ class F110ParallelEnv(ParallelEnv):
                     "inner_tolerance": cfg["inner_tolerance"],
                     "outer_tolerance": cfg["outer_tolerance"],
                     "segments": cfg.get("segments", 96),
+                    "marker_radius": cfg.get("marker_radius", 0.0),
+                    "marker_segments": cfg.get("marker_segments", 12),
+                    "offsets_only": cfg.get("offsets_only", False),
                 }
-                for key in ("fill_color", "border_color", "preferred_color"):
+                for key in ("fill_color", "border_color", "preferred_color", "marker_color"):
                     if key in cfg:
                         renderer_payload[key] = cfg[key]
+                if "offsets" in cfg:
+                    renderer_payload["offsets"] = cfg["offsets"]
                 self.renderer.configure_reward_ring(**renderer_payload)
             else:
                 self.renderer.configure_reward_ring(enabled=False)
@@ -1052,7 +1096,8 @@ class F110ParallelEnv(ParallelEnv):
         if self.renderer is None:
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,
                                         lidar_fov=4.7,
-                                        max_range=30.0)
+                                        max_range=30.0,
+                                        lidar_offset=self.lidar_dist)
             # use self.map_path (without extension) and self.map_ext
             self.renderer.update_map(
                 str(self.map_path.with_suffix("")),

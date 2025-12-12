@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -25,6 +25,10 @@ KAMIKAZE_PARAM_KEYS = (
     "radius_bonus_reward",
     "radius_bonus_distance",
     "radius_bonus_once",
+    "distance_delta_reward",
+    "idle_penalty",
+    "idle_penalty_steps",
+    "idle_speed_threshold",
 )
 
 
@@ -70,6 +74,10 @@ class KamikazeRewardStrategy(RewardStrategy):
         radius_bonus_reward: float = 0.0,
         radius_bonus_distance: float = 0.0,
         radius_bonus_once: bool = False,
+        distance_delta_reward: float = 0.0,
+        idle_penalty: float = 0.0,
+        idle_penalty_steps: int = 0,
+        idle_speed_threshold: float = 0.0,
     ) -> None:
         self.target_agent = target_agent
         self.success_reward = float(success_reward)
@@ -85,10 +93,18 @@ class KamikazeRewardStrategy(RewardStrategy):
         self.radius_bonus_distance = max(float(radius_bonus_distance), 0.0)
         self.radius_bonus_once = bool(radius_bonus_once)
         self._radius_awarded: set[Tuple[str, str]] = set()
+        self.distance_delta_reward = float(distance_delta_reward)
+        self._distance_prev: Dict[Tuple[str, str], float] = {}
+        self.idle_penalty = float(idle_penalty)
+        self.idle_penalty_steps = max(int(idle_penalty_steps), 0)
+        self.idle_speed_threshold = max(float(idle_speed_threshold), 0.0)
+        self._idle_counters: Dict[str, int] = {}
 
     def reset(self, episode_index: int) -> None:
         self._tracker.reset()
         self._radius_awarded.clear()
+        self._distance_prev.clear()
+        self._idle_counters.clear()
         super().reset(episode_index)
 
     def _resolve_target_obs(
@@ -118,6 +134,31 @@ class KamikazeRewardStrategy(RewardStrategy):
             return None
         return pose_arr
 
+    @staticmethod
+    def _extract_speed(obs: Optional[Dict[str, Any]]) -> Optional[float]:
+        if not obs:
+            return None
+        speed = obs.get("speed")
+        if isinstance(speed, (int, float)):
+            return float(speed)
+        velocity = obs.get("velocity")
+        if isinstance(velocity, Mapping):
+            candidate = velocity.get("speed")
+            if isinstance(candidate, (int, float)):
+                return float(candidate)
+            vec = []
+            for key in ("x", "y"):
+                value = velocity.get(key)
+                if isinstance(value, (int, float)):
+                    vec.append(float(value))
+            if vec:
+                return float(np.linalg.norm(np.asarray(vec, dtype=np.float32)))
+        if isinstance(velocity, (list, tuple, np.ndarray)):
+            arr = np.asarray(velocity, dtype=np.float32).flatten()
+            if arr.size >= 1:
+                return float(np.linalg.norm(arr[: min(arr.size, 2)]))
+        return None
+
     def compute(self, step: RewardStep):
         acc = RewardAccumulator()
         ego_obs = step.obs
@@ -135,6 +176,7 @@ class KamikazeRewardStrategy(RewardStrategy):
         if pose_ego is not None and pose_target is not None:
             delta = pose_target[:2] - pose_ego[:2]
             distance = float(np.linalg.norm(delta))
+        speed = self._extract_speed(ego_obs)
 
         timestep = float(step.timestep or 0.0)
 
@@ -176,6 +218,34 @@ class KamikazeRewardStrategy(RewardStrategy):
                 acc.add("radius_bonus", self.radius_bonus_reward)
                 if self.radius_bonus_once:
                     self._radius_awarded.add(radius_key)
+
+        if (
+            distance is not None
+            and target_id is not None
+            and self.distance_delta_reward
+        ):
+            delta_key = (step.agent_id, target_id)
+            prev_distance = self._distance_prev.get(delta_key)
+            if prev_distance is not None and distance < prev_distance:
+                delta = prev_distance - distance
+                acc.add("distance_delta_reward", self.distance_delta_reward * delta)
+            self._distance_prev[delta_key] = distance
+
+        if (
+            self.idle_penalty
+            and self.idle_penalty_steps > 0
+            and self.idle_speed_threshold > 0.0
+            and speed is not None
+        ):
+            counter = self._idle_counters.get(step.agent_id, 0)
+            if speed < self.idle_speed_threshold:
+                counter += 1
+            else:
+                counter = 0
+            if counter >= self.idle_penalty_steps:
+                acc.add("idle_penalty", float(self.idle_penalty))
+                counter = 0
+            self._idle_counters[step.agent_id] = counter
 
         if ego_collided and not target_collided and self.self_collision_penalty:
             acc.add("self_collision_penalty", float(self.self_collision_penalty))

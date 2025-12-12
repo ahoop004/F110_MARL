@@ -20,78 +20,90 @@ scenario:
       - id: a
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 1
         names:
           - spawn_1
           - spawn_3
       - id: b
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 2
         names:
           - spawn_1
           - spawn_4
       - id: c
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 3
         names:
           - spawn_1
           - spawn_5
       - id: d
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 4
         names:
           - spawn_1
           - spawn_6
       - id: e
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 5
         names:
           - spawn_1
           - spawn_7
       - id: f
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 6
         names:
           - spawn_1
           - spawn_8
       - id: g
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 7
         names:
           - spawn_1
           - spawn_9
       - id: h
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 8
         names:
           - spawn_1
           - spawn_10
       - id: i
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 9
         names:
           - spawn_1
           - spawn_11
       - id: j
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 10
         names:
           - spawn_1
           - spawn_12
       - id: k
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 11
         names:
           - spawn_1
           - spawn_13
       - id: l
         metadata:
           spawn_option_id: spawn_random
+          spawn_curriculum_stage: 12
         names:
           - spawn_1
           - spawn_14
     spawn_curriculum:
-      min_episode: 100
-      activation_samples: 40
+      min_episode: 0
+      activation_samples: 10
       success_window: 8
       enable_rate: 0.7
       enable_patience: 4
@@ -99,7 +111,20 @@ scenario:
       disable_patience: 2
       cooldown: 20
       persist: true
-      start_enabled: true
+      start_enabled: false
+      stages:
+        - name: buda_inner_lane
+          max_stage: 1
+          enable_rate: 0.72
+          enable_patience: 3
+        - name: buda_mid_lane
+          max_stage: 2
+          enable_rate: 0.78
+          enable_patience: 3
+        - name: buda_outer_lane
+          max_stage: 3
+          enable_rate: 0.85
+          enable_patience: 4
 
   main:
     mode: train
@@ -117,7 +142,7 @@ scenario:
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/buda_sac/buda_sac.pt
-    warm_start_checkpoint: warm_starts/sac_best_eager-sweep-5.pt
+    warm_start_checkpoint: warm_starts/sac_best_sac_buda-r01-e37dfb35.pt
     wandb:
       enabled: true
       project: marl-f110
@@ -150,7 +175,7 @@ scenario:
           exploration_noise: 0.2
           exploration_noise_final: 0.05
           exploration_noise_decay_steps: 450000
-          initial_speed: 0.9
+          initial_speed: 1.9
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
           prevent_reverse: true
@@ -174,9 +199,9 @@ scenario:
           # When true, only award the bonus the first time this attacker tags the target.
           success_once: true
           # Small per-step shaping term to discourage long chases (negative values penalise time).
-          step_penalty: -0.001
+          step_penalty: -0.0001
           # Penalty applied if the attacker crashes without the target going down.
-          self_collision_penalty: -5.0
+          self_collision_penalty: -15.0
           # Per-second shaping bonus when staying within 2 m of the defender (linearly fades until far distance).
           distance_reward_near: 0.04
           distance_reward_near_distance: 2.0
@@ -187,6 +212,12 @@ scenario:
           radius_bonus_reward: 35.0
           radius_bonus_distance: 0.5
           radius_bonus_once: true
+          # Scales reward by how much the attacker closes distance compared to the previous step (per meter).
+          distance_delta_reward: 2.0
+          # Idle guard rails: penalize if speed stays below the threshold for consecutive steps.
+          idle_penalty: -0.25
+          idle_penalty_steps: 80
+          idle_speed_threshold: 0.2
       wrappers:
         - factory: obs
           params:
@@ -240,7 +271,7 @@ scenario:
           bubble_radius: 1
           max_steer: 0.35
           min_speed: 0.2
-          max_speed: 1.0
+          max_speed: 2.0
           steering_gain: 0.4
           fov_deg: 270
           normalized: true

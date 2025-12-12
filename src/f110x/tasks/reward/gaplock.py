@@ -63,6 +63,11 @@ GAPLOCK_PARAM_KEYS = (
     "success_border_lane_center",
     "success_border_requires_pressure",
     "success_requires_pressure",
+    "target_offsets",
+    "target_offset_radius",
+    "target_offset_falloff",
+    "target_offset_marker_radius",
+    "target_offset_marker_segments",
 )
 
 
@@ -124,6 +129,12 @@ class GaplockRewardStrategy(RewardStrategy):
         success_border_lane_center: float = 0.0,
         success_border_requires_pressure: bool = False,
         success_requires_pressure: bool = True,
+        target_offsets: Optional[Iterable[Any]] = None,
+        target_offset_radius: float = 0.0,
+        target_offset_falloff: float = 0.0,
+        target_offset_marker_radius: float = 0.0,
+        target_offset_marker_segments: int = 16,
+        reward_ring_state_callback: Optional[Callable[[str, Optional[List[bool]]], None]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -194,6 +205,14 @@ class GaplockRewardStrategy(RewardStrategy):
         self.success_border_lane_center = float(success_border_lane_center)
         self.success_border_requires_pressure = bool(success_border_requires_pressure)
         self.success_requires_pressure = bool(success_requires_pressure)
+        offsets, offsets_raw = self._prepare_target_offsets(target_offsets)
+        self._target_offsets = offsets
+        self._target_offsets_config = offsets_raw
+        self.target_offset_radius = max(float(target_offset_radius), 0.0)
+        self.target_offset_falloff = max(float(target_offset_falloff), 0.0)
+        self.target_offset_marker_radius = max(float(target_offset_marker_radius), 0.0)
+        self.target_offset_marker_segments = max(int(target_offset_marker_segments), 4)
+        self._reward_ring_state_callback = reward_ring_state_callback
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -204,6 +223,65 @@ class GaplockRewardStrategy(RewardStrategy):
         except (TypeError, ValueError):
             return None
         return val if val > 0.0 else None
+
+    @staticmethod
+    def _prepare_target_offsets(cfg: Optional[Iterable[Any]]) -> Tuple[List[np.ndarray], List[Tuple[float, float]]]:
+        if cfg is None:
+            return [], []
+        offsets: List[np.ndarray] = []
+        raw_pairs: List[Tuple[float, float]] = []
+        for entry in cfg:
+            if entry is None:
+                continue
+            if isinstance(entry, dict):
+                forward = entry.get("forward", entry.get("x", 0.0))
+                left = entry.get("left", entry.get("y", 0.0))
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                forward, left = entry[0], entry[1]
+            else:
+                continue
+            try:
+                fx = float(forward)
+                fy = float(left)
+            except (TypeError, ValueError):
+                continue
+            offsets.append(np.array([fx, fy], dtype=np.float32))
+            raw_pairs.append((fx, fy))
+        return offsets, raw_pairs
+
+    def _anchor_points(self, target_pose: Optional[np.ndarray]) -> List[np.ndarray]:
+        if target_pose is None or target_pose.size < 3:
+            return []
+        if not self._target_offsets:
+            return [np.asarray(target_pose[:2], dtype=np.float32)]
+        heading = float(target_pose[2])
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        rot = np.array([[cos_h, -sin_h], [sin_h, cos_h]], dtype=np.float32)
+        origin = np.asarray(target_pose[:2], dtype=np.float32)
+        anchors = []
+        for offset in self._target_offsets:
+            anchors.append(origin + rot @ offset)
+        return anchors
+
+    def _closest_anchor(
+        self,
+        ego_pose: Optional[np.ndarray],
+        target_pose: Optional[np.ndarray],
+    ) -> Tuple[Optional[np.ndarray], Optional[float], Optional[np.ndarray], List[np.ndarray], List[float]]:
+        anchors = self._anchor_points(target_pose)
+        if not anchors:
+            return None, None, None, [], []
+        if ego_pose is None or ego_pose.size < 2:
+            anchor = anchors[0]
+            return anchor, None, None, anchors, []
+        ego_xy = np.asarray(ego_pose[:2], dtype=np.float32)
+        dists = [float(np.linalg.norm(anchor - ego_xy)) for anchor in anchors]
+        best_idx = int(np.argmin(dists))
+        anchor = anchors[best_idx]
+        distance = dists[best_idx]
+        rel_vec = anchor - ego_xy
+        return anchor, distance, rel_vec, anchors, dists
 
     def reset(self, episode_index: int) -> None:
         self._success_awarded.clear()
@@ -398,10 +476,15 @@ class GaplockRewardStrategy(RewardStrategy):
         pressure_recent = False
         distance: Optional[float] = None
         alignment: Optional[float] = None
+        anchor_point: Optional[np.ndarray] = None
         if target_obs is not None:
             overlay_target_id = explicit_target_id or str(target_obs.get("agent_id", "target"))
+            ego_pose_arr = self._extract_pose(ego_obs)
+            target_pose_arr = self._extract_pose(target_obs)
+            anchor_point, distance, rel_vec, anchors_all, anchors_dists = self._closest_anchor(ego_pose_arr, target_pose_arr)
+
             if overlay_target_id:
-                if self._detect_pressure(ego_obs, target_obs):
+                if self._detect_pressure(ego_obs, target_obs, anchor_point=anchor_point):
                     self._store_pressure(
                         step.agent_id,
                         overlay_target_id,
@@ -416,13 +499,11 @@ class GaplockRewardStrategy(RewardStrategy):
                     step.timestep,
                 )
 
-            ego_pose_arr = self._extract_pose(ego_obs)
-            target_pose_arr = self._extract_pose(target_obs)
-            if ego_pose_arr is not None and target_pose_arr is not None:
-                rel_vec = target_pose_arr[:2] - ego_pose_arr[:2]
-                dist_val = float(np.linalg.norm(rel_vec))
-                if np.isfinite(dist_val):
-                    distance = dist_val
+            if ego_pose_arr is not None and target_pose_arr is not None and anchor_point is not None:
+                if rel_vec is None:
+                    rel_vec = np.asarray(anchor_point, dtype=np.float32) - np.asarray(ego_pose_arr[:2], dtype=np.float32)
+                    distance = float(np.linalg.norm(rel_vec))
+                if distance is not None and np.isfinite(distance):
                     if distance > 1e-6:
                         rel_unit = rel_vec / distance
                         ego_heading = float(ego_pose_arr[2])
@@ -457,6 +538,15 @@ class GaplockRewardStrategy(RewardStrategy):
                     if alignment is not None and self.heading_reward_coef:
                         heading_value = self.heading_reward_coef * alignment * time_scale
                         acc.add("heading_reward", min(max(heading_value, -0.3), 0.3))
+                # marker state for renderer: active if within sweet spot of each offset
+                if anchors_all and anchors_dists:
+                    radius_th = self.target_offset_radius + self.target_offset_falloff
+                    active_flags = [bool(dist <= max(radius_th, 1e-6)) for dist in anchors_dists]
+                    if self._reward_ring_state_callback is not None:
+                        try:
+                            self._reward_ring_state_callback(step.agent_id, active_flags)
+                        except Exception:
+                            pass
 
             if pressure_recent:
                 streak_value = self._pressure_streak.get(step.agent_id, 0) + 1
@@ -554,7 +644,7 @@ class GaplockRewardStrategy(RewardStrategy):
             self._idle_penalty_applied.add(step.agent_id)
 
         if self.relative_reward_cfg and target_obs is not None:
-            self._apply_relative_reward(acc, ego_obs, target_obs)
+            self._apply_relative_reward(acc, ego_obs, target_obs, anchor_point=anchor_point)
 
         self._notify_reward_ring(step.agent_id, overlay_target_id)
 
@@ -666,6 +756,7 @@ class GaplockRewardStrategy(RewardStrategy):
         acc: RewardAccumulator,
         ego_obs: Dict[str, Any],
         target_obs: Dict[str, Any],
+        anchor_point: Optional[np.ndarray] = None,
     ) -> None:
         cfg = self.relative_reward_cfg
         if not cfg:
@@ -678,7 +769,8 @@ class GaplockRewardStrategy(RewardStrategy):
         target_pose = np.asarray(target_pose, dtype=np.float32)
         if ego_pose.size < 3 or target_pose.size < 2:
             return
-        relative_vector = target_pose[:2] - ego_pose[:2]
+        target_xy = anchor_point if anchor_point is not None else target_pose[:2]
+        relative_vector = np.asarray(target_xy, dtype=np.float32) - ego_pose[:2]
         ego_heading = float(ego_pose[2])
         apply_relative_sector_reward(
             acc,
@@ -709,7 +801,13 @@ class GaplockRewardStrategy(RewardStrategy):
     def _wrap_angle(value: float) -> float:
         return float(math.atan2(math.sin(value), math.cos(value)))
 
-    def _detect_pressure(self, ego_obs: Dict[str, Any], target_obs: Dict[str, Any]) -> bool:
+    def _detect_pressure(
+        self,
+        ego_obs: Dict[str, Any],
+        target_obs: Dict[str, Any],
+        *,
+        anchor_point: Optional[np.ndarray] = None,
+    ) -> bool:
         if self.pressure_distance <= 0.0:
             return False
 
@@ -718,7 +816,8 @@ class GaplockRewardStrategy(RewardStrategy):
         if ego_pose is None or target_pose is None:
             return False
 
-        displacement = target_pose[:2] - ego_pose[:2]
+        anchor_xy = anchor_point if anchor_point is not None else target_pose[:2]
+        displacement = np.asarray(anchor_xy, dtype=np.float32) - ego_pose[:2]
         distance = float(np.linalg.norm(displacement))
         if not np.isfinite(distance) or distance > self.pressure_distance:
             return False
@@ -884,21 +983,31 @@ def _build_gaplock_strategy(
             params["reward_ring_focus_agent"] = focus_agent
     if "reward_ring_callback" not in params and hasattr(context.env, "update_reward_ring_target"):
         params["reward_ring_callback"] = context.env.update_reward_ring_target
+    if "reward_ring_state_callback" not in params and hasattr(context.env, "update_reward_ring_markers"):
+        params["reward_ring_state_callback"] = context.env.update_reward_ring_markers
 
     strategy = GaplockRewardStrategy(**params)
 
     if hasattr(context.env, "configure_reward_ring"):
-        if strategy.relative_reward_cfg:
-            overlay_cfg = strategy.relative_reward_cfg
+        overlay_cfg = strategy.relative_reward_cfg
+        offsets_cfg = getattr(strategy, "_target_offsets_config", [])
+        if overlay_cfg or offsets_cfg:
             payload: Dict[str, Any] = {
-                "preferred_radius": overlay_cfg.get("preferred_radius", 0.0),
-                "inner_tolerance": overlay_cfg.get("inner_tolerance", 0.0),
-                "outer_tolerance": overlay_cfg.get("outer_tolerance", 0.0),
+                "preferred_radius": overlay_cfg.get("preferred_radius", 0.0) if overlay_cfg else 0.0,
+                "inner_tolerance": overlay_cfg.get("inner_tolerance", 0.0) if overlay_cfg else 0.0,
+                "outer_tolerance": overlay_cfg.get("outer_tolerance", 0.0) if overlay_cfg else 0.0,
                 "segments": 96,
             }
-            payload["falloff"] = overlay_cfg.get("falloff", "linear")
-            if "weights" in overlay_cfg:
-                payload["weights"] = overlay_cfg.get("weights")
+            if overlay_cfg:
+                payload["falloff"] = overlay_cfg.get("falloff", "linear")
+                if "weights" in overlay_cfg:
+                    payload["weights"] = overlay_cfg.get("weights")
+            if offsets_cfg:
+                payload["offsets"] = offsets_cfg
+                payload["marker_radius"] = getattr(strategy, "target_offset_marker_radius", 0.0)
+                payload["marker_segments"] = getattr(strategy, "target_offset_marker_segments", 12)
+                # Only hide the ring when no radial overlay is configured
+                payload["offsets_only"] = not bool(overlay_cfg)
             focus_agent = getattr(strategy, "_reward_ring_focus_agent", None)
             context.env.configure_reward_ring(payload, agent_id=focus_agent)
         else:
