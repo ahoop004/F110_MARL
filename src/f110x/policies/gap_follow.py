@@ -32,6 +32,15 @@ class FollowTheGapPolicy:
         "u_shape_enabled": False,
         "u_shape_threshold": 0.5,
         "u_shape_crawl_speed": 0.3,
+        "gap_min_range": 0.65,
+        "target_mode": "farthest",          # "midgap" or "farthest"
+        "use_disparity_extender": True,
+        "disparity_threshold": 0.35,        # meters
+        "vehicle_width": 0.225,             # meters (match your env vehicle_params.width)
+        "safety_margin": 0.08,              # meters
+        "no_cutback_enabled": True,
+        "cutback_clearance": 0.9,           # meters
+        "cutback_hold_steps": 8, 
     }
 
     def __init__(self,
@@ -47,6 +56,15 @@ class FollowTheGapPolicy:
                  steer_smooth=0.4,   # heavier smoothing slows steering corrections
                  mode="lidar",
                  center_bias_gain=0.0,
+                 gap_min_range: float = 0.65,
+                target_mode: str = "farthest",
+                use_disparity_extender: bool = True,
+                disparity_threshold: float = 0.35,
+                vehicle_width: float = 0.225,
+                safety_margin: float = 0.08,
+                no_cutback_enabled: bool = True,
+                cutback_clearance: float = 0.9,
+                cutback_hold_steps: int = 8,
                 steering_speed_scale: float = 1.0,
                 inside_bias_gain: float = 0.0,
                 crawl_steer_ratio: float = 0.6,
@@ -91,6 +109,20 @@ class FollowTheGapPolicy:
         self.u_shape_enabled = bool(u_shape_enabled)
         self.u_shape_threshold = float(np.clip(u_shape_threshold, 0.1, 1.0))
         self.u_shape_crawl_speed = float(np.clip(u_shape_crawl_speed, 0.1, 1.0))
+        self.gap_min_range = float(gap_min_range)
+        self.target_mode = str(target_mode).strip().lower()
+        self.gap_min_range = float(gap_min_range)
+        self.target_mode = str(target_mode).strip().lower()
+        self.use_disparity_extender = bool(use_disparity_extender)
+        self.disparity_threshold = float(disparity_threshold)
+        self.vehicle_width = float(vehicle_width)
+        self.safety_margin = float(safety_margin)
+        self.no_cutback_enabled = bool(no_cutback_enabled)
+        self.cutback_clearance = float(cutback_clearance)
+        self.cutback_hold_steps = int(cutback_hold_steps)
+        self._cutback_ttl = 0
+        self._cutback_side = None
+        
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -203,7 +235,7 @@ class FollowTheGapPolicy:
 
     def _select_gap(self, proc: np.ndarray, raw_scan: np.ndarray) -> tuple:
         gaps, start = [], None
-        mask = proc > 2.5
+        mask = proc > float(self.gap_min_range)
         for i, v in enumerate(mask):
             if v and start is None:
                 start = i
@@ -253,14 +285,26 @@ class FollowTheGapPolicy:
     def best_point_midgap(self, gap):
         """Return the midpoint of the widest gap."""
         return (gap[0] + gap[1]) // 2
+    def best_point_farthest(self, gap, scan):
+        start, end = gap
+        seg = scan[start:end+1]
+        if seg.size == 0:
+            return (start + end) // 2
+        rel = int(np.argmax(seg))
+        return start + rel
 
     def get_action(self, action_space, obs: dict):
         return self._get_action_lidar(action_space, obs)
 
     def _get_action_lidar(self, action_space, obs: dict):
-        scan = np.array(obs["scans"])
+        scan = np.asarray(obs["scans"], dtype=np.float32)
         if self.normalized:
             scan = scan * self.max_distance
+
+        max_d = float(self.max_distance)
+        scan[~np.isfinite(scan)] = max_d
+        scan[scan == 0.0] = max_d   # important for “invalid as 0.0”
+        scan = np.clip(scan, 0.0, max_d)
 
         N = len(scan)
         center_idx = N // 2
@@ -271,7 +315,10 @@ class FollowTheGapPolicy:
         proc = self.preprocess_lidar(scan, min_scan=min_scan)
         proc = self.create_bubble(proc, min_scan=min_scan)
         gap = self._select_gap(proc, scan)
-        best = self.best_point_midgap(gap)
+        if getattr(self, "target_mode", "midgap") == "farthest":
+            best = self.best_point_farthest(gap, scan)
+        else:
+            best = self.best_point_midgap(gap)
         offset = (best - center_idx) / center_idx
         steering = offset * self.steering_gain * self.max_steer
 

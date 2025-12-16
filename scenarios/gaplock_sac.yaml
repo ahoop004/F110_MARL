@@ -5,8 +5,8 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 1500
-    lidar_beams: 108
+    max_steps: 35000
+    lidar_beams: 720
     terminate_on_any_done: true
     vehicle_params:
       v_max: 1.0
@@ -16,36 +16,36 @@ scenario:
     spawn_points:
       - spawn_2
       - spawn_1
-    spawn_point_sets:
-      - id: offset_lane_a
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_3
-          - spawn_1
-      - id: offset_lane_b
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_2
-          - spawn_1
-      - id: extended_gap
-        metadata:
-          spawn_option_id: spawn_random
-        names:
-          - spawn_4
-          - spawn_1
-    spawn_curriculum:
-      min_episode: 0
-      activation_samples: 40
-      success_window: 8
-      enable_rate: 0.7
-      enable_patience: 4
-      disable_rate: 0.3
-      disable_patience: 2
-      cooldown: 20
-      persist: true
-      start_enabled: true
+    # spawn_point_sets:
+    #   - id: offset_lane_a
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_3
+    #       - spawn_1
+    #   - id: offset_lane_b
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_2
+    #       - spawn_1
+    #   - id: extended_gap
+    #     metadata:
+    #       spawn_option_id: spawn_random
+    #     names:
+    #       - spawn_4
+    #       - spawn_1
+    # spawn_curriculum:
+    #   min_episode: 120
+    #   activation_samples: 40
+    #   success_window: 8
+    #   enable_rate: 0.7
+    #   enable_patience: 4
+    #   disable_rate: 0.3
+    #   disable_patience: 2
+    #   cooldown: 20
+    #   persist: true
+    #   start_enabled: true
 
   main:
     mode: train
@@ -63,7 +63,7 @@ scenario:
     save_eval_rollouts: false
     eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/sac_gaplock/sac_gaplock.pt
-    warm_start_checkpoint: warm_starts/sac_best_eager-sweep-5.pt
+    # warm_start_checkpoint: outputs/checkpoints/sac_best_gaplock_sac-r01-f357d6f9.pt
     wandb:
       enabled: true
       project: marl-f110
@@ -135,13 +135,13 @@ scenario:
       wrappers:
         - factory: obs
           params:
-            max_scan: 30.0
+            max_scan: 12.0
             components:
               - id: lidar
                 type: lidar
                 params:
-                  beams: 108
-                  max_range: 30.0
+                  beams: 720
+                  max_range: 12.0
                   normalize: true
                   clip: 1.0
               - id: ego_pose
@@ -180,18 +180,22 @@ scenario:
       algorithm:
         name: follow_gap
         params:
-          max_distance: 30.0
-          window_size: 2
-          bubble_radius: 1
-          max_steer: 0.35
-          min_speed: 0.2
-          max_speed: 1.0
-          steering_gain: 0.4
-          fov_deg: 270
-          normalized: true
-          steer_smooth: 0.35
-          center_bias_gain: 0.09
-          inside_bias_gain: 0.2
+          max_distance: 12.0
+          window_size: 5
+          bubble_radius: 70
+          max_steer: 1.0
+          min_speed: 0.1
+          max_speed: 0.6
+          steering_gain: 20.0
+          fov_deg: 240
+          # target_mode: farthest
+          use_disparity_extender: true
+          safety_margin: 0.08
+          cutback_clearance: 0.9
+          cutback_hold_steps: 8
+          # gap_min_range: 0.65
+          steer_smooth: 0.1
+          center_bias_gain: 0.00
           crawl_steer_ratio: 0.35
           steering_speed_scale: 1.0
           preview_horizon: 1.5
@@ -205,70 +209,3 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
-      policy_curriculum:
-        success_window: 40
-        activation_samples: 30
-        cooldown: 25
-        persist: true
-        stages:
-          - name: tier0_dumb_defender
-            params:
-              max_speed: 1.0
-              min_speed: 0.35
-              steering_gain: 0.25
-              steer_smooth: 0.5
-              crawl_steer_ratio: 0.55
-              center_bias_gain: 0.0
-              inside_bias_gain: 0.0
-              preview_horizon: 0.0
-              preview_samples: 0
-              dwa_samples: 0
-              enhanced_gap_scoring: false
-              u_shape_enabled: false
-          - name: tier1_preview_defender
-            enable_rate: 0.3
-            enable_patience: 3
-            params:
-              max_speed: 1.0
-              min_speed: 0.3
-              steering_gain: 0.32
-              steer_smooth: 0.42
-              crawl_steer_ratio: 0.45
-              center_bias_gain: 0.05
-              inside_bias_gain: 0.1
-              preview_horizon: 0.8
-              preview_samples: 5
-              dwa_samples: 0
-              enhanced_gap_scoring: true
-              dwa_horizon: 0.5
-              dwa_heading_weight: 0.2
-              u_shape_enabled: false
-          - name: tier2_top_defender
-            enable_rate: 0.55
-            enable_patience: 4
-            params:
-              max_distance: 30.0
-              window_size: 2
-              bubble_radius: 1
-              max_steer: 0.35
-              min_speed: 0.2
-              max_speed: 1.0
-              steering_gain: 0.4
-              fov_deg: 270
-              normalized: true
-              steer_smooth: 0.35
-              center_bias_gain: 0.09
-              inside_bias_gain: 0.2
-              crawl_steer_ratio: 0.35
-              steering_speed_scale: 1.0
-              preview_horizon: 1.5
-              preview_samples: 7
-              dwa_samples: 5
-              dwa_horizon: 0.5
-              dwa_heading_weight: 0.15
-              enhanced_gap_scoring: true
-              gap_score_width_weight: 1.0
-              gap_score_clearance_weight: 1.2
-              gap_score_center_weight: 0.5
-              gap_score_curvature_weight: 0.2
-              u_shape_enabled: false
