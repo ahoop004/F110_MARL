@@ -78,6 +78,45 @@ def build_reward_wrapper(
 
     wrapper_cfg = dict(reward_cfg)
 
+    ignore_non_trainable = wrapper_cfg.get("ignore_non_trainable")
+    if ignore_non_trainable is None:
+        ignore_non_trainable = True
+
+    if ignore_non_trainable and roster is not None:
+        assignments = getattr(roster, "assignments", None)
+        ignore_ids: List[str] = []
+        if isinstance(assignments, list):
+            for assn in assignments:
+                agent_id = getattr(assn, "agent_id", None)
+                spec = getattr(assn, "spec", None)
+                trainable = getattr(spec, "trainable", None) if spec is not None else None
+                if trainable is False and agent_id is not None:
+                    ignore_ids.append(str(agent_id))
+
+        existing = wrapper_cfg.get("ignore_agents", wrapper_cfg.get("ignored_agents"))
+        if existing is None:
+            existing_items: Iterable[Any] = ()
+        elif isinstance(existing, (list, tuple, set)):
+            existing_items = existing
+        else:
+            existing_items = (existing,)
+        merged: List[str] = []
+        seen: set[str] = set()
+        for raw in existing_items:
+            text = str(raw).strip()
+            if text and text not in seen:
+                merged.append(text)
+                seen.add(text)
+        for text in ignore_ids:
+            text = str(text).strip()
+            if text and text not in seen:
+                merged.append(text)
+                seen.add(text)
+
+        if merged:
+            wrapper_cfg["ignore_agents"] = merged
+            wrapper_cfg["ignored_agents"] = merged
+
     default_task = wrapper_cfg.get("task") or wrapper_cfg.get("mode") or "gaplock"
     default_sequence = [(0, str(default_task))]
 

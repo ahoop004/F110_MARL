@@ -641,10 +641,14 @@ class WandbSink(LogSink):
         self._train_step_max: float = 0.0
         self._phase_counters: Dict[str, int] = {}
         self._phase_stride: float = 1e-3
+        self._started: bool = False
 
     def start(self, context: Mapping[str, Any]) -> None:  # noqa: D401 - context unused
         # wandb run already initialised upstream; nothing extra required.
         _ = context
+        if self._started:
+            return
+        self._started = True
         self._train_step_max = 0.0
         self._phase_counters.clear()
         if self._run is not None:
@@ -679,11 +683,25 @@ class WandbSink(LogSink):
             else:
                 payload[key] = value
         if phase in {"train", "eval"}:
-            keep_keys = {
-                "train": {"train/return", "train/return_mean", "train/episode"},
-                "eval": {"eval/return", "eval/return_mean", "eval/episode"},
-            }[phase]
-            payload = {key: value for key, value in payload.items() if key in keep_keys}
+            base_keys = {
+                f"{phase}/return",
+                f"{phase}/return_mean",
+                f"{phase}/episode",
+            }
+            prefixes = (
+                f"{phase}/finish_line_hit/",
+                f"{phase}/finish_line_hit_rate/",
+            )
+            payload = {
+                key: value
+                for key, value in payload.items()
+                if (
+                    key in base_keys
+                    or key == f"{phase}/finish_line_any"
+                    or key.startswith(prefixes)
+                    or (key.startswith(f"{phase}/") and key.endswith("_finish_rate"))
+                )
+            }
         if not payload:
             return
 

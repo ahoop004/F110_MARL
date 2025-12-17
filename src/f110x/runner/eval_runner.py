@@ -161,6 +161,7 @@ class EvalRunner:
         eval_window = max(1, min(total_episodes, 10))
         recent_returns: Deque[float] = deque(maxlen=eval_window)
         recent_success: Deque[float] = deque(maxlen=eval_window)
+        finish_line_hit_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         reward_cfg = self.context.reward_cfg
@@ -245,6 +246,8 @@ class EvalRunner:
             }
 
             lap_counts = self._extract_lap_counts(env, agent_ids)
+            for agent_id in agent_ids:
+                finish_line_hit_counts[agent_id] += int(bool(finish_line_hits.get(agent_id, False)))
 
             defender_crashed: Optional[bool] = None
             defender_crash_step: Optional[int] = None
@@ -405,10 +408,9 @@ class EvalRunner:
             for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
                     metrics[f"eval/reward/{aid}/{name}"] = float(value)
-            if finish_line_hits:
-                metrics["eval/finish_line_any"] = float(any(finish_line_hits.values()))
-                for aid, hit in finish_line_hits.items():
-                    metrics[f"eval/finish_line_hit/{aid}"] = 1.0 if hit else 0.0
+            metrics["eval/finish_line_any"] = float(any(finish_line_hits.values())) if finish_line_hits else 0.0
+            for agent_id in agent_ids:
+                metrics[f"eval/finish_line_hit/{agent_id}"] = 1.0 if finish_line_hits.get(agent_id, False) else 0.0
 
             logger.log_metrics("eval", metrics, step=ep_index + 1)
             publish_metrics = getattr(env, "update_render_metrics", None)
@@ -419,6 +421,22 @@ class EvalRunner:
                     pass
 
             results.append(record)
+
+        summary_metrics: Dict[str, Any] = {
+            "eval/episode": float(total_episodes),
+            "eval/episodes_total": float(total_episodes),
+        }
+        for agent_id in agent_ids:
+            rate = float(finish_line_hit_counts.get(agent_id, 0)) / max(float(total_episodes), 1.0)
+            summary_metrics[f"eval/finish_line_hit_rate/{agent_id}"] = rate
+            summary_metrics[f"eval/{agent_id}_finish_rate"] = rate
+        logger.log_metrics("eval", summary_metrics, step=total_episodes)
+        publish_metrics = getattr(env, "update_render_metrics", None)
+        if callable(publish_metrics):
+            try:
+                publish_metrics("eval", summary_metrics, step=total_episodes)
+            except Exception:
+                pass
 
         return results
 

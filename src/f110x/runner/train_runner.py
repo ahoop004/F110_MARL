@@ -1156,6 +1156,16 @@ class TrainRunner:
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
             finish_line_hits = dict(rollout.finish_line_hits or {})
+            lap_counts: Dict[str, float] = {}
+            lap_array = getattr(env, "lap_counts", None)
+            id_to_index = getattr(env, "_agent_id_to_index", {})
+            if lap_array is not None and isinstance(id_to_index, dict):
+                for aid in agent_ids:
+                    idx = id_to_index.get(aid)
+                    if idx is None:
+                        continue
+                    if 0 <= idx < len(lap_array):
+                        lap_counts[aid] = float(lap_array[idx])
 
             if truncation_penalty:
                 for agent_id, truncated in rollout.truncations.items():
@@ -1197,13 +1207,32 @@ class TrainRunner:
                 attacker_step = rollout.collision_steps.get(attacker_id, -1)
                 attacker_crashed = attacker_step >= 0
 
-            success: Optional[bool] = None
+            target_finished: Optional[bool] = None
+            if defender_id is not None:
+                try:
+                    target_laps = int(getattr(env, "target_laps", 1) or 1)
+                except (TypeError, ValueError):
+                    target_laps = 1
+                target_finished = bool(finish_line_hits.get(defender_id, False)) or (
+                    target_laps > 0 and float(lap_counts.get(defender_id, 0.0)) >= float(target_laps)
+                )
+
+            attacker_win: Optional[bool] = None
             if defender_crashed is not None and attacker_crashed is not None:
-                success = defender_crashed and not attacker_crashed
+                attacker_win = bool(defender_crashed and not attacker_crashed)
             elif defender_crashed is not None:
-                success = defender_crashed
-            elif attacker_crashed is not None:
-                success = not attacker_crashed
+                attacker_win = bool(defender_crashed)
+
+            target_win: Optional[bool] = None
+            if defender_crashed is not None and attacker_crashed is not None:
+                if defender_crashed and attacker_crashed:
+                    target_win = False
+                else:
+                    target_win = bool((not defender_crashed) and (bool(target_finished) or attacker_crashed))
+            elif defender_crashed is not None:
+                target_win = bool((not defender_crashed) and bool(target_finished))
+
+            success: Optional[bool] = attacker_win
 
             attacker_components = reward_breakdown.get(attacker_id, {}) if attacker_id is not None else {}
             assisted_success: Optional[bool] = None
@@ -1231,12 +1260,8 @@ class TrainRunner:
                     success = True
                     assisted_success = True
 
-            if success is None:
-                finish_agent = defender_id or primary_id or (agent_ids[0] if agent_ids else None)
-                if finish_agent and finish_line_hits.get(finish_agent):
-                    success = True
-                    assisted_success = False
-                    episode_record_finish_agent = finish_agent
+            if episode_record_finish_agent is None and defender_id and finish_line_hits.get(defender_id):
+                episode_record_finish_agent = defender_id
 
             cause_code = resolve_episode_cause_code(
                 success=bool(success),
@@ -1268,10 +1293,14 @@ class TrainRunner:
                 "returns": returns,
                 "reward_breakdown": reward_breakdown,
                 "success": success,
+                "attacker_win": attacker_win,
+                "target_win": target_win,
+                "target_finished": target_finished,
                 "assisted_success": assisted_success,
                 "collisions_total": collisions_total,
                 "idle_truncated": rollout.idle_triggered,
                 "finish_line_hits": finish_line_hits,
+                "lap_counts": dict(lap_counts),
             }
             if episode_record_finish_agent:
                 episode_record["finish_line_agent"] = episode_record_finish_agent
@@ -1360,6 +1389,12 @@ class TrainRunner:
                 metrics["train/attacker_crashed"] = bool(attacker_crashed)
             if defender_crashed is not None:
                 metrics["train/defender_crashed"] = bool(defender_crashed)
+            if attacker_win is not None:
+                metrics["train/attacker_win"] = bool(attacker_win)
+            if target_win is not None:
+                metrics["train/target_win"] = bool(target_win)
+            if target_finished is not None:
+                metrics["train/target_finished"] = bool(target_finished)
             if defender_survival_steps is not None:
                 metrics["train/defender_survival_steps"] = float(defender_survival_steps)
             attacker_metrics_id = attacker_id or primary_id

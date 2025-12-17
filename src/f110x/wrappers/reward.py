@@ -23,6 +23,9 @@ class RewardWrapper:
     ) -> None:
         self.context = context
         self.raw_config = dict(config)
+        self._ignore_agents = self._normalize_ignore_agents(
+            config.get("ignore_agents", config.get("ignored_agents"))
+        )
         self.ego_collision_penalty = float(config.get("ego_collision_penalty", 0.0))
 
         strategy, migrated, notes = resolve_reward_task(context, config=config)
@@ -35,6 +38,24 @@ class RewardWrapper:
         self._episode_index = 0
         self._last_components: Dict[str, Dict[str, float]] = {}
         self._step_counter = 0
+
+    @staticmethod
+    def _normalize_ignore_agents(value: Any) -> set[str]:
+        if value is None:
+            return set()
+        if isinstance(value, (str, int, float)):
+            text = str(value).strip()
+            return {text} if text else set()
+        if isinstance(value, (list, tuple, set)):
+            result: set[str] = set()
+            for entry in value:
+                if entry is None:
+                    continue
+                text = str(entry).strip()
+                if text:
+                    result.add(text)
+            return result
+        return set()
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -60,6 +81,12 @@ class RewardWrapper:
         step_index: Optional[int] = None,
         events: Optional[Dict[str, Any]] = None,
     ) -> float:
+        if self._ignore_agents and agent_id in self._ignore_agents:
+            # Ignore shaped rewards entirely for opted-out agents (keep env reward).
+            total = float(reward)
+            self._last_components[agent_id] = {"env_reward": total, "total": total}
+            return total
+
         agent_obs = obs.get(agent_id)
         if agent_obs is None:
             return float(reward)
