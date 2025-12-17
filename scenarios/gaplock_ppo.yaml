@@ -73,6 +73,7 @@ scenario:
   agents:
     car_0:
       trainable: true
+      role: attacker
       algorithm:
         name: ppo
         params:
@@ -115,10 +116,14 @@ scenario:
           include_truncation: true
       reward:
         task: gaplock
+        ignore_non_trainable: true
         idle_speed_threshold: 0
         idle_patience_steps: 0
         features:
           - gaplock_offense
+          - gaplock_pinch_pocket
+          - gaplock_force_clearance
+          - gaplock_force_turn
         params:
           target_crash_reward: 100.0
           self_collision_penalty: -50.0
@@ -165,6 +170,8 @@ scenario:
             preferred_radius: 0.3
             inner_tolerance: 0.0
             outer_tolerance: 0.5
+          lidar_filter_range_max: 30.0
+          target_neighborhood_r_max: 6.0
       wrappers:
         - factory: obs
           params:
@@ -210,6 +217,7 @@ scenario:
 
     car_1:
       trainable: false
+      role: defender
       algorithm:
         name: follow_gap
         params:

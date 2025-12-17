@@ -68,6 +68,31 @@ GAPLOCK_PARAM_KEYS = (
     "target_offset_falloff",
     "target_offset_marker_radius",
     "target_offset_marker_segments",
+    # Pinch pocket / forcing reward terms
+    "pocket_reward_weight",
+    "pinch_anchor_dx",
+    "pinch_anchor_dy",
+    "pinch_sigma",
+    "pinch_in_front_x_min",
+    "pinch_pressure_distance",
+    "pinch_pressure_heading_tol_deg",
+    "pinch_pressure_recent_seconds",
+    "lidar_filter_range_min",
+    "lidar_filter_range_max",
+    "target_neighborhood_r_min",
+    "target_neighborhood_r_max",
+    "target_neighborhood_x_band",
+    "target_side_y_epsilon",
+    "force_reward_weight",
+    "force_reward_enable_ema",
+    "force_reward_ema_alpha",
+    "force_reward_band_min",
+    "force_reward_band_max",
+    "force_reward_clip",
+    "force_reward_time_scaled",
+    "turn_reward_weight",
+    "turn_reward_clip",
+    "turn_reward_time_scaled",
 )
 
 
@@ -134,6 +159,31 @@ class GaplockRewardStrategy(RewardStrategy):
         target_offset_falloff: float = 0.0,
         target_offset_marker_radius: float = 0.0,
         target_offset_marker_segments: int = 16,
+        # Pinch pocket / forcing rewards (defaults are "off" via weight=0.0)
+        pocket_reward_weight: float = 0.0,
+        pinch_anchor_dx: float = 1.2,
+        pinch_anchor_dy: float = 0.7,
+        pinch_sigma: float = 0.5,
+        pinch_in_front_x_min: float = 0.4,
+        pinch_pressure_distance: float = 1.5,
+        pinch_pressure_heading_tol_deg: float = 30.0,
+        pinch_pressure_recent_seconds: float = 1.5,
+        lidar_filter_range_min: float = 0.3,
+        lidar_filter_range_max: Optional[float] = None,
+        target_neighborhood_r_min: float = 0.3,
+        target_neighborhood_r_max: float = 6.0,
+        target_neighborhood_x_band: float = 2.0,
+        target_side_y_epsilon: float = 0.05,
+        force_reward_weight: float = 0.0,
+        force_reward_enable_ema: bool = True,
+        force_reward_ema_alpha: float = 0.4,
+        force_reward_band_min: float = 0.4,
+        force_reward_band_max: float = 3.0,
+        force_reward_clip: float = 0.2,
+        force_reward_time_scaled: bool = True,
+        turn_reward_weight: float = 0.0,
+        turn_reward_clip: float = 0.2,
+        turn_reward_time_scaled: bool = True,
         reward_ring_state_callback: Optional[Callable[[str, Optional[List[bool]]], None]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
@@ -213,6 +263,46 @@ class GaplockRewardStrategy(RewardStrategy):
         self.target_offset_marker_radius = max(float(target_offset_marker_radius), 0.0)
         self.target_offset_marker_segments = max(int(target_offset_marker_segments), 4)
         self._reward_ring_state_callback = reward_ring_state_callback
+
+        # ------------------------------------------------------------------
+        # Pinch pocket / forcing reward configuration
+        # ------------------------------------------------------------------
+        self.pocket_reward_weight = float(pocket_reward_weight)
+        self.pinch_anchor_dx = float(pinch_anchor_dx)
+        self.pinch_anchor_dy = abs(float(pinch_anchor_dy))
+        self.pinch_sigma = max(float(pinch_sigma), 1e-6)
+        self.pinch_in_front_x_min = float(pinch_in_front_x_min)
+        self.pinch_pressure_distance = max(float(pinch_pressure_distance), 0.0)
+        self.pinch_pressure_heading_tol_deg = max(float(pinch_pressure_heading_tol_deg), 0.0)
+        self.pinch_pressure_recent_seconds = max(float(pinch_pressure_recent_seconds), 0.0)
+
+        self.lidar_filter_range_min = max(float(lidar_filter_range_min), 0.0)
+        self.lidar_filter_range_max = None if lidar_filter_range_max in (None, "") else float(lidar_filter_range_max)
+        self.target_neighborhood_r_min = max(float(target_neighborhood_r_min), 0.0)
+        self.target_neighborhood_r_max = max(float(target_neighborhood_r_max), 0.0)
+        self.target_neighborhood_x_band = max(float(target_neighborhood_x_band), 0.0)
+        self.target_side_y_epsilon = max(float(target_side_y_epsilon), 0.0)
+
+        self.force_reward_weight = float(force_reward_weight)
+        self.force_reward_enable_ema = bool(force_reward_enable_ema)
+        self.force_reward_ema_alpha = float(np.clip(force_reward_ema_alpha, 0.0, 1.0))
+        self.force_reward_band_min = max(float(force_reward_band_min), 0.0)
+        self.force_reward_band_max = max(float(force_reward_band_max), 0.0)
+        self.force_reward_clip = max(float(force_reward_clip), 0.0)
+        self.force_reward_time_scaled = bool(force_reward_time_scaled)
+
+        self.turn_reward_weight = float(turn_reward_weight)
+        self.turn_reward_clip = max(float(turn_reward_clip), 0.0)
+        self.turn_reward_time_scaled = bool(turn_reward_time_scaled)
+
+        # Runtime state for pinch/forcing rewards.
+        self._pinch_pressure_log: Dict[str, Dict[str, Tuple[float, int]]] = {}
+        self._pinch_prev_d_opp: Dict[Tuple[str, str], float] = {}
+        self._pinch_d_opp_ema: Dict[Tuple[str, str], float] = {}
+        self._pinch_prev_theta: Dict[Tuple[str, str], float] = {}
+
+        # Cache for vectorised scan angle trigonometry keyed by (beam_count, fov_radians).
+        self._lidar_trig_cache: Dict[Tuple[int, float], Tuple[np.ndarray, np.ndarray, float, float]] = {}
 
     @staticmethod
     def _coerce_positive_float(value: Optional[Any]) -> Optional[float]:
@@ -295,6 +385,10 @@ class GaplockRewardStrategy(RewardStrategy):
         self._last_speed.clear()
         self._commit_active.clear()
         self._commit_awarded.clear()
+        self._pinch_pressure_log.clear()
+        self._pinch_prev_d_opp.clear()
+        self._pinch_d_opp_ema.clear()
+        self._pinch_prev_theta.clear()
 
     def _select_target_obs(
         self,
@@ -422,6 +516,7 @@ class GaplockRewardStrategy(RewardStrategy):
         target_obs, explicit_target_id = self._select_target_obs(step)
         ego_crashed = bool(ego_obs.get("collision", False))
         overlay_target_id: Optional[str] = None
+        pinch_diag: Dict[str, float] = {}
 
         timestep = float(step.timestep) if isinstance(step.timestep, (int, float)) else 0.0
         time_scale = timestep if timestep > 0.0 else 0.1
@@ -631,6 +726,234 @@ class GaplockRewardStrategy(RewardStrategy):
                 step.events.setdefault("border_success", True)
                 step.events.setdefault("terminated", True)
 
+            # ------------------------------------------------------------------
+            # Pinch pocket + obstacle clearance forcing rewards (attacker-centric)
+            # Uses only:
+            # - attacker pose (x,y,theta)
+            # - target pose (x,y,theta)
+            # - attacker LiDAR ranges (ego_obs["scans"])
+            # LiDAR angle geometry is derived from the simulator's fixed FOV (default 4.7 rad)
+            # and the beam count.
+            # ------------------------------------------------------------------
+            if overlay_target_id and ego_pose_arr is not None and target_pose_arr is not None:
+                reward_enabled = (
+                    abs(self.pocket_reward_weight) > 0.0
+                    or abs(self.force_reward_weight) > 0.0
+                    or abs(self.turn_reward_weight) > 0.0
+                )
+                if reward_enabled:
+                    x_att = float(ego_pose_arr[0])
+                    y_att = float(ego_pose_arr[1])
+                    th_att = float(ego_pose_arr[2])
+                    x_tgt = float(target_pose_arr[0])
+                    y_tgt = float(target_pose_arr[1])
+                    th_tgt = float(target_pose_arr[2])
+
+                    dx = x_att - x_tgt
+                    dy = y_att - y_tgt
+                    cos_t = math.cos(th_tgt)
+                    sin_t = math.sin(th_tgt)
+                    x_rel = cos_t * dx + sin_t * dy
+                    y_rel = -sin_t * dx + cos_t * dy
+                    attacker_left = y_rel > 0.0
+
+                    pinch_diag["pinch/x_rel"] = float(x_rel)
+                    pinch_diag["pinch/y_rel"] = float(y_rel)
+                    pinch_diag["pinch/attacker_left"] = 1.0 if attacker_left else 0.0
+
+                    # Pocket anchors in target frame and dense acquisition reward.
+                    ax = self.pinch_anchor_dx
+                    ay = self.pinch_anchor_dy
+                    d_fl = math.hypot(x_rel - ax, y_rel - ay)
+                    d_fr = math.hypot(x_rel - ax, y_rel + ay)
+                    d_min = d_fl if d_fl <= d_fr else d_fr
+                    chosen_left = d_fl <= d_fr
+
+                    pinch_diag["pinch/d_fl"] = float(d_fl)
+                    pinch_diag["pinch/d_fr"] = float(d_fr)
+                    pinch_diag["pinch/d_min"] = float(d_min)
+                    pinch_diag["pinch/pocket_left"] = 1.0 if chosen_left else 0.0
+
+                    if self.pocket_reward_weight and self.pinch_sigma > 0.0:
+                        base = math.exp(-(d_min * d_min) / (2.0 * self.pinch_sigma * self.pinch_sigma))
+                        pocket_reward = float(self.pocket_reward_weight) * float(base)
+                        if x_rel < self.pinch_in_front_x_min:
+                            pocket_reward = 0.0
+                        if abs(pocket_reward) > 1e-9:
+                            acc.add("pinch_pocket", pocket_reward)
+
+                    # Pressure gate + recent pressure tracking.
+                    pinch_pressure_now = False
+                    if self.pinch_pressure_distance > 0.0 and d_min <= self.pinch_pressure_distance:
+                        if x_rel > self.pinch_in_front_x_min:
+                            pinch_pressure_now = True
+                            tol_deg = self.pinch_pressure_heading_tol_deg
+                            if tol_deg > 0.0:
+                                tol_rad = math.radians(tol_deg)
+                                delta_th = abs(self._wrap_angle(th_att - th_tgt))
+                                pinch_diag["pinch/dtheta_abs"] = float(delta_th)
+                                if delta_th > tol_rad:
+                                    pinch_pressure_now = False
+
+                    if pinch_pressure_now:
+                        self._store_pinch_pressure(
+                            step.agent_id,
+                            overlay_target_id,
+                            step.current_time,
+                            step.step_index,
+                        )
+
+                    pinch_pressure_recent = self._has_recent_pinch_pressure(
+                        step.agent_id,
+                        overlay_target_id,
+                        step.current_time,
+                        step.step_index,
+                        step.timestep,
+                    )
+
+                    pinch_diag["pinch/pressure_now"] = 1.0 if pinch_pressure_now else 0.0
+                    pinch_diag["pinch/pressure_recent"] = 1.0 if pinch_pressure_recent else 0.0
+
+                    # Build a "wall proxy" around the target from attacker LiDAR points.
+                    D_L = float("inf")
+                    D_R = float("inf")
+                    D_opp = float("inf")
+                    D_used = float("inf")
+                    delta_D = 0.0
+
+                    ranges_raw = ego_obs.get("scans")
+                    if ranges_raw is None:
+                        ranges_raw = ego_obs.get("lidar")
+                    if ranges_raw is not None:
+                        try:
+                            ranges = np.asarray(ranges_raw, dtype=np.float32).reshape(-1)
+                        except Exception:
+                            ranges = None
+                    else:
+                        ranges = None
+
+                    if ranges is not None and ranges.size >= 3 and self.target_neighborhood_r_max > 0.0:
+                        beam_count = int(ranges.size)
+                        fov = self._resolve_lidar_fov()
+                        cos_a, sin_a, angle_min, angle_inc = self._resolve_lidar_trig(beam_count, fov)
+                        range_max = self._resolve_lidar_range_max()
+                        if self.lidar_filter_range_max is not None:
+                            range_max = float(self.lidar_filter_range_max)
+
+                        valid = np.isfinite(ranges)
+                        if self.lidar_filter_range_min > 0.0:
+                            valid &= ranges > float(self.lidar_filter_range_min)
+                        if range_max > 0.0:
+                            valid &= ranges < float(range_max)
+
+                        if np.any(valid):
+                            r = ranges[valid]
+                            x_l = r * cos_a[valid]
+                            y_l = r * sin_a[valid]
+
+                            cos_att = math.cos(th_att)
+                            sin_att = math.sin(th_att)
+                            x_w = x_att + cos_att * x_l - sin_att * y_l
+                            y_w = y_att + sin_att * x_l + cos_att * y_l
+
+                            vx = x_w - x_tgt
+                            vy = y_w - y_tgt
+                            x_t = cos_t * vx + sin_t * vy
+                            y_t = -sin_t * vx + cos_t * vy
+                            dist = np.sqrt(x_t * x_t + y_t * y_t)
+
+                            neigh = np.isfinite(dist)
+                            if self.target_neighborhood_r_min > 0.0:
+                                neigh &= dist > float(self.target_neighborhood_r_min)
+                            neigh &= dist < float(self.target_neighborhood_r_max)
+                            if self.target_neighborhood_x_band > 0.0:
+                                neigh &= np.abs(x_t) < float(self.target_neighborhood_x_band)
+
+                            if np.any(neigh):
+                                dist_n = dist[neigh]
+                                y_n = y_t[neigh]
+                                eps = float(self.target_side_y_epsilon)
+                                left_mask = y_n > eps
+                                right_mask = y_n < -eps
+                                if np.any(left_mask):
+                                    D_L = float(np.min(dist_n[left_mask]))
+                                if np.any(right_mask):
+                                    D_R = float(np.min(dist_n[right_mask]))
+
+                    if not np.isfinite(D_L):
+                        D_L = float("inf")
+                    if not np.isfinite(D_R):
+                        D_R = float("inf")
+
+                    D_opp = D_R if attacker_left else D_L
+                    if not np.isfinite(D_opp):
+                        D_opp = float(self.target_neighborhood_r_max) if self.target_neighborhood_r_max > 0.0 else float("inf")
+
+                    fallback_clearance = float(self.target_neighborhood_r_max) if self.target_neighborhood_r_max > 0.0 else 10.0
+                    pinch_diag["pinch/D_L"] = float(D_L if np.isfinite(D_L) else fallback_clearance)
+                    pinch_diag["pinch/D_R"] = float(D_R if np.isfinite(D_R) else fallback_clearance)
+                    pinch_diag["pinch/D_opp"] = float(D_opp if np.isfinite(D_opp) else fallback_clearance)
+
+                    pair_key = (step.agent_id, overlay_target_id)
+                    D_used = D_opp
+                    if self.force_reward_enable_ema and np.isfinite(D_opp):
+                        prev_ema = self._pinch_d_opp_ema.get(pair_key)
+                        if prev_ema is None or not np.isfinite(prev_ema):
+                            ema = float(D_opp)
+                        else:
+                            alpha = self.force_reward_ema_alpha
+                            ema = float(alpha * D_opp + (1.0 - alpha) * prev_ema)
+                        self._pinch_d_opp_ema[pair_key] = ema
+                        D_used = ema
+
+                    pinch_diag["pinch/D_used"] = float(D_used if np.isfinite(D_used) else fallback_clearance)
+
+                    prev_used = self._pinch_prev_d_opp.get(pair_key)
+                    if prev_used is not None and np.isfinite(prev_used) and np.isfinite(D_used):
+                        delta_D = float(prev_used - D_used)
+                    else:
+                        delta_D = 0.0
+                    pinch_diag["pinch/delta_D_used"] = float(delta_D)
+
+                    if (
+                        pinch_pressure_recent
+                        and self.force_reward_weight
+                        and np.isfinite(D_used)
+                        and self.force_reward_band_max > 0.0
+                        and (self.force_reward_band_min <= D_used <= self.force_reward_band_max)
+                        and delta_D > 0.0
+                    ):
+                        reward_value = float(self.force_reward_weight) * float(delta_D)
+                        if self.force_reward_time_scaled:
+                            reward_value *= time_scale
+                        if self.force_reward_clip > 0.0:
+                            reward_value = float(np.clip(reward_value, -self.force_reward_clip, self.force_reward_clip))
+                        if reward_value > 0.0:
+                            acc.add("force_clearance", reward_value)
+
+                    if np.isfinite(D_used):
+                        self._pinch_prev_d_opp[pair_key] = float(D_used)
+
+                    # Optional target yaw-rate shaping (derived from consecutive target headings).
+                    if pinch_pressure_recent and self.turn_reward_weight and timestep > 0.0:
+                        prev_theta = self._pinch_prev_theta.get(pair_key)
+                        if prev_theta is not None and np.isfinite(prev_theta):
+                            dtheta = self._wrap_angle(th_tgt - float(prev_theta))
+                            yaw_rate = float(dtheta / max(float(timestep), 1e-6))
+                            desired = (-1.0 if attacker_left else 1.0)
+                            turn_value = float(self.turn_reward_weight) * max(0.0, desired * yaw_rate)
+                            if self.turn_reward_time_scaled:
+                                turn_value *= time_scale
+                            if self.turn_reward_clip > 0.0:
+                                turn_value = float(np.clip(turn_value, -self.turn_reward_clip, self.turn_reward_clip))
+                            if turn_value > 0.0:
+                                acc.add("force_turn", turn_value)
+                            pinch_diag["pinch/yaw_rate"] = float(yaw_rate)
+                            pinch_diag["pinch/turn_sign_ok"] = 1.0 if (desired * yaw_rate) > 0.0 else 0.0
+                        self._pinch_prev_theta[pair_key] = float(th_tgt)
+                    elif self.turn_reward_weight:
+                        self._pinch_prev_theta[pair_key] = float(th_tgt)
+
         truncated = bool(step.events.get("truncated")) if step.events else False
         if not truncated and isinstance(step.info, dict):
             truncated = bool(step.info.get("truncated", False))
@@ -649,7 +972,71 @@ class GaplockRewardStrategy(RewardStrategy):
         self._notify_reward_ring(step.agent_id, overlay_target_id)
 
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
+        if pinch_diag:
+            for key, value in pinch_diag.items():
+                components[key] = float(value)
         return total, components
+
+    # ------------------------------------------------------------------
+    # Pinch pressure helpers
+    # ------------------------------------------------------------------
+    def _store_pinch_pressure(self, agent_id: str, target_id: str, current_time: float, step_index: int) -> None:
+        entries = self._pinch_pressure_log.setdefault(agent_id, {})
+        entries[target_id] = (float(current_time), int(step_index))
+
+    def _has_recent_pinch_pressure(
+        self,
+        agent_id: str,
+        target_id: str,
+        current_time: float,
+        step_index: int,
+        timestep: float,
+    ) -> bool:
+        if self.pinch_pressure_recent_seconds <= 0.0:
+            return False
+        entries = self._pinch_pressure_log.get(agent_id)
+        if not entries:
+            return False
+        record = entries.get(target_id)
+        if record is None:
+            return False
+
+        last_time, last_step = record
+        if np.isfinite(current_time) and np.isfinite(last_time):
+            delta = float(current_time) - float(last_time)
+            return (delta >= 0.0) and (delta <= self.pinch_pressure_recent_seconds)
+
+        if timestep <= 0.0:
+            return False
+        delta_steps = max(int(step_index) - int(last_step), 0)
+        delta_time = float(delta_steps) * float(timestep)
+        return delta_time <= self.pinch_pressure_recent_seconds
+
+    def _resolve_lidar_fov(self) -> float:
+        # Matches RaceCar default fov in src/f110x/physics/vehicle.py.
+        return 4.7
+
+    def _resolve_lidar_range_max(self) -> float:
+        return 30.0
+
+    def _resolve_lidar_trig(self, beam_count: int, fov: float) -> Tuple[np.ndarray, np.ndarray, float, float]:
+        key = (int(beam_count), float(fov))
+        cached = self._lidar_trig_cache.get(key)
+        if cached is not None:
+            cos_a, sin_a, angle_min, angle_inc = cached
+            return cos_a, sin_a, angle_min, angle_inc
+
+        beams = max(int(beam_count), 1)
+        if beams <= 1:
+            angle_inc = 0.0
+        else:
+            angle_inc = float(fov) / float(beams - 1)
+        angle_min = -float(fov) * 0.5
+        angles = angle_min + angle_inc * np.arange(beams, dtype=np.float32)
+        cos_a = np.cos(angles).astype(np.float32, copy=False)
+        sin_a = np.sin(angles).astype(np.float32, copy=False)
+        self._lidar_trig_cache[key] = (cos_a, sin_a, float(angle_min), float(angle_inc))
+        return cos_a, sin_a, float(angle_min), float(angle_inc)
 
     def _prepare_distance_gradient(self, cfg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not cfg:

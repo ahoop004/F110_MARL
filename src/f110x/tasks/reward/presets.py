@@ -37,6 +37,35 @@ REWARD_FEATURE_PRESETS: Dict[str, Dict[str, Any]] = {
         "self_collision_penalty": -5.0,
         "truncation_penalty": -1.0,
     },
+    "gaplock_pinch_pocket": {
+        "pocket_reward_weight": 0.3,
+        "pinch_anchor_dx": 1.2,
+        "pinch_anchor_dy": 0.7,
+        "pinch_sigma": 0.5,
+        "pinch_in_front_x_min": 0.4,
+        "pinch_pressure_distance": 1.5,
+        "pinch_pressure_heading_tol_deg": 30.0,
+        "pinch_pressure_recent_seconds": 1.5,
+    },
+    "gaplock_force_clearance": {
+        "force_reward_weight": 1.0,
+        "force_reward_enable_ema": True,
+        "force_reward_ema_alpha": 0.4,
+        "force_reward_band_min": 0.4,
+        "force_reward_band_max": 3.0,
+        "force_reward_clip": 0.2,
+        "force_reward_time_scaled": True,
+        "lidar_filter_range_min": 0.3,
+        "target_neighborhood_r_min": 0.3,
+        "target_neighborhood_r_max": 6.0,
+        "target_neighborhood_x_band": 2.0,
+        "target_side_y_epsilon": 0.05,
+    },
+    "gaplock_force_turn": {
+        "turn_reward_weight": 0.2,
+        "turn_reward_clip": 0.2,
+        "turn_reward_time_scaled": True,
+    },
 }
 
 

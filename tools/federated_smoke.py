@@ -17,7 +17,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scenario",
         type=Path,
-        default=Path("scenarios/convoy_lock_td3.yaml"),
+        default=Path("scenarios/gaplock_td3.yaml"),
         help="Scenario manifest to execute",
     )
     parser.add_argument("--repeat", type=int, default=2, help="Number of coordinated clients")
