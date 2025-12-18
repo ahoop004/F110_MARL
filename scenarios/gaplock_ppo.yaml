@@ -53,21 +53,21 @@ scenario:
           critic_lr: 0.0003
           gamma: 0.99
           lam: 0.95
-          clip_eps: 0.2
+          clip_eps: 0.15
           update_epochs: 5
-          batch_size: 16384
-          minibatch_size: 1024
+          batch_size: 4096
+          minibatch_size: 256
           max_grad_norm: 0.5
-          ent_coef: 0.01
+          ent_coef: 0.00
           normalize_adv: true
           gae_lambda: 0.95
           sequence_batch_size: 1
           hidden_dims:
             - 512
             - 256
-            - 128
+            # - 128
           observation_normalization: running
-          target_kl: 0.02
+          target_kl: 0.015
           entropy_schedule:
             type: linear
             start: 0.02

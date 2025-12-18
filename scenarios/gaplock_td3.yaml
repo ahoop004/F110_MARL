@@ -49,34 +49,40 @@ scenario:
         name: td3
         params:
           device: cuda
-          actor_lr: 0.004
-          critic_lr: 0.005
+          actor_lr: 0.0003
+          critic_lr: 0.0003
           actor_optimizer: adamw
           actor_weight_decay: 0.0001
+          
           actor_lr_scheduler:
             type: cosine
             t_max: 200000
             eta_min: 0.00002
+
           critic_lr_scheduler:
             type: step
             step_size: 150000
             gamma: 0.5
+
           gamma: 0.99
-          tau: 0.01
+          tau: 0.005
           policy_noise: 0.2
           noise_clip: 0.5
           policy_delay: 2
+
           batch_size: 256
-          buffer_size: 100000
-          warmup_steps: 5000
-          updates_per_step: 2
+          buffer_size: 1000000
+          warmup_steps: 10000
+
+          updates_per_step: 1
           include_truncation: true
+
           use_per: true
           per_alpha: 0.6
           per_beta_start: 0.4
           # per_beta: 0.5
           per_beta_final: 1.0
-          per_beta_increment: 0.00075
+          per_beta_increment: 0.000001
           per_min_priority: 0.00001
           per_epsilon: 0.00001
           exploration_noise: 0.2

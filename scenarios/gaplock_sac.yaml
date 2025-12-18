@@ -56,9 +56,11 @@ scenario:
           alpha_lr: 0.0003
           gamma: 0.99
           tau: 0.005
+
           batch_size: 256
           buffer_size: 1000000
           warmup_steps: 10000
+          
           auto_alpha: true
           target_entropy: -2.0
           hidden_dims:

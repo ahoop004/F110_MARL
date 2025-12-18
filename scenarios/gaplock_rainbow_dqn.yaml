@@ -49,10 +49,13 @@ scenario:
         name: r_dqn
         params:
           device: cuda
-          lr: 0.0005
+          lr: 0.0001
           gamma: 0.99
-          batch_size: 128
-          buffer_size: 200000
+
+          batch_size: 256
+          buffer_size: 1000000
+          warmup_steps: 10000
+
           target_update_interval: 750
           prioritized_replay: true
           per_alpha: 0.6
@@ -64,16 +67,16 @@ scenario:
           epsilon_start: 1.0
           epsilon_end: 0.05
           epsilon_decay: 300000
-          noisy_std: 0.4
+          noisy_std: 0.1
           hidden_dims:
             - 512
             - 256
-            - 128
+            # - 128
           n_atoms: 51
-          v_min: -50.0
-          v_max: 50.0
+          v_min: -500.0
+          v_max: 500.0
           action_mode: absolute
-          action_repeat: 2
+          action_repeat: 1
           action_set:
             - [-0.35, 0.90]
             - [-0.15, 0.80]
@@ -84,9 +87,9 @@ scenario:
             - [0.00, 0.30]
             - [0.20, 0.30]
             - [0.00, 0.00]
-            - [0.00, -0.50]
+            # - [0.00, -0.50]
           prevent_reverse: true
-          prevent_reverse_min_speed: 0.0
+          prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           include_truncation: true
       reward:
