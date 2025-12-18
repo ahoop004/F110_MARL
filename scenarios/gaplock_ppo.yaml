@@ -98,19 +98,25 @@ scenario:
         params:
           target_crash_reward: 120.0
           self_collision_penalty: -220.0
+
           truncation_penalty: -80.0
           step_reward: -0.002
           idle_speed_threshold: 0.2
           idle_penalty_steps: 40
           idle_penalty: -0.001
           idle_truncation_penalty: -5.0
+
           pressure_distance: 1.6
           pressure_timeout: 1.5
           pressure_min_speed: 0.25
-          pressure_bonus: 0.0
-          success_requires_pressure: true
+          pressure_bonus: 0.1
+          success_requires_pressure: false
+
           distance_reward_far_distance: 4.0
           distance_penalty_far: 0.01
+          lidar_filter_range_max: 12.0
+          target_neighborhood_r_max: 6.0
+
           # LiDAR wall-proxy bounds for reward computation
           lidar_filter_range_min: 0.35
           lidar_filter_range_max: 12.0
@@ -118,6 +124,7 @@ scenario:
           target_neighborhood_r_max: 6.0
           target_neighborhood_x_band: 2.2
           target_side_y_epsilon: 0.08
+
           # Pinch pocket geometry (new)
           pinch_anchor_dx: 1.3
           pinch_anchor_dy: 0.8
@@ -126,6 +133,7 @@ scenario:
           pinch_pressure_distance: 1.6
           pinch_pressure_heading_tol_deg: 35
           pinch_pressure_recent_seconds: 1.5
+
           # Forcing via opposite-side clearance shrink (new)
           force_reward_weight: 1.2
           force_reward_time_scaled: true
@@ -134,6 +142,7 @@ scenario:
           force_reward_band_max: 3.2
           force_reward_enable_ema: true
           force_reward_ema_alpha: 0.45
+
           # Target yaw-rate hint (new, optional but helpful early)
           turn_reward_weight: 0.20
           turn_reward_time_scaled: true
