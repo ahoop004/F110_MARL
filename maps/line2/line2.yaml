@@ -7,6 +7,13 @@ origin:
 occupied_thresh: 0.65
 free_thresh: 0.196
 negate: 0
+finish_line:
+    start:
+    - 45.7685
+    - 0.6567
+    end:
+    - 45.7144
+    - -2.0465
 annotations:
   finish_line:
     start:

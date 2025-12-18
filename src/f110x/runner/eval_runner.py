@@ -482,9 +482,7 @@ class EvalRunner:
 
         explicit_raw = self.context.cfg.main.checkpoint
         if explicit_raw:
-            candidate = Path(explicit_raw).expanduser()
-            if not candidate.is_absolute():
-                candidate = resolve_output_file(explicit_raw, output_root)
+            candidate = self._resolve_checkpoint_reference(explicit_raw, output_root)
             self.explicit_checkpoint_path = candidate
             self.context.cfg.main.schema.checkpoint = str(candidate)
         else:
@@ -502,6 +500,22 @@ class EvalRunner:
         if bundle is not None:
             bundle_cfg["checkpoint_name"] = checkpoint_name
             bundle.metadata["config"] = bundle_cfg
+
+    @staticmethod
+    def _resolve_checkpoint_reference(raw: str, output_root: Path) -> Path:
+        candidate = Path(raw).expanduser()
+        if candidate.is_absolute():
+            return candidate
+
+        output_candidate = (output_root / candidate).expanduser()
+        if output_candidate.exists():
+            return output_candidate
+
+        cwd_candidate = (Path.cwd() / candidate).expanduser()
+        if cwd_candidate.exists():
+            return candidate
+
+        return output_candidate
 
     def _resolve_pressure_distance(self) -> float:
         reward_params = self.context.reward_cfg.get("params")
@@ -531,10 +545,8 @@ class EvalRunner:
 
     def _resolve_checkpoint_path(self, override: Optional[Path | str]) -> Optional[Path]:
         if override is not None:
-            candidate = Path(override).expanduser() if not isinstance(override, Path) else override.expanduser()
-            if not candidate.is_absolute():
-                candidate = resolve_output_file(str(candidate), self.context.output_root)
-            return candidate
+            raw_path = str(override) if not isinstance(override, Path) else str(override)
+            return self._resolve_checkpoint_reference(raw_path, self.context.output_root)
         if self.explicit_checkpoint_path is not None:
             return self.explicit_checkpoint_path
         return self.default_checkpoint_path
