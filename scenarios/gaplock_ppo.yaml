@@ -78,7 +78,7 @@ scenario:
             start: 0.0003
             end: 0.00005
             steps: 600000
-          initial_speed: 1.9
+          initial_speed: 3.0
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
           prevent_reverse: true

@@ -89,7 +89,7 @@ scenario:
           exploration_noise_final: 0.05
           # exploration_noise_decay_steps: 3000000
           exploration_noise_decay_episodes: 600
-          initial_speed: 1.9
+          initial_speed: 3.0
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
           prevent_reverse: true
