@@ -26,14 +26,10 @@ from f110x.wrappers.action import (
 )
 from f110x.wrappers.common import to_numpy
 from f110x.policies.gap_follow import FollowTheGapPolicy
-from f110x.policies.blocker import BlockingPolicy
-from f110x.policies.ftg_centerline import FollowTheGapCenterlinePolicy
-from f110x.policies.secondary_vicon import SecondaryViconPolicy
+
 from f110x.policies.ppo.ppo import PPOAgent
 from f110x.policies.ppo.rec_ppo import RecurrentPPOAgent
-from f110x.policies.random_policy import random_policy
-from f110x.policies.simple_heuristic import simple_heuristic
-from f110x.policies.centerline_pursuit import CenterlinePursuitPolicy
+
 from f110x.policies.td3.td3 import TD3Agent
 from f110x.policies.sac.sac import SACAgent
 from f110x.policies.dqn.dqn import DQNAgent
