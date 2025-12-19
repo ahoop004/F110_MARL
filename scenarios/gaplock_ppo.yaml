@@ -78,7 +78,7 @@ scenario:
             start: 0.0003
             end: 0.00005
             steps: 600000
-          initial_speed: 3.0
+          initial_speed: 2.0
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
           prevent_reverse: true
@@ -201,7 +201,7 @@ scenario:
           bubble_radius: 70
           max_steer: 1.0
           min_speed: 0.1
-          max_speed: 3.0
+          max_speed: 2.0
           steering_gain: 20.0
           fov_deg: 240
           # target_mode: farthest
