@@ -202,146 +202,167 @@ if _HAS_RICH:
             self._phase_state = {"train": {}, "eval": {}}
             self._events.clear()
 
-        def log_metrics(
-            self,
-            phase: str,
-            metrics: Mapping[str, Any],
-            *,
-            step: Optional[float] = None,
-        ) -> None:
-            tracked = self._phase_state.get(phase)
-            if tracked is None:
-                return
+            def log_metrics(
+                self,
+                phase: str,
+                metrics: Mapping[str, Any],
+                *,
+                step: Optional[float] = None,
+            ) -> None:
+                tracked = self._phase_state.get(phase)
+                if tracked is None:
+                    return
 
-            episode = _format_int(metrics.get(f"{phase}/episode", step))
-            total = _format_int(metrics.get(f"{phase}/episodes_total"))
-            steps = _format_int(metrics.get(f"{phase}/steps"))
-            collisions = _format_int(metrics.get(f"{phase}/collisions"))
-            collision_rate = _format_number(metrics.get(f"{phase}/collision_rate"))
-            mode = metrics.get(f"{phase}/reward_task") or metrics.get(f"{phase}/reward_mode")
-            cause = metrics.get(f"{phase}/cause")
-            success = _format_bool(metrics.get(f"{phase}/success"))
-            success_rate = _format_number(metrics.get(f"{phase}/success_rate"))
-            success_total = _format_number(metrics.get(f"{phase}/success_total"))
-            idle = _format_bool(metrics.get(f"{phase}/idle"))
-            epsilon = (
-                _format_number(metrics.get("train/epsilon"))
-                if phase == "train"
-                else _format_number(metrics.get(f"{phase}/epsilon"))
-            )
-            primary_agent = metrics.get(f"{phase}/primary_agent")
-            primary_return = _format_number(metrics.get(f"{phase}/return"))
-            return_mean = _format_number(metrics.get(f"{phase}/return_mean"))
-            return_window = _format_int(metrics.get(f"{phase}/return_window"))
-            return_best = _format_number(metrics.get(f"{phase}/return_best"))
-            buffer_fraction = _format_number(metrics.get(f"{phase}/buffer_fraction"))
-            defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
-            attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
-            spawn_enabled_raw = metrics.get(f"{phase}/random_spawn_enabled")
-            spawn_stage = metrics.get(f"{phase}/spawn_stage")
-            spawn_success_rate = _format_number(metrics.get(f"{phase}/spawn_success_rate"))
-            spawn_stage_success_rate = _format_number(metrics.get(f"{phase}/spawn_stage_success_rate"))
-            spawn_structured_success_rate = _format_number(metrics.get(f"{phase}/spawn_structured_success_rate"))
-            spawn_random_success_rate = _format_number(metrics.get(f"{phase}/spawn_random_success_rate"))
-            defender_stage = metrics.get(f"{phase}/defender_stage")
-            defender_success_rate = _format_number(metrics.get(f"{phase}/defender_success_rate"))
-            defender_stage_success_rate = _format_number(metrics.get(f"{phase}/defender_stage_success_rate"))
-            defender_stage_index = _format_number(metrics.get(f"{phase}/defender_stage_index"))
+                episode = _format_int(metrics.get(f"{phase}/episode", step))
+                total = _format_int(metrics.get(f"{phase}/episodes_total"))
+                steps = _format_int(metrics.get(f"{phase}/steps"))
+                collisions = _format_int(metrics.get(f"{phase}/collisions"))
+                collision_rate = _format_number(metrics.get(f"{phase}/collision_rate"))
+                mode = metrics.get(f"{phase}/reward_task") or metrics.get(f"{phase}/reward_mode")
+                cause = metrics.get(f"{phase}/cause") or metrics.get(f"{phase}/episode_cause")
+                success = _format_bool(metrics.get(f"{phase}/success"))
+                success_rate = _format_number(metrics.get(f"{phase}/success_rate"))
+                success_rate_total = _format_number(metrics.get(f"{phase}/success_rate_total"))
+                success_total = _format_number(metrics.get(f"{phase}/success_total"))
+                time_to_success = _format_number(metrics.get(f"{phase}/time_to_success"))
+                idle = _format_bool(metrics.get(f"{phase}/idle"))
+                epsilon = (
+                    _format_number(metrics.get("train/epsilon"))
+                    if phase == "train"
+                    else _format_number(metrics.get(f"{phase}/epsilon"))
+                )
+                primary_agent = metrics.get(f"{phase}/primary_agent")
+                primary_return = _format_number(metrics.get(f"{phase}/return"))
+                return_mean = _format_number(metrics.get(f"{phase}/return_mean"))
+                return_window = _format_int(metrics.get(f"{phase}/return_window"))
+                return_best = _format_number(metrics.get(f"{phase}/return_best"))
+                buffer_fraction = _format_number(metrics.get(f"{phase}/buffer_fraction"))
+                defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
+                attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
+                attacker_win = _format_bool(metrics.get(f"{phase}/attacker_win"))
+                target_win = _format_bool(metrics.get(f"{phase}/target_win"))
+                target_finished = _format_bool(metrics.get(f"{phase}/target_finished"))
+                target_win_rate = _format_number(metrics.get(f"{phase}/target_win_rate"))
+                target_win_rate_total = _format_number(metrics.get(f"{phase}/target_win_rate_total"))
+                spawn_enabled_raw = metrics.get(f"{phase}/random_spawn_enabled")
+                spawn_stage = metrics.get(f"{phase}/spawn_stage")
+                spawn_success_rate = _format_number(metrics.get(f"{phase}/spawn_success_rate"))
+                spawn_stage_success_rate = _format_number(metrics.get(f"{phase}/spawn_stage_success_rate"))
+                spawn_structured_success_rate = _format_number(metrics.get(f"{phase}/spawn_structured_success_rate"))
+                spawn_random_success_rate = _format_number(metrics.get(f"{phase}/spawn_random_success_rate"))
+                defender_stage = metrics.get(f"{phase}/defender_stage")
+                defender_success_rate = _format_number(metrics.get(f"{phase}/defender_success_rate"))
+                defender_stage_success_rate = _format_number(metrics.get(f"{phase}/defender_stage_success_rate"))
+                defender_stage_index = _format_number(metrics.get(f"{phase}/defender_stage_index"))
 
-            if episode is not None:
-                tracked["episode"] = episode
-            if total is not None:
-                tracked["total"] = total
-            if steps is not None:
-                tracked["steps"] = steps
-            if collisions is not None:
-                tracked["collisions"] = collisions
-            if collision_rate is not None:
-                tracked["collision_rate"] = collision_rate
-            if mode is not None:
-                tracked["mode"] = mode
-            if cause is not None:
-                tracked["cause"] = cause
-            if success is not None:
-                tracked["success"] = success
-            if success_rate is not None:
-                tracked["success_rate"] = success_rate
-            if idle is not None:
-                tracked["idle"] = idle
-            if epsilon is not None:
-                tracked["epsilon"] = epsilon
-            if primary_agent is not None:
-                tracked["primary_agent"] = primary_agent
-            if primary_return is not None:
-                tracked["primary_return"] = primary_return
-            if return_mean is not None:
-                tracked["return_mean"] = return_mean
-            if return_window is not None:
-                tracked["return_window"] = return_window
-            if return_best is not None:
-                tracked["return_best"] = return_best
-            if buffer_fraction is not None:
-                tracked["buffer_fraction"] = buffer_fraction
-            if success_total is not None:
-                tracked["success_total"] = success_total
-            if defender_crash is not None:
-                tracked["defender_crash"] = defender_crash
-            if attacker_crash is not None:
-                tracked["attacker_crash"] = attacker_crash
-            if spawn_enabled_raw is not None:
-                tracked["spawn_enabled"] = bool(spawn_enabled_raw)
-            if spawn_stage is not None:
-                tracked["spawn_stage"] = str(spawn_stage)
-            if spawn_success_rate is not None:
-                tracked["spawn_success_rate"] = spawn_success_rate
-            if spawn_stage_success_rate is not None:
-                tracked["spawn_stage_success_rate"] = spawn_stage_success_rate
-            if spawn_structured_success_rate is not None:
-                tracked["spawn_structured_success_rate"] = spawn_structured_success_rate
-            if spawn_random_success_rate is not None:
-                tracked["spawn_random_success_rate"] = spawn_random_success_rate
-            if defender_stage is not None:
-                tracked["defender_stage"] = str(defender_stage)
-            if defender_success_rate is not None:
-                tracked["defender_success_rate"] = defender_success_rate
-            if defender_stage_success_rate is not None:
-                tracked["defender_stage_success_rate"] = defender_stage_success_rate
-            if defender_stage_index is not None:
-                tracked["defender_stage_index"] = defender_stage_index
+                if episode is not None:
+                    tracked["episode"] = episode
+                if total is not None:
+                    tracked["total"] = total
+                if steps is not None:
+                    tracked["steps"] = steps
+                if collisions is not None:
+                    tracked["collisions"] = collisions
+                if collision_rate is not None:
+                    tracked["collision_rate"] = collision_rate
+                if mode is not None:
+                    tracked["mode"] = mode
+                if cause is not None:
+                    tracked["cause"] = cause
+                if success is not None:
+                    tracked["success"] = success
+                if success_rate is not None:
+                    tracked["success_rate"] = success_rate
+                if success_rate_total is not None:
+                    tracked["success_rate_total"] = success_rate_total
+                if idle is not None:
+                    tracked["idle"] = idle
+                if epsilon is not None:
+                    tracked["epsilon"] = epsilon
+                if primary_agent is not None:
+                    tracked["primary_agent"] = primary_agent
+                if primary_return is not None:
+                    tracked["primary_return"] = primary_return
+                if return_mean is not None:
+                    tracked["return_mean"] = return_mean
+                if return_window is not None:
+                    tracked["return_window"] = return_window
+                if return_best is not None:
+                    tracked["return_best"] = return_best
+                if buffer_fraction is not None:
+                    tracked["buffer_fraction"] = buffer_fraction
+                if success_total is not None:
+                    tracked["success_total"] = success_total
+                if time_to_success is not None:
+                    tracked["time_to_success"] = time_to_success
+                if defender_crash is not None:
+                    tracked["defender_crash"] = defender_crash
+                if attacker_crash is not None:
+                    tracked["attacker_crash"] = attacker_crash
+                if attacker_win is not None:
+                    tracked["attacker_win"] = attacker_win
+                if target_win is not None:
+                    tracked["target_win"] = target_win
+                if target_finished is not None:
+                    tracked["target_finished"] = target_finished
+                if target_win_rate is not None:
+                    tracked["target_win_rate"] = target_win_rate
+                if target_win_rate_total is not None:
+                    tracked["target_win_rate_total"] = target_win_rate_total
+                if spawn_enabled_raw is not None:
+                    tracked["spawn_enabled"] = bool(spawn_enabled_raw)
+                if spawn_stage is not None:
+                    tracked["spawn_stage"] = str(spawn_stage)
+                if spawn_success_rate is not None:
+                    tracked["spawn_success_rate"] = spawn_success_rate
+                if spawn_stage_success_rate is not None:
+                    tracked["spawn_stage_success_rate"] = spawn_stage_success_rate
+                if spawn_structured_success_rate is not None:
+                    tracked["spawn_structured_success_rate"] = spawn_structured_success_rate
+                if spawn_random_success_rate is not None:
+                    tracked["spawn_random_success_rate"] = spawn_random_success_rate
+                if defender_stage is not None:
+                    tracked["defender_stage"] = str(defender_stage)
+                if defender_success_rate is not None:
+                    tracked["defender_success_rate"] = defender_success_rate
+                if defender_stage_success_rate is not None:
+                    tracked["defender_stage_success_rate"] = defender_stage_success_rate
+                if defender_stage_index is not None:
+                    tracked["defender_stage_index"] = defender_stage_index
 
-            agents = tracked.setdefault("agents", {})
-            for key, value in metrics.items():
-                agent_prefix = f"{phase}/agent/"
-                if key.startswith(agent_prefix):
-                    remainder = key[len(agent_prefix) :]
-                    agent_id, _, metric_name = remainder.partition("/")
-                    if not metric_name:
-                        continue
-                    entry = agents.setdefault(agent_id, {})
-                    formatted = _format_number(value)
-                    if metric_name == "return":
-                        entry["return"] = formatted
-                    elif metric_name == "collisions":
-                        entry["collisions"] = formatted
-                    elif metric_name == "avg_speed":
-                        entry["speed"] = formatted
-                    elif metric_name == "collision_step":
-                        entry["collision_step"] = formatted
-                    elif metric_name == "lap_count":
-                        entry["lap_count"] = formatted
+                agents = tracked.setdefault("agents", {})
+                for key, value in metrics.items():
+                    agent_prefix = f"{phase}/agent/"
+                    if key.startswith(agent_prefix):
+                        remainder = key[len(agent_prefix) :]
+                        agent_id, _, metric_name = remainder.partition("/")
+                        if not metric_name:
+                            continue
+                        entry = agents.setdefault(agent_id, {})
+                        formatted = _format_number(value)
+                        if metric_name == "return":
+                            entry["return"] = formatted
+                        elif metric_name == "collisions":
+                            entry["collisions"] = formatted
+                        elif metric_name == "avg_speed":
+                            entry["speed"] = formatted
+                        elif metric_name == "collision_step":
+                            entry["collision_step"] = formatted
+                        elif metric_name == "lap_count":
+                            entry["lap_count"] = formatted
 
-            finish_hits: Dict[str, bool] = {}
-            finish_prefix = f"{phase}/finish_line_hit/"
-            for key, value in metrics.items():
-                if key.startswith(finish_prefix):
-                    agent_id = key[len(finish_prefix) :]
-                    hit = _format_bool(value)
-                    if hit is not None:
-                        finish_hits[agent_id] = hit
-            if finish_hits:
-                tracked["finish_line_hits"] = finish_hits
+                finish_hits: Dict[str, bool] = {}
+                finish_prefix = f"{phase}/finish_line_hit/"
+                for key, value in metrics.items():
+                    if key.startswith(finish_prefix):
+                        agent_id = key[len(finish_prefix) :]
+                        hit = _format_bool(value)
+                        if hit is not None:
+                            finish_hits[agent_id] = hit
+                if finish_hits:
+                    tracked["finish_line_hits"] = finish_hits
 
-            self._refresh()
+                self._refresh()
 
         def log_event(
             self,
@@ -406,7 +427,8 @@ if _HAS_RICH:
                 metrics_line_parts.append(f"CollRate {collision_rate:.2f}")
             success_total = state.get("success_total")
             if success_total is not None:
-                metrics_line_parts.append(f"SuccessTot {int(success_total)}")
+                win_label = "AttWins" if state.get("attacker_win") is not None else "SuccessTot"
+                metrics_line_parts.append(f"{win_label} {int(success_total)}")
             if metrics_line_parts:
                 summary_lines.append("  ".join(metrics_line_parts))
             if buffer_fraction is not None:
@@ -419,14 +441,45 @@ if _HAS_RICH:
             if cause:
                 summary_lines.append(f"Cause: {cause}")
 
+            attacker_win = state.get("attacker_win")
+            target_win = state.get("target_win")
+            target_finished = state.get("target_finished")
+            time_to_success = state.get("time_to_success")
             success = state.get("success")
-            if success is not None:
+            if attacker_win is not None:
+                summary_lines.append(f"Attacker win: {'yes' if attacker_win else 'no'}")
+            elif success is not None:
                 summary_lines.append(f"Success: {'yes' if success else 'no'}")
+
+            if target_win is not None:
+                target_line = f"Target success: {'yes' if target_win else 'no'}"
+                if target_finished is not None:
+                    target_line += f" (finished {'yes' if target_finished else 'no'})"
+                summary_lines.append(target_line)
+            elif target_finished is not None:
+                summary_lines.append(f"Target finished: {'yes' if target_finished else 'no'}")
+
+            if time_to_success is not None:
+                summary_lines.append(f"Time to success: {time_to_success:.1f}s")
+
             success_rate = state.get("success_rate")
+            success_rate_total = state.get("success_rate_total")
+            rate_label = "Attacker win rate" if attacker_win is not None else "Success rate"
             if success_rate is not None:
-                summary_lines.append(f"Success rate: {success_rate * 100:.1f}%")
+                summary_lines.append(f"{rate_label}: {success_rate * 100:.1f}%")
+            if success_rate_total is not None:
+                summary_lines.append(f"{rate_label} total: {success_rate_total * 100:.1f}%")
+
+            target_win_rate = state.get("target_win_rate")
+            target_win_rate_total = state.get("target_win_rate_total")
+            if target_win_rate is not None:
+                summary_lines.append(f"Target success rate: {target_win_rate * 100:.1f}%")
+            if target_win_rate_total is not None:
+                summary_lines.append(f"Target success rate total: {target_win_rate_total * 100:.1f}%")
+
             if success_total is not None and success_total > 0:
-                summary_lines.append(f"Success total: {int(success_total)}")
+                total_label = "Attacker wins total" if attacker_win is not None else "Success total"
+                summary_lines.append(f"{total_label}: {int(success_total)}")
             finish_hits = state.get("finish_line_hits")
             if finish_hits:
                 labels = ", ".join(f"{aid}={'yes' if hit else 'no'}" for aid, hit in finish_hits.items())
