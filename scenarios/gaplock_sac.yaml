@@ -3,6 +3,10 @@ meta:
 
 scenario:
   env:
+    reward_overlay_enabled: true
+    reward_overlay_alpha: 0.25
+    reward_overlay_value_scale: 1.0
+    reward_overlay_segments: 48
     map: line2
     seed: 42
     max_steps: 5000

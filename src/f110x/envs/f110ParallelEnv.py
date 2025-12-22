@@ -180,20 +180,35 @@ class F110ParallelEnv(ParallelEnv):
         self._reward_ring_marker_dirty: bool = False
         self._reward_overlays: List[Dict[str, Any]] = []
         self._reward_overlay_dirty: bool = False
-        overlay_alpha = merged.get("reward_overlay_alpha", 0.25)
+        self._reward_overlay_enabled = False
+        self._reward_overlay_applied = False
+        overlay_cfg = merged.get("reward_overlay")
+        if isinstance(overlay_cfg, Mapping):
+            enabled_raw = overlay_cfg.get("enabled", merged.get("reward_overlay_enabled", False))
+            overlay_alpha = overlay_cfg.get("alpha", merged.get("reward_overlay_alpha", 0.25))
+            overlay_scale = overlay_cfg.get(
+                "value_scale",
+                overlay_cfg.get("scale", merged.get("reward_overlay_value_scale", 1.0)),
+            )
+            overlay_segments = overlay_cfg.get("segments", merged.get("reward_overlay_segments", 48))
+        else:
+            enabled_raw = merged.get("reward_overlay_enabled", False)
+            overlay_alpha = merged.get("reward_overlay_alpha", 0.25)
+            overlay_scale = merged.get("reward_overlay_value_scale", 1.0)
+            overlay_segments = merged.get("reward_overlay_segments", 48)
+
+        self._reward_overlay_enabled = self._coerce_bool_flag(enabled_raw, default=False)
         try:
             self._reward_overlay_alpha = float(overlay_alpha)
         except (TypeError, ValueError):
             self._reward_overlay_alpha = 0.25
         self._reward_overlay_alpha = float(min(max(self._reward_overlay_alpha, 0.0), 1.0))
-        overlay_scale = merged.get("reward_overlay_value_scale", 1.0)
         try:
             self._reward_overlay_value_scale = float(overlay_scale)
         except (TypeError, ValueError):
             self._reward_overlay_value_scale = 1.0
         if self._reward_overlay_value_scale <= 0.0 or not np.isfinite(self._reward_overlay_value_scale):
             self._reward_overlay_value_scale = 1.0
-        overlay_segments = merged.get("reward_overlay_segments", 48)
         try:
             self._reward_overlay_segments = int(overlay_segments)
         except (TypeError, ValueError):
@@ -848,11 +863,17 @@ class F110ParallelEnv(ParallelEnv):
         self,
         overlays: Optional[Sequence[Mapping[str, Any]]],
         *,
+        enabled: Optional[bool] = None,
         alpha: Optional[float] = None,
         value_scale: Optional[float] = None,
         segments: Optional[int] = None,
     ) -> None:
         """Update translucent circle overlays used to visualise reward regions."""
+        if enabled is not None:
+            enabled_val = self._coerce_bool_flag(enabled, default=self._reward_overlay_enabled)
+            if enabled_val != self._reward_overlay_enabled:
+                self._reward_overlay_enabled = enabled_val
+                self._reward_overlay_dirty = True
         if overlays is None:
             if self._reward_overlays:
                 self._reward_overlays = []
@@ -924,6 +945,7 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_ring_dirty = True
             self._reward_ring_target_dirty = True
             self._reward_overlay_dirty = True
+            self._reward_overlay_applied = False
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -1228,17 +1250,31 @@ class F110ParallelEnv(ParallelEnv):
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
-        if self.renderer is not None and (self._reward_overlay_dirty or self._reward_overlays):
-            try:
-                self.renderer.update_reward_overlays(
-                    self._reward_overlays,
-                    alpha=self._reward_overlay_alpha,
-                    value_scale=self._reward_overlay_value_scale,
-                    segments=self._reward_overlay_segments,
-                )
-            except Exception:
-                pass
-            self._reward_overlay_dirty = False
+        if self.renderer is not None:
+            if self._reward_overlay_enabled:
+                if self._reward_overlay_dirty or self._reward_overlays:
+                    try:
+                        self.renderer.update_reward_overlays(
+                            self._reward_overlays,
+                            alpha=self._reward_overlay_alpha,
+                            value_scale=self._reward_overlay_value_scale,
+                            segments=self._reward_overlay_segments,
+                        )
+                        self._reward_overlay_applied = bool(self._reward_overlays)
+                    except Exception:
+                        pass
+                    self._reward_overlay_dirty = False
+            elif self._reward_overlay_applied:
+                try:
+                    self.renderer.update_reward_overlays(
+                        [],
+                        alpha=self._reward_overlay_alpha,
+                        value_scale=self._reward_overlay_value_scale,
+                        segments=self._reward_overlay_segments,
+                    )
+                except Exception:
+                    pass
+                self._reward_overlay_applied = False
         if self.renderer is not None and self._render_callbacks:
             for callback in list(self._render_callbacks):
                 try:
@@ -1268,6 +1304,23 @@ class F110ParallelEnv(ParallelEnv):
 
     def clear_render_callbacks(self) -> None:
         self._render_callbacks.clear()
+
+    @staticmethod
+    def _coerce_bool_flag(value: Any, *, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "yes", "y", "1", "on"}:
+                return True
+            if lowered in {"false", "no", "n", "0", "off"}:
+                return False
+            return default
+        return bool(value)
 
     @staticmethod
     def _normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:

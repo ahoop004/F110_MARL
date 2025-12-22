@@ -188,6 +188,10 @@ class EnvSchema(BaseSchema):
     centerline_csv: Optional[str] = None
     centerline_render: bool = True
     centerline_features: bool = True
+    reward_overlay_enabled: bool = False
+    reward_overlay_alpha: float = 0.25
+    reward_overlay_value_scale: float = 1.0
+    reward_overlay_segments: int = 48
     vehicle_params: Dict[str, float] = field(default_factory=_default_vehicle_params)
 
     def update_from_dict(self, data: Mapping[str, Any]) -> None:  # type: ignore[override]
