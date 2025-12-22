@@ -18,6 +18,8 @@ class PPOAgent(BasePPOAgent):
     def __init__(self, cfg):
         device = resolve_device([cfg.get("device")])
         super().__init__(cfg, device)
+        target_kl = cfg.get("target_kl")
+        self.target_kl = float(target_kl) if target_kl is not None else None
 
         action_low = cfg.get("action_low")
         action_high = cfg.get("action_high")
@@ -112,7 +114,7 @@ class PPOAgent(BasePPOAgent):
         self.apply_entropy_decay(episodes_progress)
         self._episodes_since_update = 0
 
-        self.finish_path(normalize_advantage=True)
+        self.finish_path(normalize_advantage=self.normalize_advantage)
 
         # Convert buffers -> tensors
         obs = torch.as_tensor(np.asarray(self.obs_buf), dtype=torch.float32, device=self.device)
@@ -131,6 +133,7 @@ class PPOAgent(BasePPOAgent):
         value_losses = []
         entropies = []
         approx_kls = []
+        stop_early = False
         for _ in range(self.update_epochs):
             np.random.shuffle(idx)
             for start in range(0, N, self.minibatch_size):
@@ -162,11 +165,12 @@ class PPOAgent(BasePPOAgent):
 
                 loss = policy_loss + value_loss - self.ent_coef * entropy_term
 
+                approx_kl_value = float(approx_kl.detach().cpu().item())
                 with torch.no_grad():
                     policy_losses.append(float(policy_loss.detach().cpu().item()))
                     value_losses.append(float(value_loss.detach().cpu().item()))
                     entropies.append(float(entropy_term.detach().cpu().item()))
-                    approx_kls.append(float(approx_kl.detach().cpu().item()))
+                    approx_kls.append(approx_kl_value)
 
                 self.actor_opt.zero_grad(set_to_none=True)
                 self.critic_opt.zero_grad(set_to_none=True)
@@ -176,6 +180,11 @@ class PPOAgent(BasePPOAgent):
                     torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                 self.actor_opt.step()
                 self.critic_opt.step()
+                if self.target_kl is not None and approx_kl_value > self.target_kl:
+                    stop_early = True
+                    break
+            if stop_early:
+                break
 
         self.reset_buffer()
 
