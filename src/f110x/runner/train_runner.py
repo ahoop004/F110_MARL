@@ -1,6 +1,7 @@
 """Training runner orchestrating engine rollouts and trainer updates."""
 from __future__ import annotations
 
+import math
 import os
 from collections import deque
 from dataclasses import dataclass, field
@@ -1418,6 +1419,28 @@ class TrainRunner:
             if buffer_fraction is not None:
                 metrics["train/buffer_fraction"] = float(buffer_fraction)
                 episode_record["buffer_fraction"] = float(buffer_fraction)
+
+            def _coerce_update_metric(value: Any) -> Optional[float]:
+                if value is None:
+                    return None
+                if isinstance(value, bool):
+                    return float(value)
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(number):
+                    return None
+                return number
+
+            for trainer_id, stats in self._trainer_stats.items():
+                if not stats:
+                    continue
+                for key, value in stats.items():
+                    numeric = _coerce_update_metric(value)
+                    if numeric is None:
+                        continue
+                    metrics[f"train/update/{trainer_id}/{key}"] = numeric
 
             for agent_id, trainer in self.trainer_map.items():
                 accessor = getattr(trainer, "exploration_noise", None)
