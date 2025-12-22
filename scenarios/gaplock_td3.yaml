@@ -93,8 +93,8 @@ scenario:
       reward:
         task: gaplock
         ignore_non_trainable: true
-        idle_speed_threshold: 0
-        idle_patience_steps: 0
+        idle_speed_threshold: 0.2
+        idle_patience_steps: 40
         features:
           - gaplock_offense
           - gaplock_pinch_pocket
@@ -123,8 +123,6 @@ scenario:
 
           distance_reward_far_distance: 4.0
           distance_penalty_far: 0.01
-          lidar_filter_range_max: 12.0
-          target_neighborhood_r_max: 6.0
 
           # LiDAR wall-proxy bounds for reward computation
           lidar_filter_range_min: 0.35
