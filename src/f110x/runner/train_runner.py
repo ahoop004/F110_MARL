@@ -1264,6 +1264,21 @@ class TrainRunner:
             if episode_record_finish_agent is None and defender_id and finish_line_hits.get(defender_id):
                 episode_record_finish_agent = defender_id
 
+            if success is None:
+                finish_agent = primary_id or (agent_ids[0] if agent_ids else None)
+                if finish_agent is not None:
+                    try:
+                        target_laps = int(getattr(env, "target_laps", 1) or 1)
+                    except (TypeError, ValueError):
+                        target_laps = 1
+                    if target_laps <= 0:
+                        target_laps = 1
+                    finish_hit = bool(finish_line_hits.get(finish_agent, False))
+                    lap_count = float(lap_counts.get(finish_agent, 0.0))
+                    success = finish_hit or lap_count >= float(target_laps)
+                    if success and finish_hit and episode_record_finish_agent is None:
+                        episode_record_finish_agent = finish_agent
+
             cause_code = resolve_episode_cause_code(
                 success=bool(success),
                 attacker_crashed=bool(attacker_crashed),
