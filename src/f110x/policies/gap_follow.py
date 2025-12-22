@@ -491,16 +491,20 @@ class FollowTheGapPolicy:
         lateral_window = max(center_idx // 4, 1)
         left_band = scan[max(0, center_idx - lateral_window):center_idx]
         right_band = scan[center_idx:center_idx + lateral_window]
-        spread = float(np.std(np.concatenate([left_band, right_band]))) if left_band.size + right_band.size > 0 else 0.0
+        side_band = np.concatenate([left_band, right_band]) if left_band.size + right_band.size > 0 else np.array([])
+        spread = float(np.std(side_band)) if side_band.size > 0 else 0.0
+        forward_window = max(center_idx // 12, 1)
+        forward_band = scan[max(0, center_idx - forward_window):min(len(scan), center_idx + forward_window + 1)]
+        forward_min = float(np.min(forward_band)) if forward_band.size > 0 else forward
 
         speed = self.max_speed
         lookahead_idx = int(center_idx + np.sign(steering) * max(abs(steering) / max(self.max_steer, 1e-3), 0.1) * center_idx)
         lookahead_idx = int(np.clip(lookahead_idx, 0, len(scan) - 1))
         lookahead_range = float(scan[lookahead_idx])
 
-        if min_scan < 1.5 or lookahead_range < 2.0:
+        if forward_min < 1.5 or lookahead_range < 2.0:
             speed = max(self.min_speed, 0.5 * self.max_speed)
-        elif forward < 3.0 or spread > 2.0 or lookahead_range < 3.0:
+        elif forward < 3.0 or spread > 2.0 or lookahead_range < 3.0 or forward_min < 2.5:
             speed = max(self.min_speed, 0.6 * self.max_speed)
         elif forward < 6.0 or spread > 1.0:
             speed = 0.8 * self.max_speed
