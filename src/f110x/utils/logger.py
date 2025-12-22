@@ -351,6 +351,26 @@ if _HAS_RICH:
                     elif metric_name == "lap_count":
                         entry["lap_count"] = formatted
 
+            agent_metric_prefixes = (
+                (f"{phase}/success_rate/", "success_rate", _format_number),
+                (f"{phase}/avg_time_to_success/", "avg_time_to_success", _format_number),
+                (f"{phase}/finish_line_hit_rate/", "finish_line_hit_rate", _format_number),
+                (f"{phase}/collision_step/", "collision_step", _format_number),
+                (f"{phase}/lap_count/", "lap_count", _format_number),
+            )
+            for key, value in metrics.items():
+                for prefix, field, formatter in agent_metric_prefixes:
+                    if not key.startswith(prefix):
+                        continue
+                    agent_id = key[len(prefix) :]
+                    if not agent_id:
+                        break
+                    entry = agents.setdefault(agent_id, {})
+                    formatted = formatter(value)
+                    if formatted is not None:
+                        entry[field] = formatted
+                    break
+
             finish_hits: Dict[str, bool] = {}
             finish_prefix = f"{phase}/finish_line_hit/"
             for key, value in metrics.items():
@@ -581,16 +601,31 @@ if _HAS_RICH:
                 agents_table.add_column("Return", justify="right")
                 agents_table.add_column("Coll", justify="right")
                 agents_table.add_column("AvgSpd", justify="right")
+                agents_table.add_column("Succ%", justify="right")
+                agents_table.add_column("AvgTime", justify="right")
+                agents_table.add_column("Finish%", justify="right")
+                agents_table.add_column("Lap", justify="right")
+                agents_table.add_column("CollStep", justify="right")
                 for agent_id in sorted(agents):
                     entry = agents[agent_id]
                     ret = entry.get("return")
                     collisions_val = entry.get("collisions")
                     speed = entry.get("speed")
+                    success_rate = entry.get("success_rate")
+                    avg_time_to_success = entry.get("avg_time_to_success")
+                    finish_line_hit_rate = entry.get("finish_line_hit_rate")
+                    lap_count = entry.get("lap_count")
+                    collision_step = entry.get("collision_step")
                     agents_table.add_row(
                         agent_id,
                         f"{ret:.2f}" if ret is not None else "—",
                         f"{collisions_val:.0f}" if collisions_val is not None else "—",
                         f"{speed:.2f}" if speed is not None else "—",
+                        f"{success_rate * 100:.1f}%" if success_rate is not None else "—",
+                        f"{avg_time_to_success:.1f}" if avg_time_to_success is not None else "—",
+                        f"{finish_line_hit_rate * 100:.1f}%" if finish_line_hit_rate is not None else "—",
+                        f"{lap_count:.0f}" if lap_count is not None else "—",
+                        f"{collision_step:.0f}" if collision_step is not None else "—",
                     )
 
             components = [Align.left(summary_text)]
