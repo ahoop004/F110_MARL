@@ -379,6 +379,8 @@ if _HAS_RICH:
                     hit = _format_bool(value)
                     if hit is not None:
                         finish_hits[agent_id] = hit
+                        entry = agents.setdefault(agent_id, {})
+                        entry["finish_line_hit"] = hit
             if finish_hits:
                 tracked["finish_line_hits"] = finish_hits
 
@@ -441,10 +443,6 @@ if _HAS_RICH:
             metrics_line_parts = []
             if steps is not None:
                 metrics_line_parts.append(f"Steps {steps}")
-            if collisions is not None:
-                metrics_line_parts.append(f"Collisions {collisions}")
-            if collision_rate is not None:
-                metrics_line_parts.append(f"CollRate {collision_rate:.2f}")
             success_total = state.get("success_total")
             if success_total is not None:
                 win_label = "AttWins" if state.get("attacker_win") is not None else "SuccessTot"
@@ -497,13 +495,13 @@ if _HAS_RICH:
             if target_win_rate_total is not None:
                 summary_lines.append(f"Target success rate total: {target_win_rate_total * 100:.1f}%")
 
-            if success_total is not None and success_total > 0:
-                total_label = "Attacker wins total" if attacker_win is not None else "Success total"
-                summary_lines.append(f"{total_label}: {int(success_total)}")
             finish_hits = state.get("finish_line_hits")
-            if finish_hits:
-                labels = ", ".join(f"{aid}={'yes' if hit else 'no'}" for aid, hit in finish_hits.items())
-                summary_lines.append(f"Finish line: {labels}")
+            if success is None and finish_hits:
+                if primary_agent and primary_agent in finish_hits:
+                    success = finish_hits[primary_agent]
+                else:
+                    success = any(finish_hits.values())
+                summary_lines.append(f"Success: {'yes' if success else 'no'}")
 
             spawn_enabled = state.get("spawn_enabled")
             spawn_stage = state.get("spawn_stage")
@@ -603,6 +601,7 @@ if _HAS_RICH:
                 agents_table.add_column("AvgSpd", justify="right")
                 agents_table.add_column("Succ%", justify="right")
                 agents_table.add_column("AvgTime", justify="right")
+                agents_table.add_column("Finish", justify="center")
                 agents_table.add_column("Finish%", justify="right")
                 agents_table.add_column("Lap", justify="right")
                 agents_table.add_column("CollStep", justify="right")
@@ -613,6 +612,7 @@ if _HAS_RICH:
                     speed = entry.get("speed")
                     success_rate = entry.get("success_rate")
                     avg_time_to_success = entry.get("avg_time_to_success")
+                    finish_line_hit = entry.get("finish_line_hit")
                     finish_line_hit_rate = entry.get("finish_line_hit_rate")
                     lap_count = entry.get("lap_count")
                     collision_step = entry.get("collision_step")
@@ -623,6 +623,7 @@ if _HAS_RICH:
                         f"{speed:.2f}" if speed is not None else "—",
                         f"{success_rate * 100:.1f}%" if success_rate is not None else "—",
                         f"{avg_time_to_success:.1f}" if avg_time_to_success is not None else "—",
+                        "yes" if finish_line_hit else ("no" if finish_line_hit is not None else "—"),
                         f"{finish_line_hit_rate * 100:.1f}%" if finish_line_hit_rate is not None else "—",
                         f"{lap_count:.0f}" if lap_count is not None else "—",
                         f"{collision_step:.0f}" if collision_step is not None else "—",
