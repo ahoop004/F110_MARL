@@ -178,6 +178,28 @@ class F110ParallelEnv(ParallelEnv):
         self._reward_ring_target_dirty: bool = False
         self._reward_ring_marker_states: Dict[str, List[bool]] = {}
         self._reward_ring_marker_dirty: bool = False
+        self._reward_overlays: List[Dict[str, Any]] = []
+        self._reward_overlay_dirty: bool = False
+        overlay_alpha = merged.get("reward_overlay_alpha", 0.25)
+        try:
+            self._reward_overlay_alpha = float(overlay_alpha)
+        except (TypeError, ValueError):
+            self._reward_overlay_alpha = 0.25
+        self._reward_overlay_alpha = float(min(max(self._reward_overlay_alpha, 0.0), 1.0))
+        overlay_scale = merged.get("reward_overlay_value_scale", 1.0)
+        try:
+            self._reward_overlay_value_scale = float(overlay_scale)
+        except (TypeError, ValueError):
+            self._reward_overlay_value_scale = 1.0
+        if self._reward_overlay_value_scale <= 0.0 or not np.isfinite(self._reward_overlay_value_scale):
+            self._reward_overlay_value_scale = 1.0
+        overlay_segments = merged.get("reward_overlay_segments", 48)
+        try:
+            self._reward_overlay_segments = int(overlay_segments)
+        except (TypeError, ValueError):
+            self._reward_overlay_segments = 48
+        if self._reward_overlay_segments < 8:
+            self._reward_overlay_segments = 8
         self._render_metrics_payload: Optional[Dict[str, Any]] = None
         self._render_metrics_dirty: bool = False
         self._render_ticker: deque[str] = deque(maxlen=64)
@@ -822,6 +844,55 @@ class F110ParallelEnv(ParallelEnv):
                     pass
             self._reward_ring_marker_dirty = False
 
+    def update_reward_overlays(
+        self,
+        overlays: Optional[Sequence[Mapping[str, Any]]],
+        *,
+        alpha: Optional[float] = None,
+        value_scale: Optional[float] = None,
+        segments: Optional[int] = None,
+    ) -> None:
+        """Update translucent circle overlays used to visualise reward regions."""
+        if overlays is None:
+            if self._reward_overlays:
+                self._reward_overlays = []
+                self._reward_overlay_dirty = True
+        else:
+            cleaned: List[Dict[str, Any]] = []
+            for entry in overlays:
+                if not isinstance(entry, Mapping):
+                    continue
+                cleaned.append(dict(entry))
+            self._reward_overlays = cleaned
+            self._reward_overlay_dirty = True
+
+        if alpha is not None:
+            try:
+                alpha_val = float(alpha)
+            except (TypeError, ValueError):
+                alpha_val = self._reward_overlay_alpha
+            self._reward_overlay_alpha = float(min(max(alpha_val, 0.0), 1.0))
+            self._reward_overlay_dirty = True
+
+        if value_scale is not None:
+            try:
+                scale_val = float(value_scale)
+            except (TypeError, ValueError):
+                scale_val = self._reward_overlay_value_scale
+            if scale_val > 0.0 and np.isfinite(scale_val):
+                self._reward_overlay_value_scale = float(scale_val)
+                self._reward_overlay_dirty = True
+
+        if segments is not None:
+            try:
+                seg_val = int(segments)
+            except (TypeError, ValueError):
+                seg_val = self._reward_overlay_segments
+            seg_val = max(seg_val, 8)
+            if seg_val != self._reward_overlay_segments:
+                self._reward_overlay_segments = seg_val
+                self._reward_overlay_dirty = True
+
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
             return
@@ -852,6 +923,7 @@ class F110ParallelEnv(ParallelEnv):
             self._update_renderer_centerline()
             self._reward_ring_dirty = True
             self._reward_ring_target_dirty = True
+            self._reward_overlay_dirty = True
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -1156,6 +1228,17 @@ class F110ParallelEnv(ParallelEnv):
 
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
+        if self.renderer is not None and (self._reward_overlay_dirty or self._reward_overlays):
+            try:
+                self.renderer.update_reward_overlays(
+                    self._reward_overlays,
+                    alpha=self._reward_overlay_alpha,
+                    value_scale=self._reward_overlay_value_scale,
+                    segments=self._reward_overlay_segments,
+                )
+            except Exception:
+                pass
+            self._reward_overlay_dirty = False
         if self.renderer is not None and self._render_callbacks:
             for callback in list(self._render_callbacks):
                 try:

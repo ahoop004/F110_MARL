@@ -39,7 +39,7 @@ except Exception as exc:  # pragma: no cover - headless fallback
 import numpy as np
 from array import array
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Iterable
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Iterable, Tuple
 from PIL import Image
 import yaml
 import pandas as pd
@@ -164,6 +164,13 @@ else:
             self._reward_ring_marker_color_active: Optional[tuple[float, float, float, float]] = None
             self._reward_ring_marker_states: Dict[str, List[bool]] = {}
             self._lane_border_overlays: Dict[str, pyglet.graphics.vertexdomain.VertexList] = {}
+            self._reward_overlays: List[Mapping[str, Any]] = []
+            self._reward_overlay_segments: int = 0
+            self._reward_overlay_alpha: float = 0.25
+            self._reward_overlay_value_scale: float = 1.0
+            self._reward_overlay_cos: Optional[np.ndarray] = None
+            self._reward_overlay_sin: Optional[np.ndarray] = None
+            self._reward_overlay_circles: List[Dict[str, Any]] = []
 
             # options
             self.lidar_fov = lidar_fov
@@ -396,6 +403,7 @@ else:
                     except Exception:
                         pass
                 self._lane_border_overlays.clear()
+            self._clear_reward_overlays()
 
         # ---------- Window / Camera ----------
 
@@ -718,6 +726,223 @@ else:
                 return
             self._ticker_lines = new_lines
             self.ticker_label.text = "\n".join(new_lines)
+
+        # ---------- Reward Overlay Circles ----------
+
+        def update_reward_overlays(
+            self,
+            overlays: Optional[Sequence[Mapping[str, Any]]],
+            *,
+            alpha: float = 0.25,
+            value_scale: float = 1.0,
+            segments: int = 48,
+        ) -> None:
+            """
+            Render translucent circles for reward/penalty regions.
+
+            Each overlay entry may specify either:
+            - World coords: ``{"x": <m>, "y": <m>, "radius": <m>, "value": <float>}``
+            - Target-frame: ``{"agent_id": "car_1", "forward": <m>, "left": <m>, "radius": <m>, "value": <float>}``
+              (aliases: ``dx/dy`` or ``offset=[forward,left]``)
+            """
+
+            self._reward_overlays = list(overlays or [])
+            try:
+                alpha_val = float(alpha)
+            except (TypeError, ValueError):
+                alpha_val = 0.25
+            self._reward_overlay_alpha = float(min(max(alpha_val, 0.0), 1.0))
+
+            try:
+                scale_val = float(value_scale)
+            except (TypeError, ValueError):
+                scale_val = 1.0
+            if scale_val <= 0.0 or not np.isfinite(scale_val):
+                scale_val = 1.0
+            self._reward_overlay_value_scale = float(scale_val)
+
+            seg_val = max(int(segments) if segments is not None else 48, 8)
+            self._ensure_reward_overlay_trig(seg_val)
+            self._refresh_reward_overlays()
+
+        def _ensure_reward_overlay_trig(self, segments: int) -> None:
+            segments = max(int(segments), 8)
+            if segments == self._reward_overlay_segments and self._reward_overlay_cos is not None:
+                return
+            angles = np.linspace(0.0, 2.0 * np.pi, segments + 1, endpoint=True, dtype=np.float32)
+            self._reward_overlay_cos = np.cos(angles).astype(np.float32, copy=False)
+            self._reward_overlay_sin = np.sin(angles).astype(np.float32, copy=False)
+            self._reward_overlay_segments = segments
+            self._clear_reward_overlays()
+
+        def _clear_reward_overlays(self) -> None:
+            if self._reward_overlay_circles:
+                for circle in self._reward_overlay_circles:
+                    vlist = circle.get("vlist")
+                    if vlist is not None:
+                        try:
+                            vlist.delete()
+                        except Exception:
+                            pass
+                self._reward_overlay_circles = []
+
+        def _ensure_reward_overlay_circles(self, count: int) -> None:
+            count = max(int(count), 0)
+            desired = count
+            current = len(self._reward_overlay_circles)
+            if desired == current:
+                return
+            if desired < current:
+                for _ in range(current - desired):
+                    circle = self._reward_overlay_circles.pop()
+                    vlist = circle.get("vlist")
+                    if vlist is not None:
+                        try:
+                            vlist.delete()
+                        except Exception:
+                            pass
+                return
+
+            segments = max(int(self._reward_overlay_segments), 8)
+            vertex_count = segments + 2  # center + ring + repeat
+            for _ in range(desired - current):
+                positions = array('f', [0.0] * (2 * vertex_count))
+                colors = array('f', [0.0] * (4 * vertex_count))
+                vlist = self.shader.vertex_list(
+                    vertex_count,
+                    pyglet.gl.GL_TRIANGLE_FAN,
+                    batch=self.batch,
+                    group=self.shader_group,
+                    position=('f/dynamic', positions),
+                    color=('f/dynamic', colors),
+                )
+                self._reward_overlay_circles.append(
+                    {
+                        "vlist": vlist,
+                        "positions": positions,
+                        "colors": colors,
+                    }
+                )
+
+        def _refresh_reward_overlays(self) -> None:
+            overlays = self._reward_overlays or []
+            if not overlays:
+                if self._reward_overlay_circles:
+                    self._clear_reward_overlays()
+                return
+            if self._reward_overlay_cos is None or self._reward_overlay_sin is None:
+                return
+
+            resolved: List[Tuple[float, float, float, float]] = []
+            value_scale = self._reward_overlay_value_scale
+            eps = 1e-9
+
+            for entry in overlays:
+                if not isinstance(entry, Mapping):
+                    continue
+
+                raw_value = entry.get("value", entry.get("reward", 0.0))
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(value) or abs(value) <= eps:
+                    continue
+
+                raw_radius = entry.get("radius", entry.get("r", None))
+                try:
+                    radius = float(raw_radius)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(radius) or radius <= 0.0:
+                    continue
+
+                anchor_id = entry.get("agent_id") or entry.get("anchor_agent") or entry.get("anchor")
+                if anchor_id:
+                    anchor_id = str(anchor_id)
+                    state = self.agent_infos.get(anchor_id)
+                    if state is None:
+                        continue
+                    base_x = float(state.get("poses_x", 0.0))
+                    base_y = float(state.get("poses_y", 0.0))
+                    heading = float(state.get("poses_theta", 0.0))
+
+                    dx = entry.get("forward", entry.get("dx", entry.get("x", 0.0)))
+                    dy = entry.get("left", entry.get("dy", entry.get("y", 0.0)))
+                    offset = entry.get("offset")
+                    if isinstance(offset, (list, tuple)) and len(offset) >= 2:
+                        dx, dy = offset[0], offset[1]
+                    try:
+                        dx_f = float(dx)
+                        dy_f = float(dy)
+                    except (TypeError, ValueError):
+                        dx_f = 0.0
+                        dy_f = 0.0
+                    cos_h = math.cos(heading)
+                    sin_h = math.sin(heading)
+                    x = base_x + cos_h * dx_f - sin_h * dy_f
+                    y = base_y + sin_h * dx_f + cos_h * dy_f
+                else:
+                    center = entry.get("center")
+                    if isinstance(center, (list, tuple)) and len(center) >= 2:
+                        raw_x, raw_y = center[0], center[1]
+                    else:
+                        raw_x = entry.get("x")
+                        raw_y = entry.get("y")
+                    try:
+                        x = float(raw_x)
+                        y = float(raw_y)
+                    except (TypeError, ValueError):
+                        continue
+
+                if not np.isfinite(x) or not np.isfinite(y):
+                    continue
+
+                intensity = min(abs(value) / max(value_scale, 1e-6), 1.0)
+                if intensity <= eps:
+                    continue
+                signed_intensity = intensity if value >= 0.0 else -intensity
+                resolved.append((x, y, radius, signed_intensity))
+
+            if not resolved:
+                self._clear_reward_overlays()
+                return
+
+            self._ensure_reward_overlay_circles(len(resolved))
+            cos_vals = self._reward_overlay_cos
+            sin_vals = self._reward_overlay_sin
+            alpha = self._reward_overlay_alpha
+
+            for circle, (x, y, radius, signed_intensity) in zip(self._reward_overlay_circles, resolved):
+                vlist = circle.get("vlist")
+                positions = circle.get("positions")
+                colors = circle.get("colors")
+                if vlist is None or positions is None or colors is None:
+                    continue
+
+                cx = float(x) * self.render_scale
+                cy = float(y) * self.render_scale
+                r_px = float(radius) * self.render_scale
+
+                pos_view = np.frombuffer(positions, dtype=np.float32)
+                pos_view[0] = cx
+                pos_view[1] = cy
+                pos_view[2::2] = cx + r_px * cos_vals
+                pos_view[3::2] = cy + r_px * sin_vals
+
+                intensity = abs(float(signed_intensity))
+                if signed_intensity >= 0.0:
+                    color = (0.0, intensity, 0.0, alpha)
+                else:
+                    color = (intensity, 0.0, 0.0, alpha)
+
+                col_view = np.frombuffer(colors, dtype=np.float32).reshape((-1, 4))
+                col_view[:] = color
+                try:
+                    vlist.position[:] = positions
+                    vlist.color[:] = colors
+                except Exception:
+                    pass
 
         def _format_telemetry_lines(self) -> List[str]:
             metrics = self._telemetry_metrics
