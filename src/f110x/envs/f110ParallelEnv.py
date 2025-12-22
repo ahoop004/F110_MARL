@@ -215,6 +215,61 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_overlay_segments = 48
         if self._reward_overlay_segments < 8:
             self._reward_overlay_segments = 8
+
+        self._reward_heatmap_payload: Optional[Dict[str, Any]] = None
+        self._reward_heatmap_dirty: bool = False
+        self._reward_heatmap_enabled = False
+        self._reward_heatmap_applied = False
+        heatmap_cfg = merged.get("reward_heatmap")
+        if isinstance(heatmap_cfg, Mapping):
+            enabled_raw = heatmap_cfg.get("enabled", merged.get("reward_heatmap_enabled", False))
+            heatmap_alpha = heatmap_cfg.get("alpha", merged.get("reward_heatmap_alpha", 0.22))
+            heatmap_scale = heatmap_cfg.get(
+                "value_scale",
+                heatmap_cfg.get("scale", merged.get("reward_heatmap_value_scale", 1.0)),
+            )
+            heatmap_extent = heatmap_cfg.get(
+                "extent_m",
+                heatmap_cfg.get("extent", merged.get("reward_heatmap_extent_m", merged.get("reward_heatmap_extent", 6.0))),
+            )
+            heatmap_cell_size = heatmap_cfg.get(
+                "cell_size_m",
+                heatmap_cfg.get(
+                    "cell_size",
+                    merged.get("reward_heatmap_cell_size_m", merged.get("reward_heatmap_cell_size", 0.25)),
+                ),
+            )
+        else:
+            enabled_raw = merged.get("reward_heatmap_enabled", False)
+            heatmap_alpha = merged.get("reward_heatmap_alpha", 0.22)
+            heatmap_scale = merged.get("reward_heatmap_value_scale", 1.0)
+            heatmap_extent = merged.get("reward_heatmap_extent_m", merged.get("reward_heatmap_extent", 6.0))
+            heatmap_cell_size = merged.get("reward_heatmap_cell_size_m", merged.get("reward_heatmap_cell_size", 0.25))
+
+        self._reward_heatmap_enabled = self._coerce_bool_flag(enabled_raw, default=False)
+        try:
+            self._reward_heatmap_alpha = float(heatmap_alpha)
+        except (TypeError, ValueError):
+            self._reward_heatmap_alpha = 0.22
+        self._reward_heatmap_alpha = float(min(max(self._reward_heatmap_alpha, 0.0), 1.0))
+        try:
+            self._reward_heatmap_value_scale = float(heatmap_scale)
+        except (TypeError, ValueError):
+            self._reward_heatmap_value_scale = 1.0
+        if self._reward_heatmap_value_scale <= 0.0 or not np.isfinite(self._reward_heatmap_value_scale):
+            self._reward_heatmap_value_scale = 1.0
+        try:
+            self._reward_heatmap_extent_m = float(heatmap_extent)
+        except (TypeError, ValueError):
+            self._reward_heatmap_extent_m = 6.0
+        if self._reward_heatmap_extent_m <= 0.0 or not np.isfinite(self._reward_heatmap_extent_m):
+            self._reward_heatmap_extent_m = 6.0
+        try:
+            self._reward_heatmap_cell_size_m = float(heatmap_cell_size)
+        except (TypeError, ValueError):
+            self._reward_heatmap_cell_size_m = 0.25
+        if self._reward_heatmap_cell_size_m <= 0.0 or not np.isfinite(self._reward_heatmap_cell_size_m):
+            self._reward_heatmap_cell_size_m = 0.25
         self._render_metrics_payload: Optional[Dict[str, Any]] = None
         self._render_metrics_dirty: bool = False
         self._render_ticker: deque[str] = deque(maxlen=64)
@@ -914,6 +969,73 @@ class F110ParallelEnv(ParallelEnv):
                 self._reward_overlay_segments = seg_val
                 self._reward_overlay_dirty = True
 
+    def update_reward_heatmap(
+        self,
+        heatmap: Optional[Mapping[str, Any]],
+        *,
+        enabled: Optional[bool] = None,
+        alpha: Optional[float] = None,
+        value_scale: Optional[float] = None,
+        extent_m: Optional[float] = None,
+        cell_size_m: Optional[float] = None,
+    ) -> None:
+        """Update the cached potential-field heatmap renderer state."""
+        if enabled is not None:
+            enabled_val = self._coerce_bool_flag(enabled, default=self._reward_heatmap_enabled)
+            if enabled_val != self._reward_heatmap_enabled:
+                self._reward_heatmap_enabled = enabled_val
+                self._reward_heatmap_dirty = True
+
+        if heatmap is None:
+            if self._reward_heatmap_payload is not None:
+                self._reward_heatmap_payload = None
+                self._reward_heatmap_dirty = True
+        elif isinstance(heatmap, Mapping):
+            try:
+                payload = dict(heatmap)
+            except Exception:
+                payload = None
+            if payload is not None and payload != self._reward_heatmap_payload:
+                self._reward_heatmap_payload = payload
+                self._reward_heatmap_dirty = True
+
+        if alpha is not None:
+            try:
+                alpha_val = float(alpha)
+            except (TypeError, ValueError):
+                alpha_val = self._reward_heatmap_alpha
+            alpha_val = float(min(max(alpha_val, 0.0), 1.0))
+            if alpha_val != self._reward_heatmap_alpha:
+                self._reward_heatmap_alpha = alpha_val
+                self._reward_heatmap_dirty = True
+
+        if value_scale is not None:
+            try:
+                scale_val = float(value_scale)
+            except (TypeError, ValueError):
+                scale_val = self._reward_heatmap_value_scale
+            if scale_val > 0.0 and np.isfinite(scale_val) and scale_val != self._reward_heatmap_value_scale:
+                self._reward_heatmap_value_scale = float(scale_val)
+                self._reward_heatmap_dirty = True
+
+        if extent_m is not None:
+            try:
+                extent_val = float(extent_m)
+            except (TypeError, ValueError):
+                extent_val = self._reward_heatmap_extent_m
+            if extent_val > 0.0 and np.isfinite(extent_val) and extent_val != self._reward_heatmap_extent_m:
+                self._reward_heatmap_extent_m = float(extent_val)
+                self._reward_heatmap_dirty = True
+
+        if cell_size_m is not None:
+            try:
+                cell_val = float(cell_size_m)
+            except (TypeError, ValueError):
+                cell_val = self._reward_heatmap_cell_size_m
+            if cell_val > 0.0 and np.isfinite(cell_val) and cell_val != self._reward_heatmap_cell_size_m:
+                self._reward_heatmap_cell_size_m = float(cell_val)
+                self._reward_heatmap_dirty = True
+
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
             return
@@ -946,6 +1068,9 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_ring_target_dirty = True
             self._reward_overlay_dirty = True
             self._reward_overlay_applied = False
+            self._reward_heatmap_payload = None
+            self._reward_heatmap_dirty = True
+            self._reward_heatmap_applied = False
     # Case 1: Explicit override via options
         if options is not None:
             if isinstance(options, dict) and "poses" in options:
@@ -1251,6 +1376,32 @@ class F110ParallelEnv(ParallelEnv):
         if self.render_obs:
             self.renderer.update_obs(self.render_obs)
         if self.renderer is not None:
+            if self._reward_heatmap_enabled:
+                if self._reward_heatmap_dirty or (not self._reward_heatmap_applied and self._reward_heatmap_payload is not None):
+                    try:
+                        self.renderer.update_reward_heatmap(
+                            self._reward_heatmap_payload,
+                            alpha=self._reward_heatmap_alpha,
+                            value_scale=self._reward_heatmap_value_scale,
+                            extent_m=self._reward_heatmap_extent_m,
+                            cell_size_m=self._reward_heatmap_cell_size_m,
+                        )
+                        self._reward_heatmap_applied = self._reward_heatmap_payload is not None
+                    except Exception:
+                        pass
+                    self._reward_heatmap_dirty = False
+            elif self._reward_heatmap_applied:
+                try:
+                    self.renderer.update_reward_heatmap(
+                        None,
+                        alpha=self._reward_heatmap_alpha,
+                        value_scale=self._reward_heatmap_value_scale,
+                        extent_m=self._reward_heatmap_extent_m,
+                        cell_size_m=self._reward_heatmap_cell_size_m,
+                    )
+                except Exception:
+                    pass
+                self._reward_heatmap_applied = False
             if self._reward_overlay_enabled:
                 if self._reward_overlay_dirty or self._reward_overlays:
                     try:

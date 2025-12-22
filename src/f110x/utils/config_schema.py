@@ -192,6 +192,11 @@ class EnvSchema(BaseSchema):
     reward_overlay_alpha: float = 0.25
     reward_overlay_value_scale: float = 1.0
     reward_overlay_segments: int = 48
+    reward_heatmap_enabled: bool = False
+    reward_heatmap_alpha: float = 0.22
+    reward_heatmap_value_scale: float = 1.0
+    reward_heatmap_extent_m: float = 6.0
+    reward_heatmap_cell_size_m: float = 0.25
     vehicle_params: Dict[str, float] = field(default_factory=_default_vehicle_params)
 
     def update_from_dict(self, data: Mapping[str, Any]) -> None:  # type: ignore[override]

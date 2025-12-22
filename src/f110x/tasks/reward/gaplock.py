@@ -79,6 +79,7 @@ GAPLOCK_PARAM_KEYS = (
     "pinch_pressure_recent_seconds",
     # Potential-field reward term (hotspots at pinch anchors)
     "potential_field_weight",
+    "potential_field_sigma",
     "potential_field_radius",
     "potential_field_peak",
     "potential_field_floor",
@@ -178,6 +179,7 @@ class GaplockRewardStrategy(RewardStrategy):
         pinch_pressure_heading_tol_deg: float = 30.0,
         pinch_pressure_recent_seconds: float = 1.5,
         potential_field_weight: float = 0.0,
+        potential_field_sigma: float = 0.0,
         potential_field_radius: float = 0.0,
         potential_field_peak: float = 1.0,
         potential_field_floor: float = -1.0,
@@ -203,6 +205,7 @@ class GaplockRewardStrategy(RewardStrategy):
         turn_reward_time_scaled: bool = True,
         reward_ring_state_callback: Optional[Callable[[str, Optional[List[bool]]], None]] = None,
         reward_overlay_callback: Optional[Callable[[Optional[Sequence[Mapping[str, Any]]]], None]] = None,
+        reward_heatmap_callback: Optional[Callable[[Optional[Mapping[str, Any]]], None]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -281,6 +284,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self.target_offset_marker_segments = max(int(target_offset_marker_segments), 4)
         self._reward_ring_state_callback = reward_ring_state_callback
         self._reward_overlay_callback = reward_overlay_callback
+        self._reward_heatmap_callback = reward_heatmap_callback
 
         # ------------------------------------------------------------------
         # Pinch pocket / forcing reward configuration
@@ -295,7 +299,10 @@ class GaplockRewardStrategy(RewardStrategy):
         self.pinch_pressure_recent_seconds = max(float(pinch_pressure_recent_seconds), 0.0)
 
         self.potential_field_weight = float(potential_field_weight)
-        self.potential_field_radius = max(float(potential_field_radius), 0.0)
+        sigma_raw = potential_field_sigma
+        if sigma_raw in (None, "", 0, 0.0):
+            sigma_raw = potential_field_radius
+        self.potential_field_sigma = max(float(sigma_raw), 0.0)
         self.potential_field_peak = float(potential_field_peak)
         self.potential_field_floor = float(potential_field_floor)
         self.potential_field_power = max(float(potential_field_power), 1e-6)
@@ -534,6 +541,40 @@ class GaplockRewardStrategy(RewardStrategy):
 
         try:
             callback(overlays)
+        except Exception:
+            pass
+
+    def _notify_reward_heatmap(self, agent_id: str, target_id: Optional[str]) -> None:
+        callback = getattr(self, "_reward_heatmap_callback", None)
+        if callback is None:
+            return
+        if self._reward_ring_focus_agent is not None and agent_id != self._reward_ring_focus_agent:
+            return
+        if not target_id:
+            try:
+                callback(None)
+            except Exception:
+                pass
+            return
+        if not self.potential_field_weight or self.potential_field_sigma <= 0.0:
+            try:
+                callback(None)
+            except Exception:
+                pass
+            return
+        payload = {
+            "target_id": str(target_id),
+            "pinch_anchor_dx": float(self.pinch_anchor_dx),
+            "pinch_anchor_dy": float(self.pinch_anchor_dy),
+            "potential_field_weight": float(self.potential_field_weight),
+            "potential_field_sigma": float(self.potential_field_sigma),
+            "potential_field_peak": float(self.potential_field_peak),
+            "potential_field_floor": float(self.potential_field_floor),
+            "potential_field_power": float(self.potential_field_power),
+            "potential_field_time_scaled": bool(self.potential_field_time_scaled),
+        }
+        try:
+            callback(payload)
         except Exception:
             pass
 
@@ -873,6 +914,7 @@ class GaplockRewardStrategy(RewardStrategy):
 
         self._notify_reward_ring(step.agent_id, overlay_target_id)
         self._notify_reward_overlays(step.agent_id, overlay_target_id)
+        self._notify_reward_heatmap(step.agent_id, overlay_target_id)
 
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
         if pinch_diag:
@@ -975,15 +1017,16 @@ class GaplockRewardStrategy(RewardStrategy):
             if abs(pocket_reward) > 1e-9:
                 acc.add("pinch_pocket", pocket_reward)
 
-        if self.potential_field_weight and self.potential_field_radius > 0.0:
-            radius = float(self.potential_field_radius)
-            t = min(max(d_min / max(radius, 1e-6), 0.0), 1.0)
-            shaped = t ** float(self.potential_field_power)
-            value = float(self.potential_field_peak) + (float(self.potential_field_floor) - float(self.potential_field_peak)) * shaped
+        if self.potential_field_weight and self.potential_field_sigma > 0.0:
+            sigma = float(self.potential_field_sigma)
+            ratio = float(d_min) / max(sigma, 1e-6)
+            shaped = math.exp(-0.5 * (ratio ** float(self.potential_field_power)))
+            value = float(self.potential_field_floor) + (float(self.potential_field_peak) - float(self.potential_field_floor)) * shaped
             value *= float(self.potential_field_weight)
             if self.potential_field_time_scaled:
                 value *= float(time_scale)
             diagnostics["potential_field/d_min"] = float(d_min)
+            diagnostics["potential_field/shaped"] = float(shaped)
             diagnostics["potential_field/value"] = float(value)
             if abs(value) > 1e-9:
                 acc.add("potential_field", value)
@@ -1533,6 +1576,8 @@ def _build_gaplock_strategy(
         params["reward_ring_state_callback"] = context.env.update_reward_ring_markers
     if "reward_overlay_callback" not in params and hasattr(context.env, "update_reward_overlays"):
         params["reward_overlay_callback"] = context.env.update_reward_overlays
+    if "reward_heatmap_callback" not in params and hasattr(context.env, "update_reward_heatmap"):
+        params["reward_heatmap_callback"] = context.env.update_reward_heatmap
 
     if "lidar_fov_radians" not in params or "lidar_range_max" not in params:
         sim = getattr(context.env, "sim", None)

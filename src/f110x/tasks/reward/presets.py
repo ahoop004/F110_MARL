@@ -49,7 +49,7 @@ REWARD_FEATURE_PRESETS: Dict[str, Dict[str, Any]] = {
     },
     "gaplock_potential_field": {
         "potential_field_weight": 0.05,
-        "potential_field_radius": 1.2,
+        "potential_field_sigma": 0.5,
         "potential_field_peak": 1.0,
         "potential_field_floor": -1.0,
         "potential_field_power": 2.0,

@@ -171,6 +171,19 @@ else:
             self._reward_overlay_cos: Optional[np.ndarray] = None
             self._reward_overlay_sin: Optional[np.ndarray] = None
             self._reward_overlay_circles: List[Dict[str, Any]] = []
+            self._reward_heatmap_group = ShaderGroup(self.shader, order=-10)
+            self._reward_heatmap_enabled: bool = False
+            self._reward_heatmap_target: Optional[str] = None
+            self._reward_heatmap_key: Optional[tuple[Any, ...]] = None
+            self._reward_heatmap_alpha: float = 0.22
+            self._reward_heatmap_value_scale: float = 1.0
+            self._reward_heatmap_extent_m: float = 6.0
+            self._reward_heatmap_cell_size_m: float = 0.25
+            self._reward_heatmap_vlist: Optional[pyglet.graphics.vertexdomain.VertexList] = None
+            self._reward_heatmap_positions: Optional[array] = None
+            self._reward_heatmap_colors: Optional[array] = None
+            self._reward_heatmap_dx: Optional[np.ndarray] = None
+            self._reward_heatmap_dy: Optional[np.ndarray] = None
 
             # options
             self.lidar_fov = lidar_fov
@@ -403,6 +416,10 @@ else:
                     except Exception:
                         pass
                 self._lane_border_overlays.clear()
+            self._clear_reward_heatmap()
+            self._reward_heatmap_target = None
+            self._reward_heatmap_key = None
+            self._reward_heatmap_enabled = False
             self._clear_reward_overlays()
 
         # ---------- Window / Camera ----------
@@ -683,6 +700,7 @@ else:
 
             self.hud_label.text = "\n".join(hud_lines)
 
+            self._update_reward_heatmap_overlay()
             self._update_reward_ring_overlay()
 
             if self._follow_enabled:
@@ -943,6 +961,296 @@ else:
                     vlist.color[:] = colors
                 except Exception:
                     pass
+
+        # ---------- Reward Heatmap ----------
+
+        def update_reward_heatmap(
+            self,
+            heatmap: Optional[Mapping[str, Any]],
+            *,
+            alpha: float = 0.22,
+            value_scale: float = 1.0,
+            extent_m: float = 6.0,
+            cell_size_m: float = 0.25,
+        ) -> None:
+            """
+            Render a translucent signed heatmap around a target agent, representing the
+            gaplock Gaussian potential-field reward (green=positive, red=negative).
+
+            Expected heatmap payload keys (others ignored):
+            - ``target_id`` or ``agent_id``: target agent name
+            - ``pinch_anchor_dx`` / ``pinch_anchor_dy``: pocket anchors in target frame
+            - ``potential_field_sigma`` / ``potential_field_peak`` / ``potential_field_floor``
+              / ``potential_field_power`` / ``potential_field_weight``
+            """
+            if not heatmap:
+                self._reward_heatmap_enabled = False
+                self._reward_heatmap_target = None
+                self._reward_heatmap_key = None
+                self._clear_reward_heatmap()
+                return
+            if not isinstance(heatmap, Mapping):
+                return
+
+            target_id = heatmap.get("target_id") or heatmap.get("agent_id") or heatmap.get("target")
+            if not target_id:
+                self._reward_heatmap_enabled = False
+                self._reward_heatmap_target = None
+                self._reward_heatmap_key = None
+                self._clear_reward_heatmap()
+                return
+            self._reward_heatmap_enabled = True
+            self._reward_heatmap_target = str(target_id)
+
+            try:
+                alpha_val = float(alpha)
+            except (TypeError, ValueError):
+                alpha_val = self._reward_heatmap_alpha
+            self._reward_heatmap_alpha = float(min(max(alpha_val, 0.0), 1.0))
+
+            try:
+                scale_val = float(value_scale)
+            except (TypeError, ValueError):
+                scale_val = self._reward_heatmap_value_scale
+            if scale_val <= 0.0 or not np.isfinite(scale_val):
+                scale_val = 1.0
+            self._reward_heatmap_value_scale = float(scale_val)
+
+            try:
+                extent_val = float(extent_m)
+            except (TypeError, ValueError):
+                extent_val = self._reward_heatmap_extent_m
+            if extent_val <= 0.0 or not np.isfinite(extent_val):
+                extent_val = self._reward_heatmap_extent_m
+            self._reward_heatmap_extent_m = float(extent_val)
+
+            try:
+                cell_val = float(cell_size_m)
+            except (TypeError, ValueError):
+                cell_val = self._reward_heatmap_cell_size_m
+            if cell_val <= 0.0 or not np.isfinite(cell_val):
+                cell_val = self._reward_heatmap_cell_size_m
+            self._reward_heatmap_cell_size_m = float(cell_val)
+
+            ax_raw = heatmap.get("pinch_anchor_dx", heatmap.get("anchor_dx", heatmap.get("dx", 0.0)))
+            ay_raw = heatmap.get("pinch_anchor_dy", heatmap.get("anchor_dy", heatmap.get("dy", 0.0)))
+            try:
+                ax = float(ax_raw)
+            except (TypeError, ValueError):
+                ax = 0.0
+            try:
+                ay = abs(float(ay_raw))
+            except (TypeError, ValueError):
+                ay = 0.0
+
+            sigma_raw = heatmap.get(
+                "potential_field_sigma",
+                heatmap.get("sigma", heatmap.get("potential_field_radius", heatmap.get("radius", 0.0))),
+            )
+            try:
+                sigma = float(sigma_raw)
+            except (TypeError, ValueError):
+                sigma = 0.0
+            sigma = max(float(sigma), 0.0)
+
+            weight_raw = heatmap.get("potential_field_weight", heatmap.get("weight", 0.0))
+            try:
+                weight = float(weight_raw)
+            except (TypeError, ValueError):
+                weight = 0.0
+
+            peak_raw = heatmap.get("potential_field_peak", heatmap.get("peak", 1.0))
+            floor_raw = heatmap.get("potential_field_floor", heatmap.get("floor", -1.0))
+            power_raw = heatmap.get("potential_field_power", heatmap.get("power", 2.0))
+            try:
+                peak = float(peak_raw)
+            except (TypeError, ValueError):
+                peak = 1.0
+            try:
+                floor = float(floor_raw)
+            except (TypeError, ValueError):
+                floor = -1.0
+            try:
+                power = float(power_raw)
+            except (TypeError, ValueError):
+                power = 2.0
+            power = max(float(power), 1e-6)
+
+            if not weight or sigma <= 0.0:
+                self._reward_heatmap_key = None
+                self._clear_reward_heatmap()
+                return
+
+            key = (
+                ax,
+                ay,
+                sigma,
+                peak,
+                floor,
+                power,
+                weight,
+                self._reward_heatmap_alpha,
+                self._reward_heatmap_value_scale,
+                self._reward_heatmap_extent_m,
+                self._reward_heatmap_cell_size_m,
+            )
+            if key != self._reward_heatmap_key or self._reward_heatmap_vlist is None:
+                self._reward_heatmap_key = key
+                self._rebuild_reward_heatmap(
+                    ax=ax,
+                    ay=ay,
+                    sigma=sigma,
+                    peak=peak,
+                    floor=floor,
+                    power=power,
+                    weight=weight,
+                )
+
+            self._update_reward_heatmap_overlay()
+
+        def _clear_reward_heatmap(self) -> None:
+            vlist = getattr(self, "_reward_heatmap_vlist", None)
+            if vlist is not None:
+                try:
+                    vlist.delete()
+                except Exception:
+                    pass
+            self._reward_heatmap_vlist = None
+            self._reward_heatmap_positions = None
+            self._reward_heatmap_colors = None
+            self._reward_heatmap_dx = None
+            self._reward_heatmap_dy = None
+
+        def _rebuild_reward_heatmap(
+            self,
+            *,
+            ax: float,
+            ay: float,
+            sigma: float,
+            peak: float,
+            floor: float,
+            power: float,
+            weight: float,
+        ) -> None:
+            extent = max(float(self._reward_heatmap_extent_m), 0.0)
+            cell = max(float(self._reward_heatmap_cell_size_m), 1e-6)
+            if extent <= 0.0:
+                self._clear_reward_heatmap()
+                return
+
+            x_edges = np.arange(-extent, extent + cell, cell, dtype=np.float32)
+            y_edges = np.arange(-extent, extent + cell, cell, dtype=np.float32)
+            if x_edges.size < 2 or y_edges.size < 2:
+                self._clear_reward_heatmap()
+                return
+
+            x0 = x_edges[:-1]
+            x1 = x_edges[1:]
+            y0 = y_edges[:-1]
+            y1 = y_edges[1:]
+
+            x0g, y0g = np.meshgrid(x0, y0, indexing='xy')
+            x1g, y1g = np.meshgrid(x1, y1, indexing='xy')
+            cx = (x0g + x1g) * 0.5
+            cy = (y0g + y1g) * 0.5
+
+            d_l = np.hypot(cx - float(ax), cy - float(ay))
+            d_r = np.hypot(cx - float(ax), cy + float(ay))
+            d = np.minimum(d_l, d_r)
+
+            ratio = d / max(float(sigma), 1e-6)
+            shaped = np.exp(-0.5 * np.power(ratio, float(power), dtype=np.float32))
+            value = float(floor) + (float(peak) - float(floor)) * shaped
+            value = value * float(weight)
+
+            scale = max(float(self._reward_heatmap_value_scale), 1e-6)
+            intensity = np.clip(np.abs(value) / scale, 0.0, 1.0).astype(np.float32, copy=False)
+            alpha = float(self._reward_heatmap_alpha)
+            alpha_cell = np.where(intensity > 1e-6, alpha, 0.0).astype(np.float32, copy=False)
+
+            r = np.where(value < 0.0, intensity, 0.0).astype(np.float32, copy=False)
+            g = np.where(value > 0.0, intensity, 0.0).astype(np.float32, copy=False)
+            b = np.zeros_like(intensity, dtype=np.float32)
+            rgba_cells = np.stack([r, g, b, alpha_cell], axis=-1).reshape(-1, 4)
+
+            # Vertex offsets for 2 triangles per cell (6 vertices).
+            dx = np.stack([x0g, x1g, x1g, x0g, x1g, x0g], axis=-1).reshape(-1).astype(np.float32, copy=False)
+            dy = np.stack([y0g, y0g, y1g, y0g, y1g, y1g], axis=-1).reshape(-1).astype(np.float32, copy=False)
+            vertex_count = int(dx.size)
+            if vertex_count <= 0:
+                self._clear_reward_heatmap()
+                return
+
+            colors = np.repeat(rgba_cells, 6, axis=0)
+            if colors.shape[0] != vertex_count:
+                self._clear_reward_heatmap()
+                return
+
+            if self._reward_heatmap_vlist is not None:
+                try:
+                    self._reward_heatmap_vlist.delete()
+                except Exception:
+                    pass
+
+            positions_buf = array('f', [0.0] * (2 * vertex_count))
+            colors_buf = array('f', [0.0] * (4 * vertex_count))
+
+            col_view = np.frombuffer(colors_buf, dtype=np.float32).reshape((-1, 4))
+            col_view[:] = colors
+
+            self._reward_heatmap_positions = positions_buf
+            self._reward_heatmap_colors = colors_buf
+            self._reward_heatmap_dx = dx
+            self._reward_heatmap_dy = dy
+
+            self._reward_heatmap_vlist = self.shader.vertex_list(
+                vertex_count,
+                pyglet.gl.GL_TRIANGLES,
+                batch=self.batch,
+                group=self._reward_heatmap_group,
+                position=('f/dynamic', positions_buf),
+                color=('f/dynamic', colors_buf),
+            )
+            try:
+                self._reward_heatmap_vlist.color[:] = colors_buf
+            except Exception:
+                pass
+
+        def _update_reward_heatmap_overlay(self) -> None:
+            if not getattr(self, "_reward_heatmap_enabled", False):
+                return
+            vlist = getattr(self, "_reward_heatmap_vlist", None)
+            if vlist is None:
+                return
+            target_id = getattr(self, "_reward_heatmap_target", None)
+            if not target_id:
+                return
+            state = self.agent_infos.get(target_id)
+            if state is None:
+                return
+
+            dx = self._reward_heatmap_dx
+            dy = self._reward_heatmap_dy
+            positions = self._reward_heatmap_positions
+            if dx is None or dy is None or positions is None:
+                return
+
+            base_x = float(state.get("poses_x", 0.0))
+            base_y = float(state.get("poses_y", 0.0))
+            heading = float(state.get("poses_theta", 0.0))
+
+            cos_h = math.cos(heading)
+            sin_h = math.sin(heading)
+            x = (base_x + cos_h * dx - sin_h * dy) * self.render_scale
+            y = (base_y + sin_h * dx + cos_h * dy) * self.render_scale
+
+            pos_view = np.frombuffer(positions, dtype=np.float32)
+            pos_view[0::2] = x
+            pos_view[1::2] = y
+            try:
+                vlist.position[:] = positions
+            except Exception:
+                pass
 
         def _format_telemetry_lines(self) -> List[str]:
             metrics = self._telemetry_metrics

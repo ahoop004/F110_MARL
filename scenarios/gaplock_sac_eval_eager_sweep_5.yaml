@@ -98,53 +98,38 @@ scenario:
         idle_patience_steps: 0
         idle_speed_threshold: 0
         params:
-          distance_gradient:
-            clip:
-            - -0.1
-            - 0.1
-            points:
-            - distance: 0.4
-              value: 0.1
-            - distance: 5.0
-              value: 0.5
-            - distance: 10.0
-              value: -0.0
-            scale: 1.25
-            time_scaled: true
-          distance_penalty_far: 0.01
-          distance_reward_far_distance: 2.0
-          distance_reward_near: 0.02
-          distance_reward_near_distance: 0.9
+          distance_penalty_far: 0.0
+          distance_reward_far_distance: 0.0
+          distance_reward_near: 0.0
+          distance_reward_near_distance: 0.0
           idle_penalty: 0.0
           idle_penalty_steps: 0
           idle_speed_threshold: 0.0
           idle_truncation_penalty: 0.0
-          pressure_bonus: 0.02
-          pressure_bonus_interval: 6
-          pressure_distance: 0.9
-          pressure_min_speed: 0.25
-          pressure_streak_bonus: 0.01
+          pressure_bonus: 0.0
+          pressure_bonus_interval: 1
+          pressure_distance: 0.0
+          pressure_min_speed: 0.0
+          pressure_streak_bonus: 0.0
           pressure_streak_cap: 0
-          pressure_timeout: 0.65
-          relative_reward:
-            inner_tolerance: 0.0
-            outer_tolerance: 0.6
-            preferred_radius: 0.4
-            weights:
-              back: 0.01
-              back_left: 0.05
-              back_right: 0.05
-              front: 0.25
-              front_left: 0.35
-              front_right: 0.35
-              left: 0.15
-              right: 0.15
+          pressure_timeout: 0.0
+          success_requires_pressure: false
           self_collision_penalty: -1.0
-          speed_bonus_coef: 0.04
-          speed_bonus_target: 0.4
+          speed_bonus_coef: 0.0
+          speed_bonus_target: 0.0
           step_reward: -0.0
           target_crash_reward: 80
           truncation_penalty: -5
+
+          # Potential-field reward (Gaussian, centered on pinch anchors)
+          pinch_anchor_dx: 0.3
+          pinch_anchor_dy: 0.6
+          potential_field_weight: 1.0
+          potential_field_sigma: 0.35
+          potential_field_peak: 1.0
+          potential_field_floor: -1.0
+          potential_field_power: 2.0
+          potential_field_time_scaled: true
         task: gaplock
       trainable: true
       wrappers:
