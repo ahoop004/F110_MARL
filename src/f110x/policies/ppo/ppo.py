@@ -87,8 +87,8 @@ class PPOAgent(BasePPOAgent):
             scaled = self._scale_action(squashed)
         return scaled.detach().cpu().numpy()
 
-    def store(self, obs, act, rew, done):
-        self.store_transition(rew, done)
+    def store(self, obs, act, rew, done, terminated: bool = False):
+        self.store_transition(rew, done, terminated)
 
     def _estimate_value(self, obs):
         obs_np = np.asarray(obs, dtype=np.float32)

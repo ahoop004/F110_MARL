@@ -77,6 +77,7 @@ class BasePPOAgent:
         self.raw_act_buf: List[np.ndarray] = []
         self.rew_buf: List[float] = []
         self.done_buf: List[bool] = []
+        self.terminated_buf: List[bool] = []
         self.logp_buf: List[float] = []
         self.val_buf: List[float] = []
         self.adv_buf = np.zeros(0, dtype=np.float32)
@@ -85,9 +86,10 @@ class BasePPOAgent:
         self._episode_bootstrap: List[float] = []
         self._episode_boundaries: List[int] = [0]
 
-    def store_transition(self, rew: float, done: bool) -> None:
+    def store_transition(self, rew: float, done: bool, terminated: bool) -> None:
         self.rew_buf.append(float(rew))
         self.done_buf.append(bool(done))
+        self.terminated_buf.append(bool(terminated))
         if done:
             self._episodes_since_update += 1
             bootstrap = float(self._pending_bootstrap or 0.0)
@@ -109,8 +111,11 @@ class BasePPOAgent:
             self.ret_buf = np.zeros(0, dtype=np.float32)
             return
 
-        if len(self.done_buf) < T:
-            raise ValueError(f"rollout length mismatch: rewards {T}, dones {len(self.done_buf)}")
+        if len(self.terminated_buf) < T:
+            raise ValueError(
+                "rollout length mismatch: rewards "
+                f"{T}, terminated {len(self.terminated_buf)}"
+            )
 
         rewards = np.asarray(self.rew_buf[:T], dtype=np.float32)
         values = np.asarray(self.val_buf[:T], dtype=np.float32)
@@ -122,7 +127,7 @@ class BasePPOAgent:
             )
         else:
             values = values[:T]
-        dones = np.asarray(self.done_buf[:T], dtype=np.float32)
+        terminated = np.asarray(self.terminated_buf[:T], dtype=np.float32)
 
         normalised_boundaries: List[int] = []
         seen = set()
@@ -155,7 +160,7 @@ class BasePPOAgent:
             bootstrap_v = self._episode_bootstrap[idx] if idx < len(self._episode_bootstrap) else 0.0
             gae = 0.0
             for t in reversed(range(start, end)):
-                mask = 1.0 - dones[t]
+                mask = 1.0 - terminated[t]
                 next_value = bootstrap_v if t == end - 1 else values[t + 1]
                 delta = rewards[t] + self.gamma * next_value * mask - values[t]
                 gae = delta + self.gamma * self.lam * mask * gae
@@ -178,6 +183,7 @@ class BasePPOAgent:
         self.val_buf = list(values)
         self.rew_buf = self.rew_buf[:T]
         self.done_buf = self.done_buf[:T]
+        self.terminated_buf = self.terminated_buf[:T]
 
     # ------------------------------------------------------------------
     # Bootstrapping helpers

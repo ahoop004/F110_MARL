@@ -21,6 +21,7 @@ from f110x.utils.torch_io import resolve_device, safe_load
 
 class TD3Agent:
     def __init__(self, cfg: Dict[str, Any]):
+        self._cfg = dict(cfg)
         self.device = resolve_device([cfg.get("device")])
 
         self.obs_dim = int(cfg["obs_dim"])
@@ -397,10 +398,25 @@ class TD3Agent:
     def reset_optimizers(self) -> None:
         """Reinitialise optimiser state while preserving learning rates."""
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
-        self.critic_opt = torch.optim.Adam(
+        self.actor_opt = self._init_optimizer(
+            self.actor.parameters(),
+            self._cfg,
+            prefix="actor",
+            default_lr=self.actor_lr,
+        )
+        self.critic_opt = self._init_optimizer(
             list(self.critic1.parameters()) + list(self.critic2.parameters()),
-            lr=self.critic_lr,
+            self._cfg,
+            prefix="critic",
+            default_lr=self.critic_lr,
+        )
+        self.actor_scheduler = self._init_scheduler(
+            self.actor_opt,
+            self._cfg.get("actor_lr_scheduler"),
+        )
+        self.critic_scheduler = self._init_scheduler(
+            self.critic_opt,
+            self._cfg.get("critic_lr_scheduler"),
         )
 
     # -------------------- Helpers --------------------
