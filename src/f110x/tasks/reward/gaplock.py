@@ -77,6 +77,13 @@ GAPLOCK_PARAM_KEYS = (
     "pinch_pressure_distance",
     "pinch_pressure_heading_tol_deg",
     "pinch_pressure_recent_seconds",
+    # Potential-field reward term (hotspots at pinch anchors)
+    "potential_field_weight",
+    "potential_field_radius",
+    "potential_field_peak",
+    "potential_field_floor",
+    "potential_field_power",
+    "potential_field_time_scaled",
     "lidar_filter_range_min",
     "lidar_filter_range_max",
     "lidar_fov_radians",
@@ -170,6 +177,12 @@ class GaplockRewardStrategy(RewardStrategy):
         pinch_pressure_distance: float = 1.5,
         pinch_pressure_heading_tol_deg: float = 30.0,
         pinch_pressure_recent_seconds: float = 1.5,
+        potential_field_weight: float = 0.0,
+        potential_field_radius: float = 0.0,
+        potential_field_peak: float = 1.0,
+        potential_field_floor: float = -1.0,
+        potential_field_power: float = 2.0,
+        potential_field_time_scaled: bool = True,
         lidar_filter_range_min: float = 0.3,
         lidar_filter_range_max: Optional[float] = None,
         target_neighborhood_r_min: float = 0.3,
@@ -281,6 +294,13 @@ class GaplockRewardStrategy(RewardStrategy):
         self.pinch_pressure_heading_tol_deg = max(float(pinch_pressure_heading_tol_deg), 0.0)
         self.pinch_pressure_recent_seconds = max(float(pinch_pressure_recent_seconds), 0.0)
 
+        self.potential_field_weight = float(potential_field_weight)
+        self.potential_field_radius = max(float(potential_field_radius), 0.0)
+        self.potential_field_peak = float(potential_field_peak)
+        self.potential_field_floor = float(potential_field_floor)
+        self.potential_field_power = max(float(potential_field_power), 1e-6)
+        self.potential_field_time_scaled = bool(potential_field_time_scaled)
+
         self.lidar_filter_range_min = max(float(lidar_filter_range_min), 0.0)
         self.lidar_filter_range_max = None if lidar_filter_range_max in (None, "") else float(lidar_filter_range_max)
         self._lidar_fov_radians = None if lidar_fov_radians in (None, "") else max(float(lidar_fov_radians), 1e-6)
@@ -304,6 +324,7 @@ class GaplockRewardStrategy(RewardStrategy):
 
         self._pinch_rewards_enabled = (
             abs(self.pocket_reward_weight) > 0.0
+            or abs(self.potential_field_weight) > 0.0
             or abs(self.force_reward_weight) > 0.0
             or abs(self.turn_reward_weight) > 0.0
         )
@@ -953,6 +974,19 @@ class GaplockRewardStrategy(RewardStrategy):
                 pocket_reward = 0.0
             if abs(pocket_reward) > 1e-9:
                 acc.add("pinch_pocket", pocket_reward)
+
+        if self.potential_field_weight and self.potential_field_radius > 0.0:
+            radius = float(self.potential_field_radius)
+            t = min(max(d_min / max(radius, 1e-6), 0.0), 1.0)
+            shaped = t ** float(self.potential_field_power)
+            value = float(self.potential_field_peak) + (float(self.potential_field_floor) - float(self.potential_field_peak)) * shaped
+            value *= float(self.potential_field_weight)
+            if self.potential_field_time_scaled:
+                value *= float(time_scale)
+            diagnostics["potential_field/d_min"] = float(d_min)
+            diagnostics["potential_field/value"] = float(value)
+            if abs(value) > 1e-9:
+                acc.add("potential_field", value)
 
         # Pressure gate + recent pressure tracking.
         pinch_pressure_now = False

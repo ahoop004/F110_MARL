@@ -47,6 +47,14 @@ REWARD_FEATURE_PRESETS: Dict[str, Dict[str, Any]] = {
         "pinch_pressure_heading_tol_deg": 30.0,
         "pinch_pressure_recent_seconds": 1.5,
     },
+    "gaplock_potential_field": {
+        "potential_field_weight": 0.05,
+        "potential_field_radius": 1.2,
+        "potential_field_peak": 1.0,
+        "potential_field_floor": -1.0,
+        "potential_field_power": 2.0,
+        "potential_field_time_scaled": True,
+    },
     "gaplock_force_clearance": {
         "force_reward_weight": 1.0,
         "force_reward_enable_ema": True,
