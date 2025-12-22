@@ -177,6 +177,7 @@ class F110ParallelEnv(ParallelEnv):
         self._reward_ring_dirty: bool = False
         self._reward_ring_target_dirty: bool = False
         self._reward_ring_marker_states: Dict[str, List[bool]] = {}
+        self._reward_ring_marker_dirty: bool = False
         self._render_metrics_payload: Optional[Dict[str, Any]] = None
         self._render_metrics_dirty: bool = False
         self._render_ticker: deque[str] = deque(maxlen=64)
@@ -679,8 +680,10 @@ class F110ParallelEnv(ParallelEnv):
             self._reward_ring_config = None
             self._reward_ring_focus_agent = None
             self._reward_ring_target = None
+            self._reward_ring_marker_states.clear()
             self._reward_ring_dirty = True
             self._reward_ring_target_dirty = True
+            self._reward_ring_marker_dirty = True
             return
 
         stored = {
@@ -734,8 +737,10 @@ class F110ParallelEnv(ParallelEnv):
         if self._reward_ring_config != stored or self._reward_ring_focus_agent != agent_id:
             self._reward_ring_config = stored
             self._reward_ring_focus_agent = agent_id
+            self._reward_ring_marker_states.clear()
             self._reward_ring_dirty = True
             self._reward_ring_target_dirty = True
+            self._reward_ring_marker_dirty = True
 
     def update_reward_ring_target(self, agent_id: str, target_id: Optional[str]) -> None:
         if self._reward_ring_config is None:
@@ -749,21 +754,32 @@ class F110ParallelEnv(ParallelEnv):
         if self._reward_ring_target != normalized:
             self._reward_ring_target = normalized
             self._reward_ring_target_dirty = True
+            self._reward_ring_marker_dirty = True
+
+        if normalized:
+            pending = self._reward_ring_marker_states.get(agent_id)
+            if pending is not None:
+                self._reward_ring_marker_states[normalized] = list(pending)
+                if agent_id != normalized:
+                    self._reward_ring_marker_states.pop(agent_id, None)
+                self._reward_ring_marker_dirty = True
 
     def update_reward_ring_markers(self, agent_id: str, states: Optional[Sequence[bool]]) -> None:
-        if self._reward_ring_config is None or self.renderer is None:
+        if self._reward_ring_config is None:
             return
         focus = self._reward_ring_focus_agent
         if focus is not None and agent_id != focus:
             return
+        target_key = self._reward_ring_target or agent_id
         if states is None:
-            self._reward_ring_marker_states.pop(agent_id, None)
+            if target_key in self._reward_ring_marker_states:
+                self._reward_ring_marker_states.pop(target_key, None)
+                self._reward_ring_marker_dirty = True
         else:
-            self._reward_ring_marker_states[agent_id] = [bool(s) for s in states]
-        try:
-            self.renderer.set_reward_ring_marker_state(agent_id, self._reward_ring_marker_states.get(agent_id))
-        except Exception:
-            pass
+            snapshot = [bool(s) for s in states]
+            if self._reward_ring_marker_states.get(target_key) != snapshot:
+                self._reward_ring_marker_states[target_key] = snapshot
+                self._reward_ring_marker_dirty = True
 
     def _apply_reward_ring_to_renderer(self) -> None:
         if self.renderer is None:
@@ -795,6 +811,16 @@ class F110ParallelEnv(ParallelEnv):
         if self._reward_ring_target_dirty:
             self.renderer.set_reward_ring_target(self._reward_ring_target)
             self._reward_ring_target_dirty = False
+
+        if self._reward_ring_marker_dirty:
+            target_id = self._reward_ring_target
+            if target_id:
+                states = self._reward_ring_marker_states.get(target_id)
+                try:
+                    self.renderer.set_reward_ring_marker_state(target_id, states)
+                except Exception:
+                    pass
+            self._reward_ring_marker_dirty = False
 
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
@@ -1088,10 +1114,11 @@ class F110ParallelEnv(ParallelEnv):
     def render(self):
         assert self.render_mode in ["human", "rgb_array"]
 
-        self._collect_render_data = True
         if self._headless and self.render_mode == "human":
             # Nothing to do when headless; keep API contract intact.
             return None
+
+        self._collect_render_data = True
 
         if self.renderer is None:
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,
