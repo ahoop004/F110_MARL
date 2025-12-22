@@ -217,8 +217,8 @@ class RecurrentPPOAgent(BasePPOAgent):
     # Advantage calculation & optimisation
     # ------------------------------------------------------------------
 
-    def finish_path(self) -> None:
-        super().finish_path(normalize_advantage=False)
+    def finish_path(self, *, normalize_advantage: bool = True) -> None:
+        super().finish_path(normalize_advantage=normalize_advantage)
 
     def _ensure_episode_boundaries(self) -> None:
         if not self._episode_boundaries:
@@ -232,13 +232,6 @@ class RecurrentPPOAgent(BasePPOAgent):
         self._ensure_episode_boundaries()
 
         adv_tensor = torch.as_tensor(self.adv_buf, dtype=torch.float32, device=self.device)
-        if adv_tensor.numel() > 0:
-            adv_mean = adv_tensor.mean()
-            adv_std = adv_tensor.std(unbiased=False)
-            if adv_std.item() > 1e-8:
-                adv_tensor = (adv_tensor - adv_mean) / (adv_std + 1e-8)
-            else:
-                adv_tensor = torch.zeros_like(adv_tensor)
 
         ret_tensor = torch.as_tensor(self.ret_buf, dtype=torch.float32, device=self.device)
         logp_old_tensor = torch.as_tensor(self.logp_buf, dtype=torch.float32, device=self.device)
@@ -300,7 +293,7 @@ class RecurrentPPOAgent(BasePPOAgent):
         if not self.rew_buf:
             return None
 
-        self.finish_path()
+        self.finish_path(normalize_advantage=self.normalize_advantage)
         episodes = self._prepare_sequences()
         if not episodes:
             self.reset_buffer()

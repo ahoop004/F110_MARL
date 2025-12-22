@@ -39,11 +39,12 @@ class BasePPOAgent:
         self.act_dim = int(cfg["act_dim"])
 
         self.gamma = float(cfg.get("gamma", 0.99))
-        self.lam = float(cfg.get("lam", 0.95))
+        self.lam = float(cfg.get("lam", cfg.get("gae_lambda", 0.95)))
         self.clip_eps = float(cfg.get("clip_eps", 0.2))
         self.update_epochs = int(cfg.get("update_epochs", 10))
         self.minibatch_size = int(cfg.get("minibatch_size", 64))
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
+        self.normalize_advantage = bool(cfg.get("normalize_adv", True))
 
         base_ent_coef = float(cfg.get("ent_coef", 0.0))
         schedule_cfg = cfg.get("ent_coef_schedule") or {}
