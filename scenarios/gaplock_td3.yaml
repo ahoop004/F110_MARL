@@ -13,6 +13,8 @@ scenario:
       v_min: -1.0
       length: 0.32
       width: 0.225
+      s_min: -0.46
+      s_max: 0.46
     spawn_points:
       - spawn_2
       - spawn_1

@@ -45,6 +45,8 @@ scenario:
       v_max: 1.0
       v_min: -1.0
       width: 0.225
+      s_min: -0.46
+      s_max: 0.46
   main:
     checkpoint: plots/eager-sweep-3/20251112-132218/sac_best_eager-sweep-5.pt
     eval_episodes: 25

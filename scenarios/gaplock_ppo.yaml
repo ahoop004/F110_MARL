@@ -48,7 +48,7 @@ scenario:
           batch_size: 4096
           minibatch_size: 256
           max_grad_norm: 0.5
-          ent_coef: 0.00
+          ent_coef: 0.005
           normalize_adv: true
           gae_lambda: 0.95
           sequence_batch_size: 1
