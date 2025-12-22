@@ -109,8 +109,12 @@ scenario:
           pressure_distance: 1.6
           pressure_timeout: 1.5
           pressure_min_speed: 0.25
-          pressure_bonus: 0.1
-          success_requires_pressure: false
+          pressure_bonus: 0.01
+          pressure_bonus_interval: 10
+          success_requires_pressure: true
+
+          speed_bonus_coef: -0.03
+          speed_bonus_target: 2.5
 
           distance_reward_far_distance: 4.0
           distance_penalty_far: 0.01
@@ -126,6 +130,7 @@ scenario:
           target_side_y_epsilon: 0.08
 
           # Pinch pocket geometry (new)
+          pocket_reward_weight: 0.15
           pinch_anchor_dx: 1.3
           pinch_anchor_dy: 0.8
           pinch_sigma: 0.55
@@ -135,8 +140,8 @@ scenario:
           pinch_pressure_recent_seconds: 1.5
 
           # Forcing via opposite-side clearance shrink (new)
-          force_reward_weight: 1.2
-          force_reward_time_scaled: true
+          force_reward_weight: 3.0
+          force_reward_time_scaled: false
           force_reward_clip: 0.20
           force_reward_band_min: 0.45
           force_reward_band_max: 3.2
