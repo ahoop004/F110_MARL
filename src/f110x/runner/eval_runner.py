@@ -162,6 +162,13 @@ class EvalRunner:
         recent_returns: Deque[float] = deque(maxlen=eval_window)
         recent_success: Deque[float] = deque(maxlen=eval_window)
         finish_line_hit_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        completion_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        completion_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
+        completion_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        total_successes = 0
+        target_laps = int(getattr(env, "target_laps", 1) or 1)
+        if target_laps <= 0:
+            target_laps = 1
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         reward_cfg = self.context.reward_cfg
@@ -246,8 +253,52 @@ class EvalRunner:
             }
 
             lap_counts = self._extract_lap_counts(env, agent_ids)
+            lap_times = self._extract_lap_times(env, agent_ids)
             for agent_id in agent_ids:
                 finish_line_hit_counts[agent_id] += int(bool(finish_line_hits.get(agent_id, False)))
+
+            completion: Dict[str, bool] = {}
+            completion_times: Dict[str, Optional[float]] = {}
+            for agent_id in agent_ids:
+                finish_hit = bool(finish_line_hits.get(agent_id, False))
+                lap_count = float(lap_counts.get(agent_id, 0.0))
+                completed = finish_hit or (lap_count >= float(target_laps))
+                completion[agent_id] = completed
+
+                completion_time: Optional[float] = None
+                if completed:
+                    lap_time_val = lap_times.get(agent_id)
+                    if lap_time_val is not None and lap_time_val > 0:
+                        completion_time = float(lap_time_val)
+                    else:
+                        completion_time = float(getattr(env, "current_time", 0.0) or 0.0)
+                completion_times[agent_id] = completion_time
+
+                if completed:
+                    completion_counts[agent_id] += 1
+                    if completion_time is not None:
+                        completion_time_sums[agent_id] += float(completion_time)
+                        completion_time_counts[agent_id] += 1
+
+                self._plot_logger.log_eval_agent_metrics(
+                    {
+                        "episode": ep_index + 1,
+                        "agent_id": agent_id,
+                        "success": int(completed),
+                        "time_to_success": "" if completion_time is None else float(completion_time),
+                        "lap_count": lap_counts.get(agent_id, ""),
+                        "lap_time": lap_times.get(agent_id, ""),
+                        "finish_line_hit": int(finish_hit),
+                        "target_laps": target_laps,
+                        "steps": rollout.steps,
+                        "sim_time": float(getattr(env, "current_time", 0.0) or 0.0),
+                        "collisions": int(rollout.collisions.get(agent_id, 0)),
+                        "collision_step": "" if collision_steps.get(agent_id) is None else int(collision_steps[agent_id]),
+                        "terminated": int(bool(rollout.terms.get(agent_id, False))),
+                        "truncated": int(bool(rollout.truncations.get(agent_id, False))),
+                        "cause": rollout.cause,
+                    }
+                )
 
             defender_crashed: Optional[bool] = None
             defender_crash_step: Optional[int] = None
@@ -292,6 +343,10 @@ class EvalRunner:
                     success = True
                     assisted_success = False
                     record_finish_agent = finish_agent
+            if success is None:
+                finish_agent = primary_id or (agent_ids[0] if agent_ids else None)
+                if finish_agent is not None:
+                    success = bool(completion.get(finish_agent, False))
 
             cause_code = resolve_episode_cause_code(
                 success=bool(success),
@@ -300,6 +355,12 @@ class EvalRunner:
                 truncated=any(rollout.truncations.values()) or rollout.idle_triggered,
             )
             self._plot_logger.log_path_points(path_points, cause_code)
+
+            time_to_success: Optional[float] = None
+            if success:
+                finish_agent = primary_id or (agent_ids[0] if agent_ids else None)
+                if finish_agent is not None:
+                    time_to_success = completion_times.get(finish_agent)
 
             record: Dict[str, Any] = {
                 "episode": ep_index + 1,
@@ -310,6 +371,8 @@ class EvalRunner:
             }
             if success is not None:
                 record["success"] = success
+            if time_to_success is not None:
+                record["time_to_success"] = float(time_to_success)
             record["assisted_success"] = assisted_success
             record["reward_breakdown"] = reward_breakdown
             record["finish_line_hits"] = finish_line_hits
@@ -365,6 +428,9 @@ class EvalRunner:
             success_rate = (
                 float(sum(recent_success) / len(recent_success)) if recent_success else None
             )
+            if success:
+                total_successes += 1
+            success_rate_total = float(total_successes) / max(float(ep_index + 1), 1.0)
 
             collision_rate = float(collision_total) / max(float(rollout.steps), 1.0)
 
@@ -384,8 +450,11 @@ class EvalRunner:
                 metrics["eval/success"] = bool(success)
             if assisted_success is not None:
                 metrics["eval/assisted_success"] = bool(assisted_success)
+            metrics["eval/success_rate_total"] = success_rate_total
             if success_rate is not None:
                 metrics["eval/success_rate"] = success_rate
+            if time_to_success is not None:
+                metrics["eval/time_to_success"] = float(time_to_success)
             if defender_crashed is not None:
                 metrics["eval/defender_crashed"] = bool(defender_crashed)
             if attacker_crashed is not None:
@@ -419,17 +488,37 @@ class EvalRunner:
                     publish_metrics("eval", metrics, step=ep_index + 1)
                 except Exception:
                     pass
+            self._plot_logger.log_episode_metrics(
+                {
+                    "episode": ep_index + 1,
+                    "steps": rollout.steps,
+                    "time_to_success": "" if time_to_success is None else float(time_to_success),
+                    "success": int(success) if success is not None else "",
+                    "success_rate_window": "" if success_rate is None else float(success_rate),
+                    "success_rate_total": float(success_rate_total),
+                    "collisions": collision_total,
+                    "cause_code": cause_code,
+                }
+            )
 
             results.append(record)
 
         summary_metrics: Dict[str, Any] = {
             "eval/episode": float(total_episodes),
             "eval/episodes_total": float(total_episodes),
+            "eval/success_rate_total": float(total_successes) / max(float(total_episodes), 1.0),
         }
         for agent_id in agent_ids:
             rate = float(finish_line_hit_counts.get(agent_id, 0)) / max(float(total_episodes), 1.0)
             summary_metrics[f"eval/finish_line_hit_rate/{agent_id}"] = rate
             summary_metrics[f"eval/{agent_id}_finish_rate"] = rate
+            completion_rate = float(completion_counts.get(agent_id, 0)) / max(float(total_episodes), 1.0)
+            summary_metrics[f"eval/success_rate/{agent_id}"] = completion_rate
+            time_count = completion_time_counts.get(agent_id, 0) or 0
+            if time_count > 0:
+                summary_metrics[f"eval/avg_time_to_success/{agent_id}"] = (
+                    float(completion_time_sums.get(agent_id, 0.0)) / float(time_count)
+                )
         logger.log_metrics("eval", summary_metrics, step=total_episodes)
         publish_metrics = getattr(env, "update_render_metrics", None)
         if callable(publish_metrics):
@@ -437,6 +526,30 @@ class EvalRunner:
                 publish_metrics("eval", summary_metrics, step=total_episodes)
             except Exception:
                 pass
+
+        summary_payload: Dict[str, Any] = {
+            "episodes": total_episodes,
+            "primary_agent": primary_id,
+            "episode_successes": total_successes,
+            "episode_success_rate": float(total_successes) / max(float(total_episodes), 1.0),
+            "target_laps": target_laps,
+            "agents": {},
+        }
+        for agent_id in agent_ids:
+            agent_successes = int(completion_counts.get(agent_id, 0))
+            agent_payload: Dict[str, Any] = {
+                "successes": agent_successes,
+                "success_rate": float(agent_successes) / max(float(total_episodes), 1.0),
+            }
+            time_count = int(completion_time_counts.get(agent_id, 0))
+            if time_count > 0:
+                agent_payload["avg_time_to_success"] = float(
+                    completion_time_sums.get(agent_id, 0.0)
+                ) / float(time_count)
+            else:
+                agent_payload["avg_time_to_success"] = None
+            summary_payload["agents"][agent_id] = agent_payload
+        self._plot_logger.write_eval_summary(summary_payload)
 
         return results
 
@@ -572,6 +685,21 @@ class EvalRunner:
             if 0 <= idx < len(lap_counts):
                 counts[agent_id] = float(lap_counts[idx])
         return counts
+
+    @staticmethod
+    def _extract_lap_times(env, agent_ids: List[str]) -> Dict[str, float]:
+        times: Dict[str, float] = {}
+        lap_times = getattr(env, "lap_times", None)
+        id_to_index = getattr(env, "_agent_id_to_index", {})
+        if lap_times is None or not isinstance(id_to_index, dict):
+            return times
+        for agent_id in agent_ids:
+            idx = id_to_index.get(agent_id)
+            if idx is None:
+                continue
+            if 0 <= idx < len(lap_times):
+                times[agent_id] = float(lap_times[idx])
+        return times
 
     @staticmethod
     def _trace_transform(step) -> Dict[str, Any]:

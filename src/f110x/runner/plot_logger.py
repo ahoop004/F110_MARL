@@ -114,8 +114,12 @@ class PlotArtifactLogger:
         self.raw_config_snapshot: Mapping[str, Any] = raw_cfg
         self.path_log_file = base_dir / f"paths_{run_label}.csv"
         self.metrics_file = base_dir / f"metrics_{run_label}.csv"
+        self.eval_agent_metrics_file = base_dir / f"eval_agent_metrics_{run_label}.csv"
         self._path_header_written = self.path_log_file.exists() and self.path_log_file.stat().st_size > 0
         self._metrics_header_written = self.metrics_file.exists() and self.metrics_file.stat().st_size > 0
+        self._eval_agent_header_written = (
+            self.eval_agent_metrics_file.exists() and self.eval_agent_metrics_file.stat().st_size > 0
+        )
 
     @property
     def base_dir(self) -> Path:
@@ -178,6 +182,7 @@ class PlotArtifactLogger:
                     [
                         "episode",
                         "steps",
+                        "time_to_success",
                         "success",
                         "success_rate_window",
                         "success_rate_total",
@@ -193,6 +198,7 @@ class PlotArtifactLogger:
                 [
                     row.get("episode", ""),
                     row.get("steps", ""),
+                    row.get("time_to_success", ""),
                     row.get("success", ""),
                     row.get("success_rate_window", ""),
                     row.get("success_rate_total", ""),
@@ -203,6 +209,57 @@ class PlotArtifactLogger:
                     row.get("cause_code", ""),
                 ]
             )
+
+    def log_eval_agent_metrics(self, row: Mapping[str, Any]) -> None:
+        self.eval_agent_metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.eval_agent_metrics_file.open("a", newline="") as handle:
+            writer = csv.writer(handle)
+            if not self._eval_agent_header_written:
+                writer.writerow(
+                    [
+                        "episode",
+                        "agent_id",
+                        "success",
+                        "time_to_success",
+                        "lap_count",
+                        "lap_time",
+                        "finish_line_hit",
+                        "target_laps",
+                        "steps",
+                        "sim_time",
+                        "collisions",
+                        "collision_step",
+                        "terminated",
+                        "truncated",
+                        "cause",
+                    ]
+                )
+                self._eval_agent_header_written = True
+            writer.writerow(
+                [
+                    row.get("episode", ""),
+                    row.get("agent_id", ""),
+                    row.get("success", ""),
+                    row.get("time_to_success", ""),
+                    row.get("lap_count", ""),
+                    row.get("lap_time", ""),
+                    row.get("finish_line_hit", ""),
+                    row.get("target_laps", ""),
+                    row.get("steps", ""),
+                    row.get("sim_time", ""),
+                    row.get("collisions", ""),
+                    row.get("collision_step", ""),
+                    row.get("terminated", ""),
+                    row.get("truncated", ""),
+                    row.get("cause", ""),
+                ]
+            )
+
+    def write_eval_summary(self, summary: Mapping[str, Any]) -> None:
+        summary_path = self.base_dir / f"eval_summary_{self.run_label}.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with summary_path.open("w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2, default=_json_default)
 
     def write_run_config_snapshot(self, run_suffix: Optional[str]) -> None:
         payload = {

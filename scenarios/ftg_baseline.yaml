@@ -4,12 +4,12 @@ meta:
 scenario:
   env:
     # map: Shanghai_map
-    map: Budapest_map
-    # map: line2
+    # map: Budapest_map
+    map: line2
     seed: 42
     max_steps: 25000
     lidar_beams: 720
-    lidar_dist: 0.103
+
     terminate_on_any_done: true
     vehicle_params:
       v_max: 1.0
@@ -21,7 +21,7 @@ scenario:
     # spawn_points:
     #   - spawn_1
     spawn_points:
-      - spawn_9
+      - spawn_1
 
   main:
     mode: eval

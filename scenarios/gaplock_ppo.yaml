@@ -9,10 +9,12 @@ scenario:
     lidar_beams: 720
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 2.0
+      v_max: 1.0
       v_min: -1.0
       length: 0.32
       width: 0.225
+      s_min: -0.46
+      s_max: 0.46
     spawn_points:
       - spawn_2
       - spawn_1
