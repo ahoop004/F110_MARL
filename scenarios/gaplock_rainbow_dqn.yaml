@@ -99,7 +99,7 @@ scenario:
           self_collision_penalty: -220.0
 
           truncation_penalty: -150.0
-          step_reward: -0.01
+          step_reward: -0.001
           idle_speed_threshold: 0.02
           idle_penalty_steps: 140
           idle_penalty: -0.001
@@ -139,15 +139,15 @@ scenario:
           # Potential-field reward (Gaussian, centered on pinch anchors)
           # Set `potential_field_weight` > 0 to enable.
           potential_field_weight: 2.0
-          potential_field_sigma: 0.35
+          potential_field_sigma: 0.6
           potential_field_peak: 1.0
-          potential_field_floor: -1.0
-          potential_field_power: 1.0
+          potential_field_floor: -0.2
+          potential_field_power: 1.5
           potential_field_time_scaled: true
 
           # Forcing via opposite-side clearance shrink (new)
-          force_reward_weight: 0.0
-          force_reward_time_scaled: true
+          force_reward_weight: 10.0
+          force_reward_time_scaled: false
           force_reward_clip: 0.15
           force_reward_band_min: 0.45
           force_reward_band_max: 3.2
@@ -155,8 +155,8 @@ scenario:
           force_reward_ema_alpha: 0.45
 
           # Target yaw-rate hint (new, optional but helpful early)
-          turn_reward_weight: 0.0
-          turn_reward_time_scaled: true
+          turn_reward_weight: 3.0
+          turn_reward_time_scaled: false
           turn_reward_clip: 0.15
 
 
