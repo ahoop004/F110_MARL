@@ -106,20 +106,19 @@ scenario:
           # Pinch pocket geometry (new)
           pocket_reward_weight: 0.0
           pinch_anchor_dx: 0.3
-          pinch_anchor_dy: 0.6
+          pinch_anchor_dy: 0.45
           pinch_sigma: 0.35
           pinch_in_front_x_min: 0.45
           pinch_pressure_distance: 1.6
           pinch_pressure_heading_tol_deg: 35
           pinch_pressure_recent_seconds: 1.5
-
           # Potential-field reward (Gaussian, centered on pinch anchors)
           # Set `potential_field_weight` > 0 to enable.
-          potential_field_weight: 1.0
-          potential_field_sigma: 1.35
+          potential_field_weight: 2.0
+          potential_field_sigma: 0.35
           potential_field_peak: 1.0
           potential_field_floor: -1.0
-          potential_field_power: 2.0
+          potential_field_power: 1.0
           potential_field_time_scaled: true
 
           # Forcing via opposite-side clearance shrink (new)
