@@ -5,11 +5,11 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 35000
+    max_steps: 5000
     lidar_beams: 720
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 10.0
+      v_max: 2.0
       v_min: -1.0
       length: 0.32
       width: 0.225
@@ -68,17 +68,17 @@ scenario:
             # - 128
           observation_normalization: running
           target_kl: 0.015
-          entropy_schedule:
-            type: linear
-            start: 0.02
-            end: 0.005
-            steps: 600000
-          learning_rate_schedule:
-            type: linear
-            start: 0.0003
-            end: 0.00005
-            steps: 600000
-          initial_speed: 3.0
+          # entropy_schedule:
+          #   type: linear
+          #   start: 0.02
+          #   end: 0.005
+          #   steps: 600000
+          # learning_rate_schedule:
+          #   type: linear
+          #   start: 0.0003
+          #   end: 0.00005
+          #   steps: 600000
+          initial_speed: 1.80
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
           prevent_reverse: true

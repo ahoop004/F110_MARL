@@ -5,11 +5,11 @@ scenario:
   env:
     map: line2
     seed: 42
-    max_steps: 35000
+    max_steps: 5000
     lidar_beams: 720
     terminate_on_any_done: true
     vehicle_params:
-      v_max: 10.0
+      v_max: 2.0
       v_min: -1.0
       length: 0.32
       width: 0.225
@@ -89,7 +89,7 @@ scenario:
             - [0.00, 0.00]
             # - [0.00, -0.50]
 
-          initial_speed: 3.0
+          initial_speed: 1.8
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5
 
