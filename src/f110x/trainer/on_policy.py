@@ -53,6 +53,7 @@ class OnPolicyTrainer(Trainer):
             transition.action,
             transition.reward,
             done_flag,
+            transition.terminated,
         )
 
     def update(self) -> Optional[Dict[str, Any]]:
