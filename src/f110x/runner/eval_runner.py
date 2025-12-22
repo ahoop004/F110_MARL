@@ -143,6 +143,11 @@ class EvalRunner:
         attacker_id = team.primary_role("attacker")
         defender_id = team.primary_role("defender")
         agent_ids = list(env.possible_agents)
+        if defender_id is None and attacker_id is not None:
+            for candidate in agent_ids:
+                if candidate != attacker_id:
+                    defender_id = candidate
+                    break
 
         logger = self._logger
         total_episodes = int(episodes)
@@ -166,6 +171,9 @@ class EvalRunner:
         completion_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
         completion_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
         total_successes = 0
+        recent_target_win: Deque[float] = deque(maxlen=eval_window)
+        target_win_total = 0
+        target_win_trials = 0
         target_laps = int(getattr(env, "target_laps", 1) or 1)
         if target_laps <= 0:
             target_laps = 1
@@ -316,25 +324,44 @@ class EvalRunner:
                 if attacker_step is not None:
                     attacker_crash_step = int(attacker_step)
 
-            success: Optional[bool] = None
+            target_finished: Optional[bool] = None
+            if defender_id is not None:
+                target_finished = bool(finish_line_hits.get(defender_id, False)) or (
+                    target_laps > 0 and float(lap_counts.get(defender_id, 0.0)) >= float(target_laps)
+                )
+
+            attacker_win: Optional[bool] = None
             if defender_crashed is not None and attacker_crashed is not None:
-                success = defender_crashed and not attacker_crashed
+                attacker_win = bool(defender_crashed and not attacker_crashed)
             elif defender_crashed is not None:
-                success = defender_crashed
+                attacker_win = bool(defender_crashed)
             elif attacker_crashed is not None:
-                success = not attacker_crashed
+                attacker_win = bool(not attacker_crashed)
+
+            target_win: Optional[bool] = None
+            if defender_crashed is not None and attacker_crashed is not None:
+                if defender_crashed and attacker_crashed:
+                    target_win = False
+                else:
+                    target_win = bool((not defender_crashed) and (bool(target_finished) or attacker_crashed))
+            elif defender_crashed is not None:
+                target_win = bool((not defender_crashed) and bool(target_finished))
+
+            success: Optional[bool] = attacker_win
 
             assisted_success: Optional[bool] = None
             record_finish_agent: Optional[str] = None
             if success and attacker_id is not None:
                 attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
-                assisted_success = success_reward_val > 0.0
+                kamikaze_reward_val = float(attacker_components.get("kamikaze_success", 0.0) or 0.0)
+                assisted_success = (success_reward_val > 0.0) or (kamikaze_reward_val > 0.0)
 
             if not success and attacker_id is not None:
                 attacker_components = reward_breakdown.get(attacker_id, {})
                 success_reward_val = float(attacker_components.get("success_reward", 0.0) or 0.0)
-                if success_reward_val > 0.0:
+                kamikaze_reward_val = float(attacker_components.get("kamikaze_success", 0.0) or 0.0)
+                if success_reward_val > 0.0 or kamikaze_reward_val > 0.0:
                     success = True
                     assisted_success = True
             if success is None:
@@ -371,6 +398,9 @@ class EvalRunner:
             }
             if success is not None:
                 record["success"] = success
+            record["attacker_win"] = attacker_win
+            record["target_win"] = target_win
+            record["target_finished"] = target_finished
             if time_to_success is not None:
                 record["time_to_success"] = float(time_to_success)
             record["assisted_success"] = assisted_success
@@ -432,6 +462,16 @@ class EvalRunner:
                 total_successes += 1
             success_rate_total = float(total_successes) / max(float(ep_index + 1), 1.0)
 
+            target_win_rate = None
+            target_win_rate_total = None
+            if target_win is not None:
+                recent_target_win.append(1.0 if target_win else 0.0)
+                target_win_trials += 1
+                if target_win:
+                    target_win_total += 1
+                target_win_rate = float(sum(recent_target_win) / len(recent_target_win))
+                target_win_rate_total = float(target_win_total) / max(float(target_win_trials), 1.0)
+
             collision_rate = float(collision_total) / max(float(rollout.steps), 1.0)
 
             metrics: Dict[str, Any] = {
@@ -459,6 +499,16 @@ class EvalRunner:
                 metrics["eval/defender_crashed"] = bool(defender_crashed)
             if attacker_crashed is not None:
                 metrics["eval/attacker_crashed"] = bool(attacker_crashed)
+            if attacker_win is not None:
+                metrics["eval/attacker_win"] = bool(attacker_win)
+            if target_win is not None:
+                metrics["eval/target_win"] = bool(target_win)
+            if target_finished is not None:
+                metrics["eval/target_finished"] = bool(target_finished)
+            if target_win_rate_total is not None:
+                metrics["eval/target_win_rate_total"] = float(target_win_rate_total)
+            if target_win_rate is not None:
+                metrics["eval/target_win_rate"] = float(target_win_rate)
             if defender_survival_steps_value is not None:
                 metrics["eval/defender_survival_steps"] = float(defender_survival_steps_value)
             metrics["eval/return_window"] = float(recent_returns.maxlen or len(recent_returns))
@@ -494,6 +544,9 @@ class EvalRunner:
                     "steps": rollout.steps,
                     "time_to_success": "" if time_to_success is None else float(time_to_success),
                     "success": int(success) if success is not None else "",
+                    "attacker_win": int(attacker_win) if attacker_win is not None else "",
+                    "target_win": int(target_win) if target_win is not None else "",
+                    "target_finished": int(target_finished) if target_finished is not None else "",
                     "success_rate_window": "" if success_rate is None else float(success_rate),
                     "success_rate_total": float(success_rate_total),
                     "collisions": collision_total,
@@ -508,6 +561,8 @@ class EvalRunner:
             "eval/episodes_total": float(total_episodes),
             "eval/success_rate_total": float(total_successes) / max(float(total_episodes), 1.0),
         }
+        if target_win_trials > 0:
+            summary_metrics["eval/target_win_rate_total"] = float(target_win_total) / float(target_win_trials)
         for agent_id in agent_ids:
             rate = float(finish_line_hit_counts.get(agent_id, 0)) / max(float(total_episodes), 1.0)
             summary_metrics[f"eval/finish_line_hit_rate/{agent_id}"] = rate
@@ -532,9 +587,14 @@ class EvalRunner:
             "primary_agent": primary_id,
             "episode_successes": total_successes,
             "episode_success_rate": float(total_successes) / max(float(total_episodes), 1.0),
+            "attacker_id": attacker_id,
+            "defender_id": defender_id,
             "target_laps": target_laps,
             "agents": {},
         }
+        if target_win_trials > 0:
+            summary_payload["target_successes"] = target_win_total
+            summary_payload["target_success_rate"] = float(target_win_total) / float(target_win_trials)
         for agent_id in agent_ids:
             agent_successes = int(completion_counts.get(agent_id, 0))
             agent_payload: Dict[str, Any] = {
