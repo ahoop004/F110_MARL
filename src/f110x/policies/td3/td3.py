@@ -98,6 +98,8 @@ class TD3Agent:
         self.action_low = action_low
         self.action_high = action_high
         self.action_range = self.action_high - self.action_low
+        self.action_noise_scale = self.action_range / 2.0
+        self.action_noise_scale_torch = torch.as_tensor(self.action_noise_scale, device=self.device)
 
         self.total_it = 0
 
@@ -114,7 +116,7 @@ class TD3Agent:
         if not deterministic:
             noise_scale = self._current_exploration_noise()
             if noise_scale > 0.0:
-                noise = np.random.normal(0.0, noise_scale, size=self.act_dim)
+                noise = np.random.normal(0.0, noise_scale, size=self.act_dim) * self.action_noise_scale
                 action = np.clip(action + noise, self.action_low, self.action_high)
             self._exploration_step += 1
         return action.astype(np.float32)
@@ -164,7 +166,11 @@ class TD3Agent:
 
         with torch.no_grad():
             # Policy smoothing regularization: perturb target action before evaluating target critics.
-            noise = (torch.randn_like(actions) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+            noise = torch.randn_like(actions) * self.policy_noise * self.action_noise_scale_torch
+            noise = noise.clamp(
+                -self.noise_clip * self.action_noise_scale_torch,
+                self.noise_clip * self.action_noise_scale_torch,
+            )
             next_action = self.actor_target(next_obs)
             next_action = self._scale_action_torch(next_action)
             next_action = (next_action + noise).clamp(
