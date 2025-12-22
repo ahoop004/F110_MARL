@@ -329,42 +329,49 @@ class RLActorNode(Node):
     def __init__(self, default_ckpt: str = "r_dqn.pt") -> None:
         super().__init__('rl_actor_dqn_node')
         self.logger = self.get_logger()
-        self.scan_topic = "/scan"
-        self.primary_topic = "/vicon/Limo_04/Limo_04"
-        self.secondary_topic =  "/vicon/Limo_02/Limo_02"
-        self.cmd_topic = "/cmd_vel"
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
-        default_ckpt =  default_ckpt
         if not os.path.isabs(default_ckpt):
             default_ckpt = os.path.join(script_dir, default_ckpt)
-        self.ckpt_path =  default_ckpt
-        self.ckpt_path = "/home/agilex/agilex_ros2_ws/src/car_crashers/car_crashers/r_dqn.pt"
+        robot_default_ckpt = "/home/agilex/agilex_ros2_ws/src/car_crashers/car_crashers/r_dqn.pt"
+        if os.path.isfile(robot_default_ckpt):
+            default_ckpt = robot_default_ckpt
 
-        self.rate_hz =  20.0
-        self.use_safety =  True
-        self.hard_border =  1.0
-        self.max_pose_age = 0.25
-        self.prevent_reverse =  True
-        self.min_throttle = 0.0
+        self.declare_parameter("scan_topic", "/scan")
+        self.declare_parameter("primary_topic", "/vicon/Limo_04/Limo_04")
+        self.declare_parameter("secondary_topic", "/vicon/Limo_02/Limo_02")
+        self.declare_parameter("cmd_topic", "/cmd_vel")
+        self.declare_parameter("ckpt", default_ckpt)
+        self.declare_parameter("rate_hz", 20.0)
+        self.declare_parameter("use_safety", True)
+        self.declare_parameter("hard_border", 1.0)
+        self.declare_parameter("max_pose_age", 0.25)
+        self.declare_parameter("prevent_reverse", True)
+        self.declare_parameter("prevent_reverse_min_speed", 0.0)
+        self.declare_parameter("steer_sign", -1.0)
+        self.declare_parameter("lin_scale", 0.4)
+        self.declare_parameter("ang_scale", 1.0)
+        self.declare_parameter("max_steer_cmd", 1.0)
+        self.declare_parameter("max_speed_cmd", 0.35)
+        self.declare_parameter("max_reverse_speed_cmd", 0.0)
 
-        # Output mapping (sim-trained actions -> LIMO /cmd_vel)
-        # steer_sign: use -1.0 if your base turns the "wrong way" for positive angular.z
-        self.steer_sign =  -1.0
-        # Scale raw policy outputs down to LIMO-safe speeds / turns
-        self.lin_scale = 0.4
-        self.ang_scale = 1.0
-        # Final command caps
-        self.max_steer_cmd = 1.0
-        self.max_speed_cmd =  0.35
-        self.max_reverse_speed_cmd =  0.0
-
-        hidden_dims =  [512, 256]
-        atoms =  51
-        v_min =  -500.0
-        v_max = 500.0
-        noisy =  True
-        sigma0 =  0.4
+        self.scan_topic = str(self.get_parameter("scan_topic").value)
+        self.primary_topic = str(self.get_parameter("primary_topic").value)
+        self.secondary_topic = str(self.get_parameter("secondary_topic").value)
+        self.cmd_topic = str(self.get_parameter("cmd_topic").value)
+        self.ckpt_path = str(self.get_parameter("ckpt").value)
+        self.rate_hz = float(self.get_parameter("rate_hz").value)
+        self.use_safety = bool(self.get_parameter("use_safety").value)
+        self.hard_border = float(self.get_parameter("hard_border").value)
+        self.max_pose_age = float(self.get_parameter("max_pose_age").value)
+        self.prevent_reverse = bool(self.get_parameter("prevent_reverse").value)
+        self.min_throttle = float(self.get_parameter("prevent_reverse_min_speed").value)
+        self.steer_sign = float(self.get_parameter("steer_sign").value)
+        self.lin_scale = float(self.get_parameter("lin_scale").value)
+        self.ang_scale = float(self.get_parameter("ang_scale").value)
+        self.max_steer_cmd = float(self.get_parameter("max_steer_cmd").value)
+        self.max_speed_cmd = float(self.get_parameter("max_speed_cmd").value)
+        self.max_reverse_speed_cmd = float(self.get_parameter("max_reverse_speed_cmd").value)
 
         self.last_scan: Optional[np.ndarray] = None
         self.primary_state = init_agent_state()

@@ -6,8 +6,6 @@ ROS2 PPO actor node aligned with scenarios/gaplock_ppo.yaml.
 Place alongside your PPO checkpoint (ppo_gaplock.pt) inside your ROS package.
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -87,7 +85,7 @@ class PPOActor(nn.Module):
         self.mu_head = nn.Linear(prev, act_dim)
         self.log_std = nn.Parameter(torch.zeros(act_dim))
 
-    def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         features = self.body(obs)
         mu = self.mu_head(features)
         log_std = torch.clamp(self.log_std, -5.0, 2.0)

@@ -6,10 +6,8 @@ ROS2 SAC actor node aligned with scenarios/gaplock_sac.yaml.
 Place alongside sac_gaplock.pt inside your ROS package scripts directory.
 """
 
-from __future__ import annotations
-
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import rclpy
@@ -58,7 +56,7 @@ def _stamp_to_sec(stamp: Any) -> Optional[float]:
 
 
 def _infer_actor_arch(state_dict: Dict[str, torch.Tensor]) -> Tuple[Tuple[int, ...], int]:
-    dims: list[int] = []
+    dims = []  # type: List[int]
     idx = 0
     while True:
         key = f"net.{idx}.weight"
@@ -96,7 +94,7 @@ class GaussianPolicy(nn.Module):
         self.net = nn.Sequential(*layers)
         self.act_dim = int(act_dim)
 
-    def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         raw = self.net(obs)
         mu, log_std = torch.split(raw, self.act_dim, dim=-1)
         log_std = torch.clamp(log_std, -5.0, 2.0)

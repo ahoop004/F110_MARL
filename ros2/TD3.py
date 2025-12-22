@@ -8,8 +8,10 @@ Drop this script plus td3_gaplock.pt into your ROS package scripts directory.
 
 #from __future__ import annotations
 
+import importlib
 import os
-from typing import Optional
+import sys
+from typing import Any, Optional
 
 import numpy as np
 import rclpy
@@ -20,15 +22,64 @@ from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from car_crashers.gaplock_utils import (
-    ACTION_HIGH,
-    ACTION_LOW,
-    OBS_DIM,
-    build_observation,
-    init_agent_state,
-    scale_continuous_action,
-    update_agent_state,
-)
+try:
+    from car_crashers.gaplock_utils import (  # type: ignore
+        ACTION_HIGH,
+        ACTION_LOW,
+        OBS_DIM,
+        build_observation,
+        init_agent_state,
+        scale_continuous_action,
+        update_agent_state,
+    )
+except ImportError:  # pragma: no cover
+    from gaplock_utils import (  # type: ignore
+        ACTION_HIGH,
+        ACTION_LOW,
+        OBS_DIM,
+        build_observation,
+        init_agent_state,
+        scale_continuous_action,
+        update_agent_state,
+    )
+
+
+def _stamp_to_sec(stamp: Any) -> Optional[float]:
+    if stamp is None:
+        return None
+    if isinstance(stamp, (float, int)):
+        return float(stamp)
+    nanoseconds = getattr(stamp, "nanoseconds", None)
+    if nanoseconds is not None:
+        return float(nanoseconds) * 1e-9
+    sec = getattr(stamp, "sec", None)
+    nanosec = getattr(stamp, "nanosec", None)
+    if sec is not None and nanosec is not None:
+        return float(sec) + float(nanosec) * 1e-9
+    return None
+
+
+def _apply_numpy_pickle_compat() -> None:
+    """Allow loading checkpoints pickled with numpy>=2 on numpy<2."""
+
+    if "numpy._core" in sys.modules:
+        return
+
+    try:
+        core_mod = importlib.import_module("numpy.core")
+    except Exception:
+        return
+
+    sys.modules.setdefault("numpy._core", core_mod)
+    for name in ("multiarray", "_multiarray_umath", "numeric", "umath", "overrides"):
+        alias_name = "numpy._core.%s" % name
+        if alias_name in sys.modules:
+            continue
+        try:
+            sub_mod = importlib.import_module("numpy.core.%s" % name)
+        except Exception:
+            continue
+        sys.modules.setdefault(alias_name, sub_mod)
 
 
 class TD3Actor(nn.Module):
@@ -48,6 +99,7 @@ class TD3Actor(nn.Module):
 
 
 def load_td3_actor(ckpt_path: str, model: nn.Module, device: str) -> nn.Module:
+    _apply_numpy_pickle_compat()
     ckpt = torch.load(ckpt_path, map_location=device)
     if isinstance(ckpt, nn.Module):
         model.load_state_dict(ckpt.state_dict(), strict=False)
@@ -67,35 +119,46 @@ def load_td3_actor(ckpt_path: str, model: nn.Module, device: str) -> nn.Module:
 
 class RLActorNode(Node):
     def __init__(self, default_ckpt: str = "td3_gaplock.pt") -> None:
-        super().__init__('rl_actor_td3_node')
-        self.scan_topic = "/scan"
-        self.primary_topic = "/vicon/Limo_04/Limo_04"
-        self.secondary_topic = "/vicon/Limo_02/Limo_02"
-        self.cmd_topic = "/cmd_vel"
-
+        super().__init__("rl_actor_td3_node")
         self.logger = self.get_logger()
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
         if not os.path.isabs(default_ckpt):
             default_ckpt = os.path.join(script_dir, default_ckpt)
-        self.ckpt_path = default_ckpt
+        robot_default_ckpt = "/home/agilex/agilex_ros2_ws/src/car_crashers/car_crashers/td3_gaplock_young-sweep-2.pt"
+        if os.path.isfile(robot_default_ckpt):
+            default_ckpt = robot_default_ckpt
 
-        #TODO: ROS puts everyhing in an /install folder, where the TD3file isn't
-        self.ckpt_path = "/home/agilex/agilex_ros2_ws/src/car_crashers/car_crashers/td3_gaplock_young-sweep-2.pt"
+        self.declare_parameter("scan_topic", "/scan")
+        self.declare_parameter("primary_topic", "/vicon/Limo_04/Limo_04")
+        self.declare_parameter("secondary_topic", "/vicon/Limo_02/Limo_02")
+        self.declare_parameter("cmd_topic", "/cmd_vel")
+        self.declare_parameter("ckpt", default_ckpt)
+        self.declare_parameter("rate_hz", 20.0)
+        self.declare_parameter("use_safety", True)
+        self.declare_parameter("hard_border", 1.0)
+        self.declare_parameter("prevent_reverse", True)
+        self.declare_parameter("prevent_reverse_min_speed", 0.01)
+        self.declare_parameter("max_pose_age", 0.25)
 
-        self.rate_hz = 20.0
-        self.use_safety = True
-        self.hard_border = 1.0
-        self.prevent_reverse = True
-        self.min_throttle = 0.01
-        self.max_pose_age = 0.25
+        self.scan_topic = str(self.get_parameter("scan_topic").value)
+        self.primary_topic = str(self.get_parameter("primary_topic").value)
+        self.secondary_topic = str(self.get_parameter("secondary_topic").value)
+        self.cmd_topic = str(self.get_parameter("cmd_topic").value)
+        self.ckpt_path = str(self.get_parameter("ckpt").value)
+        self.rate_hz = float(self.get_parameter("rate_hz").value)
+        self.use_safety = bool(self.get_parameter("use_safety").value)
+        self.hard_border = float(self.get_parameter("hard_border").value)
+        self.prevent_reverse = bool(self.get_parameter("prevent_reverse").value)
+        self.min_throttle = float(self.get_parameter("prevent_reverse_min_speed").value)
+        self.max_pose_age = float(self.get_parameter("max_pose_age").value)
 
         self.last_scan: Optional[np.ndarray] = None
         self.primary_state = init_agent_state()
         self.secondary_state = init_agent_state()
+        self._waiting_logged = False
 
-
-        qos = QoSProfile(depth=10,reliability=ReliabilityPolicy.BEST_EFFORT)
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(LaserScan, self.scan_topic, self.on_scan, qos)
 
         self.sub_primary = self.create_subscription(TransformStamped, self.primary_topic, self.on_primary, 20)
@@ -123,21 +186,25 @@ class RLActorNode(Node):
     def on_tick(self) -> None:
         if self.last_scan is None or self.primary_state["pose"] is None or self.secondary_state["pose"] is None:
             self.pub_cmd.publish(Twist())
-            self.logger.info("TD3 Waiting for scan/primary/secondary info")
+            if not self._waiting_logged:
+                self.logger.info("TD3 waiting for scan/primary/secondary info")
+                self._waiting_logged = True
             return
+        self._waiting_logged = False
 
-        now = self.get_clock().now()
+        now_sec = float(self.get_clock().now().nanoseconds) * 1e-9
         for label, state in (("primary", self.primary_state), ("secondary", self.secondary_state)):
             stamp = state["stamp"]
-            if stamp is None: # or (now - stamp) > self.max_pose_age:
-                self.logger.warn("%s pose stale -> zero command" % label)
+            stamp_sec = _stamp_to_sec(stamp)
+            if stamp_sec is None or (now_sec - stamp_sec) > self.max_pose_age:
+                self.logger.warning("%s pose stale -> zero command" % label)
                 self.pub_cmd.publish(Twist())
                 return
 
         if self.use_safety:
             sec_y = float(self.secondary_state["pose"][1])
             if abs(sec_y) > self.hard_border:
-                self.logger.warn("Target |y|=%.2f exceeds %.2f -> stopping" % (sec_y, self.hard_border))
+                self.logger.warning("Target |y|=%.2f exceeds %.2f -> stopping" % (sec_y, self.hard_border))
                 self.pub_cmd.publish(Twist())
                 return
 
@@ -159,14 +226,18 @@ class RLActorNode(Node):
 
 
 def main():
-    #rospy.init_node("rl_actor_td3_node", anonymous=False)
     rclpy.init()
-    node = RLActorNode()
-    rclpy.spin(node)
+    node = None
+    try:
+        node = RLActorNode()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except rospy.ROSInterruptException:
-        pass
+    main()
