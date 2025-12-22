@@ -22,18 +22,6 @@ scenario:
   main:
     mode: train
     train_episodes: 15000
-    # eval_episodes: 10
-    # eval_interval: 150
-    # federated:
-    #   enabled: false
-    #   interval: 50
-    #   agents:
-    #     - car_0
-    #   root: outputs/federated_gaplock
-    #   mode: mean
-    #   timeout: 600.0
-    save_eval_rollouts: false
-    eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/ppo_gaplock/ppo_gaplock.pt
     wandb:
       enabled: true
@@ -67,19 +55,8 @@ scenario:
           hidden_dims:
             - 512
             - 256
-            # - 128
           observation_normalization: running
           target_kl: 0.015
-          # entropy_schedule:
-          #   type: linear
-          #   start: 0.02
-          #   end: 0.005
-          #   steps: 600000
-          # learning_rate_schedule:
-          #   type: linear
-          #   start: 0.0003
-          #   end: 0.00005
-          #   steps: 600000
           initial_speed: 1.80
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5

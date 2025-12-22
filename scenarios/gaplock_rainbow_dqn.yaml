@@ -22,18 +22,6 @@ scenario:
   main:
     mode: train
     train_episodes: 1500
-    # eval_episodes: 10
-    # eval_interval: 150
-    # federated:
-    #   enabled: false
-    #   interval: 50
-    #   agents:
-    #     - car_0
-    #   root: outputs/federated_gaplock
-    #   mode: mean
-    #   timeout: 600.0
-    save_eval_rollouts: false
-    eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
     wandb:
       enabled: true
@@ -89,7 +77,7 @@ scenario:
             - [0.00, 0.30]
             - [0.20, 0.30]
             - [0.00, 0.00]
-            # - [0.00, -0.50]
+
 
           initial_speed: 1.8
           initial_speed_warmup_steps: 180
@@ -285,70 +273,4 @@ scenario:
           gap_score_center_weight: 0.5
           gap_score_curvature_weight: 0.2
           u_shape_enabled: false
-      # policy_curriculum:
-      #   success_window: 40
-      #   activation_samples: 30
-      #   cooldown: 25
-      #   persist: true
-      #   stages:
-      #     - name: tier0_dumb_defender
-      #       params:
-      #         max_speed: 1.0
-      #         min_speed: 0.35
-      #         steering_gain: 0.25
-      #         steer_smooth: 0.5
-      #         crawl_steer_ratio: 0.55
-      #         center_bias_gain: 0.0
-      #         inside_bias_gain: 0.0
-      #         preview_horizon: 0.0
-      #         preview_samples: 0
-      #         dwa_samples: 0
-      #         enhanced_gap_scoring: false
-      #         u_shape_enabled: false
-      #     - name: tier1_preview_defender
-      #       enable_rate: 0.3
-      #       enable_patience: 3
-      #       params:
-      #         max_speed: 1.0
-      #         min_speed: 0.3
-      #         steering_gain: 0.32
-      #         steer_smooth: 0.42
-      #         crawl_steer_ratio: 0.45
-      #         center_bias_gain: 0.05
-      #         inside_bias_gain: 0.1
-      #         preview_horizon: 0.8
-      #         preview_samples: 5
-      #         dwa_samples: 0
-      #         enhanced_gap_scoring: true
-      #         dwa_horizon: 0.5
-      #         dwa_heading_weight: 0.2
-      #         u_shape_enabled: false
-      #     - name: tier2_top_defender
-      #       enable_rate: 0.55
-      #       enable_patience: 4
-      #       params:
-      #         max_distance: 30.0
-      #         window_size: 2
-      #         bubble_radius: 1
-      #         max_steer: 0.35
-      #         min_speed: 0.2
-      #         max_speed: 1.0
-      #         steering_gain: 0.4
-      #         fov_deg: 270
-      #         normalized: true
-      #         steer_smooth: 0.35
-      #         center_bias_gain: 0.09
-      #         inside_bias_gain: 0.2
-      #         crawl_steer_ratio: 0.35
-      #         steering_speed_scale: 1.0
-      #         preview_horizon: 1.5
-      #         preview_samples: 7
-      #         dwa_samples: 5
-      #         dwa_horizon: 0.5
-      #         dwa_heading_weight: 0.15
-      #         enhanced_gap_scoring: true
-      #         gap_score_width_weight: 1.0
-      #         gap_score_clearance_weight: 1.2
-      #         gap_score_center_weight: 0.5
-      #         gap_score_curvature_weight: 0.2
-      #         u_shape_enabled: false
+     

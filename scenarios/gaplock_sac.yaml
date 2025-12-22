@@ -21,18 +21,6 @@ scenario:
   main:
     mode: train
     train_episodes: 1500
-    # eval_episodes: 10
-    # eval_interval: 150
-    # federated:
-    #   enabled: false
-    #   interval: 50
-    #   agents:
-    #     - car_0
-    #   root: outputs/federated_gaplock
-    #   mode: mean
-    #   timeout: 600.0
-    save_eval_rollouts: false
-    eval_rollout_dir: eval_rollouts
     checkpoint: checkpoints/sac_gaplock/sac_gaplock.pt
     # warm_start_checkpoint: outputs/checkpoints/sac_best_gaplock_sac-r01-f357d6f9.pt
     wandb:
