@@ -228,7 +228,8 @@ class RainbowDQNAgent(ActionValueAgent):
         self.optimizer.step()
 
         td_delta = chosen_q - target_q
-        self.finalize_update(indices, td_delta)
+        priority_errors = loss_per_sample.detach() if self._use_per else td_delta
+        self.finalize_update(indices, priority_errors)
 
         buffer_capacity = float(getattr(self.buffer, "capacity", max(len(self.buffer), 1)))
         buffer_fraction = float(len(self.buffer) / buffer_capacity)
