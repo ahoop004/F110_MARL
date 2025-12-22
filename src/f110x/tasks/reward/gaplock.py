@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Mapping, Sequence
 
 import numpy as np
 
@@ -189,6 +189,7 @@ class GaplockRewardStrategy(RewardStrategy):
         turn_reward_clip: float = 0.2,
         turn_reward_time_scaled: bool = True,
         reward_ring_state_callback: Optional[Callable[[str, Optional[List[bool]]], None]] = None,
+        reward_overlay_callback: Optional[Callable[[Optional[Sequence[Mapping[str, Any]]]], None]] = None,
     ) -> None:
         self.target_crash_reward = float(target_crash_reward)
         self.self_collision_penalty = float(self_collision_penalty)
@@ -266,6 +267,7 @@ class GaplockRewardStrategy(RewardStrategy):
         self.target_offset_marker_radius = max(float(target_offset_marker_radius), 0.0)
         self.target_offset_marker_segments = max(int(target_offset_marker_segments), 4)
         self._reward_ring_state_callback = reward_ring_state_callback
+        self._reward_overlay_callback = reward_overlay_callback
 
         # ------------------------------------------------------------------
         # Pinch pocket / forcing reward configuration
@@ -438,6 +440,80 @@ class GaplockRewardStrategy(RewardStrategy):
             self._reward_ring_callback(agent_id, target_id)
         except Exception:
             # Rendering is auxiliary; ignore callback errors.
+            pass
+
+    def _notify_reward_overlays(self, agent_id: str, target_id: Optional[str]) -> None:
+        callback = self._reward_overlay_callback
+        if callback is None:
+            return
+        if self._reward_ring_focus_agent is not None and agent_id != self._reward_ring_focus_agent:
+            return
+        if not target_id:
+            try:
+                callback(None)
+            except Exception:
+                pass
+            return
+
+        overlays: List[Dict[str, Any]] = []
+
+        # Base "pressure" zone around the target.
+        if self.pressure_distance > 0.0:
+            overlays.append(
+                {
+                    "agent_id": str(target_id),
+                    "forward": 0.0,
+                    "left": 0.0,
+                    "radius": float(self.pressure_distance),
+                    "value": 1.0,
+                }
+            )
+
+        # Optional target-offset pockets (one circle per configured offset).
+        offset_radius = float(self.target_offset_radius + self.target_offset_falloff)
+        if offset_radius > 0.0:
+            offsets = list(self._target_offsets_config or [])
+            if not offsets:
+                offsets = [(0.0, 0.0)]
+            for forward, left in offsets:
+                overlays.append(
+                    {
+                        "agent_id": str(target_id),
+                        "forward": float(forward),
+                        "left": float(left),
+                        "radius": offset_radius,
+                        "value": 1.0,
+                    }
+                )
+
+        # Pinch pocket visualisation (two symmetric Gaussians in the target frame).
+        if self.pinch_sigma > 0.0 and abs(self.pocket_reward_weight) > 0.0:
+            ax = float(self.pinch_anchor_dx)
+            ay = float(self.pinch_anchor_dy)
+            radius = float(self.pinch_sigma)
+            value = float(self.pocket_reward_weight)
+            overlays.append(
+                {
+                    "agent_id": str(target_id),
+                    "forward": ax,
+                    "left": ay,
+                    "radius": radius,
+                    "value": value,
+                }
+            )
+            overlays.append(
+                {
+                    "agent_id": str(target_id),
+                    "forward": ax,
+                    "left": -ay,
+                    "radius": radius,
+                    "value": value,
+                }
+            )
+
+        try:
+            callback(overlays)
+        except Exception:
             pass
 
     @staticmethod
@@ -775,6 +851,7 @@ class GaplockRewardStrategy(RewardStrategy):
             self._apply_relative_reward(acc, ego_obs, target_obs, anchor_point=anchor_point)
 
         self._notify_reward_ring(step.agent_id, overlay_target_id)
+        self._notify_reward_overlays(step.agent_id, overlay_target_id)
 
         total, components = apply_reward_scaling(acc.total, acc.components, self.scaling_params)
         if pinch_diag:
@@ -1420,6 +1497,8 @@ def _build_gaplock_strategy(
         params["reward_ring_callback"] = context.env.update_reward_ring_target
     if "reward_ring_state_callback" not in params and hasattr(context.env, "update_reward_ring_markers"):
         params["reward_ring_state_callback"] = context.env.update_reward_ring_markers
+    if "reward_overlay_callback" not in params and hasattr(context.env, "update_reward_overlays"):
+        params["reward_overlay_callback"] = context.env.update_reward_overlays
 
     if "lidar_fov_radians" not in params or "lidar_range_max" not in params:
         sim = getattr(context.env, "sim", None)
