@@ -108,11 +108,11 @@ scenario:
           - gaplock_force_clearance
           - gaplock_force_turn
         params:
-          target_crash_reward: 120.0
+          target_crash_reward: 200.0
           self_collision_penalty: -220.0
 
-          truncation_penalty: -80.0
-          step_reward: -0.002
+          truncation_penalty: -150.0
+          step_reward: -0.01
           idle_speed_threshold: 0.2
           idle_penalty_steps: 40
           idle_penalty: -0.001
@@ -121,7 +121,7 @@ scenario:
           pressure_distance: 1.6
           pressure_timeout: 1.5
           pressure_min_speed: 0.25
-          pressure_bonus: 0.01
+          pressure_bonus: 0.002
           success_requires_pressure: true
 
           distance_reward_far_distance: 4.0
@@ -147,9 +147,9 @@ scenario:
           pinch_pressure_recent_seconds: 1.5
 
           # Forcing via opposite-side clearance shrink (new)
-          force_reward_weight: 3.0
-          force_reward_time_scaled: false
-          force_reward_clip: 0.20
+          force_reward_weight: 1.5
+          force_reward_time_scaled: true
+          force_reward_clip: 0.15
           force_reward_band_min: 0.45
           force_reward_band_max: 3.2
           force_reward_enable_ema: true
@@ -201,7 +201,7 @@ scenario:
           target_offset_falloff: 0.0
           target_offset_marker_radius: 0.0
           target_offset_marker_segments: 16
-          pocket_reward_weight: 0.15
+          pocket_reward_weight: 0.08
           relative_reward: null
 
 
