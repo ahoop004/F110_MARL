@@ -203,8 +203,15 @@ class RecurrentPPOAgent(BasePPOAgent):
         self._critic_forward_step(obs_t)
         return scaled.squeeze(0).detach().cpu().numpy().astype(np.float32)
 
-    def store(self, obs: np.ndarray, act: Any, rew: float, done: bool) -> None:
-        self.store_transition(rew, done)
+    def store(
+        self,
+        obs: np.ndarray,
+        act: Any,
+        rew: float,
+        done: bool,
+        terminated: bool = False,
+    ) -> None:
+        self.store_transition(rew, done, terminated)
 
     def _estimate_value(self, obs: Any) -> float:
         obs_np = np.asarray(obs, dtype=np.float32)
