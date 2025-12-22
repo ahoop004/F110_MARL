@@ -51,10 +51,11 @@ scenario:
         name: sac
         params:
           device: cuda
-          actor_lr: 0.0003
-          critic_lr: 0.0003
-          alpha_lr: 0.0003
-          gamma: 0.99
+          actor_lr: 0.00035
+          critic_lr: 0.00035
+          alpha_lr: 0.00035
+
+          gamma: 0.999
           tau: 0.005
 
           batch_size: 256

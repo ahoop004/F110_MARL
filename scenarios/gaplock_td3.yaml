@@ -49,8 +49,8 @@ scenario:
         name: td3
         params:
           device: cuda
-          actor_lr: 0.0003
-          critic_lr: 0.0003
+          actor_lr: 0.00035
+          critic_lr: 0.00035
           actor_optimizer: adamw
           actor_weight_decay: 0.0001
           
@@ -64,7 +64,7 @@ scenario:
             step_size: 150000
             gamma: 0.5
 
-          gamma: 0.99
+          gamma: 0.999
           tau: 0.005
           policy_noise: 0.2
           noise_clip: 0.5

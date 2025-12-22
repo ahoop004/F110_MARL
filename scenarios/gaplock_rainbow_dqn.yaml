@@ -49,8 +49,8 @@ scenario:
         name: r_dqn
         params:
           device: cuda
-          lr: 0.0003
-          gamma: 0.99
+          lr: 0.00035
+          gamma: 0.999
 
           batch_size: 256
           buffer_size: 1000000
