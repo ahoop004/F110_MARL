@@ -260,10 +260,34 @@ class EvalRunner:
                 for aid, step in rollout.collision_steps.items()
             }
 
+            defender_crashed: Optional[bool] = None
+            defender_crash_step: Optional[int] = None
+            if defender_id is not None:
+                defender_step = collision_steps.get(defender_id)
+                defender_crashed = defender_step is not None
+                if defender_step is not None:
+                    defender_crash_step = int(defender_step)
+
+            attacker_crashed: Optional[bool] = None
+            attacker_crash_step: Optional[int] = None
+            if attacker_id is not None:
+                attacker_step = collision_steps.get(attacker_id)
+                attacker_crashed = attacker_step is not None
+                if attacker_step is not None:
+                    attacker_crash_step = int(attacker_step)
+
             lap_counts = self._extract_lap_counts(env, agent_ids)
             lap_times = self._extract_lap_times(env, agent_ids)
             for agent_id in agent_ids:
                 finish_line_hit_counts[agent_id] += int(bool(finish_line_hits.get(agent_id, False)))
+
+            timestep = float(getattr(env, "timestep", 0.0) or 0.0)
+
+            def _collision_time(step_idx: Optional[int]) -> Optional[float]:
+                if step_idx is None or timestep <= 0.0:
+                    return None
+                # collision steps are 0-based indices aligned with the env time update
+                return float(step_idx + 1) * timestep
 
             completion: Dict[str, bool] = {}
             completion_times: Dict[str, Optional[float]] = {}
@@ -271,7 +295,6 @@ class EvalRunner:
                 finish_hit = bool(finish_line_hits.get(agent_id, False))
                 lap_count = float(lap_counts.get(agent_id, 0.0))
                 completed = finish_hit or (lap_count >= float(target_laps))
-                completion[agent_id] = completed
 
                 completion_time: Optional[float] = None
                 if completed:
@@ -280,6 +303,37 @@ class EvalRunner:
                         completion_time = float(lap_time_val)
                     else:
                         completion_time = float(getattr(env, "current_time", 0.0) or 0.0)
+
+                # If we have attacker/defender roles, treat a win-by-opponent-crash as a
+                # "success" for per-agent metrics (useful for FTG/defender baselines).
+                if attacker_id is not None and defender_id is not None:
+                    win_by_crash = False
+                    crash_time: Optional[float] = None
+                    if (
+                        agent_id == defender_id
+                        and bool(attacker_crashed)
+                        and not bool(defender_crashed)
+                    ):
+                        win_by_crash = True
+                        crash_time = _collision_time(attacker_crash_step)
+                    elif (
+                        agent_id == attacker_id
+                        and bool(defender_crashed)
+                        and not bool(attacker_crashed)
+                    ):
+                        win_by_crash = True
+                        crash_time = _collision_time(defender_crash_step)
+
+                    if win_by_crash:
+                        completed = True
+                        if completion_time is None:
+                            completion_time = (
+                                crash_time
+                                if crash_time is not None
+                                else float(getattr(env, "current_time", 0.0) or 0.0)
+                            )
+
+                completion[agent_id] = completed
                 completion_times[agent_id] = completion_time
 
                 if completed:
@@ -307,22 +361,6 @@ class EvalRunner:
                         "cause": rollout.cause,
                     }
                 )
-
-            defender_crashed: Optional[bool] = None
-            defender_crash_step: Optional[int] = None
-            if defender_id is not None:
-                defender_step = collision_steps.get(defender_id)
-                defender_crashed = defender_step is not None
-                if defender_step is not None:
-                    defender_crash_step = int(defender_step)
-
-            attacker_crashed: Optional[bool] = None
-            attacker_crash_step: Optional[int] = None
-            if attacker_id is not None:
-                attacker_step = collision_steps.get(attacker_id)
-                attacker_crashed = attacker_step is not None
-                if attacker_step is not None:
-                    attacker_crash_step = int(attacker_step)
 
             target_finished: Optional[bool] = None
             if defender_id is not None:
