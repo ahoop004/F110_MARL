@@ -109,9 +109,9 @@ scenario:
         ignore_non_trainable: true  # apply shaping only to learning agents
         # idle_speed_threshold: 0.0  # speed below this counts as idle
         # idle_patience_steps: 0  # steps of idling before truncation
-        features:   # named reward presets
-          - gaplock_offense  # offense shaping preset
-        params:   # gaplock reward tuning knobs
+        features:  # named reward presets
+          - gaplock_offense  # offense-focused preset
+        params:  # gaplock reward tuning knobs
           target_crash_reward: 200.0  # reward for making the target crash
           self_collision_penalty: -220.0  # penalty for crashing yourself
 
@@ -134,7 +134,7 @@ scenario:
           distance_penalty_far: 0.0  # penalty for staying too far away
 
           # LiDAR wall-proxy bounds for reward computation
-          lidar_filter_range_min: 0.35  # ignore lidar hits closer than this
+          lidar_filter_range_min: 0.15  # ignore lidar hits closer than this
           lidar_filter_range_max: 12.0  # ignore lidar hits farther than this
           target_neighborhood_r_min: 0.40  # inner radius around target to consider
           target_neighborhood_r_max: 6.0  # outer radius around target to consider
@@ -142,11 +142,11 @@ scenario:
           target_side_y_epsilon: 0.08  # center band before counting left/right
 
           # Pinch pocket geometry (new)
-          pocket_reward_weight: 0.0  # strength of pocket (pinch) positioning reward
+          pocket_reward_weight: 0.01  # strength of pocket (pinch) positioning reward
           pinch_anchor_dx: 0.3  # forward offset for the desired pocket
-          pinch_anchor_dy: 0.45  # side offset for the desired pocket
+          pinch_anchor_dy: 0.35  # side offset for the desired pocket
           pinch_sigma: 0.35  # spread of the pocket reward
-          pinch_in_front_x_min: 0.45  # only reward pocket when in front of target
+          pinch_in_front_x_min: 0.1  # only reward pocket when in front of target
           pinch_pressure_distance: 1.6  # distance for pinch pressure to count
           pinch_pressure_heading_tol_deg: 35  # heading alignment tolerance
           pinch_pressure_recent_seconds: 1.5  # how long pinch pressure is remembered
