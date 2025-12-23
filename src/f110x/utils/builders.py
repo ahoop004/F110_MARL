@@ -691,6 +691,43 @@ def _config_flag(value: Any) -> bool:
     return bool(value)
 
 
+def _coerce_float_choices(value: Any) -> Optional[List[float]]:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set, np.ndarray)):
+        choices: List[float] = []
+        for item in value:
+            try:
+                val = float(item)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(val):
+                choices.append(val)
+        return choices or None
+    return None
+
+
+def _resolve_initial_speed_config(algo_cfg: Dict[str, Any]) -> Tuple[float, Optional[List[float]]]:
+    initial_speed_raw = algo_cfg.get("initial_speed", 0.0)
+    choices_raw = algo_cfg.get("initial_speed_choices", algo_cfg.get("initial_speed_options"))
+    choices = _coerce_float_choices(choices_raw)
+    if choices is None:
+        choices = _coerce_float_choices(initial_speed_raw)
+    if choices:
+        algo_cfg["initial_speed_choices"] = choices
+
+    initial_speed = 0.0
+    if not isinstance(initial_speed_raw, (list, tuple, set, np.ndarray)):
+        try:
+            initial_speed = float(initial_speed_raw)
+        except (TypeError, ValueError):
+            initial_speed = 0.0
+    elif choices:
+        initial_speed = float(choices[0])
+    algo_cfg["initial_speed"] = initial_speed
+    return initial_speed, choices
+
+
 def _continuous_prevent_reverse_factory(action_space: spaces.Box, algo_cfg: Dict[str, Any]) -> Optional[Any]:
     flag = algo_cfg.get("prevent_reverse")
     if flag is None:
@@ -784,12 +821,7 @@ def _build_continuous_algo(
     algo_cfg["action_low"] = action_space.low.astype(np.float32).tolist()
     algo_cfg["action_high"] = action_space.high.astype(np.float32).tolist()
 
-    initial_speed_raw = algo_cfg.get("initial_speed", 0.0)
-    try:
-        initial_speed = float(initial_speed_raw)
-    except (TypeError, ValueError):
-        initial_speed = 0.0
-    algo_cfg["initial_speed"] = initial_speed
+    initial_speed, initial_speed_choices = _resolve_initial_speed_config(algo_cfg)
 
     controller = controller_factory(algo_cfg)
     if post_init is not None:
@@ -811,6 +843,7 @@ def _build_continuous_algo(
         metadata={
             "config": algo_cfg,
             "initial_speed": initial_speed,
+            "initial_speed_choices": initial_speed_choices,
         },
         trainer=trainer,
         action_wrapper=action_wrapper,
@@ -949,6 +982,7 @@ def _build_dqn_family_algo(
 
     obs_dim = int(obs_vector.size)
     dqn_cfg["obs_dim"] = obs_dim
+    initial_speed, initial_speed_choices = _resolve_initial_speed_config(dqn_cfg)
 
     shared_policy_key = dqn_cfg.get("shared_policy") or dqn_cfg.get("shared_policy_id")
     controller: Any
@@ -1003,7 +1037,11 @@ def _build_dqn_family_algo(
         controller=controller,
         obs_pipeline=pipeline,
         trainable=_is_trainable(assignment.spec, default=True),
-        metadata={"config": dqn_cfg},
+        metadata={
+            "config": dqn_cfg,
+            "initial_speed": initial_speed,
+            "initial_speed_choices": initial_speed_choices,
+        },
         trainer=trainer,
         action_wrapper=action_wrapper,
     )
@@ -1405,17 +1443,35 @@ class AgentTeam:
     def apply_initial_conditions(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """Adjust the environment to honour any per-agent metadata initialisers."""
         speed_map: Dict[str, float] = {}
+        rng = getattr(self.env, "rng", None)
+        if rng is None:
+            rng = np.random.default_rng()
         for bundle in self.agents:
             initial = bundle.metadata.get("initial_speed")
-            if initial is None:
-                config = bundle.metadata.get("config")
-                if isinstance(config, dict):
+            choices = bundle.metadata.get("initial_speed_choices")
+            config = bundle.metadata.get("config")
+            if isinstance(config, dict):
+                if choices is None:
+                    choices = _coerce_float_choices(
+                        config.get("initial_speed_choices", config.get("initial_speed_options"))
+                    )
+                if initial is None:
                     initial = config.get("initial_speed")
-            if initial is None:
-                continue
-            try:
-                speed_val = float(initial)
-            except (TypeError, ValueError):
+            if choices is None:
+                choices = _coerce_float_choices(initial)
+
+            speed_val = None
+            if choices:
+                try:
+                    speed_val = float(rng.choice(choices))
+                except Exception:
+                    speed_val = None
+            elif initial is not None:
+                try:
+                    speed_val = float(initial)
+                except (TypeError, ValueError):
+                    speed_val = None
+            if speed_val is None:
                 continue
             if np.isfinite(speed_val) and abs(speed_val) > 0.0:
                 speed_map[bundle.agent_id] = speed_val
