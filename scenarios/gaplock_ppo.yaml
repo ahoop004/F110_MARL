@@ -67,8 +67,8 @@ scenario:
       reward:
         task: gaplock
         ignore_non_trainable: true
-        idle_speed_threshold: 0.2
-        idle_patience_steps: 40
+        idle_speed_threshold: 0.02
+        idle_patience_steps: 140
         features:
           - gaplock_offense
         params:
