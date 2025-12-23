@@ -72,7 +72,7 @@ scenario:
           hidden_dims:
             - 512
             - 256
-            # - 128
+            - 128
           atoms: 51
           v_min: -300.0
           v_max: 300.0
@@ -107,8 +107,8 @@ scenario:
       reward:
         task: gaplock  # selects which reward logic to use
         ignore_non_trainable: true  # apply shaping only to learning agents
-        # idle_speed_threshold: 0.0  # speed below this counts as idle
-        # idle_patience_steps: 0  # steps of idling before truncation
+        idle_speed_threshold: 0.0  # speed below this counts as idle
+        idle_patience_steps: 0  # steps of idling before truncation
         features:  # named reward presets
           - gaplock_offense  # offense-focused preset
         params:  # gaplock reward tuning knobs

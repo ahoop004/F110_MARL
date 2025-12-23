@@ -70,6 +70,7 @@ scenario:
           hidden_dims:
             - 512
             - 256
+            - 128
           observation_normalization: running
           target_kl: 0.015
           initial_speed: 1.0
@@ -98,8 +99,8 @@ scenario:
 
           truncation_penalty: -150.0  # penalty when the episode ends early
           step_reward: -0.001  # small per-step penalty to encourage progress
-          # idle_speed_threshold: 0.0  # speed below this counts as idle
-          # idle_patience_steps: 0  # steps of idling before truncation
+          idle_speed_threshold: 0.0  # speed below this counts as idle
+          idle_patience_steps: 0  # steps of idling before truncation
 
           pressure_distance: 0.0  # how close you must be to count as pressure
           pressure_timeout: 0.0  # how long pressure is remembered
