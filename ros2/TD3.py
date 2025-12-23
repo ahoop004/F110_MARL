@@ -214,13 +214,6 @@ class RLActorNode(Node):
                 self.pub_cmd.publish(Twist())
                 return
 
-        if self.use_safety:
-            sec_y = float(self.secondary_state["pose"][1])
-            if abs(sec_y) > self.hard_border:
-                self.logger.warning("Target |y|=%.2f exceeds %.2f -> stopping" % (sec_y, self.hard_border))
-                self.pub_cmd.publish(Twist())
-                return
-
         obs_vec = build_observation(self.last_scan, self.primary_state, self.secondary_state)
         obs_t = torch.from_numpy(obs_vec.reshape(1, -1)).to(self.device)
         with torch.no_grad():

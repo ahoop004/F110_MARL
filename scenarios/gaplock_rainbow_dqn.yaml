@@ -101,8 +101,8 @@ scenario:
       reward:
         task: gaplock
         ignore_non_trainable: true
-        idle_speed_threshold: 0.0
-        idle_patience_steps: 0
+        # idle_speed_threshold: 0.0
+        # idle_patience_steps: 0
         features:
           - gaplock_offense
         params:
@@ -111,8 +111,8 @@ scenario:
 
           truncation_penalty: -150.0
           step_reward: -0.001
-          idle_speed_threshold: 0.0
-          idle_patience_steps: 0
+          # idle_speed_threshold: 0.0
+          # idle_patience_steps: 0
 
           pressure_distance: 0.0
           pressure_timeout: 0.0

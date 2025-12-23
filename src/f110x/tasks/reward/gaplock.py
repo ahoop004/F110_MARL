@@ -1562,6 +1562,8 @@ def _build_gaplock_strategy(
     registry: RewardTaskRegistry,
 ) -> RewardStrategy:
     params = dict(config.get("params", {}))
+    # idle_patience_steps is used by runner-level idle termination, not the reward strategy.
+    params.pop("idle_patience_steps", None)
     if "target_resolver" not in params:
         resolver = _build_gaplock_target_resolver(context)
         if resolver is not None:
