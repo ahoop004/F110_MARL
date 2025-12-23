@@ -86,73 +86,73 @@ scenario:
           prevent_reverse_speed_index: 1
           include_truncation: true
       reward:
-        task: gaplock
-        ignore_non_trainable: true
-        # idle_speed_threshold: 0.0
-        # idle_patience_steps: 0
-        features:
-          - gaplock_offense
-        params:
-          target_crash_reward: 200.0
-          self_collision_penalty: -220.0
+        task: gaplock  # selects which reward logic to use
+        ignore_non_trainable: true  # apply shaping only to learning agents
+        # idle_speed_threshold: 0.0  # speed below this counts as idle
+        # idle_patience_steps: 0  # steps of idling before truncation
+        features:   # named reward presets
+          - gaplock_offense  # offense shaping preset
+        params:   # gaplock reward tuning knobs
+          target_crash_reward: 200.0  # reward for making the target crash
+          self_collision_penalty: -220.0  # penalty for crashing yourself
 
-          truncation_penalty: -150.0
-          step_reward: -0.001
-          # idle_speed_threshold: 0.0
-          # idle_patience_steps: 0
+          truncation_penalty: -150.0  # penalty when the episode ends early
+          step_reward: -0.001  # small per-step penalty to encourage progress
+          # idle_speed_threshold: 0.0  # speed below this counts as idle
+          # idle_patience_steps: 0  # steps of idling before truncation
 
-          pressure_distance: 0.0
-          pressure_timeout: 0.0
-          pressure_min_speed: 0.0
-          pressure_bonus: 0.0
-          pressure_bonus_interval: 1
-          success_requires_pressure: false
+          pressure_distance: 0.0  # how close you must be to count as pressure
+          pressure_timeout: 0.0  # how long pressure is remembered
+          pressure_min_speed: 0.0  # min speed required to count as pressure
+          pressure_bonus: 0.0  # bonus for maintaining pressure
+          pressure_bonus_interval: 1  # how often the pressure bonus can apply
+          success_requires_pressure: false  # only award success if pressure was applied
 
-          speed_bonus_coef: 0.0
-          speed_bonus_target: 0.0
+          speed_bonus_coef: 0.0  # scale for speed-based bonus
+          speed_bonus_target: 0.0  # speed where bonus stops increasing
 
-          distance_reward_far_distance: 0.0
-          distance_penalty_far: 0.0
+          distance_reward_far_distance: 0.0  # distance where being far starts to matter
+          distance_penalty_far: 0.0  # penalty for staying too far away
 
           # LiDAR wall-proxy bounds for reward computation
-          lidar_filter_range_min: 0.35
-          lidar_filter_range_max: 12.0
-          target_neighborhood_r_min: 0.40
-          target_neighborhood_r_max: 6.0
-          target_neighborhood_x_band: 2.2
-          target_side_y_epsilon: 0.08
+          lidar_filter_range_min: 0.35  # ignore lidar hits closer than this
+          lidar_filter_range_max: 12.0  # ignore lidar hits farther than this
+          target_neighborhood_r_min: 0.40  # inner radius around target to consider
+          target_neighborhood_r_max: 6.0  # outer radius around target to consider
+          target_neighborhood_x_band: 2.2  # front/back band around target to consider
+          target_side_y_epsilon: 0.08  # center band before counting left/right
 
           # Pinch pocket geometry (new)
-          pocket_reward_weight: 0.0
-          pinch_anchor_dx: 0.3
-          pinch_anchor_dy: 0.45
-          pinch_sigma: 0.35
-          pinch_in_front_x_min: 0.45
-          pinch_pressure_distance: 1.6
-          pinch_pressure_heading_tol_deg: 35
-          pinch_pressure_recent_seconds: 1.5
+          pocket_reward_weight: 0.0  # strength of pocket (pinch) positioning reward
+          pinch_anchor_dx: 0.3  # forward offset for the desired pocket
+          pinch_anchor_dy: 0.45  # side offset for the desired pocket
+          pinch_sigma: 0.35  # spread of the pocket reward
+          pinch_in_front_x_min: 0.45  # only reward pocket when in front of target
+          pinch_pressure_distance: 1.6  # distance for pinch pressure to count
+          pinch_pressure_heading_tol_deg: 35  # heading alignment tolerance
+          pinch_pressure_recent_seconds: 1.5  # how long pinch pressure is remembered
           # Potential-field reward (Gaussian, centered on pinch anchors)
           # Set `potential_field_weight` > 0 to enable.
-          potential_field_weight: 2.0
-          potential_field_sigma: 0.3
-          potential_field_peak: 1.0
-          potential_field_floor: -1.0
-          potential_field_power: 1.5
-          potential_field_time_scaled: true
+          potential_field_weight: 2.0  # strength of potential-field shaping
+          potential_field_sigma: 0.3  # spread of the potential field
+          potential_field_peak: 1.0  # max potential-field value
+          potential_field_floor: -1.0  # min potential-field value
+          potential_field_power: 1.5  # shape of the potential field falloff
+          potential_field_time_scaled: true  # scale potential field by timestep
 
           # Forcing via opposite-side clearance shrink (new)
-          force_reward_weight: 10.0
-          force_reward_time_scaled: false
-          force_reward_clip: 0.15
-          force_reward_band_min: 0.45
-          force_reward_band_max: 3.2
-          force_reward_enable_ema: true
-          force_reward_ema_alpha: 0.45
+          force_reward_weight: 10.0  # strength of clearance-shrinking reward
+          force_reward_time_scaled: false  # scale clearance reward by timestep
+          force_reward_clip: 0.15  # cap clearance reward size
+          force_reward_band_min: 0.45  # lower clearance bound for reward
+          force_reward_band_max: 3.2  # upper clearance bound for reward
+          force_reward_enable_ema: true  # smooth clearance signal over time
+          force_reward_ema_alpha: 0.45  # smoothing factor for clearance signal
 
           # Target yaw-rate hint (new, optional but helpful early)
-          turn_reward_weight: 3.0
-          turn_reward_time_scaled: false
-          turn_reward_clip: 0.15
+          turn_reward_weight: 3.0  # strength of target-turning hint
+          turn_reward_time_scaled: false  # scale turning hint by timestep
+          turn_reward_clip: 0.15  # cap turning hint size
 
       wrappers:
         - factory: obs
