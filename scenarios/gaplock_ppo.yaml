@@ -18,6 +18,16 @@ scenario:
     spawn_points:
       - spawn_2
       - spawn_1
+    spawn_cycle: true
+    spawn_point_sets:
+      - id: attacker_ahead_a
+        names: [spawn_3, spawn_1]
+      - id: attacker_ahead_b
+        names: [spawn_4, spawn_1]
+      - id: attacker_far_a
+        names: [spawn_5, spawn_2]
+      - id: attacker_far_b
+        names: [spawn_6, spawn_2]
 
   main:
     mode: train
@@ -49,6 +59,11 @@ scenario:
           minibatch_size: 256
           max_grad_norm: 0.5
           ent_coef: 0.005
+          ent_coef_schedule:
+            start: 0.02
+            final: 0.005
+            decay_start: 0
+            decay_episodes: 8000
           normalize_adv: true
           gae_lambda: 0.95
           sequence_batch_size: 1

@@ -52,10 +52,13 @@ class OffPolicyTrainer(Trainer):
             return float(eps_fn())
         raise AttributeError("Underlying agent does not expose epsilon()")
 
-    def reset_noise_schedule(self) -> None:
+    def reset_noise_schedule(self, *, restart: bool = False) -> None:
         reset_fn = getattr(self._agent, "reset_noise_schedule", None)
         if callable(reset_fn):
-            reset_fn()
+            try:
+                reset_fn(restart=restart)
+            except TypeError:
+                reset_fn()
 
     def exploration_noise(self) -> Optional[float]:
         accessor = getattr(self._agent, "current_exploration_noise", None)

@@ -24,6 +24,16 @@ scenario:
     spawn_points:
       - spawn_2
       - spawn_1
+    spawn_cycle: true
+    spawn_point_sets:
+      - id: attacker_ahead_a
+        names: [spawn_3, spawn_1]
+      - id: attacker_ahead_b
+        names: [spawn_4, spawn_1]
+      - id: attacker_far_a
+        names: [spawn_5, spawn_2]
+      - id: attacker_far_b
+        names: [spawn_6, spawn_2]
 
 
   main:
@@ -65,8 +75,8 @@ scenario:
             - 256
 
           exploration_noise: 0.2
-          exploration_noise_final: 0.02
-          exploration_noise_decay_steps: 300000
+          exploration_noise_final: 0.05
+          exploration_noise_decay_episodes: 1500
           initial_speed: 1.0
           initial_speed_warmup_steps: 180
           initial_speed_warmup_throttle: 0.5

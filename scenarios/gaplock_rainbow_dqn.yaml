@@ -18,6 +18,16 @@ scenario:
     spawn_points:
       - spawn_2
       - spawn_1
+    spawn_cycle: true
+    spawn_point_sets:
+      - id: attacker_ahead_a
+        names: [spawn_3, spawn_1]
+      - id: attacker_ahead_b
+        names: [spawn_4, spawn_1]
+      - id: attacker_far_a
+        names: [spawn_5, spawn_2]
+      - id: attacker_far_b
+        names: [spawn_6, spawn_2]
 
   main:
     mode: train
@@ -44,7 +54,7 @@ scenario:
 
           batch_size: 256
           buffer_size: 1000000
-          warmup_steps: 10000
+          learning_starts: 10000
 
           target_update_interval: 750
           prioritized_replay: true
@@ -54,10 +64,11 @@ scenario:
           per_beta_increment: 0.00005
           per_min_priority: 0.0001
           per_epsilon: 0.0001
+          noisy_layers: false
+          epsilon_enabled: true
           epsilon_start: 1.0
           epsilon_end: 0.05
-          epsilon_decay: 300000
-          noisy_std: 0.1
+          epsilon_decay: 1200
           hidden_dims:
             - 512
             - 256

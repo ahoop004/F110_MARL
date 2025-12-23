@@ -80,6 +80,22 @@ class SACAgent:
         self.action_high = action_high
         self.action_range = self.action_high - self.action_low
 
+        self.exploration_noise_initial = float(cfg.get("exploration_noise", 0.0))
+        self.exploration_noise_final = float(
+            cfg.get("exploration_noise_final", self.exploration_noise_initial)
+        )
+        self.exploration_noise_decay_steps = max(
+            1, int(cfg.get("exploration_noise_decay_steps", 50_000))
+        )
+        try:
+            decay_episodes_value = int(cfg.get("exploration_noise_decay_episodes", 0))
+        except (TypeError, ValueError):
+            decay_episodes_value = 0
+        self.exploration_noise_decay_episodes = max(decay_episodes_value, 0)
+        self._exploration_step = 0
+        self._exploration_episode = 0
+        self.action_noise_scale = self.action_range / 2.0
+
         self.total_it = 0
 
     # ------------------------------------------------------------------
@@ -99,7 +115,14 @@ class SACAgent:
                 raw_action = dist.rsample()
             squashed = torch.tanh(raw_action)
             action = self._scale_action_torch(squashed)
-        return action.squeeze(0).cpu().numpy().astype(np.float32)
+        action_np = action.squeeze(0).cpu().numpy().astype(np.float32)
+        if not deterministic:
+            noise_scale = self._current_exploration_noise()
+            if noise_scale > 0.0:
+                noise = np.random.normal(0.0, noise_scale, size=self.act_dim) * self.action_noise_scale
+                action_np = np.clip(action_np + noise, self.action_low, self.action_high)
+            self._exploration_step += 1
+        return action_np
 
     def store_transition(
         self,
@@ -111,6 +134,22 @@ class SACAgent:
         info: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.buffer.add(obs, action, reward, next_obs, done, info)
+
+    def reset_noise_schedule(self, *, restart: bool = False) -> None:
+        if restart:
+            self._exploration_step = 0
+            self._exploration_episode = 0
+            return
+
+        if self.exploration_noise_decay_episodes > 0:
+            self._exploration_step = 0
+            self._exploration_episode = min(
+                self._exploration_episode + 1,
+                self.exploration_noise_decay_episodes,
+            )
+
+    def current_exploration_noise(self) -> float:
+        return float(self._current_exploration_noise())
 
     # ------------------------------------------------------------------
     # Training
@@ -205,6 +244,21 @@ class SACAgent:
             "alpha_loss": float(alpha_loss_value),
             "update_it": float(self.total_it),
         }
+
+    def _current_exploration_noise(self) -> float:
+        if self.exploration_noise_decay_episodes > 0:
+            frac = min(
+                1.0,
+                self._exploration_episode / float(self.exploration_noise_decay_episodes),
+            )
+        else:
+            if self.exploration_noise_decay_steps <= 0:
+                return self.exploration_noise_final
+            frac = min(
+                1.0,
+                self._exploration_step / float(self.exploration_noise_decay_steps),
+            )
+        return (1.0 - frac) * self.exploration_noise_initial + frac * self.exploration_noise_final
 
     # ------------------------------------------------------------------
     # Persistence helpers
