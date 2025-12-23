@@ -138,8 +138,15 @@ class RLActorNode(Node):
         self.declare_parameter("use_safety", True)
         self.declare_parameter("hard_border", 1.0)
         self.declare_parameter("prevent_reverse", True)
-        self.declare_parameter("prevent_reverse_min_speed", 0.01)
+        self.declare_parameter("prevent_reverse_min_speed", 0.0)
         self.declare_parameter("max_pose_age", 0.25)
+        # LIMO cmd_vel mapping knobs (kept in sync with ros2/RainbowDQN.py)
+        self.declare_parameter("steer_sign", -1.0)
+        self.declare_parameter("lin_scale", 0.4)
+        self.declare_parameter("ang_scale", 1.0)
+        self.declare_parameter("max_steer_cmd", 1.0)
+        self.declare_parameter("max_speed_cmd", 0.35)
+        self.declare_parameter("max_reverse_speed_cmd", 0.0)
 
         self.scan_topic = str(self.get_parameter("scan_topic").value)
         self.primary_topic = str(self.get_parameter("primary_topic").value)
@@ -152,6 +159,12 @@ class RLActorNode(Node):
         self.prevent_reverse = bool(self.get_parameter("prevent_reverse").value)
         self.min_throttle = float(self.get_parameter("prevent_reverse_min_speed").value)
         self.max_pose_age = float(self.get_parameter("max_pose_age").value)
+        self.steer_sign = float(self.get_parameter("steer_sign").value)
+        self.lin_scale = float(self.get_parameter("lin_scale").value)
+        self.ang_scale = float(self.get_parameter("ang_scale").value)
+        self.max_steer_cmd = float(self.get_parameter("max_steer_cmd").value)
+        self.max_speed_cmd = float(self.get_parameter("max_speed_cmd").value)
+        self.max_reverse_speed_cmd = float(self.get_parameter("max_reverse_speed_cmd").value)
 
         self.last_scan: Optional[np.ndarray] = None
         self.primary_state = init_agent_state()
@@ -214,14 +227,23 @@ class RLActorNode(Node):
             raw = self.actor(obs_t).cpu().numpy()[0]
 
         action = scale_continuous_action(raw)
-        steer = float(np.clip(action[0], ACTION_LOW[0], ACTION_HIGH[0]))
-        throttle = float(np.clip(action[1], ACTION_LOW[1], ACTION_HIGH[1]))
+        raw_steer = float(np.clip(action[0], ACTION_LOW[0], ACTION_HIGH[0]))
+        raw_speed = float(np.clip(action[1], ACTION_LOW[1], ACTION_HIGH[1]))
         if self.prevent_reverse:
-            throttle = max(throttle, self.min_throttle)
+            raw_speed = max(raw_speed, self.min_throttle)
+
+        steer_cmd = self.steer_sign * raw_steer * self.ang_scale
+        speed_cmd = raw_speed * self.lin_scale
+
+        steer_cmd = float(np.clip(steer_cmd, -self.max_steer_cmd, self.max_steer_cmd))
+        if self.prevent_reverse:
+            speed_cmd = float(np.clip(speed_cmd, 0.0, self.max_speed_cmd))
+        else:
+            speed_cmd = float(np.clip(speed_cmd, -self.max_reverse_speed_cmd, self.max_speed_cmd))
 
         cmd = Twist()
-        cmd.angular.z = steer
-        cmd.linear.x = throttle
+        cmd.angular.z = steer_cmd
+        cmd.linear.x = speed_cmd
         self.pub_cmd.publish(cmd)
 
 

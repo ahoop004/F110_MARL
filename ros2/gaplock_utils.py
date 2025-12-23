@@ -19,8 +19,9 @@ MAX_LIDAR_RANGE = 12.0
 EGO_POSE_NORM = 12.0
 VEL_NORM = 2.0
 OBS_DIM = LIDAR_BEAMS + 18  # lidar + ego/target pose/vel + relative pose
-ACTION_LOW = np.array([-0.41890001297, -1.0], dtype=np.float32)
-ACTION_HIGH = np.array([0.41890001297, 2.0], dtype=np.float32)
+# Match scenario.env.vehicle_params.{s_min,s_max,v_min,v_max} across gaplock RL configs.
+ACTION_LOW = np.array([-0.46, -1.0], dtype=np.float32)
+ACTION_HIGH = np.array([0.46, 1.0], dtype=np.float32)
 
 
 def init_agent_state() -> Dict[str, Any]:
