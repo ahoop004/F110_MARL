@@ -143,9 +143,9 @@ scenario:
           # Potential-field reward (Gaussian, centered on pinch anchors)
           # Set `potential_field_weight` > 0 to enable.
           potential_field_weight: 2.0
-          potential_field_sigma: 0.6
+          potential_field_sigma: 0.3
           potential_field_peak: 1.0
-          potential_field_floor: -0.2
+          potential_field_floor: -1.0
           potential_field_power: 1.5
           potential_field_time_scaled: true
 
