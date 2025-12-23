@@ -10,6 +10,7 @@ from typing import Any, Deque, Dict, Iterable, Mapping, Optional, Sequence, Tupl
 
 try:  # pragma: no cover - optional dependency
     from rich.align import Align
+    from rich import box
     from rich.console import Console, Group
     from rich.live import Live
     from rich.panel import Panel
@@ -495,6 +496,7 @@ if _HAS_RICH:
             if target_win_rate_total is not None:
                 summary_lines.append(f"Target success rate total: {target_win_rate_total * 100:.1f}%")
 
+            primary_agent = state.get("primary_agent")
             finish_hits = state.get("finish_line_hits")
             if success is None and finish_hits:
                 if primary_agent and primary_agent in finish_hits:
@@ -565,7 +567,6 @@ if _HAS_RICH:
             if crash_bits:
                 summary_lines.append("  ".join(crash_bits))
 
-            primary_agent = state.get("primary_agent")
             primary_return = state.get("primary_return")
             return_mean = state.get("return_mean")
             return_best = state.get("return_best")
@@ -589,7 +590,13 @@ if _HAS_RICH:
                     line += f", best {return_best:.2f}"
                 summary_lines.append(line)
 
-            summary_text = Text("\n".join(summary_lines) if summary_lines else "No telemetry yet.")
+            summary_table = Table(expand=True, show_header=False, box=box.SIMPLE)
+            summary_table.add_column("Summary", justify="left")
+            if summary_lines:
+                for line in summary_lines:
+                    summary_table.add_row(line)
+            else:
+                summary_table.add_row("No telemetry yet.")
 
             agents_table = None
             agents = state.get("agents") or {}
@@ -629,7 +636,7 @@ if _HAS_RICH:
                         f"{collision_step:.0f}" if collision_step is not None else "—",
                     )
 
-            components = [Align.left(summary_text)]
+            components = [Align.left(summary_table)]
             if agents_table is not None:
                 components.append(Align.left(agents_table))
 

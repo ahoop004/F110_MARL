@@ -1121,6 +1121,11 @@ class TrainRunner:
         update_after = max(1, int(self.context.update_after or 1))
         _ = update_start  # kept for compatibility with legacy callers
 
+        finish_line_hit_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        agent_success_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        agent_success_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
+        agent_success_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+
         total_episodes = int(episodes)
         logger.start({
             "mode": "train",
@@ -1157,6 +1162,8 @@ class TrainRunner:
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
             finish_line_hits = dict(rollout.finish_line_hits or {})
+            for agent_id in agent_ids:
+                finish_line_hit_counts[agent_id] += int(bool(finish_line_hits.get(agent_id, False)))
             lap_counts: Dict[str, float] = {}
             lap_array = getattr(env, "lap_counts", None)
             id_to_index = getattr(env, "_agent_id_to_index", {})
@@ -1167,6 +1174,16 @@ class TrainRunner:
                         continue
                     if 0 <= idx < len(lap_array):
                         lap_counts[aid] = float(lap_array[idx])
+
+            lap_times: Dict[str, float] = {}
+            lap_time_array = getattr(env, "lap_times", None)
+            if lap_time_array is not None and isinstance(id_to_index, dict):
+                for aid in agent_ids:
+                    idx = id_to_index.get(aid)
+                    if idx is None:
+                        continue
+                    if 0 <= idx < len(lap_time_array):
+                        lap_times[aid] = float(lap_time_array[idx])
 
             if truncation_penalty:
                 for agent_id, truncated in rollout.truncations.items():
@@ -1413,6 +1430,81 @@ class TrainRunner:
                 metrics["train/target_finished"] = bool(target_finished)
             if defender_survival_steps is not None:
                 metrics["train/defender_survival_steps"] = float(defender_survival_steps)
+
+            timestep = float(getattr(env, "timestep", 0.0) or 0.0)
+
+            def _step_time(step_idx: int) -> Optional[float]:
+                if step_idx < 0:
+                    return None
+                if timestep <= 0.0:
+                    return None
+                return float(step_idx + 1) * timestep
+
+            episode_success_flags: Dict[str, bool] = {aid: False for aid in agent_ids}
+            episode_success_times: Dict[str, Optional[float]] = {aid: None for aid in agent_ids}
+
+            if attacker_id and attacker_id in episode_success_flags and attacker_win is not None:
+                episode_success_flags[attacker_id] = bool(attacker_win)
+                if episode_success_flags[attacker_id] and defender_id is not None:
+                    defender_step = rollout.collision_steps.get(defender_id, -1)
+                    episode_success_times[attacker_id] = _step_time(int(defender_step)) or float(
+                        getattr(env, "current_time", 0.0) or 0.0
+                    )
+
+            if defender_id and defender_id in episode_success_flags and target_win is not None:
+                episode_success_flags[defender_id] = bool(target_win)
+                if episode_success_flags[defender_id]:
+                    if bool(target_finished):
+                        lap_time_val = lap_times.get(defender_id, 0.0)
+                        if lap_time_val > 0.0:
+                            episode_success_times[defender_id] = float(lap_time_val)
+                        else:
+                            episode_success_times[defender_id] = float(getattr(env, "current_time", 0.0) or 0.0)
+                    elif bool(attacker_crashed) and attacker_id is not None:
+                        attacker_step = rollout.collision_steps.get(attacker_id, -1)
+                        episode_success_times[defender_id] = _step_time(int(attacker_step)) or float(
+                            getattr(env, "current_time", 0.0) or 0.0
+                        )
+
+            if target_win is None and attacker_win is None:
+                try:
+                    target_laps = int(getattr(env, "target_laps", 1) or 1)
+                except (TypeError, ValueError):
+                    target_laps = 1
+                if target_laps <= 0:
+                    target_laps = 1
+                for agent_id in agent_ids:
+                    completed = bool(finish_line_hits.get(agent_id, False)) or (
+                        float(lap_counts.get(agent_id, 0.0)) >= float(target_laps)
+                    )
+                    episode_success_flags[agent_id] = completed
+                    if completed:
+                        lap_time_val = lap_times.get(agent_id, 0.0)
+                        if lap_time_val > 0.0:
+                            episode_success_times[agent_id] = float(lap_time_val)
+                        else:
+                            episode_success_times[agent_id] = float(getattr(env, "current_time", 0.0) or 0.0)
+
+            for aid, succeeded in episode_success_flags.items():
+                if not succeeded:
+                    continue
+                agent_success_counts[aid] += 1
+                time_value = episode_success_times.get(aid)
+                if time_value is not None and math.isfinite(time_value):
+                    agent_success_time_sums[aid] += float(time_value)
+                    agent_success_time_counts[aid] += 1
+
+            episodes_completed = float(episode_idx + 1)
+            for aid in agent_ids:
+                metrics[f"train/success_rate/{aid}"] = float(agent_success_counts.get(aid, 0)) / max(episodes_completed, 1.0)
+                metrics[f"train/finish_line_hit_rate/{aid}"] = float(finish_line_hit_counts.get(aid, 0)) / max(
+                    episodes_completed, 1.0
+                )
+                time_count = int(agent_success_time_counts.get(aid, 0) or 0)
+                if time_count > 0:
+                    metrics[f"train/avg_time_to_success/{aid}"] = float(agent_success_time_sums.get(aid, 0.0)) / float(
+                        time_count
+                    )
             attacker_metrics_id = attacker_id or primary_id
             avg_relative_distance = None
             pressure_ratio = None
@@ -1528,13 +1620,16 @@ class TrainRunner:
             for aid, step_val in rollout.collision_steps.items():
                 if step_val >= 0:
                     metrics[f"train/agent/{aid}/collision_step"] = float(step_val)
+            for aid in agent_ids:
+                metrics[f"train/agent/{aid}/lap_count"] = float(lap_counts.get(aid, 0.0))
             for aid, breakdown in reward_breakdown.items():
                 for name, value in breakdown.items():
                     metrics[f"train/reward/{aid}/{name}"] = float(value)
-            if finish_line_hits:
-                metrics["train/finish_line_any"] = float(any(finish_line_hits.values()))
-                for aid, hit in finish_line_hits.items():
-                    metrics[f"train/finish_line_hit/{aid}"] = 1.0 if hit else 0.0
+            metrics["train/finish_line_any"] = 1.0 if any(
+                bool(finish_line_hits.get(agent_id, False)) for agent_id in agent_ids
+            ) else 0.0
+            for aid in agent_ids:
+                metrics[f"train/finish_line_hit/{aid}"] = 1.0 if finish_line_hits.get(aid, False) else 0.0
 
             logger.log_metrics("train", metrics, step=episode_idx + 1)
             publish_metrics = getattr(env, "update_render_metrics", None)
