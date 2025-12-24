@@ -8,6 +8,7 @@ from .discrete import (
     ReplaySample,
     build_replay_buffer,
     sample_continuous_replay,
+    sample_mixed_continuous_replay,
     sample_replay_batch,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "ReplaySample",
     "build_replay_buffer",
     "sample_continuous_replay",
+    "sample_mixed_continuous_replay",
     "sample_replay_batch",
 ]

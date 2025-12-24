@@ -67,6 +67,22 @@ class DiscreteAgentBase:
             per_flag_key=per_flag_key,
             default_prioritized=default_prioritized,
         )
+        ratio_raw = cfg.get("success_buffer_ratio", 0.0)
+        try:
+            ratio_value = float(ratio_raw)
+        except (TypeError, ValueError):
+            ratio_value = 0.0
+        self.success_buffer_ratio = min(max(ratio_value, 0.0), 1.0)
+        success_capacity = int(cfg.get("success_buffer_size", 0) or 0)
+        self.success_buffer: Optional[ReplayBuffer] = None
+        if success_capacity > 0 and self.success_buffer_ratio > 0.0:
+            self.success_buffer = ReplayBuffer(
+                success_capacity,
+                (self.obs_dim,),
+                (self.act_dim,),
+                store_actions=store_actions,
+                store_action_indices=store_action_indices,
+            )
         self.step_count = 0
         self._updates = 0
         self.episode_count = 0
@@ -144,6 +160,29 @@ class DiscreteAgentBase:
         self.n_actions = self._action_helper.n_actions
         self.act_dim = self._action_helper.act_dim
 
+    def store_success_transition(
+        self,
+        obs: np.ndarray,
+        action: Any,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.success_buffer is None:
+            return
+        action_vec, info_dict, action_idx = self._action_helper.prepare_action(action, info)
+        action_payload = action_vec if self.success_buffer.store_actions else None
+        self.success_buffer.add(
+            obs,
+            action_payload,
+            reward,
+            next_obs,
+            done,
+            info_dict,
+            action_index=action_idx,
+        )
+
 
 class ActionValueAgent(DiscreteAgentBase):
     """Augments :class:`DiscreteAgentBase` with Q-learning utilities."""
@@ -193,7 +232,20 @@ class ActionValueAgent(DiscreteAgentBase):
         return True
 
     def sample_batch(self) -> ReplaySample:
-        return sample_replay_batch(self.buffer, self.batch_size, self.device, self._action_helper)
+        success_buffer = self.success_buffer
+        ratio = self.success_buffer_ratio
+        if success_buffer is None or ratio <= 0.0:
+            return sample_replay_batch(self.buffer, self.batch_size, self.device, self._action_helper)
+
+        success_count, main_count = _resolve_success_mix(self.batch_size, ratio, len(success_buffer))
+        if success_count <= 0:
+            return sample_replay_batch(self.buffer, self.batch_size, self.device, self._action_helper)
+
+        main_sample = None
+        if main_count > 0:
+            main_sample = sample_replay_batch(self.buffer, main_count, self.device, self._action_helper)
+        success_sample = sample_replay_batch(success_buffer, success_count, self.device, self._action_helper)
+        return _merge_replay_samples(main_sample, success_sample)
 
     def finalize_update(self, indices: Optional[np.ndarray], td_errors: Any) -> None:
         self._updates += 1
@@ -203,11 +255,18 @@ class ActionValueAgent(DiscreteAgentBase):
                 target.load_state_dict(online.state_dict())
         if not self._use_per or indices is None or td_errors is None:
             return
+        idx = np.asarray(indices, dtype=np.int64).reshape(-1)
+        if idx.size == 0:
+            return
+        mask = idx >= 0
+        if not mask.any():
+            return
         if hasattr(td_errors, "detach"):
             td_np = td_errors.detach().cpu().numpy()
         else:
             td_np = np.asarray(td_errors, dtype=np.float32)
-        self.buffer.update_priorities(indices, np.abs(td_np))
+        td_np = np.asarray(td_np, dtype=np.float32).reshape(-1)
+        self.buffer.update_priorities(idx[mask], np.abs(td_np[mask]))
 
 
 class DiscreteActionAdapter:
@@ -274,6 +333,96 @@ class DiscreteActionAdapter:
         action_idx = int(info_dict.get("action_index", action_idx_fallback))
         info_dict["action_index"] = action_idx
         return np.asarray(action_vec, dtype=np.float32), info_dict, action_idx
+
+
+def _resolve_success_mix(
+    batch_size: int,
+    ratio: float,
+    success_len: int,
+) -> Tuple[int, int]:
+    if ratio <= 0.0 or success_len <= 0 or batch_size <= 0:
+        return 0, batch_size
+    success_count = int(batch_size * ratio)
+    if success_count <= 0:
+        return 0, batch_size
+    success_count = min(success_count, int(success_len))
+    main_count = max(batch_size - success_count, 0)
+    return success_count, main_count
+
+
+def _merge_replay_samples(
+    main: Optional[ReplaySample],
+    success: ReplaySample,
+) -> ReplaySample:
+    if main is None:
+        return success
+
+    obs = torch.cat([main.obs, success.obs], dim=0)
+    rewards = torch.cat([main.rewards, success.rewards], dim=0)
+    next_obs = torch.cat([main.next_obs, success.next_obs], dim=0)
+    dones = torch.cat([main.dones, success.dones], dim=0)
+    action_indices = torch.cat([main.action_indices, success.action_indices], dim=0)
+    weights = torch.cat([main.weights.view(-1), success.weights.view(-1)], dim=0)
+    infos = list(main.infos) + list(success.infos)
+
+    indices = None
+    if main.indices is not None:
+        main_idx = np.asarray(main.indices, dtype=np.int64).reshape(-1)
+        if success.indices is None:
+            success_idx = np.full((success.obs.shape[0],), -1, dtype=np.int64)
+        else:
+            success_idx = np.asarray(success.indices, dtype=np.int64).reshape(-1)
+        indices = np.concatenate([main_idx, success_idx], axis=0)
+
+    actions = None
+    if main.actions is not None and success.actions is not None:
+        actions = torch.cat([main.actions, success.actions], dim=0)
+
+    return ReplaySample(
+        obs=obs,
+        rewards=rewards,
+        next_obs=next_obs,
+        dones=dones,
+        action_indices=action_indices,
+        weights=weights,
+        infos=infos,
+        indices=indices,
+        actions=actions,
+    )
+
+
+def _merge_continuous_samples(
+    main: Optional[ContinuousReplaySample],
+    success: ContinuousReplaySample,
+) -> ContinuousReplaySample:
+    if main is None:
+        return success
+
+    obs = torch.cat([main.obs, success.obs], dim=0)
+    actions = torch.cat([main.actions, success.actions], dim=0)
+    rewards = torch.cat([main.rewards, success.rewards], dim=0)
+    next_obs = torch.cat([main.next_obs, success.next_obs], dim=0)
+    dones = torch.cat([main.dones, success.dones], dim=0)
+    weights = torch.cat([main.weights, success.weights], dim=0)
+
+    indices = None
+    if main.indices is not None:
+        main_idx = np.asarray(main.indices, dtype=np.int64).reshape(-1)
+        if success.indices is None:
+            success_idx = np.full((success.obs.shape[0],), -1, dtype=np.int64)
+        else:
+            success_idx = np.asarray(success.indices, dtype=np.int64).reshape(-1)
+        indices = np.concatenate([main_idx, success_idx], axis=0)
+
+    return ContinuousReplaySample(
+        obs=obs,
+        actions=actions,
+        rewards=rewards,
+        next_obs=next_obs,
+        dones=dones,
+        weights=weights,
+        indices=indices,
+    )
 
 
 def build_replay_buffer(
@@ -419,6 +568,27 @@ def sample_continuous_replay(
     )
 
 
+def sample_mixed_continuous_replay(
+    main_buffer: ReplayBuffer,
+    success_buffer: Optional[ReplayBuffer],
+    batch_size: int,
+    success_ratio: float,
+    device: torch.device,
+) -> ContinuousReplaySample:
+    if success_buffer is None or success_ratio <= 0.0:
+        return sample_continuous_replay(main_buffer, batch_size, device)
+
+    success_count, main_count = _resolve_success_mix(batch_size, success_ratio, len(success_buffer))
+    if success_count <= 0:
+        return sample_continuous_replay(main_buffer, batch_size, device)
+
+    main_sample = None
+    if main_count > 0:
+        main_sample = sample_continuous_replay(main_buffer, main_count, device)
+    success_sample = sample_continuous_replay(success_buffer, success_count, device)
+    return _merge_continuous_samples(main_sample, success_sample)
+
+
 __all__ = [
     "ContinuousReplaySample",
     "ActionValueAgent",
@@ -427,5 +597,6 @@ __all__ = [
     "ReplaySample",
     "build_replay_buffer",
     "sample_continuous_replay",
+    "sample_mixed_continuous_replay",
     "sample_replay_batch",
 ]

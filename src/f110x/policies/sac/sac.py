@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from f110x.policies.common import build_replay_buffer, sample_continuous_replay
+from f110x.policies.common import build_replay_buffer, sample_mixed_continuous_replay
+from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.sac.net import GaussianPolicy, QNetwork, hard_update, soft_update
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -71,6 +72,22 @@ class SACAgent:
             per_flag_key="use_per",
             default_prioritized=False,
         )
+        ratio_raw = cfg.get("success_buffer_ratio", 0.0)
+        try:
+            ratio_value = float(ratio_raw)
+        except (TypeError, ValueError):
+            ratio_value = 0.0
+        self.success_buffer_ratio = min(max(ratio_value, 0.0), 1.0)
+        success_capacity = int(cfg.get("success_buffer_size", 0) or 0)
+        self.success_buffer: Optional[ReplayBuffer] = None
+        if success_capacity > 0 and self.success_buffer_ratio > 0.0:
+            self.success_buffer = ReplayBuffer(
+                success_capacity,
+                (self.obs_dim,),
+                (self.act_dim,),
+                store_actions=True,
+                store_action_indices=False,
+            )
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -135,6 +152,19 @@ class SACAgent:
     ) -> None:
         self.buffer.add(obs, action, reward, next_obs, done, info)
 
+    def store_success_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.success_buffer is None:
+            return
+        self.success_buffer.add(obs, action, reward, next_obs, done, info)
+
     def reset_noise_schedule(self, *, restart: bool = False) -> None:
         if restart:
             self._exploration_step = 0
@@ -159,7 +189,13 @@ class SACAgent:
         if len(self.buffer) < max(self.batch_size, self.warmup_steps):
             return None
 
-        sample = sample_continuous_replay(self.buffer, self.batch_size, self.device)
+        sample = sample_mixed_continuous_replay(
+            self.buffer,
+            self.success_buffer,
+            self.batch_size,
+            self.success_buffer_ratio,
+            self.device,
+        )
         obs = sample.obs
         actions = sample.actions
         rewards = sample.rewards

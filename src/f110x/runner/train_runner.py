@@ -1485,6 +1485,11 @@ class TrainRunner:
                         else:
                             episode_success_times[agent_id] = float(getattr(env, "current_time", 0.0) or 0.0)
 
+            for agent_id, trainer in trainer_map.items():
+                notify = getattr(trainer, "notify_episode_result", None)
+                if callable(notify):
+                    notify(success=bool(episode_success_flags.get(agent_id, False)))
+
             for aid, succeeded in episode_success_flags.items():
                 if not succeeded:
                     continue

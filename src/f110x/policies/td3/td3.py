@@ -14,7 +14,8 @@ import torch.nn.functional as F
 # except ImportError:  # pragma: no cover - wandb optional
 #     wandb = None
 
-from f110x.policies.common import build_replay_buffer, sample_continuous_replay
+from f110x.policies.common import build_replay_buffer, sample_mixed_continuous_replay
+from f110x.policies.buffers import ReplayBuffer
 from f110x.policies.td3.net import TD3Actor, TD3Critic, hard_update, soft_update
 from f110x.utils.torch_io import resolve_device, safe_load
 
@@ -90,6 +91,22 @@ class TD3Agent:
             per_flag_key="use_per",
             default_prioritized=False,
         )
+        ratio_raw = cfg.get("success_buffer_ratio", 0.0)
+        try:
+            ratio_value = float(ratio_raw)
+        except (TypeError, ValueError):
+            ratio_value = 0.0
+        self.success_buffer_ratio = min(max(ratio_value, 0.0), 1.0)
+        success_capacity = int(cfg.get("success_buffer_size", 0) or 0)
+        self.success_buffer: Optional[ReplayBuffer] = None
+        if success_capacity > 0 and self.success_buffer_ratio > 0.0:
+            self.success_buffer = ReplayBuffer(
+                success_capacity,
+                (self.obs_dim,),
+                (self.act_dim,),
+                store_actions=True,
+                store_action_indices=False,
+            )
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -150,13 +167,32 @@ class TD3Agent:
     ) -> None:
         self.buffer.add(obs, action, reward, next_obs, done, info)
 
+    def store_success_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.success_buffer is None:
+            return
+        self.success_buffer.add(obs, action, reward, next_obs, done, info)
+
     # -------------------- Learning --------------------
 
     def update(self) -> Optional[Dict[str, float]]:
         if len(self.buffer) < max(self.batch_size, self.warmup_steps):
             return None
 
-        sample = sample_continuous_replay(self.buffer, self.batch_size, self.device)
+        sample = sample_mixed_continuous_replay(
+            self.buffer,
+            self.success_buffer,
+            self.batch_size,
+            self.success_buffer_ratio,
+            self.device,
+        )
         obs = sample.obs
         actions = sample.actions
         rewards = sample.rewards
@@ -213,10 +249,11 @@ class TD3Agent:
 
         if self.use_per and sample.indices is not None:
             td_errors = (td_error1.abs() + td_error2.abs()) * 0.5
-            self.buffer.update_priorities(
-                sample.indices,
-                td_errors.detach().cpu().squeeze(1).numpy(),
-            )
+            idx = np.asarray(sample.indices, dtype=np.int64).reshape(-1)
+            mask = idx >= 0
+            if mask.any():
+                td_np = td_errors.detach().cpu().squeeze(1).numpy()
+                self.buffer.update_priorities(idx[mask], td_np[mask])
 
         return {
             "critic_loss": float(critic_loss.detach().cpu().item()),

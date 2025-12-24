@@ -101,6 +101,7 @@ class RainbowDQNAgent(ActionValueAgent):
 
         self._store_actions = getattr(self.buffer, "store_actions", store_actions_flag)
         self._n_step_buffer: Deque[NStepEntry] = deque()
+        self._success_n_step_buffer: Deque[NStepEntry] = deque()
 
     # -------------------- Interaction --------------------
 
@@ -167,6 +168,35 @@ class RainbowDQNAgent(ActionValueAgent):
             self._episode_done = True
         elif not done and self._episode_done:
             self._episode_done = False
+
+    def store_success_transition(
+        self,
+        obs: np.ndarray,
+        action: Iterable[float],
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.success_buffer is None:
+            return
+        obs_arr = np.asarray(obs, dtype=np.float32)
+        next_obs_arr = np.asarray(next_obs, dtype=np.float32)
+
+        action_vec, info_dict, action_idx = self._action_helper.prepare_action(action, info)
+        action_vec = action_vec if self._store_actions else None
+        transition: NStepEntry = (
+            obs_arr,
+            None if action_vec is None else np.asarray(action_vec, dtype=np.float32),
+            float(reward),
+            next_obs_arr,
+            bool(done),
+            info_dict,
+            action_idx,
+        )
+
+        self._success_n_step_buffer.append(transition)
+        self._maybe_append_success_transition(done)
 
     # -------------------- Learning --------------------
 
@@ -337,12 +367,37 @@ class RainbowDQNAgent(ActionValueAgent):
             )
             self.step_count += 1
 
-    def _compute_n_step_target(self) -> Tuple[float, float, np.ndarray, bool]:
+    def _maybe_append_success_transition(self, terminal: bool) -> None:
+        if self.success_buffer is None:
+            return
+        while len(self._success_n_step_buffer) >= self.n_step or (terminal and self._success_n_step_buffer):
+            reward, discount, next_obs, done_flag = self._compute_n_step_target(self._success_n_step_buffer)
+            obs0, action0, _r0, _next0, _done0, info0, action_idx0 = self._success_n_step_buffer.popleft()
+            info_store = dict(info0 or {})
+            info_store["action_index"] = action_idx0
+            info_store["n_step_gamma"] = discount
+            action_for_buffer = action0 if self._store_actions else None
+            self.success_buffer.add(
+                obs0,
+                action_for_buffer,
+                reward,
+                next_obs,
+                done_flag,
+                info_store,
+                action_index=action_idx0,
+            )
+
+    def _compute_n_step_target(
+        self,
+        buffer: Optional[Deque[NStepEntry]] = None,
+    ) -> Tuple[float, float, np.ndarray, bool]:
+        if buffer is None:
+            buffer = self._n_step_buffer
         reward = 0.0
-        next_obs = self._n_step_buffer[0][3]
+        next_obs = buffer[0][3]
         done_flag = False
         steps = 0
-        for idx, (_obs, _action, r, next_o, done, _info, _aidx) in enumerate(self._n_step_buffer):
+        for idx, (_obs, _action, r, next_o, done, _info, _aidx) in enumerate(buffer):
             reward += (self.gamma ** idx) * float(r)
             next_obs = next_o
             steps = idx + 1

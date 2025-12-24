@@ -19,6 +19,10 @@ class OffPolicyTrainer(Trainer):
         self._agent = agent
         cfg = dict(config or {})
         self._include_truncation = bool(cfg.get("include_truncation", True))
+        self._episode_cache: list[tuple[Any, Any, float, Any, bool, Optional[Dict[str, Any]]]] = []
+        self._completed_episode: Optional[
+            list[tuple[Any, Any, float, Any, bool, Optional[Dict[str, Any]]]]
+        ] = None
 
     def select_action(self, obs: Any, *, deterministic: bool = False) -> Any:
         return self._agent.act(obs, deterministic=deterministic)
@@ -33,6 +37,19 @@ class OffPolicyTrainer(Trainer):
             done,
             transition.info,
         )
+        self._episode_cache.append(
+            (
+                transition.obs,
+                transition.action,
+                transition.reward,
+                transition.next_obs,
+                done,
+                transition.info,
+            )
+        )
+        if transition.terminated or transition.truncated:
+            self._completed_episode = self._episode_cache
+            self._episode_cache = []
 
     def update(self) -> Optional[Dict[str, Any]]:
         stats = self._agent.update()
@@ -103,6 +120,17 @@ class OffPolicyTrainer(Trainer):
         reset_fn = getattr(self._agent, "reset_optimizers", None)
         if callable(reset_fn):
             reset_fn()
+
+    def notify_episode_result(self, *, success: bool) -> None:
+        completed = self._completed_episode
+        self._completed_episode = None
+        if not success or not completed:
+            return
+        store_fn = getattr(self._agent, "store_success_transition", None)
+        if not callable(store_fn):
+            return
+        for obs, action, reward, next_obs, done, info in completed:
+            store_fn(obs, action, reward, next_obs, done, info)
 
 
 DQNTrainer = OffPolicyTrainer
