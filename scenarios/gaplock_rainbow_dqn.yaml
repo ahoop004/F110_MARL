@@ -31,7 +31,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 1500
+    train_episodes: 15000
     checkpoint: checkpoints/rainbow_gaplock/rainbow_gaplock.pt
     wandb:
       enabled: true
@@ -90,7 +90,7 @@ scenario:
             - [0.00, 0.00]
 
 
-          initial_speed: 1.8
+          initial_speed: 1.0
           initial_speed_choices:
             - 0.2
             - 0.4

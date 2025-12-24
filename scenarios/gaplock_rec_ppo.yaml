@@ -1,14 +1,8 @@
 meta:
-  name: gaplock_sac
+  name: gaplock_rec_ppo
 
 scenario:
   env:
-    reward_heatmap:
-      enabled: true
-      alpha: 0.22
-      value_scale: 1.0
-      extent_m: 6.0
-      cell_size_m: 0.05
     map: line2
     seed: 42
     max_steps: 5000
@@ -35,49 +29,51 @@ scenario:
       - id: attacker_far_b
         names: [spawn_6, spawn_2]
 
-
   main:
     mode: train
     train_episodes: 15000
-    checkpoint: checkpoints/sac_gaplock/sac_gaplock.pt
-    # warm_start_checkpoint: outputs/checkpoints/sac_best_gaplock_sac-r01-f357d6f9.pt
+    checkpoint: checkpoints/rec_ppo_gaplock/rec_ppo_gaplock.pt
     wandb:
       enabled: true
       project: marl-f110
       entity: ahoop004-old-dominion-university
-      group: gaplock_sac
+      group: gaplock_rec_ppo
       tags:
-        - sac
+        - rec_ppo
 
   agents:
     car_0:
       trainable: true
       role: attacker
       algorithm:
-        name: sac
+        name: rec_ppo
         params:
           device: cuda
           actor_lr: 0.00035
           critic_lr: 0.00035
-          alpha_lr: 0.00035
-
           gamma: 0.999
-          tau: 0.005
-
-          batch_size: 256
-          buffer_size: 1000000
-          warmup_steps: 10000
-          
-          auto_alpha: true
-          target_entropy: -2.0
-          hidden_dims:
+          lam: 0.95
+          clip_eps: 0.15
+          update_epochs: 5
+          sequence_batch_size: 1
+          max_grad_norm: 0.5
+          ent_coef: 0.005
+          ent_coef_schedule:
+            start: 0.02
+            final: 0.005
+            decay_start: 0
+            decay_episodes: 8000
+          normalize_adv: true
+          gae_lambda: 0.95
+          rnn_type: lstm
+          rnn_hidden_size: 128
+          rnn_layers: 1
+          rnn_dropout: 0.0
+          mlp_hidden_dims:
             - 512
             - 256
             - 128
-
-          exploration_noise: 0.2
-          exploration_noise_final: 0.05
-          exploration_noise_decay_episodes: 1500
+          observation_normalization: running
           initial_speed: 1.0
           initial_speed_choices:
             - 0.2
@@ -91,13 +87,6 @@ scenario:
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           include_truncation: true
-          use_per: true
-          per_alpha: 0.6
-          per_beta_start: 0.4
-          per_beta_final: 1.0
-          per_beta_increment: 1e-6
-          per_min_priority: 1e-3
-          per_epsilon: 1e-6
       reward:
         task: gaplock  # selects which reward logic to use
         ignore_non_trainable: true  # apply shaping only to learning agents
@@ -167,9 +156,6 @@ scenario:
           turn_reward_weight: 3.0  # strength of target-turning hint
           turn_reward_time_scaled: false  # scale turning hint by timestep
           turn_reward_clip: 0.15  # cap turning hint size
-
-
-
 
       wrappers:
         - factory: obs
