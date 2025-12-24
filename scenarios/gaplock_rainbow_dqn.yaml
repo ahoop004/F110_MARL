@@ -142,10 +142,11 @@ scenario:
           target_side_y_epsilon: 0.08  # center band before counting left/right
 
           # Pinch pocket geometry (new)
-          pocket_reward_weight: 0.01  # strength of pocket (pinch) positioning reward
-          pinch_anchor_dx: 0.3  # forward offset for the desired pocket
-          pinch_anchor_dy: 0.35  # side offset for the desired pocket
-          pinch_sigma: 0.35  # spread of the pocket reward
+          # Pinch pocket geometry (new)
+          pocket_reward_weight: 0.015  # strength of pocket (pinch) positioning reward
+          pinch_anchor_dx: 0.35  # forward offset for the desired pocket
+          pinch_anchor_dy: 0.33  # side offset for the desired pocket
+          pinch_sigma: 0.4  # spread of the pocket reward
           pinch_in_front_x_min: 0.1  # only reward pocket when in front of target
           pinch_pressure_distance: 1.6  # distance for pinch pressure to count
           pinch_pressure_heading_tol_deg: 35  # heading alignment tolerance
@@ -154,10 +155,10 @@ scenario:
           # Potential-field reward (Gaussian, centered on pinch anchors)
           # Set `potential_field_weight` > 0 to enable.
           potential_field_weight: 2.0  # strength of potential-field shaping
-          potential_field_sigma: 0.3  # spread of the potential field
+          potential_field_sigma: 0.45 # spread of the potential field
           potential_field_peak: 1.0  # max potential-field value
-          potential_field_floor: -1.0  # min potential-field value
-          potential_field_power: 1.5  # shape of the potential field falloff
+          potential_field_floor: -2.0  # min potential-field value
+          potential_field_power: 2.0 # shape of the potential field falloff
           potential_field_time_scaled: true  # scale potential field by timestep
 
           # Forcing via opposite-side clearance shrink (new)
