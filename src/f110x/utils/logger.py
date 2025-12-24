@@ -219,6 +219,7 @@ if _HAS_RICH:
             steps = _format_int(metrics.get(f"{phase}/steps"))
             collisions = _format_int(metrics.get(f"{phase}/collisions"))
             collision_rate = _format_number(metrics.get(f"{phase}/collision_rate"))
+            collision_rate_total = _format_number(metrics.get(f"{phase}/collision_rate_total"))
             mode = metrics.get(f"{phase}/reward_task") or metrics.get(f"{phase}/reward_mode")
             cause = metrics.get(f"{phase}/cause") or metrics.get(f"{phase}/episode_cause")
             success = _format_bool(metrics.get(f"{phase}/success"))
@@ -227,6 +228,7 @@ if _HAS_RICH:
             success_total = _format_number(metrics.get(f"{phase}/success_total"))
             time_to_success = _format_number(metrics.get(f"{phase}/time_to_success"))
             idle = _format_bool(metrics.get(f"{phase}/idle"))
+            idle_rate_total = _format_number(metrics.get(f"{phase}/idle_rate_total"))
             epsilon = (
                 _format_number(metrics.get("train/epsilon"))
                 if phase == "train"
@@ -240,6 +242,7 @@ if _HAS_RICH:
             buffer_fraction = _format_number(metrics.get(f"{phase}/buffer_fraction"))
             defender_crash = _format_bool(metrics.get(f"{phase}/defender_crashed"))
             attacker_crash = _format_bool(metrics.get(f"{phase}/attacker_crashed"))
+            attacker_crash_rate_total = _format_number(metrics.get(f"{phase}/attacker_crash_rate_total"))
             attacker_win = _format_bool(metrics.get(f"{phase}/attacker_win"))
             target_win = _format_bool(metrics.get(f"{phase}/target_win"))
             target_finished = _format_bool(metrics.get(f"{phase}/target_finished"))
@@ -266,6 +269,8 @@ if _HAS_RICH:
                 tracked["collisions"] = collisions
             if collision_rate is not None:
                 tracked["collision_rate"] = collision_rate
+            if collision_rate_total is not None:
+                tracked["collision_rate_total"] = collision_rate_total
             if mode is not None:
                 tracked["mode"] = mode
             if cause is not None:
@@ -278,6 +283,8 @@ if _HAS_RICH:
                 tracked["success_rate_total"] = success_rate_total
             if idle is not None:
                 tracked["idle"] = idle
+            if idle_rate_total is not None:
+                tracked["idle_rate_total"] = idle_rate_total
             if epsilon is not None:
                 tracked["epsilon"] = epsilon
             if primary_agent is not None:
@@ -300,6 +307,8 @@ if _HAS_RICH:
                 tracked["defender_crash"] = defender_crash
             if attacker_crash is not None:
                 tracked["attacker_crash"] = attacker_crash
+            if attacker_crash_rate_total is not None:
+                tracked["attacker_crash_rate_total"] = attacker_crash_rate_total
             if attacker_win is not None:
                 tracked["attacker_win"] = attacker_win
             if target_win is not None:
@@ -553,12 +562,28 @@ if _HAS_RICH:
             if idle is not None:
                 summary_lines.append(f"Idle stop: {'yes' if idle else 'no'}")
 
+            idle_rate_total = state.get("idle_rate_total")
+            if idle_rate_total is not None:
+                summary_lines.append(f"Idle stop rate: {idle_rate_total * 100:.1f}%")
+
+            collision_rate = state.get("collision_rate")
+            collision_rate_total = state.get("collision_rate_total")
+            if collision_rate is not None and collision_rate_total is not None:
+                summary_lines.append(
+                    f"Collision rate: {collision_rate * 100:.2f}% (total {collision_rate_total * 100:.2f}%)"
+                )
+            elif collision_rate is not None:
+                summary_lines.append(f"Collision rate: {collision_rate * 100:.2f}%")
+            elif collision_rate_total is not None:
+                summary_lines.append(f"Collision rate total: {collision_rate_total * 100:.2f}%")
+
             epsilon = state.get("epsilon")
             if epsilon is not None:
                 summary_lines.append(f"Epsilon: {epsilon:.3f}")
 
             defender_crash = state.get("defender_crash")
             attacker_crash = state.get("attacker_crash")
+            attacker_crash_rate_total = state.get("attacker_crash_rate_total")
             crash_bits = []
             if defender_crash is not None:
                 crash_bits.append(f"Defender crash: {'yes' if defender_crash else 'no'}")
@@ -566,6 +591,8 @@ if _HAS_RICH:
                 crash_bits.append(f"Attacker crash: {'yes' if attacker_crash else 'no'}")
             if crash_bits:
                 summary_lines.append("  ".join(crash_bits))
+            if attacker_crash_rate_total is not None:
+                summary_lines.append(f"Attacker crash rate: {attacker_crash_rate_total * 100:.1f}%")
 
             primary_return = state.get("primary_return")
             return_mean = state.get("return_mean")

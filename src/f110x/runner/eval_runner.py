@@ -171,6 +171,11 @@ class EvalRunner:
         completion_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
         completion_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
         total_successes = 0
+        idle_stop_total = 0
+        attacker_crash_total = 0
+        attacker_crash_trials = 0
+        collisions_total_sum = 0
+        steps_total_sum = 0.0
         recent_target_win: Deque[float] = deque(maxlen=eval_window)
         target_win_total = 0
         target_win_trials = 0
@@ -511,6 +516,21 @@ class EvalRunner:
                 target_win_rate_total = float(target_win_total) / max(float(target_win_trials), 1.0)
 
             collision_rate = float(collision_total) / max(float(rollout.steps), 1.0)
+            if rollout.idle_triggered:
+                idle_stop_total += 1
+            collisions_total_sum += collision_total
+            steps_total_sum += float(rollout.steps)
+            if attacker_crashed is not None:
+                attacker_crash_trials += 1
+                if attacker_crashed:
+                    attacker_crash_total += 1
+
+            episodes_completed = float(ep_index + 1)
+            idle_rate_total = float(idle_stop_total) / episodes_completed
+            collision_rate_total = float(collisions_total_sum) / max(steps_total_sum, 1.0)
+            attacker_crash_rate_total = None
+            if attacker_crash_trials > 0:
+                attacker_crash_rate_total = float(attacker_crash_total) / float(attacker_crash_trials)
 
             metrics: Dict[str, Any] = {
                 "eval/episode": float(ep_index + 1),
@@ -520,6 +540,9 @@ class EvalRunner:
                 "eval/return_mean": mean_return,
                 "eval/collisions": float(collision_total),
                 "eval/collision_rate": collision_rate,
+                "eval/collision_rate_total": collision_rate_total,
+                "eval/idle": bool(rollout.idle_triggered),
+                "eval/idle_rate_total": idle_rate_total,
                 "eval/cause": rollout.cause,
             }
             if primary_id:
@@ -537,6 +560,8 @@ class EvalRunner:
                 metrics["eval/defender_crashed"] = bool(defender_crashed)
             if attacker_crashed is not None:
                 metrics["eval/attacker_crashed"] = bool(attacker_crashed)
+            if attacker_crash_rate_total is not None:
+                metrics["eval/attacker_crash_rate_total"] = float(attacker_crash_rate_total)
             if attacker_win is not None:
                 metrics["eval/attacker_win"] = bool(attacker_win)
             if target_win is not None:

@@ -1125,6 +1125,11 @@ class TrainRunner:
         agent_success_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
         agent_success_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
         agent_success_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
+        idle_stop_total = 0
+        attacker_crash_total = 0
+        attacker_crash_trials = 0
+        collisions_total_sum = 0
+        steps_total_sum = 0.0
 
         total_episodes = int(episodes)
         logger.start({
@@ -1390,7 +1395,22 @@ class TrainRunner:
                         buffer_fraction = candidate
                         break
 
-            success_rate_total = float(total_successes) / float(episode_idx + 1)
+            if rollout.idle_triggered:
+                idle_stop_total += 1
+            collisions_total_sum += collisions_total
+            steps_total_sum += float(rollout.steps)
+            if attacker_crashed is not None:
+                attacker_crash_trials += 1
+                if attacker_crashed:
+                    attacker_crash_total += 1
+
+            episodes_completed = float(episode_idx + 1)
+            success_rate_total = float(total_successes) / episodes_completed
+            idle_rate_total = float(idle_stop_total) / episodes_completed
+            collision_rate_total = float(collisions_total_sum) / max(steps_total_sum, 1.0)
+            attacker_crash_rate_total = None
+            if attacker_crash_trials > 0:
+                attacker_crash_rate_total = float(attacker_crash_total) / float(attacker_crash_trials)
             metrics: Dict[str, Any] = {
                 "train/episode": float(episode_idx + 1),
                 "train/episodes_total": float(total_episodes),
@@ -1399,7 +1419,9 @@ class TrainRunner:
                 "train/return_mean": rolling_return,
                 "train/collisions": float(collisions_total),
                 "train/collision_rate": collision_rate,
+                "train/collision_rate_total": collision_rate_total,
                 "train/idle": bool(rollout.idle_triggered),
+                "train/idle_rate_total": idle_rate_total,
                 "train/reward_task": rollout.reward_task,
                 "train/episode_cause": rollout.cause,
                 "train/success_total": float(total_successes),
@@ -1420,6 +1442,8 @@ class TrainRunner:
                 metrics["train/exploration_noise"] = float(exploration_noise)
             if attacker_crashed is not None:
                 metrics["train/attacker_crashed"] = bool(attacker_crashed)
+            if attacker_crash_rate_total is not None:
+                metrics["train/attacker_crash_rate_total"] = float(attacker_crash_rate_total)
             if defender_crashed is not None:
                 metrics["train/defender_crashed"] = bool(defender_crashed)
             if attacker_win is not None:
