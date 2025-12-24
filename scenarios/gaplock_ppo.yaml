@@ -31,7 +31,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 15000
+    train_episodes: 1500
     checkpoint: checkpoints/ppo_gaplock/ppo_gaplock.pt
     wandb:
       enabled: true

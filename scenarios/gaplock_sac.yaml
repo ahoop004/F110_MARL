@@ -38,7 +38,7 @@ scenario:
 
   main:
     mode: train
-    train_episodes: 15000
+    train_episodes: 1500
     checkpoint: checkpoints/sac_gaplock/sac_gaplock.pt
     # warm_start_checkpoint: outputs/checkpoints/sac_best_gaplock_sac-r01-f357d6f9.pt
     wandb:
