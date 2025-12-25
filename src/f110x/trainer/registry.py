@@ -100,7 +100,7 @@ register_trainer(
     _class_factory(
         OffPolicyTrainer,
         supports_config=True,
-        defaults={"include_truncation": True},
+        defaults={"include_truncation": True, "time_limit_terminal": True},
     ),
 )
 register_trainer(
@@ -108,7 +108,7 @@ register_trainer(
     _class_factory(
         OffPolicyTrainer,
         supports_config=True,
-        defaults={"include_truncation": True},
+        defaults={"include_truncation": True, "time_limit_terminal": True},
     ),
 )
 register_trainer(
@@ -116,7 +116,7 @@ register_trainer(
     _class_factory(
         OffPolicyTrainer,
         supports_config=True,
-        defaults={"include_truncation": False},
+        defaults={"include_truncation": False, "time_limit_terminal": True},
     ),
     aliases=("r_dqn", "rainbow_dqn"),
 )

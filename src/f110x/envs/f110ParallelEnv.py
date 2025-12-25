@@ -1152,6 +1152,9 @@ class F110ParallelEnv(ParallelEnv):
         trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
         truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
         infos = {aid: {} for aid in self.possible_agents}
+        if trunc_flag:
+            for aid in infos:
+                infos[aid]["time_limit"] = True
         self._inject_finish_line_info(infos)
 
         # advance and cull finished agents

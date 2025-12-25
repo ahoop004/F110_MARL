@@ -229,6 +229,10 @@ if _HAS_RICH:
             time_to_success = _format_number(metrics.get(f"{phase}/time_to_success"))
             idle = _format_bool(metrics.get(f"{phase}/idle"))
             idle_rate_total = _format_number(metrics.get(f"{phase}/idle_rate_total"))
+            truncated = _format_bool(metrics.get(f"{phase}/truncated"))
+            truncation_rate_total = _format_number(metrics.get(f"{phase}/truncation_rate_total"))
+            timeout = _format_bool(metrics.get(f"{phase}/timeout"))
+            timeout_rate_total = _format_number(metrics.get(f"{phase}/timeout_rate_total"))
             epsilon = (
                 _format_number(metrics.get("train/epsilon"))
                 if phase == "train"
@@ -285,6 +289,14 @@ if _HAS_RICH:
                 tracked["idle"] = idle
             if idle_rate_total is not None:
                 tracked["idle_rate_total"] = idle_rate_total
+            if truncated is not None:
+                tracked["truncated"] = truncated
+            if truncation_rate_total is not None:
+                tracked["truncation_rate_total"] = truncation_rate_total
+            if timeout is not None:
+                tracked["timeout"] = timeout
+            if timeout_rate_total is not None:
+                tracked["timeout_rate_total"] = timeout_rate_total
             if epsilon is not None:
                 tracked["epsilon"] = epsilon
             if primary_agent is not None:
@@ -565,6 +577,20 @@ if _HAS_RICH:
             idle_rate_total = state.get("idle_rate_total")
             if idle_rate_total is not None:
                 summary_lines.append(f"Idle stop rate: {idle_rate_total * 100:.1f}%")
+
+            truncated = state.get("truncated")
+            if truncated is not None:
+                summary_lines.append(f"Truncated: {'yes' if truncated else 'no'}")
+            truncation_rate_total = state.get("truncation_rate_total")
+            if truncation_rate_total is not None:
+                summary_lines.append(f"Truncation rate: {truncation_rate_total * 100:.1f}%")
+
+            timeout = state.get("timeout")
+            if timeout is not None:
+                summary_lines.append(f"Timeout: {'yes' if timeout else 'no'}")
+            timeout_rate_total = state.get("timeout_rate_total")
+            if timeout_rate_total is not None:
+                summary_lines.append(f"Timeout rate: {timeout_rate_total * 100:.1f}%")
 
             collision_rate = state.get("collision_rate")
             collision_rate_total = state.get("collision_rate_total")

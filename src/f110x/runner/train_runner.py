@@ -1126,10 +1126,13 @@ class TrainRunner:
         agent_success_time_sums: Dict[str, float] = {agent_id: 0.0 for agent_id in agent_ids}
         agent_success_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
         idle_stop_total = 0
+        truncation_total = 0
+        timeout_total = 0
         attacker_crash_total = 0
         attacker_crash_trials = 0
         collisions_total_sum = 0
         steps_total_sum = 0.0
+        max_steps = int(getattr(env, "max_steps", 0) or 0)
 
         total_episodes = int(episodes)
         logger.start({
@@ -1167,6 +1170,30 @@ class TrainRunner:
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
             finish_line_hits = dict(rollout.finish_line_hits or {})
+            if rollout.reward_task == "gaplock":
+                shaping_detected = False
+                for agent_id in self.trainable_agent_ids:
+                    breakdown = reward_breakdown.get(agent_id, {})
+                    for name, value in breakdown.items():
+                        if name in {"total", "env_reward"}:
+                            continue
+                        if abs(float(value)) > 1e-6:
+                            shaping_detected = True
+                            break
+                    if shaping_detected:
+                        break
+                if not shaping_detected:
+                    logger.warning(
+                        "Gaplock reward produced no shaping signal",
+                        extra={
+                            "episode": episode_idx + 1,
+                            "reward_task": rollout.reward_task,
+                            "trainable_returns": {
+                                agent_id: float(returns.get(agent_id, 0.0))
+                                for agent_id in self.trainable_agent_ids
+                            },
+                        },
+                    )
             for agent_id in agent_ids:
                 finish_line_hit_counts[agent_id] += int(bool(finish_line_hits.get(agent_id, False)))
             lap_counts: Dict[str, float] = {}
@@ -1240,6 +1267,12 @@ class TrainRunner:
                     target_laps > 0 and float(lap_counts.get(defender_id, 0.0)) >= float(target_laps)
                 )
 
+            episode_truncated = bool(rollout.idle_triggered or any(rollout.truncations.values()))
+            episode_timeout = bool(
+                episode_truncated and max_steps > 0 and float(rollout.steps) >= float(max_steps)
+            )
+            timeout_success = bool(episode_timeout and defender_crashed is not None and not defender_crashed)
+
             attacker_win: Optional[bool] = None
             if defender_crashed is not None and attacker_crashed is not None:
                 attacker_win = bool(defender_crashed and not attacker_crashed)
@@ -1254,6 +1287,8 @@ class TrainRunner:
                     target_win = bool((not defender_crashed) and (bool(target_finished) or attacker_crashed))
             elif defender_crashed is not None:
                 target_win = bool((not defender_crashed) and bool(target_finished))
+            if timeout_success:
+                target_win = True
 
             success: Optional[bool] = attacker_win
 
@@ -1397,6 +1432,10 @@ class TrainRunner:
 
             if rollout.idle_triggered:
                 idle_stop_total += 1
+            if episode_truncated:
+                truncation_total += 1
+            if episode_timeout:
+                timeout_total += 1
             collisions_total_sum += collisions_total
             steps_total_sum += float(rollout.steps)
             if attacker_crashed is not None:
@@ -1407,6 +1446,8 @@ class TrainRunner:
             episodes_completed = float(episode_idx + 1)
             success_rate_total = float(total_successes) / episodes_completed
             idle_rate_total = float(idle_stop_total) / episodes_completed
+            truncation_rate_total = float(truncation_total) / episodes_completed
+            timeout_rate_total = float(timeout_total) / episodes_completed
             collision_rate_total = float(collisions_total_sum) / max(steps_total_sum, 1.0)
             attacker_crash_rate_total = None
             if attacker_crash_trials > 0:
@@ -1422,6 +1463,10 @@ class TrainRunner:
                 "train/collision_rate_total": collision_rate_total,
                 "train/idle": bool(rollout.idle_triggered),
                 "train/idle_rate_total": idle_rate_total,
+                "train/truncated": bool(episode_truncated),
+                "train/truncation_rate_total": truncation_rate_total,
+                "train/timeout": bool(episode_timeout),
+                "train/timeout_rate_total": timeout_rate_total,
                 "train/reward_task": rollout.reward_task,
                 "train/episode_cause": rollout.cause,
                 "train/success_total": float(total_successes),
@@ -1484,6 +1529,8 @@ class TrainRunner:
                             episode_success_times[defender_id] = float(lap_time_val)
                         else:
                             episode_success_times[defender_id] = float(getattr(env, "current_time", 0.0) or 0.0)
+                    elif episode_timeout:
+                        episode_success_times[defender_id] = float(getattr(env, "current_time", 0.0) or 0.0)
                     elif bool(attacker_crashed) and attacker_id is not None:
                         attacker_step = rollout.collision_steps.get(attacker_id, -1)
                         episode_success_times[defender_id] = _step_time(int(attacker_step)) or float(

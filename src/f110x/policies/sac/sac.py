@@ -201,6 +201,7 @@ class SACAgent:
         rewards = sample.rewards
         next_obs = sample.next_obs
         dones = sample.dones
+        weights = sample.weights if self.use_per else torch.ones_like(rewards, device=self.device)
 
         # Critic update -------------------------------------------------
         with torch.no_grad():
@@ -225,7 +226,9 @@ class SACAgent:
 
         current_q1 = self.q1(obs, actions)
         current_q2 = self.q2(obs, actions)
-        critic_loss = F.mse_loss(current_q1, target) + F.mse_loss(current_q2, target)
+        td_error1 = current_q1 - target
+        td_error2 = current_q2 - target
+        critic_loss = ((td_error1.pow(2) + td_error2.pow(2)) * weights).mean()
 
         self.q1_opt.zero_grad(set_to_none=True)
         self.q2_opt.zero_grad(set_to_none=True)
@@ -272,6 +275,14 @@ class SACAgent:
         soft_update(self.q2_target, self.q2, self.tau)
 
         self.total_it += 1
+
+        if self.use_per and sample.indices is not None:
+            td_errors = (td_error1.abs() + td_error2.abs()) * 0.5
+            idx = np.asarray(sample.indices, dtype=np.int64).reshape(-1)
+            mask = idx >= 0
+            if mask.any():
+                td_np = td_errors.detach().cpu().squeeze(1).numpy()
+                self.buffer.update_priorities(idx[mask], td_np[mask])
 
         return {
             "critic_loss": float(critic_loss.detach().cpu().item()),

@@ -172,6 +172,8 @@ class EvalRunner:
         completion_time_counts: Dict[str, int] = {agent_id: 0 for agent_id in agent_ids}
         total_successes = 0
         idle_stop_total = 0
+        truncation_total = 0
+        timeout_total = 0
         attacker_crash_total = 0
         attacker_crash_trials = 0
         collisions_total_sum = 0
@@ -182,6 +184,7 @@ class EvalRunner:
         target_laps = int(getattr(env, "target_laps", 1) or 1)
         if target_laps <= 0:
             target_laps = 1
+        max_steps = int(getattr(env, "max_steps", 0) or 0)
 
         render_enabled = force_render or str(self.context.cfg.env.get("render_mode", "")).lower() == "human"
         reward_cfg = self.context.reward_cfg
@@ -373,6 +376,12 @@ class EvalRunner:
                     target_laps > 0 and float(lap_counts.get(defender_id, 0.0)) >= float(target_laps)
                 )
 
+            episode_truncated = bool(rollout.idle_triggered or any(rollout.truncations.values()))
+            episode_timeout = bool(
+                episode_truncated and max_steps > 0 and float(rollout.steps) >= float(max_steps)
+            )
+            timeout_success = bool(episode_timeout and defender_crashed is not None and not defender_crashed)
+
             attacker_win: Optional[bool] = None
             if defender_crashed is not None and attacker_crashed is not None:
                 attacker_win = bool(defender_crashed and not attacker_crashed)
@@ -389,6 +398,8 @@ class EvalRunner:
                     target_win = bool((not defender_crashed) and (bool(target_finished) or attacker_crashed))
             elif defender_crashed is not None:
                 target_win = bool((not defender_crashed) and bool(target_finished))
+            if timeout_success:
+                target_win = True
 
             success: Optional[bool] = attacker_win
 
@@ -518,6 +529,10 @@ class EvalRunner:
             collision_rate = float(collision_total) / max(float(rollout.steps), 1.0)
             if rollout.idle_triggered:
                 idle_stop_total += 1
+            if episode_truncated:
+                truncation_total += 1
+            if episode_timeout:
+                timeout_total += 1
             collisions_total_sum += collision_total
             steps_total_sum += float(rollout.steps)
             if attacker_crashed is not None:
@@ -527,6 +542,8 @@ class EvalRunner:
 
             episodes_completed = float(ep_index + 1)
             idle_rate_total = float(idle_stop_total) / episodes_completed
+            truncation_rate_total = float(truncation_total) / episodes_completed
+            timeout_rate_total = float(timeout_total) / episodes_completed
             collision_rate_total = float(collisions_total_sum) / max(steps_total_sum, 1.0)
             attacker_crash_rate_total = None
             if attacker_crash_trials > 0:
@@ -543,6 +560,10 @@ class EvalRunner:
                 "eval/collision_rate_total": collision_rate_total,
                 "eval/idle": bool(rollout.idle_triggered),
                 "eval/idle_rate_total": idle_rate_total,
+                "eval/truncated": bool(episode_truncated),
+                "eval/truncation_rate_total": truncation_rate_total,
+                "eval/timeout": bool(episode_timeout),
+                "eval/timeout_rate_total": timeout_rate_total,
                 "eval/cause": rollout.cause,
             }
             if primary_id:

@@ -77,8 +77,8 @@ scenario:
             - 256
             - 128
 
-          exploration_noise: 0.2
-          exploration_noise_final: 0.05
+          exploration_noise: 0.0
+          exploration_noise_final: 0.0
           exploration_noise_decay_episodes: 1500
           initial_speed: 1.0
           initial_speed_choices:
@@ -93,6 +93,7 @@ scenario:
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           include_truncation: true
+          time_limit_terminal: true
           use_per: true
           per_alpha: 0.6
           per_beta_start: 0.4

@@ -19,6 +19,7 @@ class OffPolicyTrainer(Trainer):
         self._agent = agent
         cfg = dict(config or {})
         self._include_truncation = bool(cfg.get("include_truncation", True))
+        self._time_limit_terminal = bool(cfg.get("time_limit_terminal", True))
         self._episode_cache: list[tuple[Any, Any, float, Any, bool, Optional[Dict[str, Any]]]] = []
         self._completed_episode: Optional[
             list[tuple[Any, Any, float, Any, bool, Optional[Dict[str, Any]]]]
@@ -28,7 +29,18 @@ class OffPolicyTrainer(Trainer):
         return self._agent.act(obs, deterministic=deterministic)
 
     def observe(self, transition: Transition) -> None:
-        done = transition.terminated or (self._include_truncation and transition.truncated)
+        time_limit = False
+        if isinstance(transition.info, Mapping):
+            time_limit = bool(
+                transition.info.get("time_limit")
+                or transition.info.get("timeout")
+                or transition.info.get("time_limit_reached")
+            )
+        done = transition.terminated or (
+            self._include_truncation
+            and transition.truncated
+            and (self._time_limit_terminal or not time_limit)
+        )
         self._agent.store_transition(
             transition.obs,
             transition.action,

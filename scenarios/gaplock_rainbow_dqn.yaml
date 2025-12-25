@@ -106,6 +106,7 @@ scenario:
           prevent_reverse_min_speed: 0.01
           prevent_reverse_speed_index: 1
           include_truncation: true
+          time_limit_terminal: true
       reward:
         task: gaplock  # selects which reward logic to use
         ignore_non_trainable: true  # apply shaping only to learning agents

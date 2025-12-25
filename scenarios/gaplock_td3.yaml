@@ -79,6 +79,7 @@ scenario:
 
           updates_per_step: 1
           include_truncation: true
+          time_limit_terminal: true
 
           use_per: true
           per_alpha: 0.6

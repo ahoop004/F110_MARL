@@ -191,31 +191,15 @@ class PPOAgent(BasePPOAgent):
         if not policy_losses:
             return None
 
-        # def _mean_safe(values):
-        #     return float(np.mean(values)) if values else 0.0
+        def _mean_safe(values):
+            return float(np.mean(values)) if values else 0.0
 
-        # metrics = {
-        #     "policy_loss": _mean_safe(policy_losses),
-        #     "value_loss": _mean_safe(value_losses),
-        #     "entropy": _mean_safe(entropies),
-        #     "approx_kl": _mean_safe(approx_kls),
-        #     "action_mean": float(action_np.mean()) if action_np.size else 0.0,
-        #     "action_std": float(action_np.std()) if action_np.size else 0.0,
-        #     "action_abs_mean": float(np.abs(action_np).mean()) if action_np.size else 0.0,
-        #     "raw_action_std": float(raw_action_np.std()) if raw_action_np.size else 0.0,
-        #     "value_mean": float(value_pred_np.mean()) if value_pred_np.size else 0.0,
-        #     "value_std": float(value_pred_np.std()) if value_pred_np.size else 0.0,
-        #     "adv_mean": float(adv_np.mean()) if adv_np.size else 0.0,
-        #     "adv_std": float(adv_np.std()) if adv_np.size else 0.0,
-        # }
-
-        # if wandb is not None:
-        #     if action_np.size:
-        #         metrics["action_histogram"] = wandb.Histogram(action_np.flatten())
-        #     if value_pred_np.size:
-        #         metrics["value_histogram"] = wandb.Histogram(value_pred_np.flatten())
-
-        # return metrics
+        return {
+            "policy_loss": _mean_safe(policy_losses),
+            "value_loss": _mean_safe(value_losses),
+            "entropy": _mean_safe(entropies),
+            "approx_kl": _mean_safe(approx_kls),
+        }
 
     # ------------------- I/O -------------------
 
