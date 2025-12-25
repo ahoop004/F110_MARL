@@ -224,7 +224,8 @@ class TD3Agent:
         td_error1 = current_q1 - target
         td_error2 = current_q2 - target
 
-        critic_loss = ((td_error1.pow(2) + td_error2.pow(2)) * weights).mean()
+        # Apply importance weights separately to each critic loss for proper PER
+        critic_loss = (td_error1.pow(2) * weights).mean() + (td_error2.pow(2) * weights).mean()
 
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()

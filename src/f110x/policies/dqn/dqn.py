@@ -212,15 +212,7 @@ class DQNAgent(ActionValueAgent):
         self._epsilon_value = float(snapshot.get("epsilon_value", self._epsilon_value))
 
     def reset_optimizers(self) -> None:
+        """Reinitialize optimizer state while preserving network weights."""
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
-        self.target_q_net.load_state_dict(ckpt.get("target_q_net", ckpt["q_net"]))
-        self.optimizer.load_state_dict(ckpt["optimizer"])
-        self.step_count = int(ckpt.get("step_count", 0))
-        self._updates = int(ckpt.get("updates", 0))
-        self.episode_count = int(ckpt.get("episode_count", 0))
-        self._epsilon_value = float(ckpt.get("epsilon_value", self._initial_epsilon()))
-        if "action_set" in ckpt:
-            self.refresh_action_helper(np.asarray(ckpt["action_set"], dtype=np.float32))
-        self._episode_done = False
-        self.q_net.to(self.device)
-        self.target_q_net.to(self.device)
+        # Re-sync target network to match current Q-network
+        self.target_q_net.load_state_dict(self.q_net.state_dict())
