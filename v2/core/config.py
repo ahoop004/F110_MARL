@@ -134,6 +134,15 @@ def register_builtin_agents():
     except ImportError:
         pass
 
+    try:
+        from v2.agents.ftg import FTGAgent
+        AgentFactory.register("ftg", FTGAgent)
+        AgentFactory.register("follow_gap", FTGAgent)
+        AgentFactory.register("gap_follow", FTGAgent)
+        AgentFactory.register("followthegap", FTGAgent)
+    except ImportError:
+        pass
+
 
 # Register agents on import
 register_builtin_agents()
