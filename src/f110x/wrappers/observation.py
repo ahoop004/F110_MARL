@@ -97,6 +97,57 @@ class ComponentSpec:
     enabled: bool = True
 
 
+class RunningObsNormalizer:
+    """Apply running mean/variance normalisation to observation vectors."""
+
+    def __init__(
+        self,
+        wrapper: Callable[[Dict[str, Dict[str, Any]], str, Optional[str]], np.ndarray],
+        *,
+        eps: float = 1e-8,
+        clip: Optional[float] = None,
+    ) -> None:
+        self.wrapper = wrapper
+        self.eps = float(eps)
+        self.clip = float(clip) if clip is not None else None
+        self.count = 0
+        self.mean: Optional[np.ndarray] = None
+        self.m2: Optional[np.ndarray] = None
+
+    def __call__(
+        self,
+        obs: Dict[str, Dict[str, Any]],
+        ego_id: str,
+        target_id: Optional[str] = None,
+    ) -> np.ndarray:
+        vector = self.wrapper(obs, ego_id, target_id)
+        vec = np.asarray(vector, dtype=np.float32)
+        if vec.size == 0:
+            return vec
+        if self.mean is None or self.m2 is None or self.mean.shape != vec.shape:
+            self.mean = np.zeros_like(vec, dtype=np.float64)
+            self.m2 = np.zeros_like(vec, dtype=np.float64)
+            self.count = 0
+        self._update(vec)
+        var = self.m2 / max(self.count, 1)
+        normed = (vec - self.mean) / np.sqrt(var + self.eps)
+        if self.clip is not None:
+            normed = np.clip(normed, -self.clip, self.clip)
+        return normed.astype(np.float32, copy=False)
+
+    def _update(self, vec: np.ndarray) -> None:
+        x = np.asarray(vec, dtype=np.float64)
+        x = np.nan_to_num(x, copy=False)
+        self.count += 1
+        if self.count == 1:
+            self.mean = x
+            return
+        delta = x - self.mean
+        self.mean = self.mean + delta / self.count
+        delta2 = x - self.mean
+        self.m2 = self.m2 + delta * delta2
+
+
 class ObsWrapper:
     """Composable observation adapter driven by a component registry."""
 

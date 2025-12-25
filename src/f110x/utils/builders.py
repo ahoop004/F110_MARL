@@ -17,7 +17,7 @@ from f110x.utils.config_models import (
 )
 from f110x.utils.map_loader import MapData, MapLoader
 from f110x.utils.start_pose import StartPoseOption, parse_start_pose_options
-from f110x.wrappers.observation import ObsWrapper
+from f110x.wrappers.observation import ObsWrapper, RunningObsNormalizer
 from f110x.wrappers.action import (
     ActionRepeatWrapper,
     DiscreteActionWrapper,
@@ -519,6 +519,7 @@ def _build_obs_wrapper(
     roster: RosterLayout,
 ) -> ObservationAdapter:
     params = dict(wrapper_spec.params)
+    algo_cfg = _resolve_algorithm_config(ctx, assignment.spec)
 
     target_role = params.pop("target_role", None)
     target_slot = params.pop("target_slot", None)
@@ -577,6 +578,29 @@ def _build_obs_wrapper(
                     comp_params["normalize_xy"] = default_pose_scale
 
     obs_wrapper = ObsWrapper(**params)
+
+    obs_norm = algo_cfg.get("observation_normalization")
+    obs_norm_mode = None
+    if isinstance(obs_norm, str):
+        key = obs_norm.strip().lower()
+        if key in {"running", "run", "rms", "meanstd", "mean_std"}:
+            obs_norm_mode = "running"
+    elif obs_norm:
+        obs_norm_mode = "running"
+    if obs_norm_mode == "running":
+        eps_val = algo_cfg.get("observation_normalization_eps", algo_cfg.get("obs_norm_eps", 1e-8))
+        clip_val = algo_cfg.get("observation_normalization_clip", algo_cfg.get("obs_norm_clip"))
+        try:
+            eps = float(eps_val)
+        except (TypeError, ValueError):
+            eps = 1e-8
+        clip = None
+        if clip_val is not None:
+            try:
+                clip = float(clip_val)
+            except (TypeError, ValueError):
+                clip = None
+        obs_wrapper = RunningObsNormalizer(obs_wrapper, eps=eps, clip=clip)
     return ObservationAdapter(
         name=wrapper_spec.factory,
         wrapper=obs_wrapper,

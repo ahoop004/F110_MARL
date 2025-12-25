@@ -312,7 +312,10 @@ class RecurrentPPOAgent(BasePPOAgent):
         self.apply_entropy_decay(decay_count)
         self._episodes_since_update = 0
 
-        sequence_batch = max(1, self.sequence_batch_size)
+        if self.episode_batch:
+            sequence_batch = max(1, len(episodes))
+        else:
+            sequence_batch = max(1, self.sequence_batch_size)
 
         policy_losses: List[float] = []
         value_losses: List[float] = []

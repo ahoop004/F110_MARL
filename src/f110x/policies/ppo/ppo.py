@@ -134,10 +134,12 @@ class PPOAgent(BasePPOAgent):
         entropies = []
         approx_kls = []
         stop_early = False
+        mb_size = N if self.episode_batch else self.minibatch_size
+        mb_size = max(1, int(mb_size))
         for _ in range(self.update_epochs):
             np.random.shuffle(idx)
-            for start in range(0, N, self.minibatch_size):
-                end = min(start + self.minibatch_size, N)  # clamp
+            for start in range(0, N, mb_size):
+                end = min(start + mb_size, N)  # clamp
                 mb_idx = idx[start:end]
 
                 ob_b = obs[mb_idx]

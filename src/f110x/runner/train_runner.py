@@ -1167,6 +1167,11 @@ class TrainRunner:
                 pressure_metric_distance=self._pressure_metric_distance,
             )
 
+            for buffer in trajectory_buffers.values():
+                if buffer is None or buffer.off_policy:
+                    continue
+                buffer.flush()
+
             returns = dict(rollout.returns)
             reward_breakdown = dict(rollout.reward_breakdown)
             finish_line_hits = dict(rollout.finish_line_hits or {})

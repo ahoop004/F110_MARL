@@ -45,6 +45,7 @@ class BasePPOAgent:
         self.minibatch_size = int(cfg.get("minibatch_size", 64))
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
         self.normalize_advantage = bool(cfg.get("normalize_adv", True))
+        self.episode_batch = bool(cfg.get("episode_batch", False))
 
         base_ent_coef = float(cfg.get("ent_coef", 0.0))
         schedule_cfg = cfg.get("ent_coef_schedule") or {}
