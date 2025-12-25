@@ -11,17 +11,7 @@ from torch import nn
 from torch.distributions import Normal
 
 from v2.agents.ppo.base import BasePPOAgent
-
-
-def _build_mlp(input_dim: int, hidden_dims: Iterable[int], output_dim: int) -> nn.Sequential:
-    layers: List[nn.Module] = []
-    prev = input_dim
-    for hidden in hidden_dims:
-        layers.append(nn.Linear(prev, hidden))
-        layers.append(nn.ReLU(inplace=True))
-        prev = hidden
-    layers.append(nn.Linear(prev, output_dim))
-    return nn.Sequential(*layers)
+from v2.agents.common.networks import build_mlp
 
 
 def _to_tensor_list(arrays: Sequence[np.ndarray]) -> np.ndarray:
@@ -62,7 +52,7 @@ class RecurrentPPOAgent(BasePPOAgent):
         encoder_output = encoder_dims[-1] if encoder_dims else self.obs_dim
 
         # Actor network -------------------------------------------------
-        self.actor_encoder = _build_mlp(self.obs_dim, encoder_dims, encoder_output).to(self.device)
+        self.actor_encoder = build_mlp(self.obs_dim, encoder_dims, encoder_output).to(self.device)
         self.actor_rnn = rnn_cls(
             input_size=encoder_output,
             hidden_size=hidden_size,
@@ -74,7 +64,7 @@ class RecurrentPPOAgent(BasePPOAgent):
         self.actor_log_std = nn.Parameter(torch.zeros(self.act_dim, device=self.device))
 
         # Critic network ------------------------------------------------
-        self.critic_encoder = _build_mlp(self.obs_dim, encoder_dims, encoder_output).to(self.device)
+        self.critic_encoder = build_mlp(self.obs_dim, encoder_dims, encoder_output).to(self.device)
         self.critic_rnn = rnn_cls(
             input_size=encoder_output,
             hidden_size=hidden_size,
