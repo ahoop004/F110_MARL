@@ -89,77 +89,134 @@ scenario:
           prevent_reverse_speed_index: 1
           include_truncation: true
       reward:
-        task: gaplock  # selects which reward logic to use
-        ignore_non_trainable: true  # apply shaping only to learning agents
-        idle_speed_threshold: 0.0  # speed below this counts as idle
-        idle_patience_steps: 0  # steps of idling before truncation
-        features:  # named reward presets
-          - gaplock_offense  # offense-focused preset
-        params:  # gaplock reward tuning knobs
-          target_crash_reward: 60.0  # reward for making the target crash
-          self_collision_penalty: -90.0  # penalty for crashing yourself
+        task: gaplock
+        ignore_non_trainable: true
+        features:
+          - gaplock_offense
 
-          truncation_penalty: -20.0  # penalty when the episode ends early
-          # step_reward: -0.001  # small per-step penalty to encourage progress
-          idle_speed_threshold: 0.0  # speed below this counts as idle
-          idle_patience_steps: 0  # steps of idling before truncation
+        # (runner/framework-level) idle termination; keep it here, NOT inside params
+        idle_speed_threshold: 0.12
+        idle_patience_steps: 120
 
-          pressure_distance: 1.3  # how close you must be to count as pressure
-          pressure_timeout: 1.2  # how long pressure is remembered
-          pressure_min_speed: 0.3  # min speed required to count as pressure
-          pressure_heading_tolerance: 1.57  # heading tolerance (radians) for pressure
-          pressure_bonus: 0.12  # bonus for maintaining pressure
-          pressure_bonus_interval: 5  # how often the pressure bonus can apply
-          success_requires_pressure: true  # only award success if pressure was applied
+        params:
+          # --- terminal outcomes ---
+          target_crash_reward: 60.0
+          self_collision_penalty: -90.0
+          truncation_penalty: -20.0
+          success_once: true
+          success_requires_pressure: true
 
-          speed_bonus_coef: 0.05  # scale for speed-based bonus
-          speed_bonus_target: 0.6  # speed where bonus stops increasing
+          # --- stability / anti-exploit ---
+          reward_clip: 2.0
+          step_reward: -0.002
 
-          distance_reward_far_distance: 0.0  # distance where being far starts to matter
-          distance_penalty_far: 0.0  # penalty for staying too far away
+          # --- idle shaping (reward-side; separate from runner termination) ---
+          idle_speed_threshold: 0.12
+          idle_penalty_steps: 25
+          idle_penalty: 0.05
+          idle_truncation_penalty: -5.0
 
-          # LiDAR wall-proxy bounds for reward computation
-          lidar_filter_range_min: 0.15  # ignore lidar hits closer than this
-          lidar_filter_range_max: 12.0  # ignore lidar hits farther than this
-          lidar_fov_radians: 4.1887902047863905  # 240 degrees
+          # --- pressure gating ---
+          pressure_distance: 1.30
+          pressure_timeout: 1.20
+          pressure_min_speed: 0.30
+          pressure_heading_tolerance: 1.57
+          pressure_bonus: 0.12
+          pressure_bonus_interval: 5
+          pressure_streak_bonus: 0.10
+          pressure_streak_cap: 40
+
+          # --- speed / control discouragement ---
+          speed_bonus_coef: 0.05
+          speed_bonus_target: 0.60
+          reverse_penalty: 0.10
+          reverse_speed_threshold: 0.02
+          brake_penalty: 0.05
+          brake_speed_threshold: 0.40
+          brake_drop_threshold: 0.25
+
+          # --- distance + heading shaping ---
+          heading_reward_coef: 0.08
+          distance_reward_near: 0.12
+          distance_reward_near_distance: 1.00
+          distance_reward_far_distance: 2.50
+          distance_penalty_far: 0.08
+          proximity_penalty_distance: 4.50
+          proximity_penalty_value: 0.05
+          distance_gradient:
+            scale: 0.20
+            time_scaled: true
+            clip: [-0.20, 0.20]
+            points:
+              - [0.25, -1.00]
+              - [0.80,  0.70]
+              - [1.20,  0.60]
+              - [2.50,  0.00]
+              - [4.50, -0.60]
+              - [6.00, -1.00]
+
+          # --- pinch pocket + potential field ---
+          pocket_reward_weight: 0.12
+          pinch_anchor_dx: 0.55
+          pinch_anchor_dy: 0.45
+          pinch_sigma: 0.35
+          pinch_in_front_x_min: 0.25
+          pinch_pressure_distance: 0.90
+          pinch_pressure_heading_tol_deg: 35.0
+          pinch_pressure_recent_seconds: 1.00
+
+          potential_field_weight: 0.80
+          potential_field_sigma: 0.45
+          potential_field_radius: 2.00
+          potential_field_peak: 0.60
+          potential_field_floor: -0.25
+          potential_field_power: 2.0
+          potential_field_time_scaled: true
+
+          # --- LiDAR geometry ---
+          lidar_filter_range_min: 0.15
+          lidar_filter_range_max: 12.0
+          lidar_fov_radians: 4.1887902047863905
           lidar_range_max: 12.0
-          target_neighborhood_r_min: 0.40  # inner radius around target to consider
-          target_neighborhood_r_max: 6.0  # outer radius around target to consider
-          target_neighborhood_x_band: 2.2  # front/back band around target to consider
-          target_side_y_epsilon: 0.08  # center band before counting left/right
+          target_neighborhood_r_min: 0.30
+          target_neighborhood_r_max: 6.00
+          target_neighborhood_x_band: 2.00
+          target_side_y_epsilon: 0.05
 
-          # Pinch pocket geometry (new)
-          pocket_reward_weight: 0.12  # strength of pocket (pinch) positioning reward
-          pinch_anchor_dx: 0.55  # forward offset for the desired pocket
-          pinch_anchor_dy: 0.45  # side offset for the desired pocket
-          pinch_sigma: 0.35  # spread of the pocket reward
-          pinch_in_front_x_min: 0.25  # only reward pocket when in front of target
-          pinch_pressure_distance: 0.9  # distance for pinch pressure to count
-          pinch_pressure_heading_tol_deg: 35  # heading alignment tolerance
-          pinch_pressure_recent_seconds: 1.0  # how long pinch pressure is remembered
+          # --- forcing + turn shaping ---
+          force_reward_weight: 6.0
+          force_reward_enable_ema: true
+          force_reward_ema_alpha: 0.40
+          force_reward_band_min: 0.45
+          force_reward_band_max: 3.20
+          force_reward_clip: 0.25
+          force_reward_time_scaled: true
 
-          # Potential-field reward (Gaussian, centered on pinch anchors)
-          # Set `potential_field_weight` > 0 to enable.
-          potential_field_weight: 0.8  # strength of potential-field shaping
-          potential_field_sigma: 0.45 # spread of the potential field
-          potential_field_peak: 0.6  # max potential-field value
-          potential_field_floor: -0.25  # min potential-field value
-          potential_field_power: 2.0 # shape of the potential field falloff
-          potential_field_time_scaled: false  # scale potential field by timestep
+          turn_reward_weight: 2.0
+          turn_reward_clip: 0.35
+          turn_reward_time_scaled: true
 
-          # Forcing via opposite-side clearance shrink (new)
-          force_reward_weight: 6.0  # strength of clearance-shrinking reward
-          force_reward_time_scaled: false  # scale clearance reward by timestep
-          force_reward_clip: 0.25  # cap clearance reward size
-          force_reward_band_min: 0.45  # lower clearance bound for reward
-          force_reward_band_max: 3.2  # upper clearance bound for reward
-          force_reward_enable_ema: true  # smooth clearance signal over time
-          force_reward_ema_alpha: 0.45  # smoothing factor for clearance signal
-
-          # Target yaw-rate hint (new, optional but helpful early)
-          turn_reward_weight: 2.0  # strength of target-turning hint
-          turn_reward_time_scaled: false  # scale turning hint by timestep
-          turn_reward_clip: 0.35  # cap turning hint size
+          # --- leave off unless you use them ---
+          commit_distance: 0.0
+          commit_heading_threshold: 0.0
+          commit_speed_threshold: 0.0
+          commit_bonus: 0.0
+          escape_distance: 0.0
+          escape_penalty: 0.0
+          success_border_radius: 0.0
+          success_border_lane_center: 0.0
+          success_border_requires_pressure: false
+          target_offsets: null
+          target_offset_radius: 0.0
+          target_offset_falloff: 0.0
+          target_offset_marker_radius: 0.0
+          target_offset_marker_segments: 16
+          relative_reward: null
+          reward_horizon: null
+          reward_weight: null
+          reward_decay: null
+          reward_smoothing: null
+          reward_ring_focus_agent: null
 
       wrappers:
         - factory: obs
