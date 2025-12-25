@@ -22,6 +22,13 @@ from v2.core.config import (
     WrapperFactory,
     create_training_setup,
 )
+from v2.core.utils import (
+    save_checkpoint,
+    load_checkpoint,
+    SimpleLogger,
+    set_random_seeds,
+    compute_episode_metrics,
+)
 
 __all__ = [
     # Protocol
@@ -40,4 +47,10 @@ __all__ = [
     "EnvironmentFactory",
     "WrapperFactory",
     "create_training_setup",
+    # Utils
+    "save_checkpoint",
+    "load_checkpoint",
+    "SimpleLogger",
+    "set_random_seeds",
+    "compute_episode_metrics",
 ]
