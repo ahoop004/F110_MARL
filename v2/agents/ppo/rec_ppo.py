@@ -169,7 +169,24 @@ class RecurrentPPOAgent(BasePPOAgent):
     def _scale_action(self, squashed: torch.Tensor) -> torch.Tensor:
         return squashed.clamp(-1.0, 1.0) * self.action_half_range_t + self.action_mid_t
 
-    def act(self, obs: np.ndarray, aid: Optional[str] = None) -> np.ndarray:
+    def act(self, obs: np.ndarray, deterministic: bool = False, aid: Optional[str] = None) -> np.ndarray:
+        """Select action (protocol-compliant interface).
+
+        Args:
+            obs: Observation
+            deterministic: If True, select mean action (for eval)
+            aid: Optional agent ID (legacy parameter)
+
+        Returns:
+            action: Selected action
+        """
+        if deterministic:
+            return self.act_deterministic(obs, aid=aid)
+        else:
+            return self.act_stochastic(obs, aid=aid)
+
+    def act_stochastic(self, obs: np.ndarray, aid: Optional[str] = None) -> np.ndarray:
+        """Select stochastic action for training."""
         obs_np = np.asarray(obs, dtype=np.float32)
         obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device)
 

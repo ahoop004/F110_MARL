@@ -53,7 +53,24 @@ class PPOAgent(BasePPOAgent):
     def _scale_action(self, squashed):
         return self.action_low_t + 0.5 * (squashed + 1.0) * self.action_scale_t
 
-    def act(self, obs, aid=None):
+    def act(self, obs, deterministic=False, aid=None):
+        """Select action (protocol-compliant interface).
+
+        Args:
+            obs: Observation
+            deterministic: If True, select mean action (for eval)
+            aid: Optional agent ID (legacy parameter)
+
+        Returns:
+            action: Selected action
+        """
+        if deterministic:
+            return self.act_deterministic(obs, aid=aid)
+        else:
+            return self.act_stochastic(obs, aid=aid)
+
+    def act_stochastic(self, obs, aid=None):
+        """Select stochastic action for training."""
         obs_np = np.asarray(obs, dtype=np.float32)
         if not np.isfinite(obs_np).all():
             obs_np = np.nan_to_num(obs_np, copy=False)
