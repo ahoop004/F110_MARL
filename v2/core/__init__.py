@@ -14,7 +14,14 @@ from v2.core.protocol import (
     is_off_policy_agent,
 )
 from v2.core.training import TrainingLoop, EvaluationLoop
-from v2.core.config import load_yaml, resolve_paths, AgentFactory
+from v2.core.config import (
+    load_yaml,
+    resolve_paths,
+    AgentFactory,
+    EnvironmentFactory,
+    WrapperFactory,
+    create_training_setup,
+)
 
 __all__ = [
     # Protocol
@@ -26,8 +33,11 @@ __all__ = [
     # Training
     "TrainingLoop",
     "EvaluationLoop",
-    # Config
+    # Config & Factories
     "load_yaml",
     "resolve_paths",
     "AgentFactory",
+    "EnvironmentFactory",
+    "WrapperFactory",
+    "create_training_setup",
 ]

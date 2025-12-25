@@ -137,3 +137,170 @@ def register_builtin_agents():
 
 # Register agents on import
 register_builtin_agents()
+
+
+class EnvironmentFactory:
+    """Factory for creating F110 environments."""
+
+    @staticmethod
+    def create(config: Dict[str, Any]) -> Any:
+        """Create F110 parallel environment from config.
+
+        Args:
+            config: Environment configuration dictionary
+
+        Returns:
+            env: F110ParallelEnv instance
+        """
+        from v2.env.f110ParallelEnv import F110ParallelEnv
+
+        # Extract environment parameters
+        env_config = {
+            'map': config.get('map', 'maps/example_map.yaml'),
+            'num_agents': config.get('num_agents', 1),
+            'timestep': config.get('timestep', 0.01),
+            'ego_idx': config.get('ego_idx', 0),
+            'integrator': config.get('integrator', 'rk4'),
+            'render_mode': config.get('render_mode', None),
+        }
+
+        # Pass through additional config keys
+        for key in ['control_mode', 'observation_config', 'reset_config']:
+            if key in config:
+                env_config[key] = config[key]
+
+        return F110ParallelEnv(**env_config)
+
+
+class WrapperFactory:
+    """Factory for applying observation/action/reward wrappers."""
+
+    @staticmethod
+    def wrap_observation(env: Any, config: Dict[str, Any]) -> Any:
+        """Apply observation wrappers to environment.
+
+        Args:
+            env: Environment to wrap
+            config: Observation wrapper configuration
+
+        Returns:
+            wrapped_env: Environment with observation wrappers applied
+        """
+        if not config or not config.get('enabled', False):
+            return env
+
+        from v2.wrappers.observation import ObsWrapper
+
+        obs_config = config.get('config', {})
+        return ObsWrapper(env, **obs_config)
+
+    @staticmethod
+    def wrap_action(env: Any, config: Dict[str, Any]) -> Any:
+        """Apply action wrappers to environment.
+
+        Args:
+            env: Environment to wrap
+            config: Action wrapper configuration
+
+        Returns:
+            wrapped_env: Environment with action wrappers applied
+        """
+        if not config or not config.get('enabled', False):
+            return env
+
+        # Action wrappers would go here
+        # Currently F110 doesn't have a standard action wrapper
+        return env
+
+    @staticmethod
+    def wrap_reward(env: Any, config: Dict[str, Any]) -> Any:
+        """Apply reward wrappers to environment.
+
+        Args:
+            env: Environment to wrap
+            config: Reward wrapper configuration
+
+        Returns:
+            wrapped_env: Environment with reward wrappers applied
+        """
+        if not config or not config.get('enabled', False):
+            return env
+
+        from v2.wrappers.reward import RewardWrapper
+
+        reward_config = config.get('config', {})
+        return RewardWrapper(env, **reward_config)
+
+    @staticmethod
+    def wrap_all(env: Any, wrapper_configs: Dict[str, Any]) -> Any:
+        """Apply all configured wrappers to environment.
+
+        Args:
+            env: Environment to wrap
+            wrapper_configs: Dictionary of wrapper configurations
+                {
+                    'observation': {...},
+                    'action': {...},
+                    'reward': {...}
+                }
+
+        Returns:
+            wrapped_env: Fully wrapped environment
+        """
+        # Apply wrappers in order: observation -> action -> reward
+        if 'observation' in wrapper_configs:
+            env = WrapperFactory.wrap_observation(env, wrapper_configs['observation'])
+
+        if 'action' in wrapper_configs:
+            env = WrapperFactory.wrap_action(env, wrapper_configs['action'])
+
+        if 'reward' in wrapper_configs:
+            env = WrapperFactory.wrap_reward(env, wrapper_configs['reward'])
+
+        return env
+
+
+def create_training_setup(config_path: str) -> Dict[str, Any]:
+    """Create complete training setup from YAML config.
+
+    This is the main entry point that ties everything together.
+
+    Args:
+        config_path: Path to YAML configuration file
+
+    Returns:
+        setup: Dictionary containing:
+            - env: F110ParallelEnv
+            - agents: Dict[str, Agent]
+            - config: Parsed configuration
+    """
+    # Load and resolve config
+    config = load_yaml(config_path)
+    config = resolve_paths(config, base_dir=str(Path(config_path).parent))
+
+    # Create environment
+    env_config = config.get('environment', {})
+    env = EnvironmentFactory.create(env_config)
+
+    # Apply wrappers if configured
+    wrapper_configs = config.get('wrappers', {})
+    if wrapper_configs:
+        env = WrapperFactory.wrap_all(env, wrapper_configs)
+
+    # Create agents
+    agents = {}
+    agents_config = config.get('agents', {})
+
+    for agent_id, agent_cfg in agents_config.items():
+        agent_type = agent_cfg.get('type', 'ppo')
+        agent_params = agent_cfg.get('params', {})
+
+        # Create agent
+        agent = AgentFactory.create(agent_type, agent_params)
+        agents[agent_id] = agent
+
+    return {
+        'env': env,
+        'agents': agents,
+        'config': config,
+    }
