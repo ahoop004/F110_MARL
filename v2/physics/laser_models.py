@@ -187,7 +187,11 @@ def get_scan(pose, theta_dis, fov, num_beams, theta_index_increment, sines, cosi
 @njit(cache=True, error_model='numpy')
 def check_ttc_jit(scan, vel, scan_angles, cosines, side_distances, ttc_thresh):
     """
-    Checks the iTTC of each beam in a scan for collision with environment
+    Hybrid collision detection using distance and time-to-collision.
+
+    Checks both:
+    1. Distance-based: LiDAR shows < 0.15m clearance (works even when stationary)
+    2. TTC-based: About to hit within ttc_thresh seconds (predictive)
 
     Args:
         scan (np.ndarray(num_beams, )): current scan to check
@@ -195,23 +199,32 @@ def check_ttc_jit(scan, vel, scan_angles, cosines, side_distances, ttc_thresh):
         scan_angles (np.ndarray(num_beams, )): precomped angles of each beam
         cosines (np.ndarray(num_beams, )): precomped cosines of the scan angles
         side_distances (np.ndarray(num_beams, )): precomped distances at each beam from the laser to the sides of the car
-        ttc_thresh (float): threshold for iTTC for collision
+        ttc_thresh (float): threshold for iTTC for collision (default: 0.005s)
 
     Returns:
         in_collision (bool): whether vehicle is in collision with environment
-        collision_angle (float): at which angle the collision happened
     """
     in_collision = False
+
+    # PART 1: Distance-based check (catches stationary/stopped crashes)
+    # Check if any LiDAR beam shows very close proximity to wall
+    distance_thresh = 0.15  # 15cm - if closer than this, consider crashed
+    num_beams = scan.shape[0]
+    for i in range(num_beams):
+        clearance = scan[i] - side_distances[i]
+        if clearance < distance_thresh:
+            in_collision = True
+            return in_collision
+
+    # PART 2: TTC-based check (catches approaching crashes)
     if vel != 0.0:
-        num_beams = scan.shape[0]
         for i in range(num_beams):
-            proj_vel = vel*cosines[i]
-            ttc = (scan[i] - side_distances[i])/proj_vel
-            if (ttc < ttc_thresh) and (ttc >= 0.0):
-                in_collision = True
-                break
-    else:
-        in_collision = False
+            proj_vel = vel * cosines[i]
+            if proj_vel > 0:  # Only check forward-facing beams
+                ttc = (scan[i] - side_distances[i]) / proj_vel
+                if (ttc < ttc_thresh) and (ttc >= 0.0):
+                    in_collision = True
+                    break
 
     return in_collision
 

@@ -131,6 +131,11 @@ class F110ParallelEnv(ParallelEnv):
         self.current_time = 0.0
         self._elapsed_steps = 0
 
+        # Persistent collision tracking (like v1)
+        # Once an agent collides, they stay collided for the episode
+        self._collision_flags = np.zeros(self.n_agents, dtype=bool)
+        self._collision_steps = np.full(self.n_agents, -1, dtype=np.int32)
+
         # Start pose state machine
         self.lap_forward_vel_epsilon = float(merged.get("lap_forward_vel_epsilon", 0.1))
         self.start_state = StartPoseState.build(
@@ -1077,6 +1082,11 @@ class F110ParallelEnv(ParallelEnv):
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
         self.current_time = 0.0
+
+        # Reset persistent collision tracking
+        self._collision_flags.fill(False)
+        self._collision_steps.fill(-1)
+
         self.start_state.reset()
         self.state_buffers.reset()
         self._render_ticker.clear()
@@ -1165,9 +1175,18 @@ class F110ParallelEnv(ParallelEnv):
 
         # terminations/truncations
         collisions = obs_joint["collisions"]
+
+        # Update persistent collision flags (like v1)
+        # Once an agent collides, they stay collided for the episode
+        for idx, agent_id in enumerate(self.possible_agents):
+            if bool(collisions[idx]) and not self._collision_flags[idx]:
+                self._collision_flags[idx] = True
+                self._collision_steps[idx] = self._elapsed_steps
+
+        # Use persistent collision flags for termination
         terminations = build_terminations(
             self.possible_agents,
-            collisions,
+            self._collision_flags,  # Use persistent flags instead of current step
             lap_completion,
             self.terminate_on_collision,
         )
