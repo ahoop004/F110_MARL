@@ -571,6 +571,14 @@ else:
             """Stub for reward ring configuration (can be implemented as extension later)."""
             pass
 
+        def set_reward_ring_target(self, target_id: Optional[str]) -> None:
+            """Stub for setting reward ring target (can be implemented as extension later)."""
+            pass
+
+        def set_reward_ring_marker_state(self, agent_id: str, states: Any) -> None:
+            """Stub for setting reward ring marker state (can be implemented as extension later)."""
+            pass
+
         def update_metrics(self, *, phase: str = "", metrics=None, step=None, timestamp=None) -> None:
             """Stub for metrics display (can be implemented as extension later)."""
             pass

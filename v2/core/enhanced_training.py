@@ -172,7 +172,8 @@ class EnhancedTrainingLoop:
             next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
 
             # Render if enabled
-            self.env.render()
+            if hasattr(self.env, 'render_mode') and self.env.render_mode is not None:
+                self.env.render()
 
             # Compute custom rewards if provided
             rewards = {}
