@@ -878,6 +878,21 @@ def _resolve_scenario_manifest(
 
 
 def main() -> None:
+    # DEPRECATION WARNING
+    print("\n" + "="*80)
+    print("WARNING: v1 Architecture (run.py) is DEPRECATED")
+    print("="*80)
+    print("The v1 training system (run.py, experiments/, src/f110x/) is deprecated")
+    print("and will be removed in a future release.")
+    print("")
+    print("Please migrate to the v2 architecture:")
+    print("  - See README.md for quick start examples")
+    print("  - See MIGRATION_GUIDE.md for migration instructions")
+    print("  - See v2/examples/ for training examples")
+    print("")
+    print("v2 provides the same functionality with 84% less code and simpler usage.")
+    print("="*80 + "\n")
+
     parser = build_parser()
     args = parser.parse_args()
 

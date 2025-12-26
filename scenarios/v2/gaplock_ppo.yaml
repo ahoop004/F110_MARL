@@ -1,0 +1,55 @@
+# Gaplock PPO Baseline
+# Train PPO agent to force FTG opponent to crash
+
+experiment:
+  name: gaplock_ppo_baseline
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]  # Attacker, defender
+  timestep: 0.01
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: ppo
+
+    # PPO hyperparameters
+    params:
+      lr: 0.0005
+      gamma: 0.995
+      gae_lambda: 0.95
+      clip_epsilon: 0.2
+      entropy_coef: 0.01
+      value_loss_coef: 0.5
+      max_grad_norm: 0.5
+      hidden_dims: [512, 256, 128]
+      batch_size: 256
+      n_epochs: 10
+
+    # Observation configuration (738 dims)
+    observation:
+      preset: gaplock  # 720 LiDAR + 7 ego + 7 target + 4 relative = 738
+
+    # Reward configuration
+    reward:
+      preset: gaplock_full  # All reward components enabled
+      # Optional overrides:
+      # overrides:
+      #   terminal:
+      #     target_crash: 100.0  # Increase success reward
+
+  car_1:
+    role: defender
+    algorithm: ftg  # Follow-the-gap baseline
+
+wandb:
+  enabled: false  # Disabled - set to true and configure API key to enable
+  project: f110-gaplock
+  tags: [ppo, baseline, gaplock]
+  notes: "PPO baseline for gaplock adversarial task"

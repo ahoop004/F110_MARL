@@ -28,7 +28,8 @@ Author: Hongrui Zheng
 """
 
 import numpy as np
-from numba import njit
+from numba import njit, float64, int64
+from numba.types import Array
 from scipy.ndimage import distance_transform_edt as edt
 from PIL import Image
 import os
@@ -101,7 +102,7 @@ def distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, reso
     distance = dt[r, c]
     return distance
 
-@njit(cache=True)
+@njit(float64(float64, float64, float64, float64[:], float64[:], float64, float64, float64, float64, float64, int64, int64, float64, float64[:,:], float64), cache=True)
 def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt, max_range):
     """
     Find the length of a specific ray at a specific scan angle theta
@@ -394,7 +395,11 @@ class ScanSimulator2D(object):
 
         # load map image
         map_img_path = os.path.splitext(map_path)[0] + map_ext
-        self.map_img = np.array(Image.open(map_img_path).transpose(Image.FLIP_TOP_BOTTOM))
+        map_img_pil = Image.open(map_img_path)
+        # Convert to grayscale if RGB
+        if map_img_pil.mode != 'L':
+            map_img_pil = map_img_pil.convert('L')
+        self.map_img = np.array(map_img_pil.transpose(Image.FLIP_TOP_BOTTOM))
         self.map_img = self.map_img.astype(np.float64)
 
         # grayscale -> binary

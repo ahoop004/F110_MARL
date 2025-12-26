@@ -1,0 +1,42 @@
+# Gaplock Simple Rewards
+# Train PPO with simplified reward structure (no forcing rewards)
+
+experiment:
+  name: gaplock_ppo_simple
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: ppo
+
+    params:
+      lr: 0.0005
+      gamma: 0.995
+      hidden_dims: [512, 256, 128]
+
+    observation:
+      preset: gaplock
+
+    # Simple reward preset (no forcing components)
+    reward:
+      preset: gaplock_simple
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+wandb:
+  enabled: false  # Disabled - set to true and configure API key to enable
+  project: f110-gaplock
+  tags: [ppo, simple_rewards, ablation]
+  notes: "PPO with simplified rewards (ablation study)"

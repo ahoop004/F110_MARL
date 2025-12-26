@@ -1,0 +1,51 @@
+# Gaplock Custom Configuration
+# Example with custom observation and reward overrides
+
+experiment:
+  name: gaplock_custom
+  episodes: 1000
+  seed: 123
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 360  # Reduced from 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: ppo
+
+    params:
+      lr: 0.001  # Higher learning rate
+      gamma: 0.99
+      hidden_dims: [256, 128]  # Smaller network
+
+    # Custom observation with overrides
+    observation:
+      preset: gaplock
+      overrides:
+        lidar:
+          beams: 360  # Match environment LiDAR
+          max_range: 12.0
+
+    # Custom reward with overrides
+    reward:
+      preset: gaplock_full
+      overrides:
+        terminal:
+          target_crash: 100.0  # Increase success reward
+          self_crash: -50.0    # Reduce failure penalty
+        pressure:
+          distance_threshold: 1.5  # More generous pressure zone
+          bonus: 0.15  # Higher pressure bonus
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+wandb:
+  enabled: false  # Disable W&B for quick local experiments

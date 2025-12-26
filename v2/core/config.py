@@ -1,7 +1,8 @@
 """Simple configuration system - replaces complex config_models.py and builders.py."""
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 import yaml
 from pathlib import Path
+import numpy as np
 
 
 def load_yaml(path: str) -> Dict[str, Any]:
@@ -166,7 +167,7 @@ class EnvironmentFactory:
         # Extract environment parameters
         env_config = {
             'map': config.get('map', 'maps/example_map.yaml'),
-            'num_agents': config.get('num_agents', 1),
+            'n_agents': config.get('num_agents', config.get('n_agents', 1)),  # Support both num_agents and n_agents
             'timestep': config.get('timestep', 0.01),
             'ego_idx': config.get('ego_idx', 0),
             'integrator': config.get('integrator', 'rk4'),
@@ -174,7 +175,7 @@ class EnvironmentFactory:
         }
 
         # Pass through additional config keys
-        for key in ['control_mode', 'observation_config', 'reset_config']:
+        for key in ['control_mode', 'observation_config', 'reset_config', 'start_poses', 'random_spawn']:
             if key in config:
                 env_config[key] = config[key]
 

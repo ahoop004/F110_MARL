@@ -1,0 +1,52 @@
+# Gaplock SAC Comparison
+# Train SAC agent to force FTG opponent to crash
+
+experiment:
+  name: gaplock_sac_comparison
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: sac
+
+    # SAC hyperparameters
+    params:
+      lr_actor: 0.0003
+      lr_critic: 0.0003
+      lr_alpha: 0.0003
+      gamma: 0.995
+      tau: 0.005
+      alpha: 0.2  # Entropy coefficient (auto-tuned if None)
+      target_entropy: -1.0  # Target entropy (auto if None)
+      hidden_dims: [512, 256, 128]
+      buffer_size: 1000000
+      batch_size: 256
+      learning_starts: 10000
+
+    # Observation configuration
+    observation:
+      preset: gaplock
+
+    # Reward configuration
+    reward:
+      preset: gaplock_full
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+wandb:
+  enabled: false  # Disabled - set to true and configure API key to enable
+  project: f110-gaplock
+  tags: [sac, comparison, gaplock]
+  notes: "SAC comparison for gaplock adversarial task"
