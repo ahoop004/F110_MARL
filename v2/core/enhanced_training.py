@@ -171,6 +171,9 @@ class EnhancedTrainingLoop:
             # Step environment
             next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
 
+            # Render if enabled
+            self.env.render()
+
             # Compute custom rewards if provided
             rewards = {}
             for agent_id in self.agents.keys():

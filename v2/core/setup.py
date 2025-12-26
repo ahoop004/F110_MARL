@@ -206,8 +206,10 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
         agent = AgentFactory.create(algorithm, agent_kwargs)
         agents[agent_id] = agent
 
-        # Build reward strategy for trainable agents
-        if 'reward' in agent_config and hasattr(agent, 'is_trainable') and agent.is_trainable():
+        # Build reward strategy if configured
+        # Only trainable agents will have reward configs; FTG and other
+        # non-trainable agents won't have reward configs in scenarios
+        if 'reward' in agent_config:
             reward_config = agent_config['reward']
 
             # Get target agent ID if specified
