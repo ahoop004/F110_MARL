@@ -48,6 +48,7 @@ class EnhancedTrainingLoop:
         agent_rewards: Optional[Dict[str, RewardStrategy]] = None,
         observation_presets: Optional[Dict[str, str]] = None,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
+        agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
         wandb_logger: Optional[WandbLogger] = None,
         console_logger: Optional[ConsoleLogger] = None,
@@ -70,6 +71,8 @@ class EnhancedTrainingLoop:
                 Used to flatten Dict observations. If None, observations are passed as-is.
             target_ids: Optional dict mapping agent_id -> target_id
                 For adversarial tasks where agent observes target state
+            agent_algorithms: Optional dict mapping agent_id -> algorithm name (e.g., 'ppo', 'sac')
+                Used for namespacing algorithm-specific metrics in wandb
             spawn_curriculum: Optional SpawnCurriculumManager for progressive difficulty
             wandb_logger: Optional W&B logger
             console_logger: Optional console logger
@@ -86,6 +89,7 @@ class EnhancedTrainingLoop:
         self.agent_rewards = agent_rewards or {}
         self.observation_presets = observation_presets or {}
         self.target_ids = target_ids or {}
+        self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
         self.wandb_logger = wandb_logger
         self.console_logger = console_logger
@@ -337,8 +341,16 @@ class EnhancedTrainingLoop:
                 # Log trainer stats to W&B
                 if self.wandb_logger:
                     log_dict = {}
+                    # Get algorithm name for this agent (if available)
+                    algo_name = self.agent_algorithms.get(agent_id, None)
+
                     for stat_name, stat_value in update_stats.items():
-                        log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
+                        # Namespace by agent_id/algorithm/metric
+                        if algo_name:
+                            log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
+                        else:
+                            # Fallback to old style if algorithm not specified
+                            log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
                     self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Determine episode outcome for each agent
@@ -372,7 +384,7 @@ class EnhancedTrainingLoop:
                     episode=episode_num,
                     metrics=metrics,
                     rolling_stats=rolling_stats,
-                    extra={'agent_id': agent_id},
+                    agent_id=agent_id,
                 )
 
             # Log to console (only for first agent to avoid clutter)

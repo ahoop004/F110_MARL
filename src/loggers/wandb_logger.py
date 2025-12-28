@@ -122,6 +122,7 @@ class WandbLogger:
         metrics: Any,  # EpisodeMetrics
         rolling_stats: Optional[Dict[str, float]] = None,
         extra: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
     ):
         """Log metrics for a single episode.
 
@@ -130,36 +131,62 @@ class WandbLogger:
             metrics: EpisodeMetrics instance
             rolling_stats: Optional dict of rolling statistics
             extra: Optional extra metrics to log
+            agent_id: Optional agent ID for namespacing metrics
 
         Example:
             >>> logger.log_episode(
             ...     episode=0,
             ...     metrics=episode_metrics,
             ...     rolling_stats={'success_rate': 0.75, 'avg_reward': 85.2},
+            ...     agent_id='car_0',
             ... )
         """
         if not self.enabled:
             return
 
         # Convert metrics to dict
-        log_dict = metrics.to_dict()
+        metrics_dict = metrics.to_dict()
 
-        # Add rolling stats with 'rolling/' prefix
+        log_dict = {}
+
+        # Namespace episode metrics by agent_id if provided
+        if agent_id:
+            # Remove 'episode' from namespacing as it's a global counter
+            if 'episode' in metrics_dict:
+                log_dict['episode'] = metrics_dict.pop('episode')
+
+            # Namespace all other episode metrics
+            for key, value in metrics_dict.items():
+                log_dict[f'{agent_id}/{key}'] = value
+        else:
+            # No namespacing if agent_id not provided
+            log_dict = metrics_dict
+
+        # Add rolling stats with agent namespace
         if rolling_stats:
             for key, value in rolling_stats.items():
                 if key not in ['outcome_counts', 'outcome_rates', 'total_episodes']:
-                    log_dict[f'rolling/{key}'] = value
+                    if agent_id:
+                        log_dict[f'{agent_id}/rolling/{key}'] = value
+                    else:
+                        log_dict[f'rolling/{key}'] = value
 
             # Log outcome distribution
             if 'outcome_counts' in rolling_stats:
                 for outcome, count in rolling_stats['outcome_counts'].items():
-                    log_dict[f'rolling/outcomes/{outcome}'] = count
+                    if agent_id:
+                        log_dict[f'{agent_id}/rolling/outcomes/{outcome}'] = count
+                    else:
+                        log_dict[f'rolling/outcomes/{outcome}'] = count
 
             if 'outcome_rates' in rolling_stats:
                 for outcome, rate in rolling_stats['outcome_rates'].items():
-                    log_dict[f'rolling/outcome_rates/{outcome}'] = rate
+                    if agent_id:
+                        log_dict[f'{agent_id}/rolling/outcome_rates/{outcome}'] = rate
+                    else:
+                        log_dict[f'rolling/outcome_rates/{outcome}'] = rate
 
-        # Add extra metrics
+        # Add extra metrics (not namespaced - assume they're already properly named)
         if extra:
             log_dict.update(extra)
 

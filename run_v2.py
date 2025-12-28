@@ -604,12 +604,20 @@ def main():
             enabled=True,
         )
 
+        # Extract algorithm names for each agent
+        agent_algorithms = {}
+        for agent_id, agent_config in scenario['agents'].items():
+            algo = agent_config.get('algorithm', '').lower()
+            if algo:
+                agent_algorithms[agent_id] = algo
+
         training_loop = EnhancedTrainingLoop(
             env=env,
             agents=agents,
             agent_rewards=reward_strategies,
             observation_presets=observation_presets,
             target_ids=target_ids,
+            agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,
             wandb_logger=wandb_logger,
             console_logger=console_logger,

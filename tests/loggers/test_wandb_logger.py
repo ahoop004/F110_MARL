@@ -121,6 +121,51 @@ class TestWandbLogger:
         assert logged_data['rolling/outcomes/self_crash'] == 1
 
     @patch('src.loggers.wandb_logger.wandb')
+    def test_log_episode_with_agent_id(self, mock_wandb):
+        """Test episode logging with agent_id namespacing."""
+        logger = WandbLogger(project="test", mode="online")
+
+        metrics = EpisodeMetrics(
+            episode=0,
+            outcome=EpisodeOutcome.TARGET_CRASH,
+            total_reward=125.5,
+            steps=450,
+            reward_components={'terminal/success': 60.0},
+        )
+
+        rolling_stats = {
+            'success_rate': 0.75,
+            'avg_reward': 100.0,
+            'outcome_counts': {'target_crash': 3, 'self_crash': 1},
+            'outcome_rates': {'target_crash': 0.75, 'self_crash': 0.25},
+        }
+
+        logger.log_episode(0, metrics, rolling_stats, agent_id='car_0')
+
+        # Should have called wandb.log
+        mock_wandb.log.assert_called_once()
+        logged_data = mock_wandb.log.call_args[0][0]
+
+        # Episode should NOT be namespaced (global counter)
+        assert logged_data['episode'] == 0
+
+        # Episode metrics should be namespaced
+        assert logged_data['car_0/total_reward'] == 125.5
+        assert logged_data['car_0/steps'] == 450
+        assert logged_data['car_0/outcome'] == 'target_crash'
+        assert logged_data['car_0/reward/terminal/success'] == 60.0
+
+        # Rolling stats should be namespaced
+        assert logged_data['car_0/rolling/success_rate'] == 0.75
+        assert logged_data['car_0/rolling/avg_reward'] == 100.0
+
+        # Outcome counts/rates should be namespaced
+        assert logged_data['car_0/rolling/outcomes/target_crash'] == 3
+        assert logged_data['car_0/rolling/outcomes/self_crash'] == 1
+        assert logged_data['car_0/rolling/outcome_rates/target_crash'] == 0.75
+        assert logged_data['car_0/rolling/outcome_rates/self_crash'] == 0.25
+
+    @patch('src.loggers.wandb_logger.wandb')
     def test_log_episode_disabled(self, mock_wandb):
         """Test that logging does nothing when disabled."""
         logger = WandbLogger(project="test", mode="disabled")
