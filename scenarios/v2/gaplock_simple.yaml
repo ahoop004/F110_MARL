@@ -198,5 +198,6 @@ agents:
 wandb:
   enabled: false  # Disabled - set to true and configure API key to enable
   project: f110-gaplock
+  entity: ahoop004-old-dominion-university
   tags: [ppo, simple_rewards, ablation]
   notes: "PPO with simplified rewards (ablation study)"

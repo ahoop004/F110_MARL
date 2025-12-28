@@ -247,5 +247,6 @@ agents:
 wandb:
   enabled: false
   project: f110-gaplock
+  entity: ahoop004-old-dominion-university
   tags: [sac, limo, realistic]
   notes: "SAC with Agilex Limo realistic parameters (v_max=1.0 m/s)"

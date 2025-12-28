@@ -227,5 +227,6 @@ agents:
 wandb:
   enabled: false  # Disabled - set to true and configure API key to enable
   project: f110-gaplock
+  entity: ahoop004-old-dominion-university
   tags: [td3, comparison, gaplock]
   notes: "TD3 comparison for gaplock adversarial task"

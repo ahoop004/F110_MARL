@@ -224,3 +224,9 @@ agents:
 
 wandb:
   enabled: false  # Disable W&B for quick local experiments
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  group: gaplock_custom
+  tags:
+    - custom
+    - experimental
