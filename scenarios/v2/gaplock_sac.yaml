@@ -159,7 +159,7 @@ agents:
 
       # Override reward parameters (optional - comment out to use preset defaults)
       overrides:
-        # Forcing rewards (Gaussian pinch pockets)
+        # Forcing rewards (Gaussian pinch pockets) - REBALANCED: 10x reduction
         forcing:
           enabled: true
           pinch_pockets:
@@ -167,22 +167,22 @@ agents:
             anchor_forward: 1.20  # Distance ahead of target (m)
             anchor_lateral: 0.35  # Distance to side of target (m) - adjusted for narrow track
             sigma: 0.55           # Gaussian width (m)
-            weight: 0.80          # Reward multiplier
+            weight: 0.08          # REBALANCED: was 0.80
             # Potential field mode (if peak/floor specified, uses field mapping instead of simple Gaussian)
             peak: 1.0             # Max reward at optimal position
             floor: -0.5           # Min reward when far from optimal
             power: 2.0            # Field decay exponent
           clearance:
             enabled: true
-            weight: 0.80          # Clearance reduction multiplier
+            weight: 0.08          # REBALANCED: was 0.80
             band_min: 0.30        # Min clearance for reward (m)
             band_max: 3.20        # Max clearance for reward (m)
-            clip: 0.15            # Max reward per step
+            clip: 0.015           # REBALANCED: was 0.15
             time_scaled: true
           turn:
             enabled: true
-            weight: 2.0           # Turn shaping multiplier
-            clip: 0.15            # Max reward per step
+            weight: 0.2           # REBALANCED: was 2.0
+            clip: 0.015           # REBALANCED: was 0.15
             time_scaled: true
 
         # Distance-based shaping
@@ -196,12 +196,12 @@ agents:
         # Heading alignment
         heading:
           enabled: true
-          coefficient: 0.08       # Alignment bonus coefficient
+          coefficient: 0.008      # REBALANCED: was 0.08
 
         # Speed bonus
         speed:
           enabled: true
-          bonus_coef: 0.05        # Speed bonus coefficient
+          bonus_coef: 0.005       # REBALANCED: was 0.05
 
         # Step penalty (constant per-step reward)
         step_reward: -0.01        # Small penalty per step to encourage faster completion
