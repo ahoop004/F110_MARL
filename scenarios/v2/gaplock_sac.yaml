@@ -195,7 +195,7 @@ agents:
         terminal:
           target_crash: 60.0      # Target crashes (success)
           self_crash: -40.0       # Self crashes (failure)
-          timeout: 0.0            # Episode timeout
+          timeout: -90.0            # Episode timeout
 
   car_1:
     role: defender
@@ -204,7 +204,7 @@ agents:
     # FTG parameters (Limo-compatible - matches v1)
     params:
       # Core algorithm parameters
-      max_distance: 30.0
+      max_distance: 12.0
       window_size: 4
       bubble_radius: 2
       max_steer: 0.32

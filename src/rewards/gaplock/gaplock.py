@@ -13,6 +13,7 @@ from rewards.gaplock.heading import HeadingReward
 from rewards.gaplock.speed import SpeedReward
 from rewards.gaplock.forcing import ForcingReward
 from rewards.gaplock.penalties import BehaviorPenalties
+from rewards.gaplock.step_penalty import StepPenalty
 
 
 class GaplockReward(RewardStrategy):
@@ -93,6 +94,10 @@ class GaplockReward(RewardStrategy):
         # Behavior penalties
         if config.get('penalties', {}).get('enabled', True):
             components.append(BehaviorPenalties(config.get('penalties', {})))
+
+        # Step penalty (constant per-step reward/penalty)
+        if 'step_reward' in config and config['step_reward'] != 0.0:
+            components.append(StepPenalty(config))
 
         # Compose all components
         self.composer = ComposedReward(components)

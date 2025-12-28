@@ -117,7 +117,7 @@ scenario:
           self_collision_penalty: -90.0
           truncation_penalty: -90.0
           success_once: true
-          success_requires_pressure: true
+          success_requires_pressure: false
 
           # --- stability / anti-exploit ---
           reward_clip: 2.0

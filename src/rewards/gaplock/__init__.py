@@ -13,6 +13,7 @@ from rewards.gaplock.heading import HeadingReward
 from rewards.gaplock.speed import SpeedReward
 from rewards.gaplock.forcing import ForcingReward
 from rewards.gaplock.penalties import BehaviorPenalties
+from rewards.gaplock.step_penalty import StepPenalty
 
 __all__ = [
     'GaplockReward',
@@ -23,4 +24,5 @@ __all__ = [
     'SpeedReward',
     'ForcingReward',
     'BehaviorPenalties',
+    'StepPenalty',
 ]
