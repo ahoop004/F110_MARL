@@ -216,18 +216,18 @@ class WandbLogger:
         """Get W&B run information for metadata tracking.
 
         Returns:
-            Dict with keys: wandb_run_id, wandb_run_name, wandb_url
+            Dict with keys: run_id, run_name, url
                 Values are None if W&B is disabled or not initialized
 
         Example:
             >>> info = logger.get_wandb_info()
-            >>> print(info['wandb_url'])
+            >>> print(info['url'])
             'https://wandb.ai/username/project/runs/abc123'
         """
         return {
-            'wandb_run_id': self.wandb_run_id,
-            'wandb_run_name': self.wandb_run_name,
-            'wandb_url': self.wandb_url,
+            'run_id': self.wandb_run_id,
+            'run_name': self.wandb_run_name,
+            'url': self.wandb_url,
         }
 
     def finish(self):
