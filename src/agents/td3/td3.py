@@ -118,6 +118,9 @@ class TD3Agent:
         self.action_noise_scale = self.action_range / 2.0
         self.action_noise_scale_torch = torch.as_tensor(self.action_noise_scale, device=self.device)
 
+        # Gradient clipping
+        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
+
         self.total_it = 0
 
     # -------------------- Interaction API --------------------
@@ -229,6 +232,9 @@ class TD3Agent:
 
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
+        if self.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), self.max_grad_norm)
         self.critic_opt.step()
         self._step_scheduler(self.critic_scheduler)
 
@@ -239,6 +245,8 @@ class TD3Agent:
 
             self.actor_opt.zero_grad(set_to_none=True)
             actor_loss.backward()
+            if self.max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.actor_opt.step()
             self._step_scheduler(self.actor_scheduler)
 

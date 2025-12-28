@@ -122,7 +122,7 @@ agents:
     algorithm: td3
     target_id: car_1  # Attacker targets the defender
 
-    # TD3 hyperparameters
+    # TD3 hyperparameters (OPTIMIZED)
     params:
       lr_actor: 0.0003
       lr_critic: 0.0003
@@ -131,11 +131,19 @@ agents:
       policy_noise: 0.2
       noise_clip: 0.5
       policy_delay: 2
-      hidden_dims: [512, 256, 128]
+      hidden_dims: [256, 256]     # OPTIMIZED: Smaller networks (was [512, 256, 128])
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 10000
+      learning_starts: 2500       # OPTIMIZED: Reduced (was 10000)
       exploration_noise: 0.1
+      max_grad_norm: 0.5          # OPTIMIZED: Gradient clipping
+
+      # Prioritized Experience Replay
+      use_per: true
+      per_alpha: 0.6
+      per_beta: 0.4
+      per_beta_increment: 0.001
+      per_epsilon: 0.01
 
       # Prevent reverse (matches v1 behavior)
       prevent_reverse: true
@@ -199,11 +207,11 @@ agents:
         # Step penalty (constant per-step reward)
         step_reward: -0.01        # Small penalty per step to encourage faster completion
 
-        # Terminal rewards
+        # Terminal rewards (OPTIMIZED: Scaled down)
         terminal:
-          target_crash: 60.0      # Target crashes (success)
-          self_crash: -40.0       # Self crashes (failure)
-          timeout: -90.0          # Episode timeout
+          target_crash: 10.0      # OPTIMIZED: was 60.0
+          self_crash: -10.0       # OPTIMIZED: was -40.0
+          timeout: -5.0           # OPTIMIZED: was -90.0
 
   car_1:
     role: defender

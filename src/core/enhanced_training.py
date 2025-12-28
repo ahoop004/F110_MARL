@@ -21,6 +21,7 @@ from core.best_model_tracker import BestModelTracker
 from metrics import MetricsTracker, determine_outcome, EpisodeOutcome
 from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 from rewards.base import RewardStrategy
+from wrappers.normalize import ObservationNormalizer
 
 
 class EnhancedTrainingLoop:
@@ -59,6 +60,8 @@ class EnhancedTrainingLoop:
         max_steps_per_episode: int = 5000,
         rolling_window: int = 100,
         save_every_n_episodes: Optional[int] = None,
+        normalize_observations: bool = True,
+        obs_clip: float = 10.0,
     ):
         """Initialize enhanced training loop.
 
@@ -83,6 +86,8 @@ class EnhancedTrainingLoop:
             max_steps_per_episode: Max steps per episode
             rolling_window: Window size for rolling statistics
             save_every_n_episodes: Save checkpoint every N episodes (None = disabled)
+            normalize_observations: Whether to normalize observations with running mean/std
+            obs_clip: Clip normalized observations to [-clip, clip]
         """
         self.env = env
         self.agents = agents
@@ -100,6 +105,16 @@ class EnhancedTrainingLoop:
         self.max_steps_per_episode = max_steps_per_episode
         self.rolling_window = rolling_window
         self.save_every_n_episodes = save_every_n_episodes
+
+        # Observation normalization
+        self.normalize_observations = normalize_observations
+        self.obs_normalizer: Optional[ObservationNormalizer] = None
+        if self.normalize_observations:
+            # Get observation shape from first agent
+            first_agent_id = list(agents.keys())[0]
+            obs_space = env.observation_spaces[first_agent_id]
+            obs_shape = obs_space.shape
+            self.obs_normalizer = ObservationNormalizer(obs_shape, clip=obs_clip)
 
         # Initialize metrics tracker for each agent
         self.metrics_trackers = {

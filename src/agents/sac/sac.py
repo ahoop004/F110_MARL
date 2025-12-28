@@ -118,6 +118,9 @@ class SACAgent:
         self._exploration_episode = 0
         self.action_noise_scale = self.action_range / 2.0
 
+        # Gradient clipping
+        self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
+
         self.total_it = 0
 
     # ------------------------------------------------------------------
@@ -246,6 +249,9 @@ class SACAgent:
         self.q1_opt.zero_grad(set_to_none=True)
         self.q2_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
+        if self.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.q1.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.q2.parameters(), self.max_grad_norm)
         self.q1_opt.step()
         self.q2_opt.step()
 
@@ -270,6 +276,8 @@ class SACAgent:
 
         self.actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
+        if self.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         self.actor_opt.step()
 
         # Temperature update -------------------------------------------

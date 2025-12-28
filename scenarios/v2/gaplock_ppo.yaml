@@ -24,7 +24,7 @@ environment:
     # Success tracking parameters
     window: 200               # Rolling window size for success rate calculation
     activation_samples: 50    # Min episodes before transitions can occur
-    min_episode: 150          # Min episode before first stage transition (ensures 150 eps at fixed speed)
+    min_episode: 50           # OPTIMIZED: Faster curriculum (was 150)
 
     # Stage transition parameters
     enable_patience: 5        # Consecutive episodes above threshold to advance
@@ -122,16 +122,16 @@ agents:
     algorithm: ppo
     target_id: car_1  # Attacker targets the defender
 
-    # PPO hyperparameters
+    # PPO hyperparameters (OPTIMIZED)
     params:
       lr: 0.0005
       gamma: 0.995
       gae_lambda: 0.95
       clip_epsilon: 0.2
-      entropy_coef: 0.01
+      entropy_coef: 0.02          # OPTIMIZED: Increased for exploration (was 0.01)
       value_loss_coef: 0.5
-      max_grad_norm: 0.5
-      hidden_dims: [512, 256, 128]
+      max_grad_norm: 0.5          # Already optimal
+      hidden_dims: [256, 256]     # OPTIMIZED: Smaller networks (was [512, 256, 128])
       batch_size: 256
       n_epochs: 10
 
@@ -192,11 +192,11 @@ agents:
         # Step penalty (constant per-step reward)
         step_reward: -0.01        # Small penalty per step to encourage faster completion
 
-        # Terminal rewards
+        # Terminal rewards (OPTIMIZED: Scaled down)
         terminal:
-          target_crash: 60.0      # Target crashes (success)
-          self_crash: -40.0       # Self crashes (failure)
-          timeout: -90.0          # Episode timeout
+          target_crash: 10.0      # OPTIMIZED: was 60.0
+          self_crash: -10.0       # OPTIMIZED: was -40.0
+          timeout: -5.0           # OPTIMIZED: was -90.0
 
   car_1:
     role: defender

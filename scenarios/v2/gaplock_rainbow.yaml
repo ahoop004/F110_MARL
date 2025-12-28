@@ -25,7 +25,7 @@ environment:
     # Success tracking parameters
     window: 200               # Rolling window size for success rate calculation
     activation_samples: 50    # Min episodes before transitions can occur
-    min_episode: 150          # Min episode before first stage transition (ensures 150 eps at fixed speed)
+    min_episode: 50           # OPTIMIZED: Faster curriculum (was 150)
 
     # Stage transition parameters
     enable_patience: 5        # Consecutive episodes above threshold to advance
@@ -141,10 +141,10 @@ agents:
       # Rainbow DQN architecture
       lr: 0.0005
       gamma: 0.995
-      hidden_dims: [512, 256, 128]
+      hidden_dims: [256, 256]     # OPTIMIZED: Smaller networks (was [512, 256, 128])
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 10000
+      learning_starts: 2500       # OPTIMIZED: Reduced warmup (was 10000)
       target_update_interval: 1000  # Hard update every 1000 steps
 
       # Rainbow components
@@ -158,7 +158,7 @@ agents:
       epsilon_enabled: false    # Disabled (using noisy layers instead)
 
       # Gradient clipping
-      max_grad_norm: 10.0
+      max_grad_norm: 0.5          # OPTIMIZED: Reduced (was 10.0)
 
     # Observation configuration
     observation:
@@ -217,11 +217,11 @@ agents:
         # Step penalty (constant per-step reward)
         step_reward: -0.01        # Small penalty per step to encourage faster completion
 
-        # Terminal rewards
+        # Terminal rewards (OPTIMIZED: Scaled down)
         terminal:
-          target_crash: 60.0      # Target crashes (success)
-          self_crash: -40.0       # Self crashes (failure)
-          timeout: -90.0          # Episode timeout
+          target_crash: 10.0      # OPTIMIZED: was 60.0
+          self_crash: -10.0       # OPTIMIZED: was -40.0
+          timeout: -5.0           # OPTIMIZED: was -90.0
 
   car_1:
     role: defender
