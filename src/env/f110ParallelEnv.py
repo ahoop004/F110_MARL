@@ -1,6 +1,6 @@
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
 import gymnasium as gym
 from gymnasium import spaces
 import yaml
@@ -10,11 +10,16 @@ from pettingzoo import ParallelEnv
 
 # base classes
 from physics import Simulator, Integrator
-from render import EnvRenderer
+# Lazy import to avoid pyglet initialization on HPC without display
+# from render import EnvRenderer  # Moved to render() method
 from env.start_pose_state import StartPoseState
 from env.collision import build_terminations
 from env.state_buffer import StateBuffers
 from utils.centerline import progress_from_spacing
+
+# Type checking only imports (don't execute at runtime)
+if TYPE_CHECKING:
+    from render import EnvRenderer
 
 
 def _default_vehicle_params() -> Dict[str, float]:
@@ -308,7 +313,7 @@ class F110ParallelEnv(ParallelEnv):
             default_lidar_skip = 0
         self._render_lidar_skip_default = default_lidar_skip
         self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
-        self._render_callbacks: List[Callable[[EnvRenderer], None]] = []
+        self._render_callbacks: List[Callable[["EnvRenderer"], None]] = []
 
         self._single_action_space = spaces.Box(
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
@@ -322,7 +327,7 @@ class F110ParallelEnv(ParallelEnv):
     def _configure_rendering(self, cfg: Mapping[str, Any]) -> None:
         self.render_mode = cfg.get("render_mode", "human")
         self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
-        self.renderer: Optional[EnvRenderer] = None
+        self.renderer: Optional["EnvRenderer"] = None
         headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
         self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
         mode = (self.render_mode or "").lower()
@@ -1472,6 +1477,9 @@ class F110ParallelEnv(ParallelEnv):
         self._collect_render_data = True
 
         if self.renderer is None:
+            # Lazy import to avoid pyglet initialization when rendering disabled
+            from render import EnvRenderer
+
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,
                                         lidar_fov=4.7,
                                         max_range=30.0,
@@ -1579,7 +1587,7 @@ class F110ParallelEnv(ParallelEnv):
             frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3).copy()
             return frame
 
-    def add_render_callback(self, callback: Callable[[EnvRenderer], None]) -> None:
+    def add_render_callback(self, callback: Callable[["EnvRenderer"], None]) -> None:
         if not callable(callback):
             raise TypeError("Render callback must be callable")
         if callback not in self._render_callbacks:
