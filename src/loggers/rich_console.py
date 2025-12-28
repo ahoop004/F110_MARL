@@ -126,15 +126,15 @@ class RichConsole:
             # Extract outcome rates from outcome_rates dict
             outcome_rates = outcome_stats.get('outcome_rates', {})
 
-            # Attack success = target_crash rate
+            # Attack success = target_crash rate (clean attack success)
             self.attack_success_rate = outcome_rates.get('target_crash', 0.0)
 
-            # Target success = all attacker failure modes (defender successfully defended)
+            # Target success = attacker solo failures (defender successfully defended)
+            # Note: collision is a mutual failure, not counted for either side
             self.target_success_rate = (
                 outcome_rates.get('target_finish', 0.0) +
                 outcome_rates.get('self_crash', 0.0) +
-                outcome_rates.get('idle_stop', 0.0) +
-                outcome_rates.get('collision', 0.0)
+                outcome_rates.get('idle_stop', 0.0)
             )
 
             # Failure modes (individual breakdown)
