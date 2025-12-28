@@ -1,9 +1,10 @@
-# Gaplock PPO Baseline
-# Train PPO agent to force FTG opponent to crash
+# Gaplock Rainbow DQN Comparison
+# Train Rainbow DQN agent to force FTG opponent to crash
 # NOTE: Uses Limo parameters (v_max=1.0 m/s) to match v1 behavior
+# Rainbow DQN uses discrete actions with noisy layers for exploration
 
 experiment:
-  name: gaplock_ppo_baseline
+  name: gaplock_rainbow_comparison
   episodes: 1500
   seed: 42
 
@@ -119,21 +120,45 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: ppo
-    target_id: car_1  # Attacker targets the defender
+    algorithm: rainbow  # Rainbow DQN with discrete actions
+    target_id: car_1    # Attacker targets the defender
 
-    # PPO hyperparameters
+    # Rainbow DQN hyperparameters
     params:
+      # Discrete action set: [velocity, steering_angle]
+      # 9 actions covering speed (1.0, 0.7, 0.5) x steering (left, center, right)
+      action_set:
+        - [1.0, 0.0]    # Fast straight
+        - [1.0, 0.30]   # Fast left
+        - [1.0, -0.30]  # Fast right
+        - [0.7, 0.0]    # Medium straight
+        - [0.7, 0.30]   # Medium left
+        - [0.7, -0.30]  # Medium right
+        - [0.5, 0.0]    # Slow straight
+        - [0.5, 0.30]   # Slow left
+        - [0.5, -0.30]  # Slow right
+
+      # Rainbow DQN architecture
       lr: 0.0005
       gamma: 0.995
-      gae_lambda: 0.95
-      clip_epsilon: 0.2
-      entropy_coef: 0.01
-      value_loss_coef: 0.5
-      max_grad_norm: 0.5
       hidden_dims: [512, 256, 128]
+      buffer_size: 1000000
       batch_size: 256
-      n_epochs: 10
+      learning_starts: 10000
+      target_update_interval: 1000  # Hard update every 1000 steps
+
+      # Rainbow components
+      noisy_layers: true        # Noisy networks for exploration (instead of epsilon-greedy)
+      noisy_sigma0: 0.5         # Initial noise parameter
+      atoms: 51                 # Categorical DQN atoms
+      v_min: -100.0             # Min value support
+      v_max: 100.0              # Max value support
+      n_step: 3                 # N-step returns
+      use_per: true             # Prioritized experience replay
+      epsilon_enabled: false    # Disabled (using noisy layers instead)
+
+      # Gradient clipping
+      max_grad_norm: 10.0
 
     # Observation configuration
     observation:
@@ -234,5 +259,5 @@ wandb:
   enabled: false  # Disabled - set to true and configure API key to enable
   project: f110-gaplock
   entity: ahoop004-old-dominion-university
-  tags: [ppo, baseline, gaplock]
-  notes: "PPO baseline for gaplock adversarial task"
+  tags: [rainbow, dqn, comparison, gaplock]
+  notes: "Rainbow DQN comparison for gaplock adversarial task (discrete actions with noisy layers)"
