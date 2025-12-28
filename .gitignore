@@ -210,3 +210,4 @@ __marimo__/
 wandb/
 runs/
 outputs/
+.claude
