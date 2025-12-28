@@ -139,7 +139,7 @@ celerybeat.pid
 .env
 .envrc
 .venv
-env/
+
 venv/
 ENV/
 env.bak/
@@ -210,3 +210,4 @@ __marimo__/
 wandb/
 runs/
 outputs/
+.claude

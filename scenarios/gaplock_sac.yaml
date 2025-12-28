@@ -108,20 +108,20 @@ scenario:
           - gaplock_offense
 
         # (runner/framework-level) idle termination; keep it here, NOT inside params
-        idle_speed_threshold: 0.12
+        idle_speed_threshold: 0.02
         idle_patience_steps: 120
 
         params:
           # --- terminal outcomes ---
-          target_crash_reward: 60.0
+          target_crash_reward: 90.0
           self_collision_penalty: -90.0
-          truncation_penalty: -20.0
+          truncation_penalty: -90.0
           success_once: true
-          success_requires_pressure: true
+          success_requires_pressure: false
 
           # --- stability / anti-exploit ---
           reward_clip: 2.0
-          step_reward: -0.002
+          step_reward: -0.01
 
           # --- idle shaping (reward-side; separate from runner termination) ---
           idle_speed_threshold: 0.12

@@ -1,0 +1,42 @@
+# Quick test scenario for rendering (3 episodes)
+experiment:
+  name: test_render
+  episodes: 3
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 500  # Short episodes for testing
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+  render: true  # Enable rendering
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: ppo
+
+    params:
+      lr: 0.0005
+      gamma: 0.995
+      hidden_dims: [256, 128]  # Smaller for faster testing
+
+    observation:
+      preset: gaplock
+
+    reward:
+      preset: gaplock_full
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+wandb:
+  enabled: false  # Disable W&B for quick test
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  group: test_render
+  tags:
+    - test

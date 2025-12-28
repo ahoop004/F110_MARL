@@ -1,0 +1,232 @@
+experiment:
+  name: gaplock_custom
+  episodes: 1000
+  seed: 123
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 360
+  spawn_points:
+  - spawn_2
+  - spawn_1
+  timestep: 0.01
+  render: true
+  spawn_curriculum:
+    enabled: true
+    window: 200
+    activation_samples: 50
+    min_episode: 150
+    enable_patience: 5
+    disable_patience: 3
+    cooldown: 20
+    lock_speed_steps: 150
+    stages:
+    - name: optimal_fixed
+      spawn_points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      - spawn_pinch_ahead
+      speed_range:
+      - 0.61
+      - 0.61
+      enable_rate: 0.7
+    - name: optimal_varied_speed
+      spawn_points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      - spawn_pinch_ahead
+      - spawn_approach_0.0C
+      - spawn_approach_0.3L
+      - spawn_approach_0.3R
+      speed_range:
+      - 0.3
+      - 1.0
+      enable_rate: 0.65
+      disable_rate: 0.5
+    - name: full_random
+      spawn_points: all
+      speed_range:
+      - 0.3
+      - 1.0
+      disable_rate: 0.45
+    spawn_configs:
+      spawn_pinch_right:
+        car_0:
+        - -45.569
+        - -1.0
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+      spawn_pinch_left:
+        car_0:
+        - -45.569
+        - -0.4
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+      spawn_pinch_ahead:
+        car_0:
+        - -45.569
+        - -0.7
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+      spawn_approach_0.0C:
+        car_0:
+        - -49.269
+        - -0.7
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+      spawn_approach_0.3L:
+        car_0:
+        - -49.269
+        - -0.4
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+      spawn_approach_0.3R:
+        car_0:
+        - -49.269
+        - -1.0
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
+  visualization:
+    reward_ring:
+      enabled: false
+      preferred_radius: 1.5
+    heatmap:
+      enabled: false
+      extent_m: 6.0
+      cell_size_m: 0.25
+      alpha: 0.22
+      update_frequency: 5
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    length: 0.32
+    width: 0.225
+    m: 3.74
+    I: 0.04712
+    s_min: -0.46
+    s_max: 0.46
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+agents:
+  car_0:
+    role: attacker
+    target_id: car_1
+    algorithm: ppo
+    params:
+      lr: 0.001
+      gamma: 0.99
+      hidden_dims:
+      - 256
+      - 128
+    observation:
+      preset: gaplock
+      overrides:
+        lidar:
+          beams: 360
+          max_range: 12.0
+    reward:
+      preset: gaplock_full
+      overrides:
+        forcing:
+          enabled: true
+          pinch_pockets:
+            enabled: true
+            anchor_forward: 1.2
+            anchor_lateral: 0.3
+            sigma: 0.45
+            weight: 0.8
+            peak: 0.6
+            floor: -0.25
+            power: 2.0
+          clearance:
+            enabled: true
+            weight: 0.8
+            band_min: 0.3
+            band_max: 3.2
+            clip: 0.25
+            time_scaled: true
+          turn:
+            enabled: true
+            weight: 2.0
+            clip: 0.35
+            time_scaled: true
+        distance:
+          enabled: true
+          near_distance: 1.0
+          far_distance: 2.5
+          reward_near: 0.12
+          penalty_far: 0.08
+        heading:
+          enabled: true
+          coefficient: 0.08
+        speed:
+          enabled: true
+          bonus_coef: 0.05
+        pressure:
+          enabled: true
+          distance_threshold: 1.5
+          bonus: 0.15
+        step_reward: -0.01
+        terminal:
+          target_crash: 100.0
+          self_crash: -50.0
+          timeout: 0.0
+  car_1:
+    role: defender
+    algorithm: ftg
+    params:
+      max_distance: 30.0
+      window_size: 4
+      bubble_radius: 2
+      max_steer: 0.32
+      min_speed: 0.2
+      max_speed: 1.0
+      steering_gain: 0.6
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.4
+      mode: lidar
+      gap_min_range: 0.65
+      target_mode: farthest
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+      no_cutback_enabled: true
+      cutback_clearance: 0.9
+      cutback_hold_steps: 8
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  group: gaplock_custom
+  tags:
+  - custom
+  - experimental

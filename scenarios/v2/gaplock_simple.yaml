@@ -1,0 +1,206 @@
+# Gaplock Simple Rewards
+# Train PPO with simplified reward structure (no forcing rewards)
+
+experiment:
+  name: gaplock_ppo_simple
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 5000
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+  render: true  # Enable rendering with telemetry extensions
+
+  # Spawn curriculum for progressive difficulty
+  # Automatically adjusts spawn difficulty based on agent success rate
+  spawn_curriculum:
+    enabled: true # Set to true to enable curriculum learning
+
+    # Success tracking parameters
+    window: 200               # Rolling window size for success rate calculation
+    activation_samples: 50    # Min episodes before transitions can occur
+    min_episode: 150          # Min episode before first stage transition (ensures 150 eps at fixed speed)
+
+    # Stage transition parameters
+    enable_patience: 5        # Consecutive episodes above threshold to advance
+    disable_patience: 3       # Consecutive episodes below threshold to regress
+    cooldown: 20              # Min episodes between stage transitions (prevents oscillation)
+
+    # Speed control parameters
+    lock_speed_steps: 150     # Lock starting speed for first N steps of each episode (0 to disable)
+
+    # Curriculum stages (progressive difficulty)
+    stages:
+      # Stage 0: Easy - Fixed optimal pinch positions, fixed speed
+      # Both agents start at 0.5 m/s, spawns at optimal pinch pockets
+      - name: "optimal_fixed"
+        spawn_points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead]
+        speed_range: [0.61, 0.61]  # Fixed 0.5 m/s for both agents
+        enable_rate: 0.70        # Advance when success >= 70%
+
+      # Stage 1: Medium - Optimal + approach positions, variable speed
+      # Adds approach spawns, randomizes speed 0.3-1.0 m/s
+      - name: "optimal_varied_speed"
+        spawn_points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead, spawn_approach_0.0C, spawn_approach_0.3L, spawn_approach_0.3R]
+        speed_range: [0.3, 1.0]  # Random speed 0.3-1.0 m/s
+        enable_rate: 0.65        # Advance when success >= 65%
+        disable_rate: 0.50       # Regress if success < 50%
+
+      # Stage 2: Hard - All available spawns, variable speed
+      # Uses all spawn points including map defaults, random speeds
+      - name: "full_random"
+        spawn_points: "all"      # Use all available spawn points
+        speed_range: [0.3, 1.0]  # Random speed 0.3-1.0 m/s
+        disable_rate: 0.45       # Regress if success < 45%
+
+    # Multi-agent spawn point configurations
+    # Adjusted for narrow track (y: -1.7 to +0.3m), anchor_lateral=0.30m
+    spawn_configs:
+      spawn_pinch_right:
+        car_0: [-45.569, -1.000, 0.000]  # Attacker at right pinch pocket
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+      spawn_pinch_left:
+        car_0: [-45.569, -0.400, 0.000]  # Attacker at left pinch pocket
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+      spawn_pinch_ahead:
+        car_0: [-45.569, -0.700, 0.000]  # Attacker directly ahead
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+      spawn_approach_0.0C:
+        car_0: [-49.269, -0.700, 0.000]  # Attacker 2.5m behind, center
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+      spawn_approach_0.3L:
+        car_0: [-49.269, -0.400, 0.000]  # Attacker 2.5m behind, left offset
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+      spawn_approach_0.3R:
+        car_0: [-49.269, -1.000, 0.000]  # Attacker 2.5m behind, right offset
+        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+
+  # Visualization configuration (optional)
+  visualization:
+    reward_ring:
+      enabled: false
+      # inner_radius and outer_radius are auto-extracted from reward config
+      preferred_radius: 1.5
+
+    heatmap:
+      enabled: false  # Toggle with H key during training
+      extent_m: 6.0  # Heatmap size (meters from target)
+      cell_size_m: 0.25  # Cell resolution (smaller = higher quality, slower)
+      alpha: 0.22  # Transparency (0-1)
+      update_frequency: 5  # Update every N frames
+      # Reward params auto-extracted from car_0 reward config
+
+  # Agilex Limo vehicle parameters (realistic - matches v1)
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    length: 0.32
+    width: 0.225
+    m: 3.74
+    I: 0.04712
+    s_min: -0.46
+    s_max: 0.46
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0          # Limo realistic speed
+
+agents:
+  car_0:
+    role: attacker
+    target_id: car_1  # Attacker targets the defender
+    algorithm: ppo
+
+    params:
+      lr: 0.0005
+      gamma: 0.995
+      hidden_dims: [512, 256, 128]
+
+    observation:
+      preset: gaplock
+
+    # Simple reward preset (no forcing components)
+    reward:
+      preset: gaplock_simple
+
+      # Override reward parameters (optional - comment out to use preset defaults)
+      overrides:
+        # Forcing rewards (DISABLED in simple preset for ablation)
+        forcing:
+          enabled: false  # Set to true to enable pinch pockets
+
+        # Distance-based shaping
+        distance:
+          enabled: true
+          near_distance: 1.0      # Close range (m)
+          far_distance: 2.5       # Far range (m)
+          reward_near: 0.10       # Reward when near
+          penalty_far: 0.05       # Penalty when far
+
+        # Heading alignment
+        heading:
+          enabled: true
+          coefficient: 0.08       # Alignment bonus coefficient
+
+        # Speed bonus
+        speed:
+          enabled: true
+          bonus_coef: 0.05        # Speed bonus coefficient
+
+        # Step penalty (constant per-step reward)
+        step_reward: -0.01        # Small penalty per step to encourage faster completion
+
+        # Terminal rewards
+        terminal:
+          target_crash: 60.0      # Target crashes (success)
+          self_crash: -40.0       # Self crashes (failure)
+          timeout: 0.0            # Episode timeout
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+    # FTG parameters (Limo-compatible - matches v1)
+    params:
+      # Core algorithm parameters
+      max_distance: 30.0
+      window_size: 4
+      bubble_radius: 2
+      max_steer: 0.32
+
+      # Speed control (FTG dynamically adjusts based on gap clearance)
+      min_speed: 0.2         # Min speed in tight spaces (m/s)
+      max_speed: 1.0         # Max speed in open areas (m/s, matches v_max)
+
+      # Control parameters
+      steering_gain: 0.6
+      fov: 4.71238898        # 270 degrees
+      normalized: false
+      steer_smooth: 0.4
+      mode: "lidar"
+      gap_min_range: 0.65
+      target_mode: "farthest"
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+      no_cutback_enabled: true
+      cutback_clearance: 0.9
+      cutback_hold_steps: 8
+
+wandb:
+  enabled: false  # Disabled - set to true and configure API key to enable
+  project: f110-gaplock
+  entity: ahoop004-old-dominion-university
+  tags: [ppo, simple_rewards, ablation]
+  notes: "PPO with simplified rewards (ablation study)"
