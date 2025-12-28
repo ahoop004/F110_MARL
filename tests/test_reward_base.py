@@ -1,9 +1,9 @@
 """Tests for reward system base infrastructure."""
 
 import pytest
-from rewards.base import RewardComponent, RewardStrategy
-from rewards.composer import ComposedReward
-from rewards.presets import load_preset, merge_config
+from src.rewards.base import RewardComponent, RewardStrategy
+from src.rewards.composer import ComposedReward
+from src.rewards.presets import load_preset, merge_config
 
 
 # Mock reward component for testing

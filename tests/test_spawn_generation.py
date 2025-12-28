@@ -2,7 +2,7 @@
 """Test spawn point generation for pinch pockets."""
 
 import numpy as np
-from utils.spawn_generator import (
+from src.utils.spawn_generator import (
     generate_pinch_pocket_spawns,
     generate_approach_spawns,
     print_spawn_yaml

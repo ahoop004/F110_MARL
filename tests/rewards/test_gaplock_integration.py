@@ -2,8 +2,8 @@
 
 import pytest
 import numpy as np
-from rewards import load_preset
-from rewards.gaplock import GaplockReward
+from src.rewards import load_preset
+from src.rewards.gaplock import GaplockReward
 
 
 class TestGaplockIntegration:

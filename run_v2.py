@@ -40,8 +40,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from core.scenario import load_and_expand_scenario, ScenarioError
-from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
+from src.core.scenario import load_and_expand_scenario, ScenarioError
+from src.loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 
 
 def parse_args():
@@ -270,10 +270,10 @@ def main():
     scenario = resolve_cli_overrides(scenario, args)
 
     # Resolve run ID early (for W&B and checkpoint alignment)
-    from core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
-    from core.run_metadata import RunMetadata
-    from core.checkpoint_manager import CheckpointManager
-    from core.best_model_tracker import BestModelTracker
+    from src.core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
+    from src.core.run_metadata import RunMetadata
+    from src.core.checkpoint_manager import CheckpointManager
+    from src.core.best_model_tracker import BestModelTracker
 
     # Get algorithm name for run ID
     algorithm = 'unknown'
@@ -307,9 +307,9 @@ def main():
 
     # Import training components
     try:
-        from core.enhanced_training import EnhancedTrainingLoop
-        from core.setup import create_training_setup
-        from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+        from src.core.enhanced_training import EnhancedTrainingLoop
+        from src.core.setup import create_training_setup
+        from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
     except ImportError as e:
         console_logger.print_error(f"Failed to import training components: {e}")
         import traceback
@@ -347,7 +347,7 @@ def main():
         # Extract reward parameters from attacker agent config
         reward_params = {}
         if attacker_id and 'reward' in scenario['agents'][attacker_id]:
-            from rewards.presets import load_preset, merge_config
+            from src.rewards.presets import load_preset, merge_config
 
             reward_config = scenario['agents'][attacker_id]['reward']
 
@@ -487,7 +487,7 @@ def main():
         spawn_curriculum = None
         spawn_config = scenario['environment'].get('spawn_curriculum', {})
         if spawn_config.get('enabled', False):
-            from core.spawn_curriculum import SpawnCurriculumManager
+            from src.core.spawn_curriculum import SpawnCurriculumManager
 
             # Get spawn point configurations from environment
             spawn_configs = spawn_config.get('spawn_configs', {})
@@ -581,7 +581,7 @@ def main():
         # Initialize CSV logger (uses same output directory as checkpoints)
         csv_logger = None
         if not args.no_checkpoints:
-            from core.run_id import get_output_dir
+            from src.core.run_id import get_output_dir
             output_dir = get_output_dir(
                 run_id=run_id,
                 scenario_name=scenario['experiment']['name']

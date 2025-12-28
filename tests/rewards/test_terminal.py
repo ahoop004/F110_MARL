@@ -1,7 +1,7 @@
 """Tests for terminal rewards."""
 
 import pytest
-from rewards.gaplock.terminal import TerminalReward
+from src.rewards.gaplock.terminal import TerminalReward
 
 
 class TestTerminalReward:

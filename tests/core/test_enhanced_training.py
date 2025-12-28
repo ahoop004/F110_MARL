@@ -4,8 +4,8 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 import numpy as np
 
-from core.enhanced_training import EnhancedTrainingLoop
-from metrics import EpisodeOutcome
+from src.core.enhanced_training import EnhancedTrainingLoop
+from src.metrics import EpisodeOutcome
 
 
 @pytest.fixture

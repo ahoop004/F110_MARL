@@ -19,10 +19,10 @@ Keyboard controls:
 """
 
 import numpy as np
-from env.f110ParallelEnv import F110ParallelEnv
-from render import EnvRenderer, TelemetryHUD, RewardRingExtension, RewardHeatmap
-from agents.ftg import FollowTheGap
-from rewards.presets import load_preset
+from src.env.f110ParallelEnv import F110ParallelEnv
+from src.render import EnvRenderer, TelemetryHUD, RewardRingExtension, RewardHeatmap
+from src.agents.ftg import FollowTheGap
+from src.rewards.presets import load_preset
 
 def main():
     print("=== Visualization Demo ===")

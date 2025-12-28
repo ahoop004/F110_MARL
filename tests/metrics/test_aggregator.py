@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from metrics import EpisodeOutcome, EpisodeMetrics, MetricsAggregator
+from src.metrics import EpisodeOutcome, EpisodeMetrics, MetricsAggregator
 
 
 class TestMetricsAggregator:

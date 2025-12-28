@@ -1,8 +1,8 @@
 """Quick test script to diagnose keyboard input issues."""
 
 import time
-from env.f110ParallelEnv import F110ParallelEnv
-from render import TelemetryHUD, RewardRingExtension
+from src.env.f110ParallelEnv import F110ParallelEnv
+from src.render import TelemetryHUD, RewardRingExtension
 
 print("=" * 60)
 print("Keyboard Test - Diagnosing keyboard input")

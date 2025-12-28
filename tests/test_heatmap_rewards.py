@@ -2,11 +2,11 @@
 """Test heatmap reward query functionality."""
 
 import numpy as np
-from rewards.presets import load_preset
-from rewards.composer import ComposedReward
-from rewards.gaplock.forcing import ForcingReward
-from rewards.gaplock.distance import DistanceReward
-from rewards.gaplock.heading import HeadingReward
+from src.rewards.presets import load_preset
+from src.rewards.composer import ComposedReward
+from src.rewards.gaplock.forcing import ForcingReward
+from src.rewards.gaplock.distance import DistanceReward
+from src.rewards.gaplock.heading import HeadingReward
 
 # Load gaplock config
 config = load_preset('gaplock_full')

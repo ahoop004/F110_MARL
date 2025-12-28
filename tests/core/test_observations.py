@@ -1,7 +1,7 @@
 """Tests for observation configuration system."""
 
 import pytest
-from core.observations import (
+from src.core.observations import (
     compute_obs_dim,
     load_observation_preset,
     merge_observation_config,

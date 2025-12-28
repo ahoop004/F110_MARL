@@ -1,7 +1,7 @@
 """Tests for episode metrics tracking."""
 
 import pytest
-from metrics import EpisodeOutcome, EpisodeMetrics, MetricsTracker
+from src.metrics import EpisodeOutcome, EpisodeMetrics, MetricsTracker
 
 
 class TestEpisodeMetrics:

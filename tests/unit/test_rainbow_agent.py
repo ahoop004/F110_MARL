@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from agents.rainbow.r_dqn import RainbowDQNAgent
+from src.agents.rainbow.r_dqn import RainbowDQNAgent
 
 
 class TestRainbowAgent:

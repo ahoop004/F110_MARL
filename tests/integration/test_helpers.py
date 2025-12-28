@@ -1,7 +1,7 @@
 """Helper utilities for integration tests."""
 from typing import Any, Dict
 import numpy as np
-from wrappers.observation import ObsWrapper
+from src.wrappers.observation import ObsWrapper
 
 
 class SimpleObservationWrapper:

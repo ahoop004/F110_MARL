@@ -6,8 +6,8 @@ import numpy as np
 # Set headless mode for testing
 os.environ["PYGLET_HEADLESS"] = "1"
 
-from env.f110ParallelEnv import F110ParallelEnv
-from render import EnvRenderer, MinimalHUD
+from src.env.f110ParallelEnv import F110ParallelEnv
+from src.render import EnvRenderer, MinimalHUD
 
 
 def test_renderer_with_parallel_env():

@@ -8,7 +8,7 @@ on the track and not spawning outside boundaries.
 import numpy as np
 import yaml
 import time
-from env.f110ParallelEnv import F110ParallelEnv
+from src.env.f110ParallelEnv import F110ParallelEnv
 
 def main():
     # Load scenario

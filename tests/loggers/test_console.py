@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import Mock, patch
-from loggers import ConsoleLogger
+from src.loggers import ConsoleLogger
 
 
 class TestConsoleLogger:
