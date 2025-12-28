@@ -129,10 +129,15 @@ class RichConsole:
             # Attack success = target_crash rate
             self.attack_success_rate = outcome_rates.get('target_crash', 0.0)
 
-            # Target success = target_finish rate
-            self.target_success_rate = outcome_rates.get('target_finish', 0.0)
+            # Target success = all attacker failure modes (defender successfully defended)
+            self.target_success_rate = (
+                outcome_rates.get('target_finish', 0.0) +
+                outcome_rates.get('self_crash', 0.0) +
+                outcome_rates.get('idle_stop', 0.0) +
+                outcome_rates.get('collision', 0.0)
+            )
 
-            # Failure modes
+            # Failure modes (individual breakdown)
             self.idle_stop_rate = outcome_rates.get('idle_stop', 0.0)
             self.truncation_rate = outcome_rates.get('timeout', 0.0)
             self.attacker_crash_rate = outcome_rates.get('self_crash', 0.0)
