@@ -190,8 +190,8 @@ class TestResolveCLIOverrides:
 class TestInitializeLoggers:
     """Test logger initialization."""
 
-    @patch('v2.run.WandbLogger')
-    @patch('v2.run.ConsoleLogger')
+    @patch('run_v2.WandbLogger')
+    @patch('run_v2.ConsoleLogger')
     def test_initialize_with_wandb_enabled(self, mock_console, mock_wandb, valid_scenario):
         """Test initializing loggers with W&B enabled."""
         valid_scenario['wandb']['enabled'] = True
@@ -207,7 +207,7 @@ class TestInitializeLoggers:
         mock_console.assert_called()
         assert console_logger is not None
 
-    @patch('v2.run.ConsoleLogger')
+    @patch('run_v2.ConsoleLogger')
     def test_initialize_with_wandb_disabled(self, mock_console, valid_scenario):
         """Test initializing loggers with W&B disabled."""
         valid_scenario['wandb']['enabled'] = False
@@ -222,7 +222,7 @@ class TestInitializeLoggers:
         mock_console.assert_called_once()
         assert console_logger is not None
 
-    @patch('v2.run.ConsoleLogger')
+    @patch('run_v2.ConsoleLogger')
     def test_initialize_with_quiet(self, mock_console, valid_scenario):
         """Test initializing loggers with quiet mode."""
         args = Mock(quiet=True)
@@ -236,7 +236,7 @@ class TestInitializeLoggers:
 class TestPrintScenarioSummary:
     """Test scenario summary printing."""
 
-    @patch('v2.run.ConsoleLogger')
+    @patch('run_v2.ConsoleLogger')
     def test_print_summary(self, mock_console_class, valid_scenario):
         """Test printing scenario summary."""
         mock_console = Mock()

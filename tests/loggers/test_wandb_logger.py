@@ -9,7 +9,7 @@ from src.metrics import EpisodeMetrics, EpisodeOutcome
 class TestWandbLogger:
     """Test WandbLogger class."""
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_initialization_online(self, mock_wandb):
         """Test logger initialization in online mode."""
         logger = WandbLogger(
@@ -24,7 +24,7 @@ class TestWandbLogger:
         assert call_kwargs['project'] == "test-project"
         assert call_kwargs['tags'] == ["test"]
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_initialization_disabled(self, mock_wandb):
         """Test logger initialization in disabled mode."""
         logger = WandbLogger(
@@ -35,7 +35,7 @@ class TestWandbLogger:
         assert logger.enabled is False
         mock_wandb.init.assert_not_called()
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_flatten_config_simple(self, mock_wandb):
         """Test config flattening with simple dict."""
         config = {
@@ -52,7 +52,7 @@ class TestWandbLogger:
             'gamma': 0.995,
         }
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_flatten_config_nested(self, mock_wandb):
         """Test config flattening with nested dict."""
         config = {
@@ -81,7 +81,7 @@ class TestWandbLogger:
             'reward/pressure/enabled': True,
         }
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_log_episode_enabled(self, mock_wandb):
         """Test episode logging when enabled."""
         logger = WandbLogger(project="test", mode="online")
@@ -120,7 +120,7 @@ class TestWandbLogger:
         assert logged_data['rolling/outcomes/target_crash'] == 3
         assert logged_data['rolling/outcomes/self_crash'] == 1
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_log_episode_disabled(self, mock_wandb):
         """Test that logging does nothing when disabled."""
         logger = WandbLogger(project="test", mode="disabled")
@@ -137,7 +137,7 @@ class TestWandbLogger:
         # Should not call wandb.log
         mock_wandb.log.assert_not_called()
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_log_metrics(self, mock_wandb):
         """Test arbitrary metrics logging."""
         logger = WandbLogger(project="test", mode="online")
@@ -147,7 +147,7 @@ class TestWandbLogger:
 
         mock_wandb.log.assert_called_once_with(metrics, step=100)
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_log_component_stats(self, mock_wandb):
         """Test component statistics logging."""
         logger = WandbLogger(project="test", mode="online")
@@ -174,7 +174,7 @@ class TestWandbLogger:
         assert logged_data['components/terminal/success/std'] == 0.0
         assert logged_data['components/pressure/bonus/mean'] == 0.12
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_finish(self, mock_wandb):
         """Test finishing the run."""
         logger = WandbLogger(project="test", mode="online")
@@ -182,7 +182,7 @@ class TestWandbLogger:
 
         mock_wandb.finish.assert_called_once()
 
-    @patch('v2.logging.wandb_logger.wandb')
+    @patch('src.loggers.wandb_logger.wandb')
     def test_finish_disabled(self, mock_wandb):
         """Test that finish does nothing when disabled."""
         logger = WandbLogger(project="test", mode="disabled")

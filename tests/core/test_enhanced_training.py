@@ -195,7 +195,7 @@ class TestEnhancedTrainingLoop:
         for episode in tracker.episodes:
             assert isinstance(episode.outcome, EpisodeOutcome)
 
-    @patch('v2.core.enhanced_training.determine_outcome')
+    @patch('src.core.enhanced_training.determine_outcome')
     def test_outcome_determination(self, mock_determine, mock_env, mock_agents):
         """Test that outcome is determined correctly."""
         mock_determine.return_value = EpisodeOutcome.TARGET_CRASH

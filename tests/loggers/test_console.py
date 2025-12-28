@@ -19,7 +19,7 @@ class TestConsoleLogger:
         logger = ConsoleLogger(verbose=False)
         assert logger.verbose is False
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_header(self, mock_console_class):
         """Test printing header."""
         mock_console = Mock()
@@ -32,7 +32,7 @@ class TestConsoleLogger:
         assert mock_console.rule.called
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_config(self, mock_console_class):
         """Test printing config."""
         mock_console = Mock()
@@ -45,7 +45,7 @@ class TestConsoleLogger:
         # Should create and print table
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_log_episode_verbose(self, mock_console_class):
         """Test episode logging in verbose mode."""
         mock_console = Mock()
@@ -64,7 +64,7 @@ class TestConsoleLogger:
         # Should print the episode
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_log_episode_not_verbose(self, mock_console_class):
         """Test episode logging with verbose=False."""
         mock_console = Mock()
@@ -81,7 +81,7 @@ class TestConsoleLogger:
         # Should not print anything
         assert not mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_summary(self, mock_console_class):
         """Test printing summary."""
         mock_console = Mock()
@@ -98,7 +98,7 @@ class TestConsoleLogger:
         # Should print table
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_outcome_distribution(self, mock_console_class):
         """Test printing outcome distribution."""
         mock_console = Mock()
@@ -115,7 +115,7 @@ class TestConsoleLogger:
         # Should print table
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_outcome_distribution_empty(self, mock_console_class):
         """Test printing empty outcome distribution."""
         mock_console = Mock()
@@ -128,7 +128,7 @@ class TestConsoleLogger:
         # Should not print anything for empty counts
         assert not mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_create_progress(self, mock_console_class):
         """Test progress bar creation."""
         mock_console = Mock()
@@ -140,7 +140,7 @@ class TestConsoleLogger:
         # Should return a Progress instance
         assert progress is not None
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_success(self, mock_console_class):
         """Test success message."""
         mock_console = Mock()
@@ -151,7 +151,7 @@ class TestConsoleLogger:
 
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_warning(self, mock_console_class):
         """Test warning message."""
         mock_console = Mock()
@@ -162,7 +162,7 @@ class TestConsoleLogger:
 
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_error(self, mock_console_class):
         """Test error message."""
         mock_console = Mock()
@@ -173,7 +173,7 @@ class TestConsoleLogger:
 
         assert mock_console.print.called
 
-    @patch('v2.logging.console.Console')
+    @patch('src.loggers.console.Console')
     def test_print_info(self, mock_console_class):
         """Test info message."""
         mock_console = Mock()
