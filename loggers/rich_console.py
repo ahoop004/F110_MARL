@@ -126,17 +126,17 @@ class RichConsole:
             # Extract outcome rates from outcome_rates dict
             outcome_rates = outcome_stats.get('outcome_rates', {})
 
-            # Attack success = TARGET_CRASH rate
-            self.attack_success_rate = outcome_rates.get('TARGET_CRASH', 0.0)
+            # Attack success = target_crash rate
+            self.attack_success_rate = outcome_rates.get('target_crash', 0.0)
 
-            # Target success = TARGET_FINISH rate
-            self.target_success_rate = outcome_rates.get('TARGET_FINISH', 0.0)
+            # Target success = target_finish rate
+            self.target_success_rate = outcome_rates.get('target_finish', 0.0)
 
             # Failure modes
-            self.idle_stop_rate = outcome_rates.get('IDLE_STOP', 0.0)
-            self.truncation_rate = outcome_rates.get('TIMEOUT', 0.0)
-            self.attacker_crash_rate = outcome_rates.get('SELF_CRASH', 0.0)
-            self.collision_rate = outcome_rates.get('COLLISION', 0.0)
+            self.idle_stop_rate = outcome_rates.get('idle_stop', 0.0)
+            self.truncation_rate = outcome_rates.get('timeout', 0.0)
+            self.attacker_crash_rate = outcome_rates.get('self_crash', 0.0)
+            self.collision_rate = outcome_rates.get('collision', 0.0)
 
         # Update performance tracking
         now = datetime.now()
@@ -244,16 +244,16 @@ class RichConsole:
             Colored Text object
         """
         outcome_colors = {
-            'TARGET_CRASH': 'green',
-            'SELF_CRASH': 'red',
-            'COLLISION': 'yellow',
-            'TIMEOUT': 'blue',
-            'IDLE_STOP': 'magenta',
-            'TARGET_FINISH': 'cyan',
+            'target_crash': 'green',
+            'self_crash': 'red',
+            'collision': 'yellow',
+            'timeout': 'blue',
+            'idle_stop': 'magenta',
+            'target_finish': 'cyan',
         }
 
         color = outcome_colors.get(outcome, 'white')
-        return Text(outcome, style=f"bold {color}")
+        return Text(outcome.upper(), style=f"bold {color}")
 
     def _format_percentage(
         self,
