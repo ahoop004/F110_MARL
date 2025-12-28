@@ -25,18 +25,27 @@ class TerminalReward:
 
         Args:
             config: Dict with keys:
-                - target_crash: Reward when target crashes (default: 60.0)
-                - self_crash: Penalty when attacker crashes (default: -90.0)
+                - target_crash (or target_crash_reward): Reward when target crashes (default: 60.0)
+                - self_crash (or self_collision_penalty): Penalty when attacker crashes (default: -90.0)
                 - collision: Penalty for mutual collision (default: -90.0)
-                - timeout: Penalty for timeout (default: -20.0)
-                - idle_stop: Penalty for idle truncation (default: -5.0)
+                - timeout (or truncation_penalty): Penalty for timeout (default: -20.0)
+                - idle_stop (or idle_truncation_penalty): Penalty for idle truncation (default: -5.0)
                 - target_finish: Penalty when target finishes (default: -20.0)
         """
-        self.target_crash = float(config.get('target_crash', 60.0))
-        self.self_crash = float(config.get('self_crash', -90.0))
+        # Support both v2 names (target_crash) and v1 names (target_crash_reward) for backwards compatibility
+        self.target_crash = float(
+            config.get('target_crash', config.get('target_crash_reward', 60.0))
+        )
+        self.self_crash = float(
+            config.get('self_crash', config.get('self_collision_penalty', -90.0))
+        )
         self.collision = float(config.get('collision', -90.0))
-        self.timeout = float(config.get('timeout', -20.0))
-        self.idle_stop = float(config.get('idle_stop', -5.0))
+        self.timeout = float(
+            config.get('timeout', config.get('truncation_penalty', -20.0))
+        )
+        self.idle_stop = float(
+            config.get('idle_stop', config.get('idle_truncation_penalty', -5.0))
+        )
         self.target_finish = float(config.get('target_finish', -20.0))
 
     def compute(self, step_info: dict) -> Dict[str, float]:

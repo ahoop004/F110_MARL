@@ -252,7 +252,8 @@ class EnhancedTrainingLoop:
                 if agent_id in self.agent_rewards:
                     # Use custom reward
                     reward_info = self._build_reward_info(
-                        agent_id, obs, next_obs, step_info, episode_steps
+                        agent_id, obs, next_obs, step_info, episode_steps,
+                        terminations=terminations, truncations=truncations
                     )
                     total_reward, components = self.agent_rewards[agent_id].compute(reward_info)
                     rewards[agent_id] = total_reward
@@ -460,6 +461,8 @@ class EnhancedTrainingLoop:
         next_obs: Dict[str, Any],
         info: Dict[str, Any],
         step: int,
+        terminations: Optional[Dict[str, bool]] = None,
+        truncations: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, Any]:
         """Build reward info dict for custom reward computation.
 
@@ -469,6 +472,8 @@ class EnhancedTrainingLoop:
             next_obs: Next observations
             info: Step info from environment
             step: Current step number
+            terminations: Termination flags from environment (done flags)
+            truncations: Truncation flags from environment (timeout flags)
 
         Returns:
             Reward info dict for RewardStrategy.compute()
@@ -477,13 +482,18 @@ class EnhancedTrainingLoop:
         # Assume target_id is stored in agent config or derived from roles
         target_id = self._get_target_id(agent_id, info)
 
+        # Get done and truncated flags for this agent
+        terminated = terminations.get(agent_id, False) if terminations else False
+        truncated = truncations.get(agent_id, False) if truncations else False
+        done = terminated or truncated
+
         reward_info = {
             'obs': obs.get(agent_id, {}),
             'next_obs': next_obs.get(agent_id, {}),
             'info': info,
             'step': step,
-            'done': False,  # Will be updated on final step
-            'truncated': False,
+            'done': done,  # Actual done flag from environment
+            'truncated': truncated,  # Actual truncated flag from environment
             'timestep': 0.01,  # TODO: Get from env config
         }
 

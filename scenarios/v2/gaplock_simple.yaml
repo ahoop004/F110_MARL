@@ -157,6 +157,9 @@ agents:
           enabled: true
           bonus_coef: 0.05        # Speed bonus coefficient
 
+        # Step penalty (constant per-step reward)
+        step_reward: -0.01        # Small penalty per step to encourage faster completion
+
         # Terminal rewards
         terminal:
           target_crash: 60.0      # Target crashes (success)

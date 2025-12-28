@@ -68,8 +68,14 @@ class GaplockReward(RewardStrategy):
         components: List[RewardComponent] = []
 
         # Terminal rewards (always included)
+        # Support both v2-style (nested 'terminal' dict) and v1-style (flat top-level params)
         if 'terminal' in config:
+            # V2-style nested config
             components.append(TerminalReward(config['terminal']))
+        else:
+            # V1-style flat config - always create terminal reward component
+            # TerminalReward class will use defaults for any missing params
+            components.append(TerminalReward(config))
 
         # Pressure rewards
         if config.get('pressure', {}).get('enabled', True):

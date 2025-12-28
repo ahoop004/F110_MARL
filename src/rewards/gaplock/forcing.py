@@ -12,7 +12,7 @@ class ForcingReward:
     """Rewards for forcing target into dangerous positions.
 
     Implements three forcing mechanisms:
-    1. Pinch Pockets: Gaussian rewards for being in optimal attack positions
+    1. Pinch Pockets: Gaussian potential field rewards at optimal attack positions
     2. Clearance Reduction: Reward when target's wall clearance decreases
     3. Turn Shaping: Reward when target turns away from wall (being forced)
 
@@ -26,12 +26,15 @@ class ForcingReward:
         Args:
             config: Dict with keys:
                 - enabled: Whether forcing is enabled (default: False)
-                - pinch_pockets: Config for pinch pocket Gaussians:
+                - pinch_pockets: Config for pinch pocket Gaussian potential field:
                     - enabled: Whether enabled (default: True)
                     - anchor_forward: Distance ahead of target (default: 1.20)
                     - anchor_lateral: Distance to side of target (default: 0.70)
                     - sigma: Gaussian width (default: 0.50)
                     - weight: Reward multiplier (default: 0.30)
+                    - peak: Max reward at optimal position (default: None, uses simple Gaussian)
+                    - floor: Min reward when far from optimal (default: None)
+                    - power: Field decay exponent (default: 2.0)
                 - clearance: Config for clearance reduction:
                     - enabled: Whether enabled (default: True)
                     - weight: Reward multiplier (default: 0.80)
@@ -47,13 +50,24 @@ class ForcingReward:
         """
         self.enabled = bool(config.get('enabled', False))
 
-        # Pinch pockets config
+        # Pinch pockets config (unified with potential field)
         pinch_config = config.get('pinch_pockets', {})
         self.pinch_enabled = bool(pinch_config.get('enabled', True))
         self.pinch_anchor_forward = float(pinch_config.get('anchor_forward', 1.20))
         self.pinch_anchor_lateral = float(pinch_config.get('anchor_lateral', 0.70))
         self.pinch_sigma = float(pinch_config.get('sigma', 0.50))
         self.pinch_weight = float(pinch_config.get('weight', 0.30))
+
+        # Potential field parameters (optional, if None uses simple Gaussian)
+        self.pinch_peak = pinch_config.get('peak', None)
+        self.pinch_floor = pinch_config.get('floor', None)
+        self.pinch_power = float(pinch_config.get('power', 2.0)) if self.pinch_peak is not None else None
+
+        # Convert to float if provided
+        if self.pinch_peak is not None:
+            self.pinch_peak = float(self.pinch_peak)
+        if self.pinch_floor is not None:
+            self.pinch_floor = float(self.pinch_floor)
 
         # Clearance config
         clearance_config = config.get('clearance', {})
@@ -123,10 +137,11 @@ class ForcingReward:
         return components
 
     def _compute_pinch_pockets(self, obs: dict, target_obs: dict) -> float:
-        """Compute pinch pocket Gaussian rewards.
+        """Compute pinch pocket Gaussian potential field reward.
 
-        Rewards being in specific geometric positions relative to target
-        that are optimal for forcing.
+        Supports two modes:
+        1. Simple Gaussian (default): Sum of Gaussians at pinch pockets
+        2. Potential Field: Gaussian field with peak/floor mapping
 
         Args:
             obs: Attacker observation
@@ -155,19 +170,34 @@ class ForcingReward:
         local_x = dx * cos_theta - dy * sin_theta
         local_y = dx * sin_theta + dy * cos_theta
 
-        # Compute Gaussian reward for each pocket
-        reward = 0.0
-
-        # Right pocket (ahead and to the right)
+        # Compute distance to each pinch pocket
         anchor_x = self.pinch_anchor_forward
-        anchor_y = -self.pinch_anchor_lateral
-        dist_sq = (local_x - anchor_x)**2 + (local_y - anchor_y)**2
-        reward += np.exp(-dist_sq / (2 * self.pinch_sigma**2))
 
-        # Left pocket (ahead and to the left)
-        anchor_y = self.pinch_anchor_lateral
-        dist_sq = (local_x - anchor_x)**2 + (local_y - anchor_y)**2
-        reward += np.exp(-dist_sq / (2 * self.pinch_sigma**2))
+        # Right pocket
+        anchor_y_right = -self.pinch_anchor_lateral
+        dist_right = np.sqrt((local_x - anchor_x)**2 + (local_y - anchor_y_right)**2)
+
+        # Left pocket
+        anchor_y_left = self.pinch_anchor_lateral
+        dist_left = np.sqrt((local_x - anchor_x)**2 + (local_y - anchor_y_left)**2)
+
+        # Use minimum distance to either pocket
+        d_min = min(dist_right, dist_left)
+
+        # Compute reward based on mode
+        if self.pinch_peak is not None and self.pinch_floor is not None:
+            # Potential field mode: Map distance to [floor, peak] range
+            ratio = d_min / max(self.pinch_sigma, 1e-6)
+            shaped = np.exp(-0.5 * (ratio ** self.pinch_power))
+
+            # Map shaped value (0 to 1) to [floor, peak] range
+            value = self.pinch_floor + (self.pinch_peak - self.pinch_floor) * shaped
+            reward = value
+        else:
+            # Simple Gaussian mode: Sum of Gaussians at each pocket
+            gauss_right = np.exp(-(dist_right**2) / (2 * self.pinch_sigma**2))
+            gauss_left = np.exp(-(dist_left**2) / (2 * self.pinch_sigma**2))
+            reward = gauss_right + gauss_left
 
         return float(self.pinch_weight * reward)
 
