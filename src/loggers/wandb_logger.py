@@ -44,6 +44,7 @@ class WandbLogger:
         name: Optional[str] = None,
         tags: Optional[list] = None,
         group: Optional[str] = None,
+        entity: Optional[str] = None,
         notes: Optional[str] = None,
         mode: str = "online",
         run_id: Optional[str] = None,
@@ -57,6 +58,7 @@ class WandbLogger:
             name: Run name (optional, W&B will auto-generate if not provided)
             tags: List of tags for this run
             group: Group name for organizing runs
+            entity: W&B entity (username or team name)
             notes: Notes about this run
             mode: W&B mode ("online", "offline", or "disabled")
             run_id: Custom run ID for checkpoint alignment (optional)
@@ -100,6 +102,7 @@ class WandbLogger:
                 name=name,
                 tags=tags,
                 group=group,
+                entity=entity,
                 notes=notes,
                 mode=mode,
                 **kwargs,

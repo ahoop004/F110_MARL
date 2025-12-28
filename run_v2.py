@@ -215,6 +215,7 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             config=scenario,
             tags=wandb_config.get('tags', []),
             group=wandb_config.get('group', None),
+            entity=wandb_config.get('entity', None),
             notes=wandb_config.get('notes', None),
             mode=wandb_config.get('mode', 'online'),
             run_id=run_id,  # Pass run_id for alignment
