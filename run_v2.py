@@ -310,7 +310,8 @@ def main():
     try:
         from src.core.enhanced_training import EnhancedTrainingLoop
         from src.core.setup import create_training_setup
-        from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+        # Rendering extensions imported lazily when needed (to avoid pyglet on HPC)
+        # from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
     except ImportError as e:
         console_logger.print_error(f"Failed to import training components: {e}")
         import traceback
@@ -388,6 +389,9 @@ def main():
             if extensions_added[0]:
                 return  # Already added
             extensions_added[0] = True
+
+            # Lazy import rendering extensions (only when rendering is enabled)
+            from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
 
             # Add telemetry HUD
             telemetry = TelemetryHUD(renderer)
