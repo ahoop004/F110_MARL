@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from pathlib import Path
 
-from v2.render import EnvRenderer, MinimalHUD, RenderExtension
+from render import EnvRenderer, MinimalHUD, RenderExtension
 
 
 def test_renderer_initialization():

@@ -2,8 +2,8 @@
 
 import pytest
 import numpy as np
-from v2.rewards import load_preset
-from v2.rewards.gaplock import GaplockReward
+from rewards import load_preset
+from rewards.gaplock import GaplockReward
 
 
 class TestGaplockIntegration:
@@ -219,7 +219,7 @@ class TestGaplockIntegration:
 
     def test_preset_modification(self):
         """Test that preset can be modified with overrides."""
-        from v2.rewards import merge_config
+        from rewards import merge_config
 
         base = load_preset('gaplock_simple')
         overrides = {

@@ -43,22 +43,22 @@ This directory contains example scenario files for the v2 training pipeline. Eac
 
 ```bash
 # Basic usage
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml
 
 # With W&B logging (override scenario config)
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --wandb
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --wandb
 
 # Override episodes
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --episodes 500
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --episodes 500
 
 # Override seed
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --seed 123
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --seed 123
 
 # Quiet mode (minimal console output)
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --quiet
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --quiet
 
 # Enable rendering
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --render
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --render
 ```
 
 ### Comparing Algorithms
@@ -67,13 +67,13 @@ Run multiple scenarios to compare algorithms:
 
 ```bash
 # PPO
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml --wandb
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml --wandb
 
 # TD3
-python v2/run.py --scenario scenarios/v2/gaplock_td3.yaml --wandb
+python run_v2.py --scenario scenarios/v2/gaplock_td3.yaml --wandb
 
 # SAC
-python v2/run.py --scenario scenarios/v2/gaplock_sac.yaml --wandb
+python run_v2.py --scenario scenarios/v2/gaplock_sac.yaml --wandb
 ```
 
 All runs will log to the same W&B project (`f110-gaplock`) with different tags for easy comparison.
@@ -222,14 +222,14 @@ wandb:
 **Scenario not found:**
 ```bash
 # Use absolute or relative path
-python v2/run.py --scenario scenarios/v2/gaplock_ppo.yaml
+python run_v2.py --scenario scenarios/v2/gaplock_ppo.yaml
 ```
 
 **Unknown preset error:**
 ```
 # Check available presets in:
-# - v2/rewards/presets.py (reward presets)
-# - v2/core/observations.py (observation presets)
+# - rewards/presets.py (reward presets)
+# - core/observations.py (observation presets)
 ```
 
 **Missing map file:**
@@ -253,11 +253,11 @@ cp scenarios/v2/gaplock_ppo.yaml scenarios/v2/my_experiment.yaml
 
 3. Run your scenario:
 ```bash
-python v2/run.py --scenario scenarios/v2/my_experiment.yaml --wandb
+python run_v2.py --scenario scenarios/v2/my_experiment.yaml --wandb
 ```
 
 ## Next Steps
 
-- See [v2/README.md](../../v2/README.md) for full v2 documentation
-- See [DESIGN_MASTER.md](../../v2/DESIGN_MASTER.md) for architecture overview
-- See [rewards/DESIGN.md](../../v2/rewards/DESIGN.md) for reward configuration details
+- See main README.md for full documentation
+- See rewards/DESIGN.md for reward configuration details
+- See core/observations.py for observation presets

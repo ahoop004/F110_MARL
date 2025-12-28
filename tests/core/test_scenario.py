@@ -5,7 +5,7 @@ import tempfile
 import yaml
 from pathlib import Path
 
-from v2.core.scenario import (
+from core.scenario import (
     ScenarioError,
     load_scenario,
     expand_reward_preset,

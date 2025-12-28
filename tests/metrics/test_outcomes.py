@@ -1,7 +1,7 @@
 """Tests for episode outcome classification."""
 
 import pytest
-from v2.metrics import EpisodeOutcome, determine_outcome
+from metrics import EpisodeOutcome, determine_outcome
 
 
 class TestEpisodeOutcome:

@@ -2,8 +2,8 @@
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from v2.loggers import WandbLogger
-from v2.metrics import EpisodeMetrics, EpisodeOutcome
+from loggers import WandbLogger
+from metrics import EpisodeMetrics, EpisodeOutcome
 
 
 class TestWandbLogger:

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from v2.agents.sac.sac import SACAgent
+from agents.sac.sac import SACAgent
 
 
 class TestSACAgent:

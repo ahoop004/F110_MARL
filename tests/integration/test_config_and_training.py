@@ -5,9 +5,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from v2.core.config import AgentFactory, EnvironmentFactory
-from v2.core.training import TrainingLoop, EvaluationLoop
-from v2.core.utils import save_checkpoint, load_checkpoint, set_random_seeds
+from core.config import AgentFactory, EnvironmentFactory
+from core.training import TrainingLoop, EvaluationLoop
+from core.utils import save_checkpoint, load_checkpoint, set_random_seeds
 from tests.integration.test_helpers import SimpleObservationWrapper
 
 

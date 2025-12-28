@@ -2,7 +2,7 @@
 import pytest
 import numpy as np
 
-from v2.render import EnvRenderer, RewardRingExtension
+from render import EnvRenderer, RewardRingExtension
 
 
 def test_reward_ring_initialization():
