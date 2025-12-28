@@ -1,0 +1,328 @@
+# Gaplock Reward Parameters Reference
+# Complete documentation of all available reward parameters
+# Use this as a reference when configuring your scenarios
+
+# ============================================================================
+# REWARD CONFIGURATION STRUCTURE
+# ============================================================================
+#
+# rewards are configured under: agents.{agent_id}.reward.params
+#
+# Example:
+#   agents:
+#     car_0:
+#       reward:
+#         task: gaplock
+#         params:
+#           target_crash_reward: 90.0
+#           step_reward: -0.01
+#           # ... all parameters below ...
+
+# ============================================================================
+# TERMINAL REWARDS (terminal.py)
+# ============================================================================
+# Rewards for episode outcomes (success/failure)
+
+# Success rewards
+target_crash_reward: 90.0              # Reward for crashing the target (ATTACKER SUCCESS)
+                                       # Default: 60.0
+                                       # Range: 0-200 (higher = more incentive to crash target)
+
+# Failure penalties
+self_collision_penalty: -90.0          # Penalty for crashing yourself (ATTACKER FAILURE)
+                                       # Default: -90.0
+                                       # Range: -200 to 0 (more negative = stronger discouragement)
+
+truncation_penalty: -90.0              # Penalty for timeout (episode max steps reached)
+                                       # Default: -20.0
+                                       # Range: -200 to 0 (more negative = encourage faster completion)
+
+# Success conditions
+success_once: true                     # Give success reward only once per episode
+                                       # Default: true
+                                       # If false, can get multiple success rewards (not recommended)
+
+success_requires_pressure: false       # Require sustained pressure before success counts
+                                       # Default: false
+                                       # If true, must have applied pressure before crash counts
+
+# ============================================================================
+# STEP PENALTY (step_penalty.py)
+# ============================================================================
+# Constant per-step reward/penalty to encourage faster completion
+
+step_reward: -0.01                     # Constant reward per timestep
+                                       # Default: 0.0 (disabled)
+                                       # Range: -0.1 to 0.1
+                                       # Negative values encourage faster episodes
+                                       # Example: -0.01 × 5000 steps = -50 total penalty
+
+# ============================================================================
+# STABILITY / ANTI-EXPLOIT
+# ============================================================================
+
+reward_clip: 2.0                       # Clip individual reward components to [-clip, +clip]
+                                       # Default: 2.0
+                                       # Prevents any single component from dominating
+                                       # Set to 0 to disable clipping
+
+# ============================================================================
+# IDLE PENALTIES (penalties.py)
+# ============================================================================
+# Discourage staying still (separate from framework-level idle termination)
+
+idle_speed_threshold: 0.12             # Speed below which agent is considered idle
+                                       # Default: 0.12 m/s
+                                       # Range: 0.05-0.25
+
+idle_penalty_steps: 25                 # Steps before idle penalty starts
+                                       # Default: 25
+                                       # Gives agent time to accelerate from stop
+
+idle_penalty: 0.05                     # Penalty per step while idle
+                                       # Default: 0.05
+                                       # Range: 0.01-0.20
+
+idle_truncation_penalty: -5.0          # Extra penalty if episode ends due to idle timeout
+                                       # Default: -5.0
+                                       # Applied when framework terminates due to idle
+
+# ============================================================================
+# REVERSE / BRAKE PENALTIES (penalties.py)
+# ============================================================================
+
+reverse_penalty: 0.10                  # Penalty per step while moving backwards
+                                       # Default: 0.10
+                                       # Range: 0.01-0.50
+                                       # Discourages reverse driving
+
+reverse_speed_threshold: 0.02          # Min backward speed to trigger penalty
+                                       # Default: 0.02 m/s
+                                       # Range: 0.01-0.10
+
+brake_penalty: 0.05                    # Penalty for hard braking
+                                       # Default: 0.05
+                                       # Range: 0.01-0.20
+
+brake_speed_threshold: 0.40            # Speed above which braking is monitored
+                                       # Default: 0.40 m/s
+                                       # Only penalize braking when moving fast
+
+brake_drop_threshold: 0.25             # Min speed drop to trigger brake penalty
+                                       # Default: 0.25 m/s
+                                       # Must lose this much speed in one step
+
+# ============================================================================
+# PRESSURE GATING (pressure.py)
+# ============================================================================
+# Proximity-based bonuses for applying pressure on target
+
+pressure_distance: 1.30                # Max distance for pressure bonus
+                                       # Default: 1.30 m
+                                       # Range: 0.8-2.5
+                                       # Bonus applies when within this distance of target
+
+pressure_timeout: 1.20                 # Max distance for timeout bonus
+                                       # Default: 1.20 m
+                                       # Slightly different threshold for timeout pressure
+
+pressure_min_speed: 0.30               # Min speed to count as applying pressure
+                                       # Default: 0.30 m/s
+                                       # Agent must be moving to apply pressure
+
+pressure_heading_tolerance: 1.57       # Max heading error for pressure (radians)
+                                       # Default: 1.57 (90 degrees)
+                                       # Must be roughly facing target
+
+pressure_bonus: 0.12                   # Bonus per interval while applying pressure
+                                       # Default: 0.12
+                                       # Range: 0.05-0.30
+
+pressure_bonus_interval: 5             # Steps between pressure bonuses
+                                       # Default: 5
+                                       # Get bonus every N steps while in pressure
+
+pressure_streak_bonus: 0.10            # Bonus per streak level
+                                       # Default: 0.10
+                                       # Increases with sustained pressure
+
+pressure_streak_cap: 40                # Max pressure streak level
+                                       # Default: 40
+                                       # Caps streak bonus growth
+
+# ============================================================================
+# SPEED BONUS (speed.py)
+# ============================================================================
+
+speed_bonus_coef: 0.05                 # Coefficient for speed bonus
+                                       # Default: 0.05
+                                       # Range: 0.0-0.20
+                                       # Higher = more reward for speed
+
+speed_bonus_target: 0.60               # Target speed for maximum bonus
+                                       # Default: 0.60 m/s
+                                       # Range: 0.4-1.0
+                                       # Optimal speed to maintain
+
+# ============================================================================
+# HEADING ALIGNMENT (heading.py)
+# ============================================================================
+
+heading_reward_coef: 0.08              # Coefficient for heading alignment reward
+                                       # Default: 0.08
+                                       # Range: 0.0-0.20
+                                       # Rewards facing toward target
+
+# ============================================================================
+# DISTANCE SHAPING (distance.py)
+# ============================================================================
+
+distance_reward_near: 0.12             # Reward for being near target
+                                       # Default: 0.12
+                                       # Range: 0.0-0.30
+
+distance_reward_near_distance: 1.00    # Distance threshold for "near" bonus
+                                       # Default: 1.00 m
+                                       # Range: 0.5-2.0
+
+distance_reward_far_distance: 2.50     # Distance threshold for "far" transitions
+                                       # Default: 2.50 m
+                                       # Range: 2.0-4.0
+
+distance_penalty_far: 0.08             # Penalty for being too far from target
+                                       # Default: 0.08
+                                       # Range: 0.0-0.20
+
+proximity_penalty_distance: 4.50       # Distance beyond which proximity penalty applies
+                                       # Default: 4.50 m
+                                       # Range: 3.0-8.0
+
+proximity_penalty_value: 0.05          # Penalty per step when too far
+                                       # Default: 0.05
+                                       # Range: 0.01-0.20
+
+# Distance gradient (advanced)
+distance_gradient:
+  scale: 0.20                          # Overall gradient scale
+  time_scaled: true                    # Scale gradient over episode time
+  clip: [-0.20, 0.20]                  # Min/max gradient values
+  points:                              # Distance → reward curve
+    - [0.25, -1.00]                    # Too close (collision risk)
+    - [0.80,  0.70]                    # Sweet spot (close pursuit)
+    - [1.20,  0.60]                    # Good distance
+    - [2.50,  0.00]                    # Neutral
+    - [4.50, -0.60]                    # Too far
+    - [6.00, -1.00]                    # Very far (losing target)
+
+# ============================================================================
+# FORCING MECHANICS (forcing.py) - ADVANCED
+# ============================================================================
+# Enable with: forcing: { enabled: true, ... }
+# These are complex mechanics for advanced attack strategies
+
+# Pinch pocket rewards (geometric forcing zones)
+pocket_reward_weight: 0.12             # Weight for pocket reward
+pinch_anchor_dx: 0.55                  # X offset for pinch anchor
+pinch_anchor_dy: 0.45                  # Y offset for pinch anchor
+pinch_sigma: 0.35                      # Gaussian width for pinch zone
+pinch_in_front_x_min: 0.25             # Min X distance for "in front"
+pinch_pressure_distance: 0.90          # Distance for pinch pressure
+pinch_pressure_heading_tol_deg: 35.0   # Heading tolerance (degrees)
+pinch_pressure_recent_seconds: 1.00    # Time window for recent pressure
+
+# Potential field shaping
+potential_field_weight: 0.80           # Weight for potential field reward
+potential_field_sigma: 0.45            # Field width
+potential_field_radius: 2.00           # Field radius
+potential_field_peak: 0.60             # Peak field value
+potential_field_floor: -0.25           # Minimum field value
+potential_field_power: 2.0             # Field decay exponent
+potential_field_time_scaled: true      # Scale field over time
+
+# Force reward (lateral forcing)
+force_reward_weight: 6.0               # Weight for force reward
+force_reward_enable_ema: true          # Enable exponential moving average
+force_reward_ema_alpha: 0.40           # EMA smoothing factor
+force_reward_band_min: 0.45            # Min distance for force band
+force_reward_band_max: 3.20            # Max distance for force band
+force_reward_clip: 0.25                # Clip force reward
+force_reward_time_scaled: true         # Scale over episode time
+
+# Turn reward (forcing through corners)
+turn_reward_weight: 2.0                # Weight for turn reward
+turn_reward_clip: 0.35                 # Clip turn reward
+turn_reward_time_scaled: true          # Scale over time
+
+# ============================================================================
+# LIDAR GEOMETRY (for distance/heading calculations)
+# ============================================================================
+
+lidar_filter_range_min: 0.15           # Min LiDAR range to consider
+lidar_filter_range_max: 12.0           # Max LiDAR range to consider
+lidar_fov_radians: 4.1887902047863905  # LiDAR field of view (240 deg)
+lidar_range_max: 12.0                  # Max LiDAR range
+target_neighborhood_r_min: 0.30        # Min radius for target detection
+target_neighborhood_r_max: 6.00        # Max radius for target detection
+target_neighborhood_x_band: 2.00       # X-axis band for target detection
+target_side_y_epsilon: 0.05            # Y-axis epsilon for side detection
+
+# ============================================================================
+# LEGACY / UNUSED PARAMETERS
+# ============================================================================
+# These parameters exist in code but are typically disabled
+# Leave at 0.0 unless you know what you're doing
+
+commit_distance: 0.0                   # Distance for commit bonus (disabled)
+commit_heading_threshold: 0.0          # Heading threshold for commit
+commit_speed_threshold: 0.0            # Speed threshold for commit
+commit_bonus: 0.0                      # Commit bonus value
+
+escape_distance: 0.0                   # Distance for escape penalty (disabled)
+escape_penalty: 0.0                    # Escape penalty value
+
+success_border_radius: 0.0             # Border radius for success (disabled)
+success_border_lane_center: 0.0        # Lane center for border
+success_border_requires_pressure: false
+
+target_offsets: null                   # Custom target offsets (disabled)
+target_offset_radius: 0.0
+target_offset_falloff: 0.0
+target_offset_marker_radius: 0.0
+target_offset_marker_segments: 16
+
+relative_reward: null                  # Relative reward (disabled)
+reward_horizon: null                   # Reward horizon
+reward_weight: null                    # Reward weight
+reward_decay: null                     # Reward decay
+reward_smoothing: null                 # Reward smoothing
+reward_ring_focus_agent: null          # Focus agent for reward ring
+
+# ============================================================================
+# QUICK REFERENCE - TYPICAL CONFIGURATIONS
+# ============================================================================
+
+# AGGRESSIVE ATTACKER (high terminal rewards, encourage close combat)
+# target_crash_reward: 100.0
+# self_collision_penalty: -100.0
+# step_reward: -0.02
+# pressure_bonus: 0.15
+# distance_reward_near: 0.15
+
+# CAUTIOUS ATTACKER (lower crash penalties, encourage patience)
+# target_crash_reward: 80.0
+# self_collision_penalty: -60.0
+# step_reward: -0.005
+# pressure_bonus: 0.10
+# distance_reward_near: 0.10
+
+# SPEED-FOCUSED (encourage fast completion)
+# step_reward: -0.02
+# truncation_penalty: -120.0
+# speed_bonus_coef: 0.10
+# idle_penalty: 0.10
+
+# PRECISION-FOCUSED (discourage errors)
+# self_collision_penalty: -150.0
+# brake_penalty: 0.10
+# reverse_penalty: 0.15
+# idle_penalty: 0.08
