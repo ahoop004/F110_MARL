@@ -212,7 +212,7 @@ agents:
       cutback_hold_steps: 8
 
 wandb:
-  enabled: false
+  enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
   tags: [td3, easier, pursuit]
