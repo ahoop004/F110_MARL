@@ -222,24 +222,10 @@ class WrapperFactory:
         # Currently F110 doesn't have a standard action wrapper
         return env
 
-    @staticmethod
-    def wrap_reward(env: Any, config: Dict[str, Any]) -> Any:
-        """Apply reward wrappers to environment.
-
-        Args:
-            env: Environment to wrap
-            config: Reward wrapper configuration
-
-        Returns:
-            wrapped_env: Environment with reward wrappers applied
-        """
-        if not config or not config.get('enabled', False):
-            return env
-
-        from wrappers.reward import RewardWrapper
-
-        reward_config = config.get('config', {})
-        return RewardWrapper(env, **reward_config)
+    # REMOVED: wrap_reward() method
+    # The old task-based reward system has been removed.
+    # Use src/rewards/ with build_reward_strategy() instead.
+    # See docs/REWARD_SYSTEM_REMOVAL.md for migration instructions.
 
     @staticmethod
     def wrap_all(env: Any, wrapper_configs: Dict[str, Any]) -> Any:
@@ -257,7 +243,7 @@ class WrapperFactory:
         Returns:
             wrapped_env: Fully wrapped environment
         """
-        # Apply wrappers in order: observation -> action -> reward
+        # Apply wrappers in order: observation -> action
         if 'observation' in wrapper_configs:
             env = WrapperFactory.wrap_observation(env, wrapper_configs['observation'])
 
@@ -265,7 +251,14 @@ class WrapperFactory:
             env = WrapperFactory.wrap_action(env, wrapper_configs['action'])
 
         if 'reward' in wrapper_configs:
-            env = WrapperFactory.wrap_reward(env, wrapper_configs['reward'])
+            import warnings
+            warnings.warn(
+                "Reward wrapper in config is deprecated and has been removed. "
+                "Use the new reward system in src/rewards/ instead. "
+                "See docs/REWARD_SYSTEM_REMOVAL.md for migration instructions.",
+                DeprecationWarning,
+                stacklevel=2
+            )
 
         return env
 

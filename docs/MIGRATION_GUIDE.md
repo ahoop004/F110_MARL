@@ -699,6 +699,127 @@ You'll need to manually reorganize v1 checkpoints to match v2 structure, or writ
 
 ---
 
+## Old Reward System Removal (December 2024)
+
+### What Was Removed
+
+The old task-based reward system (`src/tasks/reward/`) has been completely removed. This includes:
+
+- **src/tasks/reward/** directory (10 files, ~5,000 lines)
+- **src/wrappers/reward.py** (RewardWrapper class)
+- **Old scenario files** (gaplock_*.yaml, ftg_baseline.yaml, etc.)
+
+### Why It Was Removed
+
+- Duplicated functionality of `src/rewards/` (newer component-based system)
+- Monolithic code (1,655 lines in gaplock.py alone)
+- All active development uses v2 system exclusively
+- Registry-based architecture harder to maintain than composition
+
+### Migration: Old → New Reward System
+
+**OLD scenario format (no longer works):**
+```yaml
+agents:
+  car_0:
+    reward:
+      task: gaplock
+      params:
+        target_crash_reward: 90.0
+        self_collision_penalty: -90.0
+        # ... 200+ parameters
+```
+
+**NEW scenario format (current system):**
+```yaml
+agents:
+  car_0:
+    reward:
+      preset: gaplock_full
+      overrides:
+        terminal:
+          target_crash: 90.0
+          self_crash: -90.0
+```
+
+**OLD Python code (no longer works):**
+```python
+from tasks.reward import resolve_reward_task
+from wrappers.reward import RewardWrapper
+
+strategy, config, notes = resolve_reward_task(context, config=reward_config)
+wrapper = RewardWrapper(config=config, context=context)
+```
+
+**NEW Python code (current system):**
+```python
+from rewards import build_reward_strategy
+
+reward_strategy = build_reward_strategy(
+    reward_config,
+    agent_id='car_0',
+    target_id='car_1'
+)
+
+# In training loop
+total_reward, components = reward_strategy.compute(reward_info)
+```
+
+### Available Presets
+
+Use these in your scenario configs:
+
+- **gaplock_full**: Complete gaplock with all components (pressure, forcing, penalties)
+- **gaplock_simple**: Basic gaplock (terminal + distance shaping only)
+
+See `src/rewards/presets.py` for all available presets and their configurations.
+
+### Old Scenarios → V2 Equivalents
+
+| Old Scenario (removed) | New Equivalent |
+|------------------------|----------------|
+| `scenarios/gaplock_sac.yaml` | `scenarios/v2/gaplock_sac.yaml` |
+| `scenarios/gaplock_ppo.yaml` | `scenarios/v2/gaplock_ppo.yaml` |
+| `scenarios/gaplock_td3.yaml` | `scenarios/v2/gaplock_td3.yaml` |
+| `scenarios/gaplock_rainbow_dqn.yaml` | `scenarios/v2/gaplock_rainbow.yaml` |
+
+### Creating Custom Rewards
+
+To implement custom reward components:
+
+```python
+from rewards.base import RewardComponent
+from typing import Dict
+
+class MyRewardComponent(RewardComponent):
+    """Custom reward component."""
+
+    def __init__(self, config: Dict):
+        self.weight = config.get('weight', 1.0)
+
+    def reset(self, episode_idx: int) -> None:
+        """Reset component state."""
+        pass
+
+    def compute(self, step_info: Dict) -> Dict[str, float]:
+        """Compute rewards for this component."""
+        # Your logic here
+        return {
+            'my_component/reward': 0.5 * self.weight
+        }
+```
+
+Then add to a preset in `src/rewards/presets.py` or use in scenario config.
+
+### Detailed Documentation
+
+For complete details, see:
+- **Removal details**: [REWARD_SYSTEM_REMOVAL.md](REWARD_SYSTEM_REMOVAL.md)
+- **Rollback instructions**: [REWARD_SYSTEM_REMOVAL.md#rollback-instructions](REWARD_SYSTEM_REMOVAL.md#rollback-instructions)
+- **Component examples**: `src/rewards/gaplock/` directory
+
+---
+
 ## Need Help?
 
 - **Examples:** [`v2/examples/`](v2/examples/)

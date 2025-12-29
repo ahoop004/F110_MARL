@@ -70,6 +70,109 @@ python v2/examples/train_ppo_simple.py
 
 ---
 
+## Reward System
+
+This project uses a **component-based reward system** in `src/rewards/` for flexible, composable reward shaping.
+
+### Quick Start with Presets
+
+Use preset-based configurations in your scenario files:
+
+```yaml
+agents:
+  car_0:
+    reward:
+      preset: gaplock_full  # or gaplock_simple
+      overrides:            # optional customization
+        terminal:
+          target_crash: 100.0
+          self_crash: -10.0
+        pressure:
+          distance_threshold: 2.5
+```
+
+**Available presets:**
+- **gaplock_full**: Complete gaplock adversarial task (all components)
+- **gaplock_simple**: Basic gaplock (terminal + distance shaping)
+
+See `src/rewards/presets.py` for all configurations.
+
+### Component-Based Architecture
+
+Rewards are composed of small, focused components:
+
+```python
+from rewards import build_reward_strategy
+
+# Create reward strategy from config
+reward_strategy = build_reward_strategy(
+    config={'preset': 'gaplock_full'},
+    agent_id='car_0',
+    target_id='car_1'
+)
+
+# In training loop
+step_info = {...}  # Build step information dict
+total_reward, components = reward_strategy.compute(step_info)
+
+# Components breakdown for logging
+print(components)
+# {
+#   'terminal/success': 60.0,
+#   'pressure/bonus': 0.12,
+#   'distance/near': 0.08,
+#   'forcing/pinch': 0.15,
+#   ...
+# }
+```
+
+### Custom Reward Components
+
+Create custom components by implementing the `RewardComponent` protocol:
+
+```python
+from rewards.base import RewardComponent
+from typing import Dict
+
+class MyCustomReward(RewardComponent):
+    def __init__(self, config: Dict):
+        self.weight = config.get('weight', 1.0)
+
+    def reset(self, episode_idx: int) -> None:
+        pass  # Reset component state
+
+    def compute(self, step_info: Dict) -> Dict[str, float]:
+        # Your reward logic here
+        return {'my_component/reward': 0.5 * self.weight}
+```
+
+Then add to presets in `src/rewards/presets.py`.
+
+### Running with Rewards
+
+```bash
+# Use v2 scenario with preset rewards
+python run_v2.py --scenario scenarios/v2/gaplock_sac.yaml
+
+# With custom overrides
+python run_v2.py --scenario scenarios/v2/gaplock_custom.yaml
+```
+
+**Examples:**
+- See `scenarios/v2/*.yaml` for scenario configurations
+- See `src/rewards/gaplock/` for component implementations
+- See `docs/MIGRATION_GUIDE.md` for migration from old system
+
+### Deprecated: Old Task-Based System
+
+The old reward system (`src/tasks/reward/`) has been removed. Use `src/rewards/` instead.
+
+For migration instructions, see:
+- [docs/REWARD_SYSTEM_REMOVAL.md](docs/REWARD_SYSTEM_REMOVAL.md)
+- [docs/MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md)
+
+---
+
 ## Architecture Overview
 
 ### v2 (Current - Recommended)
