@@ -122,12 +122,29 @@ agents:
       epsilon_decay_steps: 50000
 
       # Action discretization - 15 actions (5 steering x 3 speed)
-      # Steering: [-1.0, -0.5, 0.0, 0.5, 1.0]
-      # Speed: [0.3, 0.65, 1.0] (slow, medium, fast)
-      action_discretization:
-        type: "product"          # Cartesian product of dimensions
-        steering_bins: [-1.0, -0.5, 0.0, 0.5, 1.0]
-        speed_bins: [0.3, 0.65, 1.0]
+      # Cartesian product of steering × speed
+      # Format: [steering, speed] where steering ∈ [-1, 1], speed ∈ [0, 1]
+      action_set:
+        # Hard left steering
+        - [-1.0, 0.3]   # Hard left, slow
+        - [-1.0, 0.65]  # Hard left, medium
+        - [-1.0, 1.0]   # Hard left, fast
+        # Medium left steering
+        - [-0.5, 0.3]   # Left, slow
+        - [-0.5, 0.65]  # Left, medium
+        - [-0.5, 1.0]   # Left, fast
+        # Straight
+        - [0.0, 0.3]    # Straight, slow
+        - [0.0, 0.65]   # Straight, medium
+        - [0.0, 1.0]    # Straight, fast
+        # Medium right steering
+        - [0.5, 0.3]    # Right, slow
+        - [0.5, 0.65]   # Right, medium
+        - [0.5, 1.0]    # Right, fast
+        # Hard right steering
+        - [1.0, 0.3]    # Hard right, slow
+        - [1.0, 0.65]   # Hard right, medium
+        - [1.0, 1.0]    # Hard right, fast
 
       prevent_reverse: true
       prevent_reverse_min_speed: 0.01
