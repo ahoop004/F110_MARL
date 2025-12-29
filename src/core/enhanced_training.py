@@ -259,6 +259,11 @@ class EnhancedTrainingLoop:
                 if not done[agent_id]:
                     # Flatten observation if preset configured
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
+
+                    # Normalize observation if enabled
+                    if self.obs_normalizer:
+                        flat_obs = self.obs_normalizer.normalize(agent_id, flat_obs, update=True)
+
                     actions[agent_id] = agent.act(flat_obs, deterministic=False)
 
             # Step environment
@@ -321,6 +326,11 @@ class EnhancedTrainingLoop:
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
                     flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
 
+                    # Normalize observations if enabled (don't update stats here, already updated during action selection)
+                    if self.obs_normalizer:
+                        flat_obs = self.obs_normalizer.normalize(agent_id, flat_obs, update=False)
+                        flat_next_obs = self.obs_normalizer.normalize(agent_id, flat_next_obs, update=False)
+
                     # Different storage methods for on-policy vs off-policy
                     terminated = terminations.get(agent_id, False)
                     truncated = truncations.get(agent_id, False)
@@ -332,6 +342,9 @@ class EnhancedTrainingLoop:
                     else:
                         # Off-policy agents: store_transition(obs, action, reward, next_obs, done)
                         agent.store_transition(flat_obs, actions[agent_id], rewards[agent_id], flat_next_obs, done_flag)
+
+                        # Update off-policy agents every step (they internally check if buffer is ready)
+                        agent.update()
 
             # Update observations and done flags
             obs = next_obs
@@ -600,7 +613,7 @@ class EnhancedTrainingLoop:
         stats = {}
         for agent_id, tracker in self.metrics_trackers.items():
             stats[agent_id] = {
-                'episodes': tracker.episodes,
+                'episodes': [ep.to_dict() for ep in tracker.episodes],
                 'rolling_stats': tracker.get_rolling_stats(),
                 'outcome_counts': tracker.get_outcome_counts(),
             }
