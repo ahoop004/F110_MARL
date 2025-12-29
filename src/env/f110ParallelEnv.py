@@ -103,7 +103,7 @@ class F110ParallelEnv(ParallelEnv):
         self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
             self.lidar_beams = 1080
-        self.lidar_range = float(merged.get("lidar_range", 30.0))
+        self.lidar_range = float(merged.get("lidar_range", 12.0))
         self._lidar_beam_count = max(int(self.lidar_beams), 1)
 
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))

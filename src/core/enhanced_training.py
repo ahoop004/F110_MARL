@@ -112,13 +112,15 @@ class EnhancedTrainingLoop:
 
         # Observation normalization
         self.normalize_observations = normalize_observations
+        self.obs_clip = obs_clip
         self.obs_normalizer: Optional[ObservationNormalizer] = None
         if self.normalize_observations:
             # Get observation shape from first agent
             first_agent_id = list(agents.keys())[0]
             obs_space = env.observation_spaces[first_agent_id]
-            obs_shape = obs_space.shape
-            self.obs_normalizer = ObservationNormalizer(obs_shape, clip=obs_clip)
+            obs_shape = getattr(obs_space, "shape", None)
+            if obs_shape is not None:
+                self.obs_normalizer = ObservationNormalizer(obs_shape, clip=obs_clip)
 
         # Initialize metrics tracker for each agent
         self.metrics_trackers = {
@@ -155,6 +157,21 @@ class EnhancedTrainingLoop:
             return flatten_observation(combined_obs, preset=preset, target_id=target_id)
         else:
             return flatten_observation(obs, preset=preset, target_id=target_id)
+
+    def _ensure_obs_normalizer(self, obs: np.ndarray) -> None:
+        """Initialize or refresh observation normalizer based on actual obs shape."""
+        if not self.normalize_observations:
+            return
+        if self.obs_normalizer is None:
+            self.obs_normalizer = ObservationNormalizer(obs.shape, clip=self.obs_clip)
+            return
+        if getattr(self.obs_normalizer, "obs_shape", None) != obs.shape:
+            logger.warning(
+                "Observation shape changed from %s to %s; resetting normalizer.",
+                self.obs_normalizer.obs_shape,
+                obs.shape,
+            )
+            self.obs_normalizer = ObservationNormalizer(obs.shape, clip=self.obs_clip)
 
     def run(self, episodes: int, start_episode: int = 0) -> Dict[str, Any]:
         """Run training for specified number of episodes.
@@ -254,6 +271,11 @@ class EnhancedTrainingLoop:
         episode_reward_components = {agent_id: {} for agent_id in self.agents.keys()}
         episode_steps = 0
         done = {agent_id: False for agent_id in self.agents.keys()}
+        success_transitions = {
+            agent_id: []
+            for agent_id, agent in self.agents.items()
+            if callable(getattr(agent, "store_success_transition", None))
+        }
 
         # Run episode
         while not all(done.values()) and episode_steps < self.max_steps_per_episode:
@@ -266,6 +288,8 @@ class EnhancedTrainingLoop:
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
 
                     # Normalize observation if enabled (only for numpy arrays, not dicts)
+                    if isinstance(flat_obs, np.ndarray):
+                        self._ensure_obs_normalizer(flat_obs)
                     if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
                         flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=True)
 
@@ -344,6 +368,8 @@ class EnhancedTrainingLoop:
 
                     # Process next observation (only needs to be done once)
                     flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
+                    if isinstance(flat_next_obs, np.ndarray):
+                        self._ensure_obs_normalizer(flat_next_obs)
                     if self.obs_normalizer and isinstance(flat_next_obs, np.ndarray):
                         flat_next_obs = self.obs_normalizer.normalize(flat_next_obs, agent_id, update_stats=False)
 
@@ -366,6 +392,19 @@ class EnhancedTrainingLoop:
                             logger.error(f"Agent {agent_id} update failed at episode {episode_num}, step {episode_steps}: {e}")
                             # Continue training - this update will be skipped but training continues
 
+                    if (
+                        agent_id in success_transitions
+                        and isinstance(flat_obs, np.ndarray)
+                        and isinstance(flat_next_obs, np.ndarray)
+                    ):
+                        success_transitions[agent_id].append((
+                            np.asarray(flat_obs, dtype=np.float32).copy(),
+                            np.asarray(actions[agent_id]).copy() if not np.isscalar(actions[agent_id]) else actions[agent_id],
+                            float(rewards[agent_id]),
+                            np.asarray(flat_next_obs, dtype=np.float32).copy(),
+                            bool(done_flag),
+                        ))
+
             # Update observations and done flags
             obs = next_obs
             for agent_id in self.agents.keys():
@@ -381,6 +420,7 @@ class EnhancedTrainingLoop:
         # Update agents and collect trainer stats
         trainer_stats = {}
         for agent_id, agent in self.agents.items():
+            update_stats = None
             try:
                 update_stats = agent.update()
                 if update_stats:
@@ -389,21 +429,22 @@ class EnhancedTrainingLoop:
             except Exception as e:
                 logger.error(f"Agent {agent_id} update failed after episode {episode_num}: {e}")
                 # Continue with next agent
+                continue
 
-                # Log trainer stats to W&B
-                if self.wandb_logger:
-                    log_dict = {}
-                    # Get algorithm name for this agent (if available)
-                    algo_name = self.agent_algorithms.get(agent_id, None)
+            # Log trainer stats to W&B
+            if self.wandb_logger and update_stats:
+                log_dict = {}
+                # Get algorithm name for this agent (if available)
+                algo_name = self.agent_algorithms.get(agent_id, None)
 
-                    for stat_name, stat_value in update_stats.items():
-                        # Namespace by agent_id/algorithm/metric
-                        if algo_name:
-                            log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
-                        else:
-                            # Fallback to old style if algorithm not specified
-                            log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
-                    self.wandb_logger.log_metrics(log_dict, step=episode_num)
+                for stat_name, stat_value in update_stats.items():
+                    # Namespace by agent_id/algorithm/metric
+                    if algo_name:
+                        log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
+                    else:
+                        # Fallback to old style if algorithm not specified
+                        log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
+                self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Determine episode outcome for each agent
         final_info = step_info if episode_steps > 0 else info
@@ -438,6 +479,15 @@ class EnhancedTrainingLoop:
                     rolling_stats=rolling_stats,
                     agent_id=agent_id,
                 )
+
+            # Populate success replay buffer for off-policy agents
+            if outcome.is_success() and agent_id in success_transitions:
+                transitions = success_transitions.get(agent_id, [])
+                if transitions:
+                    store_success = getattr(self.agents[agent_id], "store_success_transition", None)
+                    if callable(store_success):
+                        for obs_t, act_t, rew_t, next_obs_t, done_t in transitions:
+                            store_success(obs_t, act_t, rew_t, next_obs_t, done_t)
 
             # Log to console (only for first agent to avoid clutter)
             if self.console_logger and agent_id == list(self.agents.keys())[0]:
@@ -554,10 +604,14 @@ class EnhancedTrainingLoop:
         # Get timestep from environment if available, otherwise use default
         timestep = getattr(self.env, 'timestep', 0.01)
 
+        info_for_agent = info
+        if isinstance(info, dict):
+            info_for_agent = info.get(agent_id, info)
+
         reward_info = {
             'obs': obs.get(agent_id, {}),
             'next_obs': next_obs.get(agent_id, {}),
-            'info': info,
+            'info': info_for_agent,
             'step': step,
             'done': done,  # Actual done flag from environment
             'truncated': truncated,  # Actual truncated flag from environment
@@ -580,9 +634,9 @@ class EnhancedTrainingLoop:
         Returns:
             Target agent ID or None
         """
-        # Check if target_id is stored in agent_target_ids mapping (set during init)
-        if hasattr(self, 'agent_target_ids') and agent_id in self.agent_target_ids:
-            return self.agent_target_ids[agent_id]
+        # Check if target_id is stored in target_ids mapping (set during init)
+        if agent_id in self.target_ids:
+            return self.target_ids[agent_id]
 
         # Fallback: simple heuristic for 2-agent scenarios
         agent_ids = list(self.agents.keys())

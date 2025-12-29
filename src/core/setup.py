@@ -85,9 +85,10 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
         random.seed(seed)
 
     # Build environment configuration
+    num_agents = env_config.get('num_agents', env_config.get('n_agents', 1))
     env_kwargs = {
         'map': env_config['map'],
-        'num_agents': env_config['num_agents'],
+        'n_agents': num_agents,
         'timestep': env_config.get('timestep', 0.01),
         'max_steps': env_config.get('max_steps', 5000),
     }
@@ -95,6 +96,8 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
     # Add optional environment parameters
     if 'lidar_beams' in env_config:
         env_kwargs['lidar_beams'] = env_config['lidar_beams']
+    if 'lidar_range' in env_config:
+        env_kwargs['lidar_range'] = env_config['lidar_range']
     if 'render' in env_config:
         env_kwargs['render_mode'] = 'human' if env_config['render'] else None
     if 'vehicle_params' in env_config:

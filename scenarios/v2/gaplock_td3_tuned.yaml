@@ -1,0 +1,218 @@
+# Gaplock TD3 - Heavily Tuned for Fast Convergence
+# Combines: weaker defender + dense rewards + aggressive exploration
+
+experiment:
+  name: gaplock_td3_tuned
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 2500
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+  render: false
+
+  spawn_curriculum:
+    enabled: true
+    window: 100          # Shorter window for faster adaptation
+    activation_samples: 30
+    min_episode: 30      # Start curriculum earlier
+    enable_patience: 3   # Advance faster
+    disable_patience: 2
+    cooldown: 15
+    lock_speed_steps: 100  # Shorter speed lock
+
+    stages:
+      # Stage 0: Very close, very slow (almost guaranteed success)
+      - name: "trivial"
+        spawn_points: [spawn_pinch_ahead]
+        speed_range: [0.3, 0.3]   # Both very slow
+        enable_rate: 0.70         # Easy threshold
+
+      # Stage 1: Close, slow
+      - name: "easy"
+        spawn_points: [spawn_pinch_ahead]
+        speed_range: [0.4, 0.5]
+        enable_rate: 0.60
+        disable_rate: 0.40
+
+      # Stage 2: Close, varied speed
+      - name: "medium"
+        spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.4, 0.7]
+        enable_rate: 0.55
+        disable_rate: 0.35
+
+      # Stage 3: Full challenge
+      - name: "hard"
+        spawn_points: "all"
+        speed_range: [0.3, 1.0]
+        disable_rate: 0.40
+
+    spawn_configs:
+      spawn_pinch_right:
+        car_0: [-45.569, -1.000, 0.100]
+        car_1: [-46.769, -0.700, 0.000]
+      spawn_pinch_left:
+        car_0: [-45.569, -0.400, -0.100]
+        car_1: [-46.769, -0.700, 0.000]
+      spawn_pinch_ahead:
+        car_0: [-45.569, -0.700, 0.000]   # Very close
+        car_1: [-46.769, -0.700, 0.000]
+
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    length: 0.32
+    width: 0.225
+    m: 3.74
+    I: 0.04712
+    s_min: -0.46
+    s_max: 0.46
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: td3
+    target_id: car_1
+
+    params:
+      lr_actor: 0.0003
+      lr_critic: 0.0003
+      gamma: 0.99            # Slightly lower for faster learning
+      tau: 0.01              # Faster target network updates
+      policy_delay: 2
+      hidden_dims: [256, 256]
+      buffer_size: 500000    # Smaller buffer (faster sampling)
+      success_buffer_size: 200000
+      success_buffer_ratio: 0.2
+      batch_size: 256
+      learning_starts: 1000  # Start learning earlier!
+      max_grad_norm: 0.5
+
+      # AGGRESSIVE exploration schedule
+      exploration_noise: 0.25         # High initial noise
+      exploration_noise_decay: 0.999  # Slower decay
+      exploration_noise_min: 0.08     # Keep more exploration
+      target_noise: 0.25
+      target_noise_clip: 0.6
+
+      use_per: true
+      per_alpha: 0.7         # Higher priority to TD error
+      per_beta: 0.4
+      per_beta_increment: 0.001
+      per_epsilon: 0.01
+
+      prevent_reverse: true
+      prevent_reverse_min_speed: 0.01
+      prevent_reverse_speed_index: 1
+
+    observation:
+      preset: gaplock
+
+    # DENSE REWARD - Multiple reward signals
+    reward:
+      preset: gaplock_simple
+
+      overrides:
+        # Forcing rewards (Gaussian pinch pockets) - REBALANCED: 10x reduction
+        forcing:
+          enabled: true
+          pinch_pockets:
+            enabled: true
+            anchor_forward: 1.20  # Distance ahead of target (m)
+            anchor_lateral: 0.4  # Distance to side of target (m) - adjusted for narrow track
+            sigma: 0.55           # Gaussian width (m)
+            weight: 0.08          # REBALANCED: was 0.80
+            # Potential field mode (if peak/floor specified, uses field mapping instead of simple Gaussian)
+            peak: 1.0             # Max reward at optimal position
+            floor: -0.5           # Min reward when far from optimal
+            power: 2.0            # Field decay exponent
+          clearance:
+            enabled: true
+            weight: 0.08          # REBALANCED: was 0.80
+            band_min: 0.30        # Min clearance for reward (m)
+            band_max: 3.20        # Max clearance for reward (m)
+            clip: 0.015           # REBALANCED: was 0.15
+            time_scaled: true
+          turn:
+            enabled: true
+            weight: 0.2           # REBALANCED: was 2.0
+            clip: 0.015           # REBALANCED: was 0.15
+            time_scaled: true
+
+        # Distance-based shaping
+        distance:
+          enabled: false
+          near_distance: 1.0      # Close range (m)
+          far_distance: 2.5       # Far range (m)
+          reward_near: 0.12       # Reward when near
+          penalty_far: 0.08       # Penalty when far
+
+        # Heading alignment
+        heading:
+          enabled: true
+          coefficient: 0.008      # REBALANCED: was 0.08
+
+        # Speed bonus
+        speed:
+          enabled: true
+          bonus_coef: 0.005       # REBALANCED: was 0.05
+
+        # Step penalty (constant per-step reward)
+        step_reward: -0.01        # Small penalty per step to encourage faster completion
+
+        # Terminal rewards (OPTIMIZED: Scaled down)
+        terminal:
+          target_crash: 10.0      # OPTIMIZED: was 60.0
+          self_crash: -10.0       # OPTIMIZED: was -40.0
+          timeout: -5.0           # OPTIMIZED: was -90.0
+
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+    params:
+      max_distance: 12.0
+      window_size: 4
+      bubble_radius: 4         # VERY cautious (easier to catch)
+      max_steer: 0.32
+
+      min_speed: 0.2
+      max_speed: 0.6           # SLOW defender initially
+
+      steering_gain: 0.45      # Less aggressive
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5        # Smoother (slower reactions)
+      mode: "lidar"
+      gap_min_range: 0.65
+      target_mode: "farthest"
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+      no_cutback_enabled: true
+      cutback_clearance: 0.9
+      cutback_hold_steps: 8
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  tags: [td3, tuned, dense_rewards]
+  notes: "Heavily tuned TD3 with very weak defender and dense rewards"

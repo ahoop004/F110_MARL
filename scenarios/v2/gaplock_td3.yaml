@@ -133,6 +133,8 @@ agents:
       policy_delay: 2
       hidden_dims: [256, 256]     # OPTIMIZED: Smaller networks (was [512, 256, 128])
       buffer_size: 1000000
+      success_buffer_size: 200000
+      success_buffer_ratio: 0.2
       batch_size: 256
       learning_starts: 2500       # OPTIMIZED: Reduced (was 10000)
       exploration_noise: 0.1

@@ -40,8 +40,8 @@ class TD3Agent:
         hard_update(self.critic_target1, self.critic1)
         hard_update(self.critic_target2, self.critic2)
 
-        self.actor_lr = float(cfg.get("actor_lr", 1e-3))
-        self.critic_lr = float(cfg.get("critic_lr", 1e-3))
+        self.actor_lr = float(cfg.get("actor_lr", cfg.get("lr_actor", 1e-3)))
+        self.critic_lr = float(cfg.get("critic_lr", cfg.get("lr_critic", 1e-3)))
 
         self.actor_opt = self._init_optimizer(
             self.actor.parameters(),
@@ -65,7 +65,7 @@ class TD3Agent:
         self.noise_clip = float(cfg.get("noise_clip", 0.5))
         self.policy_delay = int(cfg.get("policy_delay", 2))
         self.batch_size = int(cfg.get("batch_size", 128))
-        self.warmup_steps = int(cfg.get("warmup_steps", 1000))
+        self.warmup_steps = int(cfg.get("warmup_steps", cfg.get("learning_starts", 1000)))
         self.exploration_noise_initial = float(cfg.get("exploration_noise", 0.1))
         self.exploration_noise_final = float(
             cfg.get("exploration_noise_final", self.exploration_noise_initial)

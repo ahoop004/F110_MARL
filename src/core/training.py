@@ -129,12 +129,13 @@ class TrainingLoop:
             step += 1
 
             # Off-policy updates (every step)
-            if self.agent_types.get(list(self.agents.keys())[0]) == "off_policy":
-                for agent_id, agent in self.agents.items():
-                    if step % self.update_frequency == 0:
-                        stats = agent.update()
-                        if stats:
-                            training_stats[agent_id] = stats
+            for agent_id, agent in self.agents.items():
+                if self.agent_types.get(agent_id) != "off_policy":
+                    continue
+                if step % self.update_frequency == 0:
+                    stats = agent.update()
+                    if stats:
+                        training_stats[agent_id] = stats
 
         # On-policy updates (end of episode)
         for agent_id, agent in self.agents.items():

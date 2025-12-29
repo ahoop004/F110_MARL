@@ -45,8 +45,10 @@ class PPOAgent(BasePPOAgent):
         self.critic = Critic(self.obs_dim).to(self.device)
 
         # Optimizers (cast LR to float in case YAML gave strings)
-        self.actor_opt = optim.Adam(self.actor.parameters(), lr=float(cfg.get("actor_lr", 3e-4)))
-        self.critic_opt = optim.Adam(self.critic.parameters(), lr=float(cfg.get("critic_lr", 1e-3)))
+        actor_lr = float(cfg.get("actor_lr", cfg.get("lr", 3e-4)))
+        critic_lr = float(cfg.get("critic_lr", cfg.get("lr", 1e-3)))
+        self.actor_opt = optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.critic_opt = optim.Adam(self.critic.parameters(), lr=critic_lr)
 
         # Learning rate schedulers (optional)
         self.actor_scheduler = self._init_scheduler(self.actor_opt, cfg.get("actor_lr_scheduler"))

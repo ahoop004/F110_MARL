@@ -40,15 +40,15 @@ class BasePPOAgent:
 
         self.gamma = float(cfg.get("gamma", 0.99))
         self.lam = float(cfg.get("lam", cfg.get("gae_lambda", 0.95)))
-        self.clip_eps = float(cfg.get("clip_eps", 0.2))
-        self.update_epochs = int(cfg.get("update_epochs", 10))
-        self.minibatch_size = int(cfg.get("minibatch_size", 64))
+        self.clip_eps = float(cfg.get("clip_eps", cfg.get("clip_epsilon", 0.2)))
+        self.update_epochs = int(cfg.get("update_epochs", cfg.get("n_epochs", 10)))
+        self.minibatch_size = int(cfg.get("minibatch_size", cfg.get("batch_size", 64)))
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
         self.normalize_advantage = bool(cfg.get("normalize_adv", True))
         self.episode_batch = bool(cfg.get("episode_batch", False))
         self.clip_value_loss = bool(cfg.get("clip_value_loss", True))
 
-        base_ent_coef = float(cfg.get("ent_coef", 0.0))
+        base_ent_coef = float(cfg.get("ent_coef", cfg.get("entropy_coef", 0.0)))
         schedule_cfg = cfg.get("ent_coef_schedule") or {}
         self.entropy = EntropySchedule(
             initial=float(schedule_cfg.get("start", base_ent_coef)),

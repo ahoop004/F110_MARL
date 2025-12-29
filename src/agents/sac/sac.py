@@ -32,8 +32,8 @@ class SACAgent:
         hard_update(self.q1_target, self.q1)
         hard_update(self.q2_target, self.q2)
 
-        self.actor_lr = float(cfg.get("actor_lr", 3e-4))
-        self.critic_lr = float(cfg.get("critic_lr", 3e-4))
+        self.actor_lr = float(cfg.get("actor_lr", cfg.get("lr_actor", 3e-4)))
+        self.critic_lr = float(cfg.get("critic_lr", cfg.get("lr_critic", 3e-4)))
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
         self.q1_opt = torch.optim.Adam(self.q1.parameters(), lr=self.critic_lr)
         self.q2_opt = torch.optim.Adam(self.q2.parameters(), lr=self.critic_lr)
@@ -42,11 +42,11 @@ class SACAgent:
         self.tau = float(cfg.get("tau", 0.005))
         self.batch_size = int(cfg.get("batch_size", 256))
         self.buffer_size = int(cfg.get("buffer_size", 1_000_000))
-        self.warmup_steps = int(cfg.get("warmup_steps", 10_000))
+        self.warmup_steps = int(cfg.get("warmup_steps", cfg.get("learning_starts", 10_000)))
 
         self.auto_alpha = bool(cfg.get("auto_alpha", True))
         init_alpha = float(cfg.get("alpha", 0.2))
-        self.alpha_lr = float(cfg.get("alpha_lr", cfg.get("actor_lr", 3e-4)))
+        self.alpha_lr = float(cfg.get("alpha_lr", cfg.get("lr_alpha", self.actor_lr)))
         if self.auto_alpha:
             self.log_alpha = torch.tensor(np.log(init_alpha), dtype=torch.float32, device=self.device, requires_grad=True)
             self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.alpha_lr)

@@ -30,18 +30,18 @@ environment:
       - name: "close_slow"
         spawn_points: [spawn_pinch_ahead]  # Start close
         speed_range: [0.4, 0.4]  # Both slow
-        enable_rate: 0.50  # Lower threshold
+        enable_rate: 0.60  # Require consistent wins before advancing
 
       - name: "close_varied"
         spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
         speed_range: [0.4, 0.7]  # Moderate speed
-        enable_rate: 0.60
-        disable_rate: 0.40
+        enable_rate: 0.65
+        disable_rate: 0.45
 
       - name: "full_random"
         spawn_points: "all"
         speed_range: [0.3, 1.0]
-        disable_rate: 0.45
+        disable_rate: 0.50
 
     spawn_configs:
       spawn_pinch_right:
@@ -81,17 +81,20 @@ agents:
     target_id: car_1
 
     params:
-      lr_actor: 0.0003
-      lr_critic: 0.0003
-      lr_alpha: 0.0003
+      actor_lr: 0.0003
+      critic_lr: 0.0003
+      alpha_lr: 0.0003
       gamma: 0.995
       tau: 0.005
-      alpha: 0.5
-      target_entropy: -1.0
+      auto_alpha: true
+      alpha: 0.2
+      target_entropy: -2.0
       hidden_dims: [256, 256]
       buffer_size: 1000000
+      success_buffer_size: 200000
+      success_buffer_ratio: 0.2
       batch_size: 256
-      learning_starts: 2500
+      warmup_steps: 5000
       max_grad_norm: 0.5
 
       use_per: true
@@ -107,37 +110,71 @@ agents:
     observation:
       preset: gaplock
 
-    # SIMPLIFIED REWARD - Focus on pursuit
+    # REWARD - Encourage clean pinches (target crash without self-crash)
     reward:
       preset: gaplock_simple
 
       overrides:
-        # PRIMARY: Distance-based pursuit reward
+        # PRIMARY: Terminal outcomes (favor clean pinches)
+        terminal:
+          target_crash: 30.0
+          self_crash: -40.0
+          collision: -80.0
+          timeout: -5.0
+
+        # PRIMARY: Pressure (stay close, stay aligned)
+        pressure:
+          enabled: true
+          distance_threshold: 1.20
+          min_speed: 0.25
+          heading_tolerance: 1.20
+          bonus: 0.12
+          bonus_interval: 5
+          streak_bonus: 0.10
+          streak_cap: 30
+
+        # PRIMARY: Distance-based shaping
         distance:
           enabled: true
-          near_distance: 2.0      # Generous "near" threshold
-          far_distance: 4.0       # Generous "far" threshold
-          reward_near: 0.2        # Strong reward for being close
-          penalty_far: 0.05       # Gentle penalty for being far
+          near_distance: 1.25
+          far_distance: 2.75
+          reward_near: 0.15
+          penalty_far: 0.1
+
+        # PRIMARY: Forcing/pinch shaping
+        forcing:
+          enabled: true
+          pinch_pockets:
+            enabled: true
+            anchor_forward: 1.20
+            anchor_lateral: 0.4
+            sigma: 0.60
+            weight: 0.12
+          clearance:
+            enabled: true
+            weight: 0.08
+            band_min: 0.30
+            band_max: 3.00
+            clip: 0.02
+            time_scaled: true
+          turn:
+            enabled: true
+            weight: 0.15
+            clip: 0.02
+            time_scaled: true
 
         # SECONDARY: Heading alignment (point towards target)
         heading:
           enabled: true
-          coefficient: 0.02       # Reward for facing target
+          coefficient: 0.01
 
         # SECONDARY: Speed bonus (move fast)
         speed:
           enabled: true
-          bonus_coef: 0.01
+          bonus_coef: 0.006
 
         # Small step penalty
-        step_reward: -0.005
-
-        # STRONG terminal rewards
-        terminal:
-          target_crash: 25.0      # Big reward for success!
-          self_crash: -10.0       # Moderate penalty for failure
-          timeout: -2.0           # Small penalty for timeout
+        step_reward: -0.01
 
   car_1:
     role: defender
