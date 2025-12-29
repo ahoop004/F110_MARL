@@ -262,7 +262,7 @@ class EnhancedTrainingLoop:
 
                     # Normalize observation if enabled
                     if self.obs_normalizer:
-                        flat_obs = self.obs_normalizer.normalize(agent_id, flat_obs, update=True)
+                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=True)
 
                     actions[agent_id] = agent.act(flat_obs, deterministic=False)
 
@@ -328,8 +328,8 @@ class EnhancedTrainingLoop:
 
                     # Normalize observations if enabled (don't update stats here, already updated during action selection)
                     if self.obs_normalizer:
-                        flat_obs = self.obs_normalizer.normalize(agent_id, flat_obs, update=False)
-                        flat_next_obs = self.obs_normalizer.normalize(agent_id, flat_next_obs, update=False)
+                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=False)
+                        flat_next_obs = self.obs_normalizer.normalize(flat_next_obs, agent_id, update_stats=False)
 
                     # Different storage methods for on-policy vs off-policy
                     terminated = terminations.get(agent_id, False)

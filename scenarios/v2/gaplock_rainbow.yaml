@@ -151,8 +151,8 @@ agents:
       noisy_layers: true        # Noisy networks for exploration (instead of epsilon-greedy)
       noisy_sigma0: 0.5         # Initial noise parameter
       atoms: 51                 # Categorical DQN atoms
-      v_min: -100.0             # Min value support
-      v_max: 100.0              # Max value support
+      v_min: -250.0             # Min value support (covers -190 to +280 actual range)
+      v_max: 300.0              # Max value support
       n_step: 3                 # N-step returns
       use_per: true             # Prioritized experience replay
       epsilon_enabled: false    # Disabled (using noisy layers instead)
