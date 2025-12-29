@@ -9,7 +9,7 @@ experiment:
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
-  max_steps: 2500
+  max_steps: 2000
   lidar_beams: 108
   spawn_points: [spawn_2, spawn_1]
   timestep: 0.01
@@ -24,24 +24,24 @@ environment:
     enable_patience: 5
     disable_patience: 3
     cooldown: 20
-    lock_speed_steps: 175
+    lock_speed_steps: 250
 
     stages:
       - name: "close_slow"
         spawn_points: [spawn_pinch_ahead]
         speed_range: [0.4, 0.4]
-        enable_rate: 0.50
+        enable_rate: 0.65
 
       - name: "close_varied"
         spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
         speed_range: [0.4, 0.7]
-        enable_rate: 0.60
-        disable_rate: 0.40
+        enable_rate: 0.70
+        disable_rate: 0.50
 
       - name: "full_random"
         spawn_points: "all"
         speed_range: [0.3, 1.0]
-        disable_rate: 0.45
+        disable_rate: 0.55
 
     spawn_configs:
       spawn_pinch_right:
@@ -130,28 +130,28 @@ agents:
         # PRIMARY: Terminal outcomes (favor clean pinches)
         terminal:
           target_crash: 30.0
-          self_crash: -40.0
-          collision: -80.0
-          timeout: -5.0
+          self_crash: -60.0
+          collision: -120.0
+          timeout: -10.0
 
         # PRIMARY: Pressure (stay close, stay aligned)
         pressure:
           enabled: true
-          distance_threshold: 1.20
+          distance_threshold: 1.10
           min_speed: 0.25
-          heading_tolerance: 1.20
-          bonus: 0.12
+          heading_tolerance: 1.00
+          bonus: 0.10
           bonus_interval: 5
-          streak_bonus: 0.10
-          streak_cap: 30
+          streak_bonus: 0.08
+          streak_cap: 25
 
         # PRIMARY: Distance-based shaping
         distance:
           enabled: true
-          near_distance: 1.25
-          far_distance: 2.75
-          reward_near: 0.15
-          penalty_far: 0.1
+          near_distance: 1.20
+          far_distance: 2.50
+          reward_near: 0.10
+          penalty_far: 0.06
 
         # PRIMARY: Forcing/pinch shaping
         forcing:
@@ -159,31 +159,31 @@ agents:
           pinch_pockets:
             enabled: true
             anchor_forward: 1.20
-            anchor_lateral: 0.4
+            anchor_lateral: 0.35
             sigma: 0.60
-            weight: 0.12
+            weight: 0.10
           clearance:
             enabled: true
-            weight: 0.08
+            weight: 0.06
             band_min: 0.30
             band_max: 3.00
             clip: 0.02
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.15
+            weight: 0.12
             clip: 0.02
             time_scaled: true
 
         # SECONDARY: Heading alignment (point towards target)
         heading:
           enabled: true
-          coefficient: 0.01
+          coefficient: 0.008
 
         # SECONDARY: Speed bonus (move fast)
         speed:
           enabled: true
-          bonus_coef: 0.006
+          bonus_coef: 0.004
 
         # Small step penalty
         step_reward: -0.01
@@ -195,13 +195,13 @@ agents:
     params:
       max_distance: 12.0
       window_size: 4
-      bubble_radius: 3
-      max_steer: 0.32
+      bubble_radius: 3.5
+      max_steer: 0.30
 
       min_speed: 0.2
-      max_speed: 0.7             # Slower than attacker
+      max_speed: 0.6             # Slower than attacker
 
-      steering_gain: 0.5
+      steering_gain: 0.4
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.4
@@ -211,9 +211,9 @@ agents:
       use_disparity_extender: true
       disparity_threshold: 0.35
       vehicle_width: 0.225
-      safety_margin: 0.08
+      safety_margin: 0.12
       no_cutback_enabled: true
-      cutback_clearance: 0.9
+      cutback_clearance: 1.0
       cutback_hold_steps: 8
 
 wandb:
