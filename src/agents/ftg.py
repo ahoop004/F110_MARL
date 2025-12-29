@@ -234,17 +234,24 @@ class FollowTheGapPolicy:
         return snapshot
 
     def preprocess_lidar(self, ranges, min_scan: Optional[float] = None) -> np.ndarray:
-        """Smooth LiDAR with moving average + clip to max_distance."""
+        """Smooth LiDAR with moving average + clip to max_distance.
+
+        Optimized to use pre-allocated numpy array instead of Python list.
+        """
         N = len(ranges)
         window = self._adaptive_window_size(min_scan)
         half = window // 2
-        proc = []
+
+        # Pre-allocate output array for better performance
+        proc = np.empty(N, dtype=np.float32)
+
         for i in range(N):
             start = max(0, i - half)
             end = min(N - 1, i + half)
             avg = np.mean(np.clip(ranges[start:end+1], 0, self.max_distance))
-            proc.append(avg)
-        return np.array(proc)
+            proc[i] = avg
+
+        return proc
 
     def create_bubble(self, proc, min_scan: Optional[float] = None) -> np.ndarray:
         """Zero out a bubble around the closest obstacle."""

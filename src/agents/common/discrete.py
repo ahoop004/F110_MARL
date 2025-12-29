@@ -350,10 +350,37 @@ def _resolve_success_mix(
     return success_count, main_count
 
 
+def _merge_indices(
+    main_indices: Optional[np.ndarray],
+    success_indices: Optional[np.ndarray],
+    success_batch_size: int,
+) -> Optional[np.ndarray]:
+    """Merge indices from main and success buffers.
+
+    Args:
+        main_indices: Indices from main buffer (or None)
+        success_indices: Indices from success buffer (or None)
+        success_batch_size: Number of samples from success buffer
+
+    Returns:
+        Merged indices array, or None if main_indices is None
+    """
+    if main_indices is None:
+        return None
+
+    main_idx = np.asarray(main_indices, dtype=np.int64).reshape(-1)
+    if success_indices is None:
+        success_idx = np.full((success_batch_size,), -1, dtype=np.int64)
+    else:
+        success_idx = np.asarray(success_indices, dtype=np.int64).reshape(-1)
+    return np.concatenate([main_idx, success_idx], axis=0)
+
+
 def _merge_replay_samples(
     main: Optional[ReplaySample],
     success: ReplaySample,
 ) -> ReplaySample:
+    """Merge main and success replay samples for discrete-action agents."""
     if main is None:
         return success
 
@@ -365,14 +392,8 @@ def _merge_replay_samples(
     weights = torch.cat([main.weights.view(-1), success.weights.view(-1)], dim=0)
     infos = list(main.infos) + list(success.infos)
 
-    indices = None
-    if main.indices is not None:
-        main_idx = np.asarray(main.indices, dtype=np.int64).reshape(-1)
-        if success.indices is None:
-            success_idx = np.full((success.obs.shape[0],), -1, dtype=np.int64)
-        else:
-            success_idx = np.asarray(success.indices, dtype=np.int64).reshape(-1)
-        indices = np.concatenate([main_idx, success_idx], axis=0)
+    # Use helper to merge indices
+    indices = _merge_indices(main.indices, success.indices, success.obs.shape[0])
 
     actions = None
     if main.actions is not None and success.actions is not None:
@@ -395,6 +416,7 @@ def _merge_continuous_samples(
     main: Optional[ContinuousReplaySample],
     success: ContinuousReplaySample,
 ) -> ContinuousReplaySample:
+    """Merge main and success replay samples for continuous-action agents."""
     if main is None:
         return success
 
@@ -405,14 +427,8 @@ def _merge_continuous_samples(
     dones = torch.cat([main.dones, success.dones], dim=0)
     weights = torch.cat([main.weights, success.weights], dim=0)
 
-    indices = None
-    if main.indices is not None:
-        main_idx = np.asarray(main.indices, dtype=np.int64).reshape(-1)
-        if success.indices is None:
-            success_idx = np.full((success.obs.shape[0],), -1, dtype=np.int64)
-        else:
-            success_idx = np.asarray(success.indices, dtype=np.int64).reshape(-1)
-        indices = np.concatenate([main_idx, success_idx], axis=0)
+    # Use helper to merge indices
+    indices = _merge_indices(main.indices, success.indices, success.obs.shape[0])
 
     return ContinuousReplaySample(
         obs=obs,

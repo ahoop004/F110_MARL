@@ -98,7 +98,11 @@ class ComponentSpec:
 
 
 class RunningObsNormalizer:
-    """Apply running mean/variance normalisation to observation vectors."""
+    """Apply running mean/variance normalisation to observation vectors.
+
+    Uses Welford's algorithm with optional windowed statistics to prevent
+    unbounded growth and improve numerical stability.
+    """
 
     def __init__(
         self,
@@ -106,10 +110,22 @@ class RunningObsNormalizer:
         *,
         eps: float = 1e-8,
         clip: Optional[float] = None,
+        max_count: Optional[int] = None,
     ) -> None:
+        """Initialize running observation normalizer.
+
+        Args:
+            wrapper: Callable that extracts observation vector
+            eps: Small constant for numerical stability (default 1e-8)
+            clip: Optional clipping range for normalized values
+            max_count: Optional maximum count for windowed statistics (default None = unlimited).
+                      When set, statistics will be reset after max_count updates to prevent
+                      numerical instability and allow adaptation to distribution changes.
+        """
         self.wrapper = wrapper
         self.eps = float(eps)
         self.clip = float(clip) if clip is not None else None
+        self.max_count = int(max_count) if max_count is not None else None
         self.count = 0
         self.mean: Optional[np.ndarray] = None
         self.m2: Optional[np.ndarray] = None
@@ -136,8 +152,20 @@ class RunningObsNormalizer:
         return normed.astype(np.float32, copy=False)
 
     def _update(self, vec: np.ndarray) -> None:
+        """Update running statistics using Welford's online algorithm.
+
+        Automatically resets statistics when max_count is reached to maintain
+        windowed behavior and numerical stability.
+        """
         x = np.asarray(vec, dtype=np.float64)
         x = np.nan_to_num(x, copy=False)
+
+        # Reset statistics if max_count reached
+        if self.max_count is not None and self.count >= self.max_count:
+            self.count = 0
+            self.mean = np.zeros_like(x, dtype=np.float64)
+            self.m2 = np.zeros_like(x, dtype=np.float64)
+
         self.count += 1
         if self.count == 1:
             self.mean = x

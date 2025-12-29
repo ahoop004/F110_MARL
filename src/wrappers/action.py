@@ -96,20 +96,38 @@ class DeltaDiscreteActionWrapper:
 
 
 class ActionRepeatWrapper:
-    """Cache transformed actions and re-emit them for multiple env steps."""
+    """Cache transformed actions and re-emit them for multiple env steps.
+
+    Automatically cleans up stale agent caches to prevent unbounded memory growth.
+    """
 
     def __init__(
         self,
         inner: Optional[Any],
         repeat: int,
+        max_cached_agents: int = 1000,
+        cleanup_interval: int = 10000,
     ) -> None:
+        """Initialize action repeat wrapper.
+
+        Args:
+            inner: Optional inner wrapper to chain
+            repeat: Number of times to repeat each action
+            max_cached_agents: Maximum number of agents to cache (default 1000)
+            cleanup_interval: Clean up stale caches every N transforms (default 10000)
+        """
         if repeat <= 0:
             raise ValueError("action repeat must be positive")
         self.inner = inner
         self.repeat = int(repeat)
+        self.max_cached_agents = max(int(max_cached_agents), 10)
+        self.cleanup_interval = max(int(cleanup_interval), 100)
+
         self._cached: Dict[str, np.ndarray] = {}
         self._remaining: Dict[str, int] = {}
         self._last_meta: Dict[str, Optional[Dict[str, Any]]] = {}
+        self._last_access: Dict[str, int] = {}  # Track last access time
+        self._transform_count = 0  # Count transform calls
 
     def transform(self, agent_id: str, action: Any) -> np.ndarray:
         transformed, _ = self._apply(agent_id, action, capture_meta=False)
@@ -122,6 +140,7 @@ class ActionRepeatWrapper:
         self._cached.pop(agent_id, None)
         self._remaining.pop(agent_id, None)
         self._last_meta.pop(agent_id, None)
+        self._last_access.pop(agent_id, None)
         if self.inner is not None:
             reset_fn = getattr(self.inner, "reset", None)
             if callable(reset_fn):
@@ -140,6 +159,13 @@ class ActionRepeatWrapper:
         *,
         capture_meta: bool,
     ) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
+        # Track access and periodic cleanup
+        self._transform_count += 1
+        self._last_access[agent_id] = self._transform_count
+
+        if self._transform_count % self.cleanup_interval == 0:
+            self._cleanup_stale_caches()
+
         remaining = self._remaining.get(agent_id, 0)
         if remaining <= 0:
             transformed, meta = self._invoke_inner(agent_id, action)
@@ -165,6 +191,28 @@ class ActionRepeatWrapper:
             info_copy = info.copy() if info is not None else None
             return transformed.copy(), info_copy
         return transformed.copy(), None
+
+    def _cleanup_stale_caches(self) -> None:
+        """Remove stale agent caches when limit exceeded.
+
+        Keeps the most recently accessed agents up to max_cached_agents limit.
+        """
+        if len(self._cached) <= self.max_cached_agents:
+            return
+
+        # Sort agents by last access time (oldest first)
+        sorted_agents = sorted(
+            self._last_access.items(),
+            key=lambda item: item[1]
+        )
+
+        # Remove oldest agents until we're under the limit
+        num_to_remove = len(self._cached) - self.max_cached_agents
+        for agent_id, _ in sorted_agents[:num_to_remove]:
+            self._cached.pop(agent_id, None)
+            self._remaining.pop(agent_id, None)
+            self._last_meta.pop(agent_id, None)
+            self._last_access.pop(agent_id, None)
 
     def _invoke_inner(self, agent_id: str, action: Any) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
         if self.inner is None:
