@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "/home/aaron/F110_MARL/profile_performance.py", line 230, in main
+    profile_environment_steps(num_steps=500)
+  File "/home/aaron/F110_MARL/profile_performance.py", line 33, in profile_environment_steps
+    env = F110ParallelEnv(
+          ^^^^^^^^^^^^^^^^
+  File "/home/aaron/F110_MARL/src/env/f110ParallelEnv.py", line 165, in __init__
+    self.sim.set_map(str(self.yaml_path), self.map_ext)
+  File "/home/aaron/F110_MARL/src/physics/simulaton.py", line 122, in set_map
+    agent.set_map(map_path, map_ext)
+  File "/home/aaron/F110_MARL/src/physics/vehicle.py", line 232, in set_map
+    RaceCar.scan_simulator.set_map(map_path, map_ext)
+  File "/home/aaron/F110_MARL/src/physics/laser_models.py", line 410, in set_map
+    map_img_pil = Image.open(map_img_path)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/.local/lib/python3.12/site-packages/PIL/Image.py", line 3505, in open
+    fp = builtins.open(filename, "rb")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/aaron/F110_MARL/None.png'
+
+######################################################################
+F110_MARL Performance Profiling
+######################################################################
+
+======================================================================
+PROFILING: Environment Steps (500 steps)
+======================================================================
+
+❌ Profiling failed: [Errno 2] No such file or directory: '/home/aaron/F110_MARL/None.png'

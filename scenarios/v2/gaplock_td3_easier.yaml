@@ -1,0 +1,181 @@
+# Gaplock TD3 - Easier Training Configuration
+# TD3 often works better than SAC for pursuit tasks due to deterministic policy
+
+experiment:
+  name: gaplock_td3_easier
+  episodes: 1500
+  seed: 42
+
+environment:
+  map: maps/line2/line2.yaml
+  num_agents: 2
+  max_steps: 2500
+  lidar_beams: 720
+  spawn_points: [spawn_2, spawn_1]
+  timestep: 0.01
+  render: false
+
+  # Spawn curriculum - easier progression
+  spawn_curriculum:
+    enabled: true
+    window: 200
+    activation_samples: 50
+    min_episode: 50
+    enable_patience: 5
+    disable_patience: 3
+    cooldown: 20
+    lock_speed_steps: 175
+
+    stages:
+      - name: "close_slow"
+        spawn_points: [spawn_pinch_ahead]
+        speed_range: [0.4, 0.4]
+        enable_rate: 0.50
+
+      - name: "close_varied"
+        spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.4, 0.7]
+        enable_rate: 0.60
+        disable_rate: 0.40
+
+      - name: "full_random"
+        spawn_points: "all"
+        speed_range: [0.3, 1.0]
+        disable_rate: 0.45
+
+    spawn_configs:
+      spawn_pinch_right:
+        car_0: [-45.569, -1.000, 0.100]
+        car_1: [-46.769, -0.700, 0.000]
+      spawn_pinch_left:
+        car_0: [-45.569, -0.400, -0.100]
+        car_1: [-46.769, -0.700, 0.000]
+      spawn_pinch_ahead:
+        car_0: [-45.569, -0.700, 0.000]
+        car_1: [-46.769, -0.700, 0.000]
+
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    length: 0.32
+    width: 0.225
+    m: 3.74
+    I: 0.04712
+    s_min: -0.46
+    s_max: 0.46
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: td3
+    target_id: car_1
+
+    params:
+      # TD3 hyperparameters - optimized for pursuit
+      lr_actor: 0.0003
+      lr_critic: 0.0003
+      gamma: 0.995
+      tau: 0.005
+      policy_delay: 2          # Update policy every 2 critic updates
+      hidden_dims: [256, 256]
+      buffer_size: 1000000
+      batch_size: 256
+      learning_starts: 2500
+      max_grad_norm: 0.5
+
+      # Exploration noise - CRITICAL for TD3
+      exploration_noise: 0.15        # Moderate noise for good exploration
+      exploration_noise_decay: 0.9995  # Slow decay
+      exploration_noise_min: 0.05    # Keep some exploration
+      target_noise: 0.2              # Noise for target policy smoothing
+      target_noise_clip: 0.5         # Clip target noise
+
+      # Prioritized Experience Replay
+      use_per: true
+      per_alpha: 0.6
+      per_beta: 0.4
+      per_beta_increment: 0.001
+      per_epsilon: 0.01
+
+      prevent_reverse: true
+      prevent_reverse_min_speed: 0.01
+      prevent_reverse_speed_index: 1
+
+    observation:
+      preset: gaplock
+
+    # SIMPLIFIED REWARD - Focus on pursuit
+    reward:
+      preset: gaplock_simple
+
+      overrides:
+        # PRIMARY: Distance-based pursuit reward
+        distance:
+          enabled: true
+          near_distance: 2.0
+          far_distance: 4.0
+          reward_near: 0.2
+          penalty_far: 0.05
+
+        # SECONDARY: Heading alignment
+        heading:
+          enabled: true
+          coefficient: 0.02
+
+        # SECONDARY: Speed bonus
+        speed:
+          enabled: true
+          bonus_coef: 0.01
+
+        step_reward: -0.005
+
+        # STRONG terminal rewards
+        terminal:
+          target_crash: 25.0
+          self_crash: -10.0
+          timeout: -2.0
+
+  car_1:
+    role: defender
+    algorithm: ftg
+
+    params:
+      max_distance: 12.0
+      window_size: 4
+      bubble_radius: 3
+      max_steer: 0.32
+
+      min_speed: 0.2
+      max_speed: 0.7             # Slower than attacker
+
+      steering_gain: 0.5
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.4
+      mode: "lidar"
+      gap_min_range: 0.65
+      target_mode: "farthest"
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+      no_cutback_enabled: true
+      cutback_clearance: 0.9
+      cutback_hold_steps: 8
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  tags: [td3, easier, pursuit]
+  notes: "TD3 training with distance-based pursuit rewards"
