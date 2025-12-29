@@ -1,5 +1,6 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 import json
+import os
 
 import numpy as np
 
@@ -112,8 +113,6 @@ class FollowTheGapPolicy:
         self.u_shape_crawl_speed = float(np.clip(u_shape_crawl_speed, 0.1, 1.0))
         self.gap_min_range = float(gap_min_range)
         self.target_mode = str(target_mode).strip().lower()
-        self.gap_min_range = float(gap_min_range)
-        self.target_mode = str(target_mode).strip().lower()
         self.use_disparity_extender = bool(use_disparity_extender)
         self.disparity_threshold = float(disparity_threshold)
         self.vehicle_width = float(vehicle_width)
@@ -123,7 +122,43 @@ class FollowTheGapPolicy:
         self.cutback_hold_steps = int(cutback_hold_steps)
         self._cutback_ttl = 0
         self._cutback_side = None
-        
+
+        # Validate parameters
+        if self.min_speed > self.max_speed:
+            raise ValueError(
+                f"min_speed ({self.min_speed}) must be <= max_speed ({self.max_speed})"
+            )
+        if self.bubble_radius < 0:
+            raise ValueError(f"bubble_radius must be >= 0, got {self.bubble_radius}")
+        if not 0 < self.fov <= 2 * np.pi:
+            raise ValueError(
+                f"fov must be in (0, 2π] radians, got {self.fov} "
+                f"({np.rad2deg(self.fov)} degrees)"
+            )
+        if self.max_steer <= 0:
+            raise ValueError(f"max_steer must be > 0, got {self.max_steer}")
+        if self.max_distance <= 0:
+            raise ValueError(f"max_distance must be > 0, got {self.max_distance}")
+        if self.window_size <= 0:
+            raise ValueError(f"window_size must be > 0, got {self.window_size}")
+        if self.target_mode not in ("farthest", "center", "weighted"):
+            raise ValueError(
+                f"target_mode must be one of ('farthest', 'center', 'weighted'), "
+                f"got '{self.target_mode}'"
+            )
+        if self.mode not in ("lidar", "waypoint", "hybrid"):
+            raise ValueError(
+                f"mode must be one of ('lidar', 'waypoint', 'hybrid'), "
+                f"got '{self.mode}'"
+            )
+        if not 0.0 <= self.steering_gain <= 1.0:
+            raise ValueError(
+                f"steering_gain should be in [0, 1], got {self.steering_gain}"
+            )
+        if not 0.0 <= self.steer_smooth <= 1.0:
+            raise ValueError(
+                f"steer_smooth should be in [0, 1], got {self.steer_smooth}"
+            )
 
         # keep track of last steering for smoothing
         self.last_steer = 0.0
@@ -198,7 +233,7 @@ class FollowTheGapPolicy:
                 snapshot[key] = getattr(self, key)
         return snapshot
 
-    def preprocess_lidar(self, ranges, min_scan: Optional[float] = None):
+    def preprocess_lidar(self, ranges, min_scan: Optional[float] = None) -> np.ndarray:
         """Smooth LiDAR with moving average + clip to max_distance."""
         N = len(ranges)
         window = self._adaptive_window_size(min_scan)
@@ -211,7 +246,7 @@ class FollowTheGapPolicy:
             proc.append(avg)
         return np.array(proc)
 
-    def create_bubble(self, proc, min_scan: Optional[float] = None):
+    def create_bubble(self, proc, min_scan: Optional[float] = None) -> np.ndarray:
         """Zero out a bubble around the closest obstacle."""
         closest = np.argmin(proc)
         radius = self._adaptive_bubble_radius(min_scan)
@@ -220,7 +255,7 @@ class FollowTheGapPolicy:
         proc[start:end+1] = 0
         return proc
 
-    def find_max_gap(self, proc):
+    def find_max_gap(self, proc) -> Tuple[int, int]:
         """Find the largest contiguous nonzero gap."""
         gaps, start = [], None
         for i, v in enumerate(proc > 2.5):
@@ -295,10 +330,10 @@ class FollowTheGapPolicy:
         rel = int(np.argmax(seg))
         return start + rel
 
-    def get_action(self, action_space, obs: dict):
+    def get_action(self, action_space, obs: dict) -> np.ndarray:
         return self._get_action_lidar(action_space, obs)
 
-    def _get_action_lidar(self, action_space, obs: dict):
+    def _get_action_lidar(self, action_space, obs: dict) -> np.ndarray:
         scan = np.asarray(obs["scans"], dtype=np.float32)
         if self.normalized:
             scan = scan * self.max_distance
@@ -567,14 +602,57 @@ class FollowTheGapPolicy:
         return None
 
     def save(self, path: str) -> None:
+        """Save policy configuration to a JSON file.
+
+        Args:
+            path: Path to save the configuration file.
+
+        Raises:
+            ValueError: If the parent directory doesn't exist.
+            IOError: If there's a permission error or other I/O error.
+        """
+        # Check parent directory exists
+        parent_dir = os.path.dirname(path)
+        if parent_dir and not os.path.exists(parent_dir):
+            raise ValueError(
+                f"Cannot save to '{path}': parent directory '{parent_dir}' does not exist"
+            )
+
         config = {key: getattr(self, key) for key in self.CONFIG_DEFAULTS if hasattr(self, key)}
         payload = {"config": config}
-        with open(path, "w") as f:
-            json.dump(payload, f, indent=2)
+
+        try:
+            with open(path, "w") as f:
+                json.dump(payload, f, indent=2)
+        except PermissionError as e:
+            raise IOError(f"Permission denied when writing to '{path}': {e}") from e
+        except OSError as e:
+            raise IOError(f"Failed to write configuration to '{path}': {e}") from e
 
     def load(self, path: str) -> None:
-        with open(path, "r") as f:
-            payload = json.load(f)
+        """Load policy configuration from a JSON file.
+
+        Args:
+            path: Path to the configuration file to load.
+
+        Raises:
+            FileNotFoundError: If the configuration file doesn't exist.
+            ValueError: If the file contains invalid JSON or configuration.
+            IOError: If there's a permission error or other I/O error.
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Configuration file not found: '{path}'")
+
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in configuration file '{path}': {e}") from e
+        except PermissionError as e:
+            raise IOError(f"Permission denied when reading '{path}': {e}") from e
+        except OSError as e:
+            raise IOError(f"Failed to read configuration from '{path}': {e}") from e
+
         config = payload.get("config", payload)
         if config:
             self.apply_config(config)

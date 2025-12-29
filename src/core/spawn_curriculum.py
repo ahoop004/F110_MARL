@@ -135,13 +135,46 @@ class SpawnCurriculumManager:
             else:
                 speed_range = (0.5, 1.0)
 
+            # Validate speed range
+            if speed_range[0] > speed_range[1]:
+                raise ValueError(
+                    f"Stage {idx} ({stage_config.get('name', f'stage_{idx}')}): "
+                    f"speed_range[0] ({speed_range[0]}) must be <= speed_range[1] ({speed_range[1]})"
+                )
+
+            # Parse and validate enable/disable rates
+            enable_rate = float(stage_config.get('enable_rate', 0.70))
+            disable_rate = float(stage_config.get('disable_rate', 0.0))
+
+            if not 0.0 <= enable_rate <= 1.0:
+                raise ValueError(
+                    f"Stage {idx} ({stage_config.get('name', f'stage_{idx}')}): "
+                    f"enable_rate must be in [0, 1], got {enable_rate}"
+                )
+            if not 0.0 <= disable_rate <= 1.0:
+                raise ValueError(
+                    f"Stage {idx} ({stage_config.get('name', f'stage_{idx}')}): "
+                    f"disable_rate must be in [0, 1], got {disable_rate}"
+                )
+
+            # Validate spawn points exist
+            if spawn_points != 'all' and isinstance(spawn_points, list):
+                available_names = set(self.available_spawn_points.keys())
+                invalid_points = [p for p in spawn_points if p not in available_names]
+                if invalid_points:
+                    raise ValueError(
+                        f"Stage {idx} ({stage_config.get('name', f'stage_{idx}')}): "
+                        f"spawn points {invalid_points} not found in available spawn points. "
+                        f"Available: {sorted(available_names)}"
+                    )
+
             # Create stage
             stage = SpawnStage(
                 name=stage_config.get('name', f'stage_{idx}'),
                 spawn_points=spawn_points,
                 speed_range=speed_range,
-                enable_rate=float(stage_config.get('enable_rate', 0.70)),
-                disable_rate=float(stage_config.get('disable_rate', 0.0)),
+                enable_rate=enable_rate,
+                disable_rate=disable_rate,
                 enable_patience=stage_config.get('enable_patience'),
                 disable_patience=stage_config.get('disable_patience'),
             )
