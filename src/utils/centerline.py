@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
+from numba import njit
 
 
 @dataclass
@@ -15,6 +16,95 @@ class CenterlineProjection:
     longitudinal_error: float
     heading_error: float
     progress: float
+
+
+@njit(cache=True)
+def _project_to_centerline_core(
+    points: np.ndarray,
+    position: np.ndarray,
+    heading: float,
+    tangent_theta: float,
+    best_index: int,
+) -> Tuple[float, float, float]:
+    """JIT-compiled core computation for centerline projection.
+
+    Args:
+        points: Centerline waypoints (N, 2)
+        position: Agent position (2,)
+        heading: Agent heading in radians
+        tangent_theta: Centerline heading at nearest point
+        best_index: Index of nearest waypoint
+
+    Returns:
+        (lateral_error, longitudinal_error, heading_error)
+    """
+    nearest = points[best_index]
+
+    tangent_cos = np.cos(tangent_theta)
+    tangent_sin = np.sin(tangent_theta)
+    tangent = np.array([tangent_cos, tangent_sin], dtype=np.float32)
+    normal = np.array([-tangent_sin, tangent_cos], dtype=np.float32)
+
+    offset_x = position[0] - nearest[0]
+    offset_y = position[1] - nearest[1]
+
+    lateral_error = offset_x * normal[0] + offset_y * normal[1]
+    longitudinal_error = offset_x * tangent[0] + offset_y * tangent[1]
+
+    heading_diff = heading - tangent_theta
+    heading_error = np.arctan2(np.sin(heading_diff), np.cos(heading_diff))
+
+    return lateral_error, longitudinal_error, heading_error
+
+
+@njit(cache=True)
+def _find_nearest_point(
+    points: np.ndarray,
+    position: np.ndarray,
+    last_index: int,
+    search_window: int,
+) -> int:
+    """JIT-compiled nearest point search.
+
+    Args:
+        points: Centerline waypoints (N, 2)
+        position: Agent position (2,)
+        last_index: Previous closest index (-1 for full search)
+        search_window: Window size around last_index
+
+    Returns:
+        Index of nearest waypoint
+    """
+    N = points.shape[0]
+
+    # Full search if no hint
+    if last_index < 0 or last_index >= N:
+        min_dist_sq = 1e10
+        best_idx = 0
+        for i in range(N):
+            dx = points[i, 0] - position[0]
+            dy = points[i, 1] - position[1]
+            dist_sq = dx * dx + dy * dy
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                best_idx = i
+        return best_idx
+
+    # Local search with window
+    start = max(0, last_index - search_window)
+    end = min(N, last_index + search_window + 1)
+
+    min_dist_sq = 1e10
+    best_idx = last_index
+    for i in range(start, end):
+        dx = points[i, 0] - position[0]
+        dy = points[i, 1] - position[1]
+        dist_sq = dx * dx + dy * dy
+        if dist_sq < min_dist_sq:
+            min_dist_sq = dist_sq
+            best_idx = i
+
+    return best_idx
 
 
 def project_to_centerline(
@@ -42,43 +132,34 @@ def project_to_centerline(
     if centerline.ndim != 2 or centerline.shape[0] == 0:
         raise ValueError("centerline must be a non-empty 2D array")
 
-    points = centerline[:, :2]
+    points = centerline[:, :2].astype(np.float32, copy=False)
     if position.shape[0] != 2:
         raise ValueError("position must contain (x, y)")
 
-    diffs = points - position.reshape(1, 2)
-    dists = np.einsum("ij,ij->i", diffs, diffs)
+    position_f32 = position.astype(np.float32, copy=False)
 
-    if last_index is not None and 0 <= last_index < len(points):
-        window = max(int(search_window), 1)
-        start = max(0, last_index - window)
-        end = min(len(points), last_index + window + 1)
-        local = dists[start:end]
-        rel_idx = int(np.argmin(local))
-        best_index = start + rel_idx
-    else:
-        best_index = int(np.argmin(dists))
+    # Use JIT-compiled nearest point search
+    last_idx = -1 if last_index is None else int(last_index)
+    best_index = _find_nearest_point(points, position_f32, last_idx, int(search_window))
 
-    nearest = points[best_index]
+    # Get tangent heading
     if centerline.shape[1] >= 3:
         tangent_theta = float(centerline[best_index, 2])
     else:
         tangent_theta = 0.0
 
-    tangent = np.array([np.cos(tangent_theta), np.sin(tangent_theta)], dtype=np.float32)
-    normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
-    offset = position.astype(np.float32) - nearest.astype(np.float32)
+    # Use JIT-compiled projection
+    lateral_error, longitudinal_error, heading_error = _project_to_centerline_core(
+        points, position_f32, float(heading), tangent_theta, best_index
+    )
 
-    lateral_error = float(np.dot(offset, normal))
-    longitudinal_error = float(np.dot(offset, tangent))
-    heading_error = float(np.arctan2(np.sin(heading - tangent_theta), np.cos(heading - tangent_theta)))
     progress = best_index / max(len(points) - 1, 1)
 
     return CenterlineProjection(
         index=best_index,
-        lateral_error=lateral_error,
-        longitudinal_error=longitudinal_error,
-        heading_error=heading_error,
+        lateral_error=float(lateral_error),
+        longitudinal_error=float(longitudinal_error),
+        heading_error=float(heading_error),
         progress=float(progress),
     )
 
