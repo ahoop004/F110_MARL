@@ -10,6 +10,7 @@ Extends the basic TrainingLoop with:
 
 from typing import Dict, Any, Optional, Tuple
 import time
+import logging
 import numpy as np
 from pettingzoo import ParallelEnv
 
@@ -22,6 +23,9 @@ from metrics import MetricsTracker, determine_outcome, EpisodeOutcome
 from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 from rewards.base import RewardStrategy
 from wrappers.normalize import ObservationNormalizer
+
+# Set up logger for error handling
+logger = logging.getLogger(__name__)
 
 
 class EnhancedTrainingLoop:
@@ -253,8 +257,9 @@ class EnhancedTrainingLoop:
 
         # Run episode
         while not all(done.values()) and episode_steps < self.max_steps_per_episode:
-            # Select actions
+            # Select actions and cache processed observations
             actions = {}
+            flat_obs_cache = {}  # Cache to avoid duplicate processing
             for agent_id, agent in self.agents.items():
                 if not done[agent_id]:
                     # Flatten observation if preset configured
@@ -264,10 +269,22 @@ class EnhancedTrainingLoop:
                     if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
                         flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=True)
 
+                    # Cache for reuse in storage phase
+                    flat_obs_cache[agent_id] = flat_obs
                     actions[agent_id] = agent.act(flat_obs, deterministic=False)
 
-            # Step environment
-            next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
+            # Step environment with error handling
+            try:
+                next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
+            except Exception as e:
+                logger.error(f"Environment step failed at episode {episode_num}, step {episode_steps}: {e}")
+                logger.error(f"Actions: {actions}")
+                # Mark all agents as terminated to end episode gracefully
+                terminations = {agent_id: True for agent_id in self.agents.keys()}
+                truncations = {agent_id: False for agent_id in self.agents.keys()}
+                next_obs = obs  # Use current obs as next_obs
+                env_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
+                step_info = {}
 
             # Compute custom rewards if provided
             rewards = {}
@@ -322,13 +339,12 @@ class EnhancedTrainingLoop:
                 if not done[agent_id]:
                     episode_rewards[agent_id] += rewards[agent_id]
 
-                    # Store experience (flatten observations if configured)
-                    flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
-                    flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
+                    # Reuse cached observation (already flattened and normalized)
+                    flat_obs = flat_obs_cache[agent_id]
 
-                    # Normalize observations if enabled (only for numpy arrays, not dicts)
-                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
-                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=False)
+                    # Process next observation (only needs to be done once)
+                    flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
+                    if self.obs_normalizer and isinstance(flat_next_obs, np.ndarray):
                         flat_next_obs = self.obs_normalizer.normalize(flat_next_obs, agent_id, update_stats=False)
 
                     # Different storage methods for on-policy vs off-policy
@@ -344,7 +360,11 @@ class EnhancedTrainingLoop:
                         agent.store_transition(flat_obs, actions[agent_id], rewards[agent_id], flat_next_obs, done_flag)
 
                         # Update off-policy agents every step (they internally check if buffer is ready)
-                        agent.update()
+                        try:
+                            agent.update()
+                        except Exception as e:
+                            logger.error(f"Agent {agent_id} update failed at episode {episode_num}, step {episode_steps}: {e}")
+                            # Continue training - this update will be skipped but training continues
 
             # Update observations and done flags
             obs = next_obs
@@ -361,10 +381,14 @@ class EnhancedTrainingLoop:
         # Update agents and collect trainer stats
         trainer_stats = {}
         for agent_id, agent in self.agents.items():
-            update_stats = agent.update()
-            if update_stats:
-                # Namespace stats by agent_id
-                trainer_stats[agent_id] = update_stats
+            try:
+                update_stats = agent.update()
+                if update_stats:
+                    # Namespace stats by agent_id
+                    trainer_stats[agent_id] = update_stats
+            except Exception as e:
+                logger.error(f"Agent {agent_id} update failed after episode {episode_num}: {e}")
+                # Continue with next agent
 
                 # Log trainer stats to W&B
                 if self.wandb_logger:
@@ -527,6 +551,9 @@ class EnhancedTrainingLoop:
         truncated = truncations.get(agent_id, False) if truncations else False
         done = terminated or truncated
 
+        # Get timestep from environment if available, otherwise use default
+        timestep = getattr(self.env, 'timestep', 0.01)
+
         reward_info = {
             'obs': obs.get(agent_id, {}),
             'next_obs': next_obs.get(agent_id, {}),
@@ -534,7 +561,7 @@ class EnhancedTrainingLoop:
             'step': step,
             'done': done,  # Actual done flag from environment
             'truncated': truncated,  # Actual truncated flag from environment
-            'timestep': 0.01,  # TODO: Get from env config
+            'timestep': timestep,
         }
 
         # Add target obs if available (for adversarial tasks)
@@ -553,8 +580,11 @@ class EnhancedTrainingLoop:
         Returns:
             Target agent ID or None
         """
-        # TODO: Get from agent config or scenario
-        # For now, simple heuristic: if 2 agents, target is the other one
+        # Check if target_id is stored in agent_target_ids mapping (set during init)
+        if hasattr(self, 'agent_target_ids') and agent_id in self.agent_target_ids:
+            return self.agent_target_ids[agent_id]
+
+        # Fallback: simple heuristic for 2-agent scenarios
         agent_ids = list(self.agents.keys())
         if len(agent_ids) == 2:
             return agent_ids[1] if agent_id == agent_ids[0] else agent_ids[0]
@@ -570,15 +600,17 @@ class EnhancedTrainingLoop:
 
         Args:
             agent_id: Agent ID
-            info: Final episode info
+            info: Final episode info (can be nested by agent or flat)
             truncated: Whether episode was truncated
 
         Returns:
             EpisodeOutcome enum
         """
-        # Use standard outcome determination
-        # TODO: Handle multi-agent case properly
-        return determine_outcome(info, truncated)
+        # Handle multi-agent case: extract agent-specific info if available
+        agent_info = info.get(agent_id, info) if agent_id in info else info
+
+        # Use standard outcome determination with agent-specific or flat info
+        return determine_outcome(agent_info, truncated)
 
     def _print_final_summary(self):
         """Print final training summary to console."""
@@ -675,24 +707,28 @@ class EnhancedTrainingLoop:
             if self.spawn_curriculum:
                 training_state['curriculum_stage'] = self.spawn_curriculum.current_stage
 
-            # Save checkpoint
+            # Save checkpoint with error handling
             checkpoint_type = "best" if is_new_best else "periodic"
-            checkpoint_path = self.checkpoint_manager.save_checkpoint(
-                episode=episode_num,
-                agent_states=agent_states,
-                optimizer_states=optimizer_states if optimizer_states else None,
-                training_state=training_state,
-                checkpoint_type=checkpoint_type,
-                metric_value=success_rate,
-            )
-
-            # Update best model tracker
-            if is_new_best:
-                self.best_model_tracker.update_best(
-                    value=success_rate,
+            try:
+                checkpoint_path = self.checkpoint_manager.save_checkpoint(
                     episode=episode_num,
-                    checkpoint_path=checkpoint_path
+                    agent_states=agent_states,
+                    optimizer_states=optimizer_states if optimizer_states else None,
+                    training_state=training_state,
+                    checkpoint_type=checkpoint_type,
+                    metric_value=success_rate,
                 )
+
+                # Update best model tracker
+                if is_new_best:
+                    self.best_model_tracker.update_best(
+                        value=success_rate,
+                        episode=episode_num,
+                        checkpoint_path=checkpoint_path
+                    )
+            except Exception as e:
+                logger.error(f"Checkpoint save failed at episode {episode_num}: {e}")
+                # Continue training despite checkpoint failure
 
                 self.checkpoint_manager.run_metadata.update_best(
                     metric_value=success_rate,
