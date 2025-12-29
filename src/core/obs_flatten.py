@@ -8,7 +8,7 @@ import numpy as np
 
 
 def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = None) -> np.ndarray:
-    """Flatten gaplock observation dict to 738-dim vector.
+    """Flatten gaplock observation dict to a normalized feature vector.
 
     Expected observation structure (from F110ParallelEnv):
     - scans/lidar: (N,) LiDAR scan
@@ -17,11 +17,12 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     - angular_velocity: scalar
     - state: central-state vector (optional)
 
-    Output structure (738 dims total for 720-beam LiDAR):
+    Output structure (N + 10 dims):
     - LiDAR: N dims (normalized to [0, 1] using 12.0m max range)
-    - Ego state: 7 dims (x, y, sin_theta, cos_theta, vx, vy, omega)
-    - Target state: 7 dims (x, y, sin_theta, cos_theta, vx, vy, omega)
-    - Relative: 4 dims (dx, dy, dtheta, distance)
+    - Ego velocity: 3 dims (vx, vy, omega) -> tanh-normalized
+    - Target velocity: 3 dims (vx, vy, omega) -> tanh-normalized
+    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) in ego frame,
+      scaled to [-1, 1] using 12.0m range and pi for angles.
 
     Args:
         obs_dict: Observation dict from environment
@@ -110,26 +111,29 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
 
     components = []
 
+    lidar_range = 12.0
+
     # LiDAR scan (normalize to [0, 1] with max range 12.0m)
     scan = obs_dict.get('scans')
     if scan is None:
         scan = obs_dict.get('lidar')
     if scan is None:
-        lidar = np.zeros(720, dtype=np.float32)
+        lidar = np.zeros(108, dtype=np.float32)
     else:
         lidar = np.asarray(scan, dtype=np.float32).reshape(-1)
-    lidar_norm = np.clip(lidar / 12.0, 0.0, 1.0)
+    lidar_norm = np.clip(lidar / lidar_range, 0.0, 1.0)
     components.append(lidar_norm)
 
-    # Ego pose (4 dims: x, y, sin(theta), cos(theta))
+    # Ego pose (used for relative computation only; not emitted)
     ego_pose = _extract_pose(obs_dict)
     x, y, theta = map(float, ego_pose[:3])
-    components.append(np.array([x, y, np.sin(theta), np.cos(theta)], dtype=np.float32))
 
-    # Ego velocity (3 dims: vx, vy, omega)
-    components.append(_extract_velocity(obs_dict))
+    # Ego velocity (3 dims: vx, vy, omega) - tanh normalized
+    ego_vel = _extract_velocity(obs_dict)
+    ego_vel_norm = np.tanh(ego_vel.astype(np.float32))
+    components.append(ego_vel_norm)
 
-    # Target state (7 dims)
+    # Target state (pose + velocity)
     target_state = None
     if target_id:
         central = obs_dict.get('central_state')
@@ -150,21 +154,28 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
 
     if target_state is not None:
         target_x, target_y, target_theta, target_vx, target_vy, target_omega = map(float, target_state[:6])
-        components.append(np.array([
-            target_x, target_y, np.sin(target_theta), np.cos(target_theta),
-            target_vx, target_vy, target_omega
-        ], dtype=np.float32))
+        target_vel = np.array([target_vx, target_vy, target_omega], dtype=np.float32)
+        target_vel_norm = np.tanh(target_vel)
+        components.append(target_vel_norm)
 
-        # Relative pose (4 dims: dx, dy, dtheta, distance)
+        # Relative pose in ego frame (4 dims)
         dx = target_x - x
         dy = target_y - y
+        cos_t = float(np.cos(theta))
+        sin_t = float(np.sin(theta))
+        rel_x = cos_t * dx + sin_t * dy
+        rel_y = -sin_t * dx + cos_t * dy
+        rel_x_norm = float(np.clip(rel_x / lidar_range, -1.0, 1.0))
+        rel_y_norm = float(np.clip(rel_y / lidar_range, -1.0, 1.0))
         dtheta = target_theta - theta
-        dtheta = np.arctan2(np.sin(dtheta), np.cos(dtheta))
-        distance = np.sqrt(dx**2 + dy**2)
+        dtheta = float(np.arctan2(np.sin(dtheta), np.cos(dtheta)))
+        dtheta_norm = float(dtheta / np.pi)
+        distance = float(np.sqrt(dx**2 + dy**2))
+        distance_norm = float(np.clip(distance / lidar_range, 0.0, 1.0))
 
-        components.append(np.array([dx, dy, dtheta, distance], dtype=np.float32))
+        components.append(np.array([rel_x_norm, rel_y_norm, dtheta_norm, distance_norm], dtype=np.float32))
     else:
-        components.append(np.zeros(7, dtype=np.float32))  # Target state
+        components.append(np.zeros(3, dtype=np.float32))  # Target velocity
         components.append(np.zeros(4, dtype=np.float32))  # Relative pose
 
     return np.concatenate(components)
