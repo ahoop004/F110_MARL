@@ -46,6 +46,7 @@ class BasePPOAgent:
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
         self.normalize_advantage = bool(cfg.get("normalize_adv", True))
         self.episode_batch = bool(cfg.get("episode_batch", False))
+        self.clip_value_loss = bool(cfg.get("clip_value_loss", True))
 
         base_ent_coef = float(cfg.get("ent_coef", 0.0))
         schedule_cfg = cfg.get("ent_coef_schedule") or {}
@@ -223,6 +224,7 @@ class BasePPOAgent:
         advantages: torch.Tensor,
         returns: torch.Tensor,
         values_pred: torch.Tensor,
+        values_old: Optional[torch.Tensor] = None,
         reduction: str = "mean",
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if reduction not in {"mean", "sum"}:
@@ -237,7 +239,19 @@ class BasePPOAgent:
         surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
         policy_loss = -torch.min(surr1, surr2)
 
-        value_loss = F.mse_loss(values_pred, returns, reduction="none")
+        # Value function loss with optional clipping
+        if self.clip_value_loss and values_old is not None:
+            # Clip predicted values to be within [old - eps, old + eps]
+            values_clipped = values_old + torch.clamp(
+                values_pred - values_old, -self.clip_eps, self.clip_eps
+            )
+            # Compute both unclipped and clipped loss, take maximum
+            value_loss_unclipped = (values_pred - returns).pow(2)
+            value_loss_clipped = (values_clipped - returns).pow(2)
+            value_loss = torch.max(value_loss_unclipped, value_loss_clipped)
+        else:
+            value_loss = F.mse_loss(values_pred, returns, reduction="none")
+
         entropy = dist.entropy().sum(dim=-1)
         approx_kl = logp_old - logp
 

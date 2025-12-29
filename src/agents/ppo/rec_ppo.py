@@ -24,6 +24,8 @@ class RecurrentPPOAgent(BasePPOAgent):
     def __init__(self, cfg: Dict[str, Any]):
         device = torch.device(cfg.get("device", "cpu"))
         super().__init__(cfg, device)
+        target_kl = cfg.get("target_kl")
+        self.target_kl = float(target_kl) if target_kl is not None else None
         self.sequence_batch_size = int(cfg.get("sequence_batch_size", cfg.get("minibatch_size", 1)) or 1)
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
@@ -249,6 +251,7 @@ class RecurrentPPOAgent(BasePPOAgent):
 
         ret_tensor = torch.as_tensor(self.ret_buf, dtype=torch.float32, device=self.device)
         logp_old_tensor = torch.as_tensor(self.logp_buf, dtype=torch.float32, device=self.device)
+        values_old_tensor = torch.as_tensor(np.asarray(self.val_buf, dtype=np.float32), dtype=torch.float32, device=self.device)
 
         obs_arr = _to_tensor_list(self.obs_buf)
         raw_arr = _to_tensor_list(self.raw_act_buf)
@@ -266,6 +269,7 @@ class RecurrentPPOAgent(BasePPOAgent):
             logp_seq = logp_old_tensor[start : start + seq_len]
             adv_seq = adv_tensor[start : start + seq_len]
             ret_seq = ret_tensor[start : start + seq_len]
+            val_seq = values_old_tensor[start : start + seq_len]
             episodes.append(
                 {
                     "obs": obs_seq,
@@ -273,6 +277,7 @@ class RecurrentPPOAgent(BasePPOAgent):
                     "logp_old": logp_seq,
                     "adv": adv_seq,
                     "ret": ret_seq,
+                    "values_old": val_seq,
                 }
             )
             start = end
@@ -328,6 +333,7 @@ class RecurrentPPOAgent(BasePPOAgent):
         value_losses: List[float] = []
         entropies: List[float] = []
         approx_kls: List[float] = []
+        stop_early = False
 
         for _ in range(self.update_epochs):
             random.shuffle(episodes)
@@ -351,6 +357,7 @@ class RecurrentPPOAgent(BasePPOAgent):
                     logp_old = ep["logp_old"]
                     adv = ep["adv"]
                     ret = ep["ret"]
+                    values_old = ep.get("values_old")
 
                     mu, log_std = self._actor_eval_sequence(obs_seq)
                     std = log_std.exp()
@@ -363,6 +370,7 @@ class RecurrentPPOAgent(BasePPOAgent):
                         advantages=adv,
                         returns=ret,
                         values_pred=values_pred,
+                        values_old=values_old,
                         reduction="sum",
                     )
 
@@ -389,10 +397,18 @@ class RecurrentPPOAgent(BasePPOAgent):
                 self.actor_opt.step()
                 self.critic_opt.step()
 
+                approx_kl_value = float(approx_kl.detach().cpu().item())
                 policy_losses.append(float(policy_loss.detach().cpu().item()))
                 value_losses.append(float(value_loss.detach().cpu().item()))
                 entropies.append(float(entropy_mean.detach().cpu().item()))
-                approx_kls.append(float(approx_kl.detach().cpu().item()))
+                approx_kls.append(approx_kl_value)
+
+                # Early stopping based on KL divergence
+                if self.target_kl is not None and approx_kl_value > self.target_kl:
+                    stop_early = True
+                    break
+            if stop_early:
+                break
 
         stats = {
             "policy_loss": float(np.mean(policy_losses)) if policy_losses else 0.0,

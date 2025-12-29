@@ -82,6 +82,9 @@ class TD3Agent:
         self._exploration_episode = 0
 
         buffer_size = int(cfg.get("buffer_size", 100_000))
+        # Prioritized Experience Replay (PER) is disabled by default.
+        # Enable with use_per: true in config for potentially faster learning.
+        # Trade-off: Higher memory usage and slower sampling vs better sample efficiency.
         self.buffer, self.use_per = build_replay_buffer(
             cfg,
             self.obs_dim,

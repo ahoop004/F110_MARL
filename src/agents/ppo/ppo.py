@@ -2,7 +2,9 @@ import os
 import numpy as np
 import torch
 import torch.optim as optim
+from torch.optim import lr_scheduler
 from torch.distributions import Normal
+from typing import Dict, Any, Optional, Mapping
 
 # try:  # optional dependency for richer logging
 #     import wandb  # type: ignore
@@ -45,6 +47,10 @@ class PPOAgent(BasePPOAgent):
         # Optimizers (cast LR to float in case YAML gave strings)
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=float(cfg.get("actor_lr", 3e-4)))
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=float(cfg.get("critic_lr", 1e-3)))
+
+        # Learning rate schedulers (optional)
+        self.actor_scheduler = self._init_scheduler(self.actor_opt, cfg.get("actor_lr_scheduler"))
+        self.critic_scheduler = self._init_scheduler(self.critic_opt, cfg.get("critic_lr_scheduler"))
 
     # ------------------- Buffer -------------------
 
@@ -139,6 +145,7 @@ class PPOAgent(BasePPOAgent):
         logp_old = torch.as_tensor(np.asarray(self.logp_buf), dtype=torch.float32, device=self.device)
         adv  = torch.as_tensor(self.adv_buf, dtype=torch.float32, device=self.device)
         rets = torch.as_tensor(self.ret_buf, dtype=torch.float32, device=self.device)
+        values_old = torch.as_tensor(np.asarray(self.val_buf), dtype=torch.float32, device=self.device)
 
         # Hard alignment check
         N = len(self.obs_buf)
@@ -164,6 +171,7 @@ class PPOAgent(BasePPOAgent):
                 adv_b = adv[mb_idx]
                 ret_b = rets[mb_idx]
                 logp_b = logp_old[mb_idx]
+                val_b = values_old[mb_idx]
 
                 mu, std = self.actor(ob_b)
                 if not torch.isfinite(mu).all() or not torch.isfinite(std).all():
@@ -179,6 +187,7 @@ class PPOAgent(BasePPOAgent):
                     advantages=adv_b,
                     returns=ret_b,
                     values_pred=values_pred,
+                    values_old=val_b,
                     reduction="mean",
                 )
 
@@ -199,6 +208,11 @@ class PPOAgent(BasePPOAgent):
                     torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                 self.actor_opt.step()
                 self.critic_opt.step()
+
+                # Step LR schedulers after each minibatch
+                self._step_scheduler(self.actor_scheduler)
+                self._step_scheduler(self.critic_scheduler)
+
                 if self.target_kl is not None and approx_kl_value > self.target_kl:
                     stop_early = True
                     break
@@ -220,19 +234,71 @@ class PPOAgent(BasePPOAgent):
             "approx_kl": _mean_safe(approx_kls),
         }
 
+    # ------------------- Scheduler helpers -------------------
+
+    def _init_scheduler(
+        self,
+        optimizer: torch.optim.Optimizer,
+        config: Optional[Mapping[str, Any]],
+    ) -> Optional[lr_scheduler._LRScheduler]:
+        """Initialize learning rate scheduler from config (adapted from TD3)."""
+        if not config:
+            return None
+        sched_type = str(config.get("type", "")).lower()
+        if not sched_type:
+            return None
+
+        if sched_type == "steplr":
+            step_size = int(config.get("step_size", 1000))
+            gamma = float(config.get("gamma", 0.5))
+            return lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+        if sched_type == "multistep":
+            milestones = config.get("milestones", [])
+            if isinstance(milestones, list):
+                milestones = [int(m) for m in milestones]
+            else:
+                milestones = []
+            gamma = float(config.get("gamma", 0.5))
+            if not milestones:
+                return None
+            return lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
+        if sched_type == "exponential":
+            gamma = float(config.get("gamma", 0.99))
+            return lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+        if sched_type == "cosine":
+            t_max = int(config.get("t_max", 1000))
+            eta_min = float(config.get("eta_min", 0.0))
+            return lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max, eta_min=eta_min)
+        if sched_type == "cosine_restarts":
+            t_0 = int(config.get("t_0", 1000))
+            t_mult = int(config.get("t_mult", 1))
+            eta_min = float(config.get("eta_min", 0.0))
+            return lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=t_0, T_mult=t_mult, eta_min=eta_min)
+        return None
+
+    @staticmethod
+    def _step_scheduler(scheduler_obj: Optional[lr_scheduler._LRScheduler]) -> None:
+        """Step the scheduler if it exists."""
+        if scheduler_obj is None:
+            return
+        scheduler_obj.step()
+
     # ------------------- I/O -------------------
 
     def save(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(
-            {
-                "actor": self.actor.state_dict(),
-                "critic": self.critic.state_dict(),
-                "actor_opt": self.actor_opt.state_dict(),
-                "critic_opt": self.critic_opt.state_dict(),
-            },
-            path,
-        )
+        state = {
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "actor_opt": self.actor_opt.state_dict(),
+            "critic_opt": self.critic_opt.state_dict(),
+        }
+        # Save scheduler state if schedulers exist
+        if self.actor_scheduler is not None:
+            state["actor_scheduler"] = self.actor_scheduler.state_dict()
+        if self.critic_scheduler is not None:
+            state["critic_scheduler"] = self.critic_scheduler.state_dict()
+        torch.save(state, path)
 
     def load(self, path):
         ckpt = safe_load(path, map_location=self.device)
@@ -240,5 +306,10 @@ class PPOAgent(BasePPOAgent):
         self.critic.load_state_dict(ckpt["critic"])
         self.actor_opt.load_state_dict(ckpt["actor_opt"])
         self.critic_opt.load_state_dict(ckpt["critic_opt"])
+        # Load scheduler state if it exists in checkpoint
+        if "actor_scheduler" in ckpt and self.actor_scheduler is not None:
+            self.actor_scheduler.load_state_dict(ckpt["actor_scheduler"])
+        if "critic_scheduler" in ckpt and self.critic_scheduler is not None:
+            self.critic_scheduler.load_state_dict(ckpt["critic_scheduler"])
         self.actor.to(self.device)
         self.critic.to(self.device)

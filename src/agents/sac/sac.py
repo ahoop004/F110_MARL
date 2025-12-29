@@ -63,6 +63,9 @@ class SACAgent:
 
         self.squash_eps = 1e-6
 
+        # Prioritized Experience Replay (PER) is disabled by default.
+        # Enable with use_per: true in config for potentially faster learning.
+        # Trade-off: Higher memory usage and slower sampling vs better sample efficiency.
         self.buffer, self.use_per = build_replay_buffer(
             cfg,
             self.obs_dim,
