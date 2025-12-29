@@ -260,8 +260,8 @@ class EnhancedTrainingLoop:
                     # Flatten observation if preset configured
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
 
-                    # Normalize observation if enabled
-                    if self.obs_normalizer:
+                    # Normalize observation if enabled (only for numpy arrays, not dicts)
+                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
                         flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=True)
 
                     actions[agent_id] = agent.act(flat_obs, deterministic=False)
@@ -326,8 +326,8 @@ class EnhancedTrainingLoop:
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
                     flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
 
-                    # Normalize observations if enabled (don't update stats here, already updated during action selection)
-                    if self.obs_normalizer:
+                    # Normalize observations if enabled (only for numpy arrays, not dicts)
+                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
                         flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=False)
                         flat_next_obs = self.obs_normalizer.normalize(flat_next_obs, agent_id, update_stats=False)
 
