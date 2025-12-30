@@ -21,8 +21,8 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     - LiDAR: N dims (normalized to [0, 1] using 12.0m max range)
     - Ego velocity: 3 dims (vx, vy, omega) -> tanh-normalized
     - Target velocity: 3 dims (vx, vy, omega) -> tanh-normalized
-    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) in ego frame,
-      scaled to [-1, 1] using 12.0m range and pi for angles.
+    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) to the pinch
+      center in ego frame, scaled to [-1, 1] using 12.0m range and pi for angles.
 
     Args:
         obs_dict: Observation dict from environment
@@ -112,6 +112,7 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     components = []
 
     lidar_range = 12.0
+    pinch_anchor_forward = 1.2
 
     # LiDAR scan (normalize to [0, 1] with max range 12.0m)
     scan = obs_dict.get('scans')
@@ -158,9 +159,11 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
         target_vel_norm = np.tanh(target_vel)
         components.append(target_vel_norm)
 
-        # Relative pose in ego frame (4 dims)
-        dx = target_x - x
-        dy = target_y - y
+        # Relative pose to pinch center in ego frame (4 dims)
+        pinch_x = target_x + pinch_anchor_forward * np.cos(target_theta)
+        pinch_y = target_y + pinch_anchor_forward * np.sin(target_theta)
+        dx = pinch_x - x
+        dy = pinch_y - y
         cos_t = float(np.cos(theta))
         sin_t = float(np.sin(theta))
         rel_x = cos_t * dx + sin_t * dy
