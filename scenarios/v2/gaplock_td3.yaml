@@ -20,7 +20,7 @@ environment:
     enable_patience: 5
     disable_patience: 3
     cooldown: 20
-    lock_speed_steps: 200
+    lock_speed_steps: 250
     stages:
     - name: optimal_fixed
       spawn_points:
