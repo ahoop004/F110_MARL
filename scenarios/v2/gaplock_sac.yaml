@@ -20,7 +20,7 @@ environment:
     enable_patience: 5
     disable_patience: 3
     cooldown: 20
-    lock_speed_steps: 250
+    lock_speed_steps: 550
     stages:
     - name: optimal_fixed
       spawn_points:
@@ -55,7 +55,7 @@ environment:
         car_0:
         - -45.569
         - -1.0
-        - 0.1
+        - 0.2
         car_1:
         - -46.769
         - -0.7
@@ -64,7 +64,7 @@ environment:
         car_0:
         - -45.569
         - -0.4
-        - -0.1
+        - -0.2
         car_1:
         - -46.769
         - -0.7
