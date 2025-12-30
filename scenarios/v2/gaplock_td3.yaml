@@ -177,35 +177,35 @@ agents:
             anchor_forward: 1.2
             anchor_lateral: 0.35
             sigma: 0.55
-            weight: 0.02
+            weight: 0.004
             peak: 1.0
             floor: -0.5
             power: 2.0
           clearance:
             enabled: true
-            weight: 0.015
+            weight: 0.003
             band_min: 0.3
             band_max: 3.2
             clip: 0.015
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.03
+            weight: 0.006
             clip: 0.015
             time_scaled: true
         distance:
           enabled: false
           near_distance: 1.0
           far_distance: 2.5
-          reward_near: 0.02
-          penalty_far: 0.01
+          reward_near: 0.004
+          penalty_far: 0.002
         heading:
           enabled: true
-          coefficient: 0.008
+          coefficient: 0.001
         speed:
           enabled: true
-          bonus_coef: 0.005
-        step_reward: -0.002
+          bonus_coef: 0.0005
+        step_reward: -0.001
         terminal:
           target_crash: 200.0
           self_crash: -20.0

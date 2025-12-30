@@ -140,9 +140,9 @@ agents:
           distance_threshold: 1.10
           min_speed: 0.25
           heading_tolerance: 1.00
-          bonus: 0.02              # Reduced from 0.05
+          bonus: 0.004             # Reduced 80% to prevent timeout farming
           bonus_interval: 5
-          streak_bonus: 0.02       # Reduced from 0.04
+          streak_bonus: 0.004      # Reduced 80% to prevent timeout farming
           streak_cap: 20
 
         # PRIMARY: Distance-based shaping (reduced to prevent timeout farming)
@@ -150,8 +150,8 @@ agents:
           enabled: true
           near_distance: 1.20
           far_distance: 2.50
-          reward_near: 0.02        # Reduced from 0.05
-          penalty_far: 0.01        # Reduced from 0.03
+          reward_near: 0.004       # Reduced 80% to prevent timeout farming
+          penalty_far: 0.002       # Reduced 80% to prevent timeout farming
 
         # PRIMARY: Forcing/pinch shaping (reduced)
         forcing:
@@ -161,32 +161,32 @@ agents:
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.60
-            weight: 0.02           # Reduced from 0.05
+            weight: 0.004          # Reduced 80% to prevent timeout farming
           clearance:
             enabled: true
-            weight: 0.015          # Reduced from 0.03
+            weight: 0.003          # Reduced 80% to prevent timeout farming
             band_min: 0.30
             band_max: 3.00
             clip: 0.02
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.03           # Reduced from 0.06
+            weight: 0.006          # Reduced 80% to prevent timeout farming
             clip: 0.02
             time_scaled: true
 
         # SECONDARY: Heading alignment (point towards target)
         heading:
           enabled: true
-          coefficient: 0.004
+          coefficient: 0.001       # Reduced 75% to prevent timeout farming
 
         # SECONDARY: Speed bonus (move fast)
         speed:
           enabled: true
-          bonus_coef: 0.002
+          bonus_coef: 0.0005       # Reduced 75% to prevent timeout farming
 
-        # Small step penalty (reduced since timeout penalty is now large)
-        step_reward: -0.002
+        # Small step penalty
+        step_reward: -0.001
 
 
   car_1:
