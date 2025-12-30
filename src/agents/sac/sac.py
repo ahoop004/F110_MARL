@@ -184,6 +184,57 @@ class SACAgent:
             return
         self.success_buffer.add(obs, action, reward, next_obs, done, info)
 
+    def store_hindsight_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        distance_to_target: float,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Store transition with hindsight experience replay (HER).
+
+        For failed episodes, relabel close approaches as "partial successes"
+        and store them in the success buffer with augmented rewards.
+
+        Args:
+            obs: Current observation
+            action: Action taken
+            reward: Original reward
+            next_obs: Next observation
+            done: Episode done flag
+            distance_to_target: Current distance to target (meters)
+            info: Additional info dict
+        """
+        if self.success_buffer is None:
+            return
+
+        # Only apply HER to non-success transitions
+        # (actual successes are handled by store_success_transition)
+        if done and info and info.get('success', False):
+            return  # Already a real success, don't augment
+
+        # Hindsight relabeling based on distance achieved
+        her_bonus = 0.0
+        store_in_success_buffer = False
+
+        if distance_to_target < 0.6:  # Very close approach (< 1 car length)
+            her_bonus = 100.0  # Large bonus
+            store_in_success_buffer = True
+        elif distance_to_target < 1.0:  # Close approach
+            her_bonus = 50.0   # Medium bonus
+            store_in_success_buffer = True
+        elif distance_to_target < 1.5:  # Moderate approach
+            her_bonus = 20.0   # Small bonus
+            store_in_success_buffer = True
+
+        if store_in_success_buffer:
+            # Augment reward and store in success buffer
+            augmented_reward = reward + her_bonus
+            self.success_buffer.add(obs, action, augmented_reward, next_obs, done, info)
+
     def reset_noise_schedule(self, *, restart: bool = False) -> None:
         if restart:
             self._exploration_step = 0

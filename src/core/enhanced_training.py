@@ -385,6 +385,20 @@ class EnhancedTrainingLoop:
                         # Off-policy agents: store_transition(obs, action, reward, next_obs, done)
                         agent.store_transition(flat_obs, actions[agent_id], rewards[agent_id], flat_next_obs, done_flag)
 
+                        # Hindsight Experience Replay (HER) for off-policy agents
+                        if hasattr(agent, 'store_hindsight_transition') and callable(agent.store_hindsight_transition):
+                            # Calculate distance to target for HER
+                            target_id = self.target_ids.get(agent_id, None)
+                            if target_id and target_id in next_obs:
+                                distance = self._calculate_distance_to_target(
+                                    next_obs[agent_id], next_obs[target_id]
+                                )
+                                agent.store_hindsight_transition(
+                                    flat_obs, actions[agent_id], rewards[agent_id],
+                                    flat_next_obs, done_flag, distance,
+                                    info=step_info.get(agent_id, {})
+                                )
+
                         # Update off-policy agents every step (they internally check if buffer is ready)
                         try:
                             agent.update()
@@ -643,6 +657,38 @@ class EnhancedTrainingLoop:
         if len(agent_ids) == 2:
             return agent_ids[1] if agent_id == agent_ids[0] else agent_ids[0]
         return None
+
+    def _calculate_distance_to_target(
+        self,
+        agent_obs: Dict[str, Any],
+        target_obs: Dict[str, Any],
+    ) -> float:
+        """Calculate Euclidean distance from agent to target.
+
+        Args:
+            agent_obs: Agent's observation dict (must contain 'pose' key)
+            target_obs: Target's observation dict (must contain 'pose' key)
+
+        Returns:
+            Distance in meters, or float('inf') if positions unavailable
+        """
+        try:
+            agent_pose = agent_obs.get('pose', None)
+            target_pose = target_obs.get('pose', None)
+
+            if agent_pose is None or target_pose is None:
+                return float('inf')
+
+            # Extract x, y positions (first 2 elements of pose)
+            agent_x, agent_y = agent_pose[0], agent_pose[1]
+            target_x, target_y = target_pose[0], target_pose[1]
+
+            # Euclidean distance
+            distance = np.sqrt((agent_x - target_x)**2 + (agent_y - target_y)**2)
+            return float(distance)
+
+        except (IndexError, KeyError, TypeError):
+            return float('inf')
 
     def _determine_agent_outcome(
         self,

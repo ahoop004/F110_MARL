@@ -99,23 +99,23 @@ agents:
     target_id: car_1
     params:
       lr: 0.0003
-      gamma: 0.995
-      lam: 0.95
+      gamma: 0.97              # Lower discount for faster credit assignment
+      lam: 0.90                # Lower GAE lambda = less bias, faster credit
       clip_eps: 0.2
       hidden_dims:
-      - 256
-      - 256
-      update_epochs: 10
-      minibatch_size: 128
-      batch_size: 2048
+      - 512                    # Increased capacity for complex behaviors
+      - 512
+      update_epochs: 20        # More epochs = learn more from each rollout
+      minibatch_size: 256      # Larger minibatches for stable gradients
+      batch_size: 4096         # Longer rollouts = more data per update
       max_grad_norm: 0.5
       normalize_adv: true
       clip_value_loss: true
       vf_coef: 0.5
-      ent_coef: 0.01
+      ent_coef: 0.05           # Higher entropy for more exploration
       ent_coef_schedule:
-        start: 0.02
-        final: 0.005
+        start: 0.08            # Start with high exploration
+        final: 0.01            # Gradually reduce
         decay_start: 100
         decay_episodes: 800
       episode_batch: false
@@ -127,6 +127,9 @@ agents:
     reward:
       preset: gaplock_simple
       overrides:
+        # Disable behavior penalties (prevent_reverse handles this)
+        penalties:
+          enabled: false
         terminal:
           target_crash: 200.0
           self_crash: -20.0

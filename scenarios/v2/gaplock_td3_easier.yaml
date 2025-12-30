@@ -15,39 +15,39 @@ environment:
   timestep: 0.01
   render: false
 
-  # Spawn curriculum - easier progression (start with varied spawns)
+  # Spawn curriculum - very conservative progression
   spawn_curriculum:
     enabled: true
     window: 200
-    activation_samples: 50
-    min_episode: 100          # Start curriculum later, let agent explore first
-    enable_patience: 7         # More patient before advancing
-    disable_patience: 3
-    cooldown: 30               # Longer cooldown between stage changes
+    activation_samples: 100    # More samples for stable decisions
+    min_episode: 200           # Delay start to build basic skills first
+    enable_patience: 10        # Very patient before advancing
+    disable_patience: 4
+    cooldown: 40               # Longer cooldown between stage changes
     lock_speed_steps: 200      # Less speed locking
 
     stages:
       - name: "random_slow"
         spawn_points: "all"    # Start with varied positions
         speed_range: [0.3, 0.5]  # Slow speeds first
-        enable_rate: 0.65
+        enable_rate: 0.70      # Higher bar for advancement
 
       - name: "random_medium"
         spawn_points: "all"
         speed_range: [0.3, 0.7]  # Increase speed range
-        enable_rate: 0.70
-        disable_rate: 0.50
+        enable_rate: 0.75      # Higher bar
+        disable_rate: 0.55
 
       - name: "close_challenges"
         spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
         speed_range: [0.4, 0.8]  # Harder scenarios with pinch spawns
-        enable_rate: 0.75
-        disable_rate: 0.55
+        enable_rate: 0.80      # Higher bar
+        disable_rate: 0.60
 
       - name: "full_random"
         spawn_points: "all"
         speed_range: [0.3, 1.0]
-        disable_rate: 0.60
+        disable_rate: 0.65
 
     spawn_configs:
       spawn_pinch_right:
@@ -87,26 +87,26 @@ agents:
     target_id: car_1
 
     params:
-      # TD3 hyperparameters - conservative for stability
-      lr_actor: 0.0001         # Reduced for more stable learning
-      lr_critic: 0.0003        # Slightly higher for critic (typical for TD3)
-      gamma: 0.99              # Reduced discount for faster credit assignment
+      # TD3 hyperparameters - optimized for pursuit task
+      lr_actor: 0.0001         # Conservative for stable learning
+      lr_critic: 0.0003        # 3x actor LR (standard for TD3)
+      gamma: 0.97              # Lower discount for faster credit assignment in long episodes
       tau: 0.005
       policy_delay: 2          # Update policy every 2 critic updates
-      hidden_dims: [256, 256]
+      hidden_dims: [512, 512]  # Increased capacity for complex pinch behaviors
       buffer_size: 1000000
       success_buffer_size: 200000
-      success_buffer_ratio: 0.1    # Reduced from 0.3 (start low until we get successes)
+      success_buffer_ratio: 0.3    # Learn heavily from rare successes
       batch_size: 256
-      learning_starts: 10000        # Collect more diverse data before learning
+      learning_starts: 20000        # Collect diverse data before learning
       max_grad_norm: 0.5
 
       # Exploration noise - CRITICAL for TD3
-      exploration_noise: 0.1         # Initial exploration noise
-      exploration_noise_final: 0.02  # Final exploration noise (keep some exploration)
-      exploration_noise_decay_steps: 100000  # Decay over 100k steps (~50 episodes at 2k steps)
-      target_noise: 0.2              # Noise for target policy smoothing
-      target_noise_clip: 0.5         # Clip target noise
+      exploration_noise: 0.2         # Higher initial exploration to discover strategies
+      exploration_noise_final: 0.05  # Keep some exploration throughout
+      exploration_noise_decay_steps: 150000  # Gradual decay over ~75 episodes
+      target_noise: 0.1              # Reduced for more stable target policy
+      target_noise_clip: 0.3         # Tighter clipping for precision
 
       # Prioritized Experience Replay - ENABLED
       use_per: true
@@ -127,6 +127,10 @@ agents:
       preset: gaplock_simple
 
       overrides:
+        # Disable behavior penalties (prevent_reverse handles this, idle penalty was too harsh)
+        penalties:
+          enabled: false
+
         # PRIMARY: Terminal outcomes (favor clean pinches)
         terminal:
           target_crash: 200.0      # HUGE reward for success
