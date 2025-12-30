@@ -1,6 +1,6 @@
 experiment:
   name: gaplock_rainbow_comparison
-  episodes: 1500
+  episodes: 2500
   seed: 42
 environment:
   map: maps/line2/line2.yaml
@@ -31,10 +31,9 @@ environment:
       spawn_points:
       - spawn_pinch_right
       - spawn_pinch_left
-      - spawn_pinch_ahead
       speed_range:
-      - 0.5
-      - 0.5
+      - 0.44
+      - 0.44
       enable_rate: 0.7
     - name: optimal_varied_speed
       spawn_points:
@@ -240,12 +239,12 @@ agents:
       max_steer: 0.32
       min_speed: 0.2
       max_speed: 1.0
-      steering_gain: 0.6
+      steering_gain: 0.3
       fov: 4.71238898
       normalized: false
-      steer_smooth: 0.4
+      steer_smooth: 0.6
       mode: lidar
-      gap_min_range: 0.65
+      gap_min_range: 0.4
       target_mode: center
       wall_avoid_kick: 0.0
       panic_factor_near: 1.0
