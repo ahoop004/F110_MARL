@@ -1,101 +1,120 @@
-# Gaplock SAC Comparison
-# Train SAC agent to force FTG opponent to crash
-# NOTE: Uses Limo parameters (v_max=1.0 m/s) to match v1 behavior
-
 experiment:
   name: gaplock_sac_comparison
   episodes: 1500
   seed: 42
-
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
   max_steps: 2500
   lidar_beams: 720
-  spawn_points: [spawn_2, spawn_1]
+  spawn_points:
+  - spawn_2
+  - spawn_1
   timestep: 0.01
-  render: true # Enable rendering with telemetry extensions
-
-  # Spawn curriculum for progressive difficulty
-  # Automatically adjusts spawn difficulty based on agent success rate
+  render: true
   spawn_curriculum:
-    enabled: true # Set to true to enable curriculum learning
-
-    # Success tracking parameters
-    window: 200               # Rolling window size for success rate calculation
-    activation_samples: 50    # Min episodes before transitions can occur
-    min_episode: 50           # OPTIMIZED: Faster curriculum (was 150)
-
-    # Stage transition parameters
-    enable_patience: 5        # Consecutive episodes above threshold to advance
-    disable_patience: 3       # Consecutive episodes below threshold to regress
-    cooldown: 20              # Min episodes between stage transitions (prevents oscillation)
-
-    # Speed control parameters
-    lock_speed_steps: 175     # Lock starting speed for first N steps of each episode (0 to disable)
-
-    # Curriculum stages (progressive difficulty)
+    enabled: true
+    window: 200
+    activation_samples: 50
+    min_episode: 50
+    enable_patience: 5
+    disable_patience: 3
+    cooldown: 20
+    lock_speed_steps: 175
     stages:
-      # Stage 0: Easy - Fixed optimal pinch positions, fixed speed
-      # Both agents start at 0.5 m/s, spawns at optimal pinch pockets
-      - name: "optimal_fixed"
-        spawn_points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead]
-        speed_range: [0.61, 0.61]  # Fixed 0.5 m/s for both agents
-        enable_rate: 0.70        # Advance when success >= 70%
-
-      # Stage 1: Medium - Optimal + approach positions, variable speed
-      # Adds approach spawns, randomizes speed 0.3-1.0 m/s
-      - name: "optimal_varied_speed"
-        spawn_points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead, spawn_approach_0.0C, spawn_approach_0.3L, spawn_approach_0.3R]
-        speed_range: [0.3, 1.0]  # Random speed 0.3-1.0 m/s
-        enable_rate: 0.65        # Advance when success >= 65%
-        disable_rate: 0.50       # Regress if success < 50%
-
-      # Stage 2: Hard - All available spawns, variable speed
-      # Uses all spawn points including map defaults, random speeds
-      - name: "full_random"
-        spawn_points: "all"      # Use all available spawn points
-        speed_range: [0.3, 1.0]  # Random speed 0.3-1.0 m/s
-        disable_rate: 0.45       # Regress if success < 45%
-
-    # Multi-agent spawn point configurations
-    # Adjusted for narrow track (y: -1.7 to +0.3m), anchor_lateral=0.30m
+    - name: optimal_fixed
+      spawn_points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      - spawn_pinch_ahead
+      speed_range:
+      - 0.61
+      - 0.61
+      enable_rate: 0.7
+    - name: optimal_varied_speed
+      spawn_points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      - spawn_pinch_ahead
+      - spawn_approach_0.0C
+      - spawn_approach_0.3L
+      - spawn_approach_0.3R
+      speed_range:
+      - 0.3
+      - 1.0
+      enable_rate: 0.65
+      disable_rate: 0.5
+    - name: full_random
+      spawn_points: all
+      speed_range:
+      - 0.3
+      - 1.0
+      disable_rate: 0.45
     spawn_configs:
       spawn_pinch_right:
-        car_0: [-45.569, -1.000, 0.100]  # Attacker at right pinch pocket
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+        car_0:
+        - -45.569
+        - -1.0
+        - 0.1
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_pinch_left:
-        car_0: [-45.569, -0.400, -0.100]  # Attacker at left pinch pocket
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+        car_0:
+        - -45.569
+        - -0.4
+        - -0.1
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_pinch_ahead:
-        car_0: [-45.569, -0.700, 0.000]  # Attacker directly ahead
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+        car_0:
+        - -45.569
+        - -0.7
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_approach_0.0C:
-        car_0: [-49.269, -0.700, 0.000]  # Attacker 2.5m behind, center
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+        car_0:
+        - -49.269
+        - -0.7
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_approach_0.3L:
-        car_0: [-49.269, -0.400, 0.000]  # Attacker 2.5m behind, left offset
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
+        car_0:
+        - -49.269
+        - -0.4
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_approach_0.3R:
-        car_0: [-49.269, -1.000, 0.000]  # Attacker 2.5m behind, right offset
-        car_1: [-46.769, -0.700, 0.000]  # Defender (centered on lane)
-
-  # Visualization configuration (optional)
+        car_0:
+        - -49.269
+        - -1.0
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
   visualization:
     reward_ring:
       enabled: false
-      # inner_radius and outer_radius are auto-extracted from reward config
       preferred_radius: 1.5
-
     heatmap:
-      enabled: false  # Toggle with H key during training
-      extent_m: 6.0  # Heatmap size (meters from target)
-      cell_size_m: 0.25  # Cell resolution (smaller = higher quality, slower)
-      alpha: 0.22  # Transparency (0-1)
-      update_frequency: 5  # Update every N frames
-      # Reward params auto-extracted from car_0 reward config
-
-  # Agilex Limo vehicle parameters (realistic - matches v1)
+      enabled: false
+      extent_m: 6.0
+      cell_size_m: 0.25
+      alpha: 0.22
+      update_frequency: 5
   vehicle_params:
     mu: 1.0489
     C_Sf: 4.718
@@ -114,130 +133,100 @@ environment:
     v_switch: 0.8
     a_max: 2.0
     v_min: -1.0
-    v_max: 1.0          # Limo realistic speed
-
+    v_max: 1.0
 agents:
   car_0:
     role: attacker
     algorithm: sac
-    target_id: car_1  # Attacker targets the defender
-
-    # SAC hyperparameters (OPTIMIZED)
+    target_id: car_1
     params:
       lr_actor: 0.0003
       lr_critic: 0.0003
       lr_alpha: 0.0003
       gamma: 0.995
       tau: 0.005
-      alpha: 0.5              # OPTIMIZED: Increased for better exploration (was 0.2)
-      target_entropy: -1.0    # OPTIMIZED: Less restrictive (was -2.0 default)
-      hidden_dims: [256, 256] # OPTIMIZED: Smaller networks (was [512, 256, 128])
+      alpha: 0.5
+      target_entropy: -1.0
+      hidden_dims:
+      - 256
+      - 256
       buffer_size: 1000000
       success_buffer_size: 200000
-      success_buffer_ratio: 0.2
+      success_buffer_ratio: 0.1
       batch_size: 256
-      learning_starts: 2500   # OPTIMIZED: Reduced (was 10000)
-      max_grad_norm: 0.5      # OPTIMIZED: Gradient clipping
-
-      # Prioritized Experience Replay
+      learning_starts: 2500
+      max_grad_norm: 0.5
       use_per: true
       per_alpha: 0.6
       per_beta: 0.4
       per_beta_increment: 0.001
       per_epsilon: 0.01
-
-      # Prevent reverse (matches v1 behavior)
       prevent_reverse: true
       prevent_reverse_min_speed: 0.01
-      prevent_reverse_speed_index: 1  # Velocity action dimension
-
-    # Observation configuration
+      prevent_reverse_speed_index: 1
     observation:
       preset: gaplock
-
-    # Reward configuration
     reward:
       preset: gaplock_full
-
-      # Override reward parameters (optional - comment out to use preset defaults)
       overrides:
-        # Forcing rewards (Gaussian pinch pockets) - REBALANCED: 10x reduction
         forcing:
           enabled: true
           pinch_pockets:
             enabled: true
-            anchor_forward: 1.20  # Distance ahead of target (m)
-            anchor_lateral: 0.35  # Distance to side of target (m) - adjusted for narrow track
-            sigma: 0.55           # Gaussian width (m)
-            weight: 0.08          # REBALANCED: was 0.80
-            # Potential field mode (if peak/floor specified, uses field mapping instead of simple Gaussian)
-            peak: 1.0             # Max reward at optimal position
-            floor: -0.5           # Min reward when far from optimal
-            power: 2.0            # Field decay exponent
+            anchor_forward: 1.2
+            anchor_lateral: 0.35
+            sigma: 0.55
+            weight: 0.02
+            peak: 1.0
+            floor: -0.5
+            power: 2.0
           clearance:
             enabled: true
-            weight: 0.08          # REBALANCED: was 0.80
-            band_min: 0.30        # Min clearance for reward (m)
-            band_max: 3.20        # Max clearance for reward (m)
-            clip: 0.015           # REBALANCED: was 0.15
+            weight: 0.015
+            band_min: 0.3
+            band_max: 3.2
+            clip: 0.015
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.2           # REBALANCED: was 2.0
-            clip: 0.015           # REBALANCED: was 0.15
+            weight: 0.03
+            clip: 0.015
             time_scaled: true
-
-        # Distance-based shaping
         distance:
           enabled: false
-          near_distance: 1.0      # Close range (m)
-          far_distance: 2.5       # Far range (m)
-          reward_near: 0.12       # Reward when near
-          penalty_far: 0.08       # Penalty when far
-
-        # Heading alignment
+          near_distance: 1.0
+          far_distance: 2.5
+          reward_near: 0.02
+          penalty_far: 0.01
         heading:
           enabled: true
-          coefficient: 0.008      # REBALANCED: was 0.08
-
-        # Speed bonus
+          coefficient: 0.008
         speed:
           enabled: true
-          bonus_coef: 0.005       # REBALANCED: was 0.05
-
-        # Step penalty (constant per-step reward)
-        step_reward: -0.01        # Small penalty per step to encourage faster completion
-
-        # Terminal rewards (OPTIMIZED: Scaled down)
+          bonus_coef: 0.005
+        step_reward: -0.002
         terminal:
-          target_crash: 10.0      # OPTIMIZED: was 60.0
-          self_crash: -10.0       # OPTIMIZED: was -40.0
-          timeout: -5.0           # OPTIMIZED: was -90.0
-
+          target_crash: 200.0
+          self_crash: -20.0
+          timeout: -100.0
+          collision: -40.0
   car_1:
     role: defender
     algorithm: ftg
-
-    # FTG parameters (Limo-compatible - matches v1)
     params:
-      # Core algorithm parameters
       max_distance: 12.0
       window_size: 4
       bubble_radius: 2
       max_steer: 0.32
-
-      # Speed control (FTG dynamically adjusts based on gap clearance)
-      min_speed: 0.2         # Min speed in tight spaces (m/s)
-      max_speed: 1.0         # Max speed in open areas (m/s, matches v_max)
-
-      # Control parameters
+      min_speed: 0.2
+      max_speed: 0.45
       steering_gain: 0.6
-      fov: 4.71238898        # 270 degrees
+      fov: 4.71238898
       normalized: false
       steer_smooth: 0.4
-      mode: "lidar"
+      mode: lidar
       gap_min_range: 0.65
-      target_mode: "farthest"
+      target_mode: farthest
       use_disparity_extender: true
       disparity_threshold: 0.35
       vehicle_width: 0.225
@@ -245,10 +234,12 @@ agents:
       no_cutback_enabled: true
       cutback_clearance: 0.9
       cutback_hold_steps: 8
-
 wandb:
-  enabled: true  # Disabled - set to true and configure API key to enable
+  enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
-  tags: [sac, comparison, gaplock]
-  notes: "SAC comparison for gaplock adversarial task"
+  tags:
+  - sac
+  - comparison
+  - gaplock
+  notes: SAC comparison for gaplock adversarial task

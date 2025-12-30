@@ -96,7 +96,7 @@ agents:
       hidden_dims: [256, 256]
       buffer_size: 1000000
       success_buffer_size: 200000
-      success_buffer_ratio: 0.3
+      success_buffer_ratio: 0.1    # Reduced from 0.3 (start low until we get successes)
       batch_size: 256
       learning_starts: 10000        # Collect more diverse data before learning
       max_grad_norm: 0.5
@@ -129,10 +129,10 @@ agents:
       overrides:
         # PRIMARY: Terminal outcomes (favor clean pinches)
         terminal:
-          target_crash: 100.0
-          self_crash: -60.0
-          collision: -120.0
-          timeout: -10.0
+          target_crash: 200.0      # HUGE reward for success
+          self_crash: -20.0        # Small penalty (learning requires trying!)
+          collision: -40.0         # Moderate penalty
+          timeout: -100.0          # MASSIVE penalty (worse than trying and failing!)
 
         # PRIMARY: Pressure (stay close, stay aligned)
         pressure:
@@ -140,20 +140,20 @@ agents:
           distance_threshold: 1.10
           min_speed: 0.25
           heading_tolerance: 1.00
-          bonus: 0.05
+          bonus: 0.02              # Reduced from 0.05
           bonus_interval: 5
-          streak_bonus: 0.04
+          streak_bonus: 0.02       # Reduced from 0.04
           streak_cap: 20
 
-        # PRIMARY: Distance-based shaping
+        # PRIMARY: Distance-based shaping (reduced to prevent timeout farming)
         distance:
           enabled: true
           near_distance: 1.20
           far_distance: 2.50
-          reward_near: 0.05
-          penalty_far: 0.03
+          reward_near: 0.02        # Reduced from 0.05
+          penalty_far: 0.01        # Reduced from 0.03
 
-        # PRIMARY: Forcing/pinch shaping
+        # PRIMARY: Forcing/pinch shaping (reduced)
         forcing:
           enabled: true
           pinch_pockets:
@@ -161,17 +161,17 @@ agents:
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.60
-            weight: 0.05
+            weight: 0.02           # Reduced from 0.05
           clearance:
             enabled: true
-            weight: 0.03
+            weight: 0.015          # Reduced from 0.03
             band_min: 0.30
             band_max: 3.00
             clip: 0.02
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.06
+            weight: 0.03           # Reduced from 0.06
             clip: 0.02
             time_scaled: true
 
@@ -185,8 +185,8 @@ agents:
           enabled: true
           bonus_coef: 0.002
 
-        # Small step penalty
-        step_reward: -0.005
+        # Small step penalty (reduced since timeout penalty is now large)
+        step_reward: -0.002
 
 
   car_1:
@@ -200,7 +200,7 @@ agents:
       max_steer: 0.30
 
       min_speed: 0.2
-      max_speed: 0.6             # Slower than attacker
+      max_speed: 0.45            # Even slower to give attacker more chance
 
       steering_gain: 0.4
       fov: 4.71238898
