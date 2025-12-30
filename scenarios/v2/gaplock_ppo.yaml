@@ -207,7 +207,7 @@ agents:
       bubble_radius: 2
       max_steer: 0.32
       min_speed: 0.2
-      max_speed: 0.45
+      max_speed: 0.85
       steering_gain: 0.6
       fov: 4.71238898
       normalized: false
