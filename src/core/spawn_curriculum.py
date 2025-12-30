@@ -84,7 +84,9 @@ class SpawnCurriculumManager:
         self.min_episode = max(0, int(config.get('min_episode', 100)))
 
         # Speed control parameters
-        self.lock_speed_steps = max(0, int(config.get('lock_speed_steps', 150)))
+        self.lock_speed_steps_default = max(0, int(config.get('lock_speed_steps', 150)))
+        self.lock_speed_steps = self.lock_speed_steps_default
+        self.lock_speed_schedule = self._parse_lock_speed_schedule(config.get('lock_speed_schedule', {}))
 
         # Transition parameters
         self.enable_patience_default = max(1, int(config.get('enable_patience', 5)))
@@ -102,6 +104,9 @@ class SpawnCurriculumManager:
         self.stage_histories: Dict[int, deque] = {
             i: deque(maxlen=self.window) for i in range(len(self.stages))
         }
+
+        # Apply initial lock speed schedule if configured
+        self._apply_lock_speed_schedule(self.current_stage_idx)
 
         # Transition tracking
         self.promote_streak = 0
@@ -181,6 +186,45 @@ class SpawnCurriculumManager:
             stages.append(stage)
 
         return stages
+
+    def _parse_lock_speed_schedule(self, raw_schedule: Any) -> Dict[str, Dict[str, Any]]:
+        """Parse lock speed schedule configuration."""
+        if not isinstance(raw_schedule, dict):
+            return {}
+        by_stage = raw_schedule.get('by_stage', {})
+        by_stage_index = raw_schedule.get('by_stage_index', {})
+        if not isinstance(by_stage, dict):
+            by_stage = {}
+        if not isinstance(by_stage_index, dict):
+            by_stage_index = {}
+        return {
+            'by_stage': by_stage,
+            'by_stage_index': by_stage_index,
+        }
+
+    def _apply_lock_speed_schedule(self, stage_idx: int) -> None:
+        """Update lock_speed_steps based on configured schedule."""
+        if not self.lock_speed_schedule:
+            self.lock_speed_steps = self.lock_speed_steps_default
+            return
+        stage = self.stages[stage_idx]
+        value = None
+        by_stage = self.lock_speed_schedule.get('by_stage', {})
+        by_index = self.lock_speed_schedule.get('by_stage_index', {})
+        if stage.name in by_stage:
+            value = by_stage.get(stage.name)
+        if value is None:
+            if stage_idx in by_index:
+                value = by_index.get(stage_idx)
+            elif str(stage_idx) in by_index:
+                value = by_index.get(str(stage_idx))
+        if value is None:
+            self.lock_speed_steps = self.lock_speed_steps_default
+        else:
+            try:
+                self.lock_speed_steps = max(0, int(value))
+            except (TypeError, ValueError):
+                self.lock_speed_steps = self.lock_speed_steps_default
 
     @property
     def current_stage(self) -> SpawnStage:
@@ -289,6 +333,7 @@ class SpawnCurriculumManager:
 
         # Clear history for new stage to get fresh statistics
         self.stage_histories[stage_idx].clear()
+        self._apply_lock_speed_schedule(stage_idx)
 
     def observe(self, episode: int, success: bool) -> Dict[str, Any]:
         """Record episode outcome and update curriculum state.

@@ -21,6 +21,11 @@ environment:
     disable_patience: 3
     cooldown: 20
     lock_speed_steps: 550
+    lock_speed_schedule:
+      by_stage:
+        optimal_fixed: 550
+        optimal_varied_speed: 350
+        full_random: 200
     stages:
     - name: optimal_fixed
       spawn_points:
@@ -241,7 +246,10 @@ agents:
       steer_smooth: 0.4
       mode: lidar
       gap_min_range: 0.65
-      target_mode: farthest
+      target_mode: center
+      wall_avoid_kick: 0.0
+      panic_factor_near: 1.0
+      panic_factor_very_near: 1.0
       use_disparity_extender: true
       disparity_threshold: 0.35
       vehicle_width: 0.225
@@ -249,6 +257,31 @@ agents:
       no_cutback_enabled: true
       cutback_clearance: 0.9
       cutback_hold_steps: 8
+    ftg_schedule:
+      enabled: true
+      by_stage:
+        optimal_varied_speed:
+          max_speed: 0.6
+          steering_gain: 0.4
+          steer_smooth: 0.4
+          bubble_radius: 2.5
+          safety_margin: 0.1
+          gap_min_range: 0.55
+          target_mode: center
+          wall_avoid_kick: 0.05
+          panic_factor_near: 1.1
+          panic_factor_very_near: 1.25
+        full_random:
+          max_speed: 1.0
+          steering_gain: 0.6
+          steer_smooth: 0.3
+          bubble_radius: 3.0
+          safety_margin: 0.15
+          gap_min_range: 0.65
+          target_mode: farthest
+          wall_avoid_kick: 0.12
+          panic_factor_near: 1.2
+          panic_factor_very_near: 1.4
 wandb:
   enabled: true
   project: marl-f110

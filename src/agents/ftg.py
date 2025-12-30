@@ -26,6 +26,13 @@ class FollowTheGapPolicy:
         "dwa_samples": 0,
         "dwa_horizon": 0.5,
         "dwa_heading_weight": 0.1,
+        "wall_avoid_kick": 0.18,
+        "panic_threshold_near": 4.0,
+        "panic_threshold_very_near": 2.0,
+        "panic_factor_near": 1.15,
+        "panic_factor_very_near": 1.4,
+        "evasive_threshold": 1.0,
+        "evasive_steer_scale": 0.5,
         "enhanced_gap_scoring": False,
         "gap_score_width_weight": 1.0,
         "gap_score_clearance_weight": 1.0,
@@ -75,6 +82,13 @@ class FollowTheGapPolicy:
                 dwa_samples: int = 0,
                 dwa_horizon: float = 0.5,
                 dwa_heading_weight: float = 0.1,
+                wall_avoid_kick: float = 0.18,
+                panic_threshold_near: float = 4.0,
+                panic_threshold_very_near: float = 2.0,
+                panic_factor_near: float = 1.15,
+                panic_factor_very_near: float = 1.4,
+                evasive_threshold: float = 1.0,
+                evasive_steer_scale: float = 0.5,
                 enhanced_gap_scoring: bool = False,
                 gap_score_width_weight: float = 1.0,
                 gap_score_clearance_weight: float = 1.0,
@@ -103,6 +117,13 @@ class FollowTheGapPolicy:
         self.dwa_samples = max(int(dwa_samples), 0)
         self.dwa_horizon = max(float(dwa_horizon), 0.0)
         self.dwa_heading_weight = float(dwa_heading_weight)
+        self.wall_avoid_kick = float(wall_avoid_kick)
+        self.panic_threshold_near = float(panic_threshold_near)
+        self.panic_threshold_very_near = float(panic_threshold_very_near)
+        self.panic_factor_near = float(panic_factor_near)
+        self.panic_factor_very_near = float(panic_factor_very_near)
+        self.evasive_threshold = float(evasive_threshold)
+        self.evasive_steer_scale = float(evasive_steer_scale)
         self.enhanced_gap_scoring = bool(enhanced_gap_scoring)
         self.gap_score_width_weight = float(gap_score_width_weight)
         self.gap_score_clearance_weight = float(gap_score_clearance_weight)
@@ -387,24 +408,26 @@ class FollowTheGapPolicy:
                 steering += self.inside_bias_gain * hug_bias * self.max_steer
 
         # 3. Sector-based danger weighting
-        # Gentler panic scaling keeps the policy committed to the current heading longer
+        # Gentler panic scaling keeps the policy committed to the current heading longer.
         panic_factor = 1.0
-        if min_scan < 4.0:
-            panic_factor = 1.15
-        if min_scan < 2.0:
-            panic_factor = 1.4
+        if min_scan < self.panic_threshold_near:
+            panic_factor = self.panic_factor_near
+        if min_scan < self.panic_threshold_very_near:
+            panic_factor = self.panic_factor_very_near
 
         steering *= panic_factor
 
-        # Kick away from closest side
-        if left_min < right_min:
-            steering += 0.18 * self.max_steer
-        elif right_min < left_min:
-            steering -= 0.18 * self.max_steer
+        # Kick away from closest side (configurable)
+        if self.wall_avoid_kick != 0.0:
+            if left_min < right_min:
+                steering += self.wall_avoid_kick * self.max_steer
+            elif right_min < left_min:
+                steering -= self.wall_avoid_kick * self.max_steer
 
-        # Override when extremely close: pure evasive
-        if min_scan < 1.0:
-            steering = np.clip(steering, -0.5 * self.max_steer, 0.5 * self.max_steer)
+        # Override when extremely close: pure evasive (configurable)
+        if min_scan < self.evasive_threshold:
+            steer_scale = self.evasive_steer_scale if self.evasive_steer_scale > 0.0 else 0.5
+            steering = np.clip(steering, -steer_scale * self.max_steer, steer_scale * self.max_steer)
 
         # Clip and smooth steering
         speed = self._extract_speed(obs)

@@ -453,6 +453,7 @@ def main():
         # Extract observation presets from scenario
         observation_presets = {}
         target_ids = {}
+        ftg_schedules = {}
 
         # First pass: collect observation presets and explicit target_ids
         for agent_id, agent_config in scenario['agents'].items():
@@ -471,6 +472,12 @@ def main():
             # Get target_id if specified (for adversarial tasks)
             if 'target_id' in agent_config:
                 target_ids[agent_id] = agent_config['target_id']
+
+            # Collect FTG schedules (optional)
+            if agent_config.get('algorithm', '').lower() == 'ftg':
+                schedule = agent_config.get('ftg_schedule')
+                if isinstance(schedule, dict):
+                    ftg_schedules[agent_id] = schedule
 
         # Second pass: infer target_ids for adversarial tasks based on roles
         # For attacker-defender scenarios, attacker targets defender
@@ -619,6 +626,7 @@ def main():
             target_ids=target_ids,
             agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,
+            ftg_schedules=ftg_schedules,
             wandb_logger=wandb_logger,
             console_logger=console_logger,
             csv_logger=csv_logger,

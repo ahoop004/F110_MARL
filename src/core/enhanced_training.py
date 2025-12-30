@@ -55,6 +55,7 @@ class EnhancedTrainingLoop:
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
+        ftg_schedules: Optional[Dict[str, Dict[str, Any]]] = None,
         wandb_logger: Optional[WandbLogger] = None,
         console_logger: Optional[ConsoleLogger] = None,
         csv_logger: Optional[CSVLogger] = None,
@@ -100,6 +101,7 @@ class EnhancedTrainingLoop:
         self.target_ids = target_ids or {}
         self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
+        self.ftg_schedules = ftg_schedules or {}
         self.wandb_logger = wandb_logger
         self.console_logger = console_logger
         self.csv_logger = csv_logger
@@ -185,6 +187,13 @@ class EnhancedTrainingLoop:
         """
         # Track training time
         self.training_start_time = time.time()
+
+        # Apply initial FTG schedule (if configured)
+        if self.spawn_curriculum and self.ftg_schedules:
+            self._apply_ftg_schedule(
+                stage_name=self.spawn_curriculum.current_stage.name,
+                stage_index=self.spawn_curriculum.current_stage_idx,
+            )
 
         # Update metadata if checkpoint manager enabled
         if self.checkpoint_manager:
@@ -568,6 +577,11 @@ class EnhancedTrainingLoop:
                 )
                 if self.console_logger:
                     self.console_logger.print_info(msg)
+                if self.ftg_schedules:
+                    self._apply_ftg_schedule(
+                        stage_name=curriculum_state['stage'],
+                        stage_index=curriculum_state['stage_index'],
+                    )
 
             # Log curriculum metrics to W&B
             if self.wandb_logger:
@@ -689,6 +703,45 @@ class EnhancedTrainingLoop:
 
         except (IndexError, KeyError, TypeError):
             return float('inf')
+
+    def _apply_ftg_schedule(self, stage_name: Optional[str], stage_index: Optional[int]) -> None:
+        """Apply FTG parameter schedule for the current curriculum stage."""
+        if not self.ftg_schedules:
+            return
+
+        for agent_id, schedule in self.ftg_schedules.items():
+            if not schedule or not schedule.get("enabled", True):
+                continue
+
+            agent = self.agents.get(agent_id)
+            if agent is None:
+                continue
+
+            apply_config = getattr(agent, "apply_config", None)
+            if not callable(apply_config):
+                continue
+
+            params: Dict[str, Any] = {}
+            by_stage = schedule.get("by_stage", {})
+            if stage_name and stage_name in by_stage:
+                params.update(by_stage[stage_name])
+
+            by_index = schedule.get("by_stage_index", {})
+            if stage_index is not None:
+                if stage_index in by_index:
+                    params.update(by_index[stage_index])
+                elif str(stage_index) in by_index:
+                    params.update(by_index[str(stage_index)])
+
+            if not params:
+                continue
+
+            apply_config(params)
+            if self.console_logger:
+                stage_label = stage_name if stage_name is not None else f"stage_{stage_index}"
+                self.console_logger.print_info(
+                    f"FTG schedule applied for {agent_id} at {stage_label}"
+                )
 
     def _determine_agent_outcome(
         self,

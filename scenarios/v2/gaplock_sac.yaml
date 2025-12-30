@@ -1,11 +1,11 @@
 experiment:
   name: gaplock_sac_comparison
-  episodes: 1500
+  episodes: 2500
   seed: 42
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
-  max_steps: 2500
+  max_steps: 1500
   lidar_beams: 720
   spawn_points:
   - spawn_2
@@ -21,15 +21,20 @@ environment:
     disable_patience: 3
     cooldown: 20
     lock_speed_steps: 550
+    lock_speed_schedule:
+      by_stage:
+        optimal_fixed: 550
+        optimal_varied_speed: 350
+        full_random: 200
     stages:
     - name: optimal_fixed
       spawn_points:
       - spawn_pinch_right
       - spawn_pinch_left
-      - spawn_pinch_ahead
+      # - spawn_pinch_ahead
       speed_range:
-      - 0.5
-      - 0.5
+      - 0.44
+      - 0.44
       enable_rate: 0.7
     - name: optimal_varied_speed
       spawn_points:
@@ -220,13 +225,16 @@ agents:
       max_steer: 0.32
       min_speed: 0.2
       max_speed: 1.0
-      steering_gain: 0.6
+      steering_gain: 0.3
       fov: 4.71238898
       normalized: false
-      steer_smooth: 0.4
+      steer_smooth: 0.6
       mode: lidar
-      gap_min_range: 0.65
-      target_mode: farthest
+      gap_min_range: 0.4
+      target_mode: center
+      wall_avoid_kick: 0.0
+      panic_factor_near: 1.0
+      panic_factor_very_near: 1.0
       use_disparity_extender: true
       disparity_threshold: 0.35
       vehicle_width: 0.225
@@ -234,6 +242,31 @@ agents:
       no_cutback_enabled: true
       cutback_clearance: 0.9
       cutback_hold_steps: 8
+    ftg_schedule:
+      enabled: true
+      by_stage:
+        optimal_varied_speed:
+          max_speed: 0.6
+          steering_gain: 0.4
+          steer_smooth: 0.4
+          bubble_radius: 2.5
+          safety_margin: 0.1
+          gap_min_range: 0.55
+          target_mode: center
+          wall_avoid_kick: 0.05
+          panic_factor_near: 1.1
+          panic_factor_very_near: 1.25
+        full_random:
+          max_speed: 1.0
+          steering_gain: 0.6
+          steer_smooth: 0.3
+          bubble_radius: 3.0
+          safety_margin: 0.15
+          gap_min_range: 0.65
+          target_mode: farthest
+          wall_avoid_kick: 0.12
+          panic_factor_near: 1.2
+          panic_factor_very_near: 1.4
 wandb:
   enabled: true
   project: marl-f110
