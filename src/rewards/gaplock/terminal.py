@@ -74,6 +74,10 @@ class TerminalReward:
         # Check collision state
         attacker_crashed = info.get('collision', False) or info.get('car_0/collision', False)
         target_crashed = info.get('target_collision', False) or info.get('car_1/collision', False)
+        if not attacker_crashed:
+            attacker_crashed = bool(info.get('self_crash', False) or info.get('attacker_collision', False))
+        if not target_crashed:
+            target_crashed = bool(info.get('target_crash', False) or info.get('success', False))
 
         if attacker_crashed and target_crashed:
             # Both crashed - mutual collision

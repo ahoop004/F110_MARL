@@ -121,6 +121,11 @@ class TD3Agent:
         self.action_noise_scale = self.action_range / 2.0
         self.action_noise_scale_torch = torch.as_tensor(self.action_noise_scale, device=self.device)
 
+        # Prevent reverse configuration
+        self.prevent_reverse = bool(cfg.get("prevent_reverse", False))
+        self.prevent_reverse_min_speed = float(cfg.get("prevent_reverse_min_speed", 0.01))
+        self.prevent_reverse_speed_index = int(cfg.get("prevent_reverse_speed_index", 1))
+
         # Gradient clipping
         self.max_grad_norm = float(cfg.get("max_grad_norm", 0.5))
 
@@ -142,6 +147,14 @@ class TD3Agent:
                 noise = np.random.normal(0.0, noise_scale, size=self.act_dim) * self.action_noise_scale
                 action = np.clip(action + noise, self.action_low, self.action_high)
             self._exploration_step += 1
+
+        # Prevent reverse: clamp speed to minimum positive value
+        if self.prevent_reverse:
+            action[self.prevent_reverse_speed_index] = max(
+                action[self.prevent_reverse_speed_index],
+                self.prevent_reverse_min_speed
+            )
+
         return action.astype(np.float32)
 
     def reset_noise_schedule(self, *, restart: bool = False) -> None:

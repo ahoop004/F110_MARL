@@ -15,33 +15,39 @@ environment:
   timestep: 0.01
   render: false
 
-  # Spawn curriculum - easier progression
+  # Spawn curriculum - easier progression (start with varied spawns)
   spawn_curriculum:
     enabled: true
     window: 200
     activation_samples: 50
-    min_episode: 50
-    enable_patience: 5
+    min_episode: 100          # Start curriculum later, let agent explore first
+    enable_patience: 7         # More patient before advancing
     disable_patience: 3
-    cooldown: 20
-    lock_speed_steps: 250
+    cooldown: 30               # Longer cooldown between stage changes
+    lock_speed_steps: 200      # Less speed locking
 
     stages:
-      - name: "close_slow"
-        spawn_points: [spawn_pinch_ahead]
-        speed_range: [0.4, 0.4]
+      - name: "random_slow"
+        spawn_points: "all"    # Start with varied positions
+        speed_range: [0.3, 0.5]  # Slow speeds first
         enable_rate: 0.65
 
-      - name: "close_varied"
-        spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
-        speed_range: [0.4, 0.7]
+      - name: "random_medium"
+        spawn_points: "all"
+        speed_range: [0.3, 0.7]  # Increase speed range
         enable_rate: 0.70
         disable_rate: 0.50
+
+      - name: "close_challenges"
+        spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.4, 0.8]  # Harder scenarios with pinch spawns
+        enable_rate: 0.75
+        disable_rate: 0.55
 
       - name: "full_random"
         spawn_points: "all"
         speed_range: [0.3, 1.0]
-        disable_rate: 0.55
+        disable_rate: 0.60
 
     spawn_configs:
       spawn_pinch_right:
@@ -81,10 +87,10 @@ agents:
     target_id: car_1
 
     params:
-      # TD3 hyperparameters - optimized for pursuit
-      lr_actor: 0.0003
-      lr_critic: 0.0003
-      gamma: 0.995
+      # TD3 hyperparameters - conservative for stability
+      lr_actor: 0.0001         # Reduced for more stable learning
+      lr_critic: 0.0003        # Slightly higher for critic (typical for TD3)
+      gamma: 0.99              # Reduced discount for faster credit assignment
       tau: 0.005
       policy_delay: 2          # Update policy every 2 critic updates
       hidden_dims: [256, 256]
@@ -92,17 +98,17 @@ agents:
       success_buffer_size: 200000
       success_buffer_ratio: 0.3
       batch_size: 256
-      learning_starts: 2500
+      learning_starts: 10000        # Collect more diverse data before learning
       max_grad_norm: 0.5
 
       # Exploration noise - CRITICAL for TD3
-      exploration_noise: 0.15        # Moderate noise for good exploration
-      exploration_noise_decay: 0.9995  # Slow decay
-      exploration_noise_min: 0.05    # Keep some exploration
+      exploration_noise: 0.1         # Initial exploration noise
+      exploration_noise_final: 0.02  # Final exploration noise (keep some exploration)
+      exploration_noise_decay_steps: 100000  # Decay over 100k steps (~50 episodes at 2k steps)
       target_noise: 0.2              # Noise for target policy smoothing
       target_noise_clip: 0.5         # Clip target noise
 
-      # Prioritized Experience Replay
+      # Prioritized Experience Replay - ENABLED
       use_per: true
       per_alpha: 0.6
       per_beta: 0.4
@@ -123,7 +129,7 @@ agents:
       overrides:
         # PRIMARY: Terminal outcomes (favor clean pinches)
         terminal:
-          target_crash: 30.0
+          target_crash: 100.0
           self_crash: -60.0
           collision: -120.0
           timeout: -10.0
@@ -134,18 +140,18 @@ agents:
           distance_threshold: 1.10
           min_speed: 0.25
           heading_tolerance: 1.00
-          bonus: 0.10
+          bonus: 0.05
           bonus_interval: 5
-          streak_bonus: 0.08
-          streak_cap: 25
+          streak_bonus: 0.04
+          streak_cap: 20
 
         # PRIMARY: Distance-based shaping
         distance:
           enabled: true
           near_distance: 1.20
           far_distance: 2.50
-          reward_near: 0.10
-          penalty_far: 0.06
+          reward_near: 0.05
+          penalty_far: 0.03
 
         # PRIMARY: Forcing/pinch shaping
         forcing:
@@ -155,32 +161,32 @@ agents:
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.60
-            weight: 0.10
+            weight: 0.05
           clearance:
             enabled: true
-            weight: 0.06
+            weight: 0.03
             band_min: 0.30
             band_max: 3.00
             clip: 0.02
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.12
+            weight: 0.06
             clip: 0.02
             time_scaled: true
 
         # SECONDARY: Heading alignment (point towards target)
         heading:
           enabled: true
-          coefficient: 0.008
+          coefficient: 0.004
 
         # SECONDARY: Speed bonus (move fast)
         speed:
           enabled: true
-          bonus_coef: 0.004
+          bonus_coef: 0.002
 
         # Small step penalty
-        step_reward: -0.01
+        step_reward: -0.005
 
 
   car_1:
