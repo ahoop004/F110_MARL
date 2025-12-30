@@ -1,65 +1,84 @@
-# Gaplock TD3 - Easier Training Configuration
-# TD3 often works better than SAC for pursuit tasks due to deterministic policy
-
 experiment:
   name: gaplock_td3_easier
   episodes: 1500
   seed: 42
-
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
   max_steps: 2000
   lidar_beams: 108
-  spawn_points: [spawn_2, spawn_1]
+  spawn_points:
+  - spawn_2
+  - spawn_1
   timestep: 0.01
   render: false
-
-  # Spawn curriculum - very conservative progression
   spawn_curriculum:
     enabled: true
     window: 200
-    activation_samples: 100    # More samples for stable decisions
-    min_episode: 200           # Delay start to build basic skills first
-    enable_patience: 10        # Very patient before advancing
+    activation_samples: 100
+    min_episode: 200
+    enable_patience: 10
     disable_patience: 4
-    cooldown: 40               # Longer cooldown between stage changes
-    lock_speed_steps: 200      # Less speed locking
-
+    cooldown: 40
+    lock_speed_steps: 200
     stages:
-      - name: "random_slow"
-        spawn_points: "all"    # Start with varied positions
-        speed_range: [0.3, 0.5]  # Slow speeds first
-        enable_rate: 0.70      # Higher bar for advancement
-
-      - name: "random_medium"
-        spawn_points: "all"
-        speed_range: [0.3, 0.7]  # Increase speed range
-        enable_rate: 0.75      # Higher bar
-        disable_rate: 0.55
-
-      - name: "close_challenges"
-        spawn_points: [spawn_pinch_ahead, spawn_pinch_right, spawn_pinch_left]
-        speed_range: [0.4, 0.8]  # Harder scenarios with pinch spawns
-        enable_rate: 0.80      # Higher bar
-        disable_rate: 0.60
-
-      - name: "full_random"
-        spawn_points: "all"
-        speed_range: [0.3, 1.0]
-        disable_rate: 0.65
-
+    - name: random_slow
+      spawn_points: all
+      speed_range:
+      - 0.3
+      - 0.5
+      enable_rate: 0.7
+    - name: random_medium
+      spawn_points: all
+      speed_range:
+      - 0.3
+      - 0.7
+      enable_rate: 0.75
+      disable_rate: 0.55
+    - name: close_challenges
+      spawn_points:
+      - spawn_pinch_ahead
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.4
+      - 0.8
+      enable_rate: 0.8
+      disable_rate: 0.6
+    - name: full_random
+      spawn_points: all
+      speed_range:
+      - 0.3
+      - 1.0
+      disable_rate: 0.65
     spawn_configs:
       spawn_pinch_right:
-        car_0: [-45.569, -1.000, 0.100]
-        car_1: [-46.769, -0.700, 0.000]
+        car_0:
+        - -45.569
+        - -1.0
+        - 0.1
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_pinch_left:
-        car_0: [-45.569, -0.400, -0.100]
-        car_1: [-46.769, -0.700, 0.000]
+        car_0:
+        - -45.569
+        - -0.4
+        - -0.1
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
       spawn_pinch_ahead:
-        car_0: [-45.569, -0.700, 0.000]
-        car_1: [-46.769, -0.700, 0.000]
-
+        car_0:
+        - -45.569
+        - -0.7
+        - 0.0
+        car_1:
+        - -46.769
+        - -0.7
+        - 0.0
   vehicle_params:
     mu: 1.0489
     C_Sf: 4.718
@@ -79,140 +98,110 @@ environment:
     a_max: 2.0
     v_min: -1.0
     v_max: 1.0
-
 agents:
   car_0:
     role: attacker
     algorithm: td3
     target_id: car_1
-
     params:
-      # TD3 hyperparameters - optimized for pursuit task
-      lr_actor: 0.0001         # Conservative for stable learning
-      lr_critic: 0.0003        # 3x actor LR (standard for TD3)
-      gamma: 0.97              # Lower discount for faster credit assignment in long episodes
+      lr_actor: 0.0001
+      lr_critic: 0.0003
+      gamma: 0.97
       tau: 0.005
-      policy_delay: 2          # Update policy every 2 critic updates
-      hidden_dims: [512, 512]  # Increased capacity for complex pinch behaviors
+      policy_delay: 2
+      hidden_dims:
+      - 512
+      - 512
       buffer_size: 1000000
       success_buffer_size: 200000
-      success_buffer_ratio: 0.3    # Learn heavily from rare successes
+      success_buffer_ratio: 0.3
       batch_size: 256
-      learning_starts: 20000        # Collect diverse data before learning
+      learning_starts: 20000
       max_grad_norm: 0.5
-
-      # Exploration noise - CRITICAL for TD3
-      exploration_noise: 0.2         # Higher initial exploration to discover strategies
-      exploration_noise_final: 0.05  # Keep some exploration throughout
-      exploration_noise_decay_steps: 150000  # Gradual decay over ~75 episodes
-      target_noise: 0.1              # Reduced for more stable target policy
-      target_noise_clip: 0.3         # Tighter clipping for precision
-
-      # Prioritized Experience Replay - ENABLED
+      exploration_noise: 0.2
+      exploration_noise_final: 0.05
+      exploration_noise_decay_steps: 150000
+      target_noise: 0.1
+      target_noise_clip: 0.3
       use_per: true
       per_alpha: 0.6
       per_beta: 0.4
       per_beta_increment: 0.001
       per_epsilon: 0.01
-
       prevent_reverse: true
       prevent_reverse_min_speed: 0.01
       prevent_reverse_speed_index: 1
-
     observation:
       preset: gaplock
-
-    # SIMPLIFIED REWARD - Focus on pursuit
     reward:
       preset: gaplock_simple
-
       overrides:
-        # Disable behavior penalties (prevent_reverse handles this, idle penalty was too harsh)
         penalties:
           enabled: false
-
-        # PRIMARY: Terminal outcomes (favor clean pinches)
         terminal:
-          target_crash: 200.0      # HUGE reward for success
-          self_crash: -20.0        # Small penalty (learning requires trying!)
-          collision: -40.0         # Moderate penalty
-          timeout: -100.0          # MASSIVE penalty (worse than trying and failing!)
-
-        # PRIMARY: Pressure (stay close, stay aligned)
+          target_crash: 200.0
+          self_crash: -20.0
+          collision: 0.0
+          timeout: -100.0
         pressure:
           enabled: true
-          distance_threshold: 1.10
+          distance_threshold: 1.1
           min_speed: 0.25
-          heading_tolerance: 1.00
-          bonus: 0.004             # Reduced 80% to prevent timeout farming
+          heading_tolerance: 1.0
+          bonus: 0.004
           bonus_interval: 5
-          streak_bonus: 0.004      # Reduced 80% to prevent timeout farming
+          streak_bonus: 0.004
           streak_cap: 20
-
-        # PRIMARY: Distance-based shaping (reduced to prevent timeout farming)
         distance:
           enabled: true
-          near_distance: 1.20
-          far_distance: 2.50
-          reward_near: 0.004       # Reduced 80% to prevent timeout farming
-          penalty_far: 0.002       # Reduced 80% to prevent timeout farming
-
-        # PRIMARY: Forcing/pinch shaping (reduced)
+          near_distance: 1.2
+          far_distance: 2.5
+          reward_near: 0.004
+          penalty_far: 0.002
         forcing:
           enabled: true
           pinch_pockets:
             enabled: true
-            anchor_forward: 1.20
+            anchor_forward: 1.2
             anchor_lateral: 0.35
-            sigma: 0.60
-            weight: 0.004          # Reduced 80% to prevent timeout farming
+            sigma: 0.6
+            weight: 0.004
           clearance:
             enabled: true
-            weight: 0.003          # Reduced 80% to prevent timeout farming
-            band_min: 0.30
-            band_max: 3.00
+            weight: 0.003
+            band_min: 0.3
+            band_max: 3.0
             clip: 0.02
             time_scaled: true
           turn:
             enabled: true
-            weight: 0.006          # Reduced 80% to prevent timeout farming
+            weight: 0.006
             clip: 0.02
             time_scaled: true
-
-        # SECONDARY: Heading alignment (point towards target)
         heading:
           enabled: true
-          coefficient: 0.001       # Reduced 75% to prevent timeout farming
-
-        # SECONDARY: Speed bonus (move fast)
+          coefficient: 0.001
         speed:
           enabled: true
-          bonus_coef: 0.0005       # Reduced 75% to prevent timeout farming
-
-        # Small step penalty
+          bonus_coef: 0.0005
         step_reward: -0.001
-
-
   car_1:
     role: defender
     algorithm: ftg
-
     params:
       max_distance: 12.0
       window_size: 4
       bubble_radius: 3.5
-      max_steer: 0.30
-
+      max_steer: 0.3
       min_speed: 0.2
-      max_speed: 0.45            # Even slower to give attacker more chance
-
+      max_speed: 0.45
       steering_gain: 0.4
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.4
-      mode: "lidar"
+      mode: lidar
       gap_min_range: 0.65
-      target_mode: "farthest"
+      target_mode: farthest
       use_disparity_extender: true
       disparity_threshold: 0.35
       vehicle_width: 0.225
@@ -220,10 +209,12 @@ agents:
       no_cutback_enabled: true
       cutback_clearance: 1.0
       cutback_hold_steps: 8
-
 wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
-  tags: [td3, easier, pursuit]
-  notes: "TD3 training with distance-based pursuit rewards"
+  tags:
+  - td3
+  - easier
+  - pursuit
+  notes: TD3 training with distance-based pursuit rewards

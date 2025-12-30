@@ -224,7 +224,7 @@ agents:
           target_crash: 200.0
           self_crash: -20.0
           timeout: -100.0
-          collision: -40.0
+          collision: 0.0
   car_1:
     role: defender
     algorithm: ftg
