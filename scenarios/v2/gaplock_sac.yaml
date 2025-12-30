@@ -7,7 +7,7 @@ environment:
   map: maps/line2/line2.yaml
   num_agents: 2
   max_steps: 2500
-  lidar_beams: 720
+  lidar_beams: 108
   spawn_points:
   - spawn_2
   - spawn_1
