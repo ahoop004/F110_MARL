@@ -21,8 +21,8 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     - LiDAR: N dims (normalized to [0, 1] using 12.0m max range)
     - Ego velocity: 3 dims (vx, vy, omega) -> tanh-normalized
     - Target velocity: 3 dims (vx, vy, omega) -> tanh-normalized
-    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) to the closest
-      pinch pocket center in ego frame, scaled to [-1, 1] using 12.0m range and pi for angles.
+    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) to the target vehicle
+      in ego frame, scaled to [-1, 1] using 12.0m range and pi for angles.
 
     Args:
         obs_dict: Observation dict from environment
@@ -112,9 +112,6 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     components = []
 
     lidar_range = 12.0
-    pinch_anchor_forward = 1.2
-    pinch_anchor_lateral = 0.45
-
     # LiDAR scan (normalize to [0, 1] with max range 12.0m)
     scan = obs_dict.get('scans')
     if scan is None:
@@ -160,34 +157,17 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
         target_vel_norm = np.tanh(target_vel)
         components.append(target_vel_norm)
 
-        # Relative pose to closest pinch pocket center in ego frame (4 dims)
-        # Pick left/right pocket based on attacker lateral position in target frame.
-        dx_att = x - target_x
-        dy_att = y - target_y
-        cos_tgt = float(np.cos(target_theta))
-        sin_tgt = float(np.sin(target_theta))
-        local_y = (-sin_tgt * dx_att) + (cos_tgt * dy_att)
-        lateral_sign = 1.0 if local_y >= 0.0 else -1.0
-
-        pinch_x = (
-            target_x
-            + pinch_anchor_forward * cos_tgt
-            - lateral_sign * pinch_anchor_lateral * sin_tgt
-        )
-        pinch_y = (
-            target_y
-            + pinch_anchor_forward * sin_tgt
-            + lateral_sign * pinch_anchor_lateral * cos_tgt
-        )
-        dx = pinch_x - x
-        dy = pinch_y - y
+        # Relative pose to target vehicle in ego frame (4 dims)
+        dx = target_x - x
+        dy = target_y - y
         cos_t = float(np.cos(theta))
         sin_t = float(np.sin(theta))
         rel_x = cos_t * dx + sin_t * dy
         rel_y = -sin_t * dx + cos_t * dy
         rel_x_norm = float(np.clip(rel_x / lidar_range, -1.0, 1.0))
         rel_y_norm = float(np.clip(rel_y / lidar_range, -1.0, 1.0))
-        dtheta = float(np.arctan2(rel_y, rel_x))
+        dtheta = float(target_theta - theta)
+        dtheta = float((dtheta + np.pi) % (2.0 * np.pi) - np.pi)
         dtheta_norm = float(dtheta / np.pi)
         distance = float(np.sqrt(dx**2 + dy**2))
         distance_norm = float(np.clip(distance / lidar_range, 0.0, 1.0))
