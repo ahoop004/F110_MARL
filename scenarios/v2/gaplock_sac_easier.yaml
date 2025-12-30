@@ -140,9 +140,9 @@ agents:
           enabled: false
         terminal:
           target_crash: 200.0
-          self_crash: -20.0
-          collision: 0.0
-          timeout: -100.0
+          self_crash: -80.0
+          collision: -100.0
+          timeout: -40.0
         pressure:
           enabled: true
           distance_threshold: 1.1

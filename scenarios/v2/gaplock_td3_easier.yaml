@@ -15,42 +15,36 @@ environment:
   spawn_curriculum:
     enabled: true
     window: 200
-    activation_samples: 100
+    activation_samples: 50
     min_episode: 50
-    enable_patience: 10
-    disable_patience: 4
-    cooldown: 40
-    lock_speed_steps: 200
+    enable_patience: 5
+    disable_patience: 3
+    cooldown: 20
+    lock_speed_steps: 250
     stages:
-    - name: random_slow
-      spawn_points: all
+    - name: close_slow
+      spawn_points:
+      - spawn_pinch_ahead
       speed_range:
-      - 0.3
-      - 0.5
-      enable_rate: 0.7
-    - name: random_medium
-      spawn_points: all
-      speed_range:
-      - 0.3
-      - 0.7
-      enable_rate: 0.75
-      disable_rate: 0.55
-    - name: close_challenges
+      - 0.4
+      - 0.4
+      enable_rate: 0.65
+    - name: close_varied
       spawn_points:
       - spawn_pinch_ahead
       - spawn_pinch_right
       - spawn_pinch_left
       speed_range:
       - 0.4
-      - 0.8
-      enable_rate: 0.8
-      disable_rate: 0.6
+      - 0.7
+      enable_rate: 0.7
+      disable_rate: 0.5
     - name: full_random
       spawn_points: all
       speed_range:
       - 0.3
       - 1.0
-      disable_rate: 0.65
+      disable_rate: 0.55
     spawn_configs:
       spawn_pinch_right:
         car_0:
@@ -148,9 +142,9 @@ agents:
           enabled: false
         terminal:
           target_crash: 200.0
-          self_crash: -20.0
-          collision: 0.0
-          timeout: -100.0
+          self_crash: -80.0
+          collision: -100.0
+          timeout: -40.0
         pressure:
           enabled: true
           distance_threshold: 1.1
