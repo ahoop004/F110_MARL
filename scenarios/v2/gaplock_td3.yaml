@@ -20,7 +20,7 @@ environment:
     enable_patience: 5
     disable_patience: 3
     cooldown: 20
-    lock_speed_steps: 175
+    lock_speed_steps: 200
     stages:
     - name: optimal_fixed
       spawn_points:
@@ -28,8 +28,8 @@ environment:
       - spawn_pinch_left
       - spawn_pinch_ahead
       speed_range:
-      - 0.61
-      - 0.61
+      - 0.5
+      - 0.5
       enable_rate: 0.7
     - name: optimal_varied_speed
       spawn_points:
@@ -220,7 +220,7 @@ agents:
       bubble_radius: 2
       max_steer: 0.32
       min_speed: 0.2
-      max_speed: 0.85
+      max_speed: 1.0
       steering_gain: 0.6
       fov: 4.71238898
       normalized: false
