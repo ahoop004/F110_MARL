@@ -111,6 +111,7 @@ class EnhancedTrainingLoop:
         self.max_steps_per_episode = max_steps_per_episode
         self.rolling_window = rolling_window
         self.save_every_n_episodes = save_every_n_episodes
+        self.obs_scales = self._resolve_obs_scales()
 
         # Observation normalization
         self.normalize_observations = normalize_observations
@@ -156,9 +157,63 @@ class EnhancedTrainingLoop:
             # Create combined observation dict with central_state
             combined_obs = dict(obs)  # Copy agent's own observation
             combined_obs['central_state'] = all_obs[target_id]  # Add target as central_state
-            return flatten_observation(combined_obs, preset=preset, target_id=target_id)
+            return flatten_observation(
+                combined_obs,
+                preset=preset,
+                target_id=target_id,
+                scales=self.obs_scales,
+            )
         else:
-            return flatten_observation(obs, preset=preset, target_id=target_id)
+            return flatten_observation(
+                obs,
+                preset=preset,
+                target_id=target_id,
+                scales=self.obs_scales,
+            )
+
+    def _resolve_obs_scales(self) -> Dict[str, float]:
+        """Resolve fixed observation scales from the environment."""
+        scales: Dict[str, float] = {}
+
+        lidar_range = getattr(self.env, "lidar_range", None)
+        if lidar_range is not None:
+            try:
+                scales["lidar_range"] = float(lidar_range)
+            except (TypeError, ValueError):
+                pass
+
+        params = getattr(self.env, "params", None)
+        if isinstance(params, dict):
+            candidates = []
+            for value in (params.get("v_max"), params.get("v_min")):
+                if value is None:
+                    continue
+                try:
+                    candidates.append(abs(float(value)))
+                except (TypeError, ValueError):
+                    continue
+            if candidates:
+                speed_scale = max(candidates)
+                if speed_scale > 0.0:
+                    scales["speed"] = speed_scale
+
+        primary_id = next(iter(self.agents), None)
+        if primary_id:
+            obs_space = getattr(self.env, "observation_spaces", {}).get(primary_id)
+            pose_space = None
+            if hasattr(obs_space, "spaces"):
+                pose_space = obs_space.spaces.get("pose")
+            if pose_space is not None and hasattr(pose_space, "low") and hasattr(pose_space, "high"):
+                low = np.asarray(pose_space.low, dtype=np.float32).reshape(-1)
+                high = np.asarray(pose_space.high, dtype=np.float32).reshape(-1)
+                if low.size >= 2 and high.size >= 2:
+                    span_x = float(high[0] - low[0])
+                    span_y = float(high[1] - low[1])
+                    position_scale = max(span_x, span_y)
+                    if position_scale > 0.0:
+                        scales["position"] = position_scale
+
+        return scales
 
     def _ensure_obs_normalizer(self, obs: np.ndarray) -> None:
         """Initialize or refresh observation normalizer based on actual obs shape."""

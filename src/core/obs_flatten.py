@@ -7,7 +7,11 @@ from typing import Dict, Any, Optional
 import numpy as np
 
 
-def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = None) -> np.ndarray:
+def flatten_gaplock_obs(
+    obs_dict: Dict[str, Any],
+    target_id: Optional[str] = None,
+    scales: Optional[Dict[str, float]] = None,
+) -> np.ndarray:
     """Flatten gaplock observation dict to a normalized feature vector.
 
     Expected observation structure (from F110ParallelEnv):
@@ -17,16 +21,20 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     - angular_velocity: scalar
     - state: central-state vector (optional)
 
-    Output structure (N + 10 dims):
-    - LiDAR: N dims (normalized to [0, 1] using 12.0m max range)
-    - Ego velocity: 3 dims (vx, vy, omega) -> tanh-normalized
-    - Target velocity: 3 dims (vx, vy, omega) -> tanh-normalized
-    - Relative pose: 4 dims (rel_x, rel_y, rel_theta, distance) to the target vehicle
-      in ego frame, scaled to [-1, 1] using 12.0m range and pi for angles.
+    Output structure (N + 11 dims):
+    - LiDAR: N dims (normalized to [0, 1] using lidar range)
+    - Ego velocity: 3 dims (vx, vy, omega) scaled by speed scale
+    - Target velocity: 3 dims (vx, vy, omega) scaled by speed scale
+    - Relative pose: 5 dims (rel_x, rel_y, sin(rel_theta), cos(rel_theta), distance)
+      to the target vehicle in ego frame, scaled by map scale.
 
     Args:
         obs_dict: Observation dict from environment
         target_id: Target agent ID (for adversarial obs). If None, uses zeros.
+        scales: Optional normalization scales dict with keys:
+            - lidar_range
+            - position
+            - speed
 
     Returns:
         Flat observation array
@@ -111,7 +119,16 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
 
     components = []
 
-    lidar_range = 12.0
+    scales = scales or {}
+    lidar_range = float(scales.get("lidar_range", 12.0))
+    position_scale = float(scales.get("position", lidar_range))
+    speed_scale = float(scales.get("speed", 1.0))
+    if lidar_range <= 0.0:
+        lidar_range = 12.0
+    if position_scale <= 0.0:
+        position_scale = lidar_range
+    if speed_scale <= 0.0:
+        speed_scale = 1.0
     # LiDAR scan (normalize to [0, 1] with max range 12.0m)
     scan = obs_dict.get('scans')
     if scan is None:
@@ -127,9 +144,9 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     ego_pose = _extract_pose(obs_dict)
     x, y, theta = map(float, ego_pose[:3])
 
-    # Ego velocity (3 dims: vx, vy, omega) - tanh normalized
+    # Ego velocity (3 dims: vx, vy, omega) - scaled by speed
     ego_vel = _extract_velocity(obs_dict)
-    ego_vel_norm = np.tanh(ego_vel.astype(np.float32))
+    ego_vel_norm = np.clip(ego_vel.astype(np.float32) / speed_scale, -1.0, 1.0)
     components.append(ego_vel_norm)
 
     # Target state (pose + velocity)
@@ -154,28 +171,33 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
     if target_state is not None:
         target_x, target_y, target_theta, target_vx, target_vy, target_omega = map(float, target_state[:6])
         target_vel = np.array([target_vx, target_vy, target_omega], dtype=np.float32)
-        target_vel_norm = np.tanh(target_vel)
+        target_vel_norm = np.clip(target_vel / speed_scale, -1.0, 1.0)
         components.append(target_vel_norm)
 
-        # Relative pose to target vehicle in ego frame (4 dims)
+        # Relative pose to target vehicle in ego frame (5 dims)
         dx = target_x - x
         dy = target_y - y
         cos_t = float(np.cos(theta))
         sin_t = float(np.sin(theta))
         rel_x = cos_t * dx + sin_t * dy
         rel_y = -sin_t * dx + cos_t * dy
-        rel_x_norm = float(np.clip(rel_x / lidar_range, -1.0, 1.0))
-        rel_y_norm = float(np.clip(rel_y / lidar_range, -1.0, 1.0))
-        dtheta = float(target_theta - theta)
-        dtheta = float((dtheta + np.pi) % (2.0 * np.pi) - np.pi)
-        dtheta_norm = float(dtheta / np.pi)
+        rel_x_norm = float(np.clip(rel_x / position_scale, -1.0, 1.0))
+        rel_y_norm = float(np.clip(rel_y / position_scale, -1.0, 1.0))
+        dtheta = float((target_theta - theta + np.pi) % (2.0 * np.pi) - np.pi)
+        sin_theta = float(np.sin(dtheta))
+        cos_theta = float(np.cos(dtheta))
         distance = float(np.sqrt(dx**2 + dy**2))
-        distance_norm = float(np.clip(distance / lidar_range, 0.0, 1.0))
+        distance_norm = float(np.clip(distance / position_scale, 0.0, 1.0))
 
-        components.append(np.array([rel_x_norm, rel_y_norm, dtheta_norm, distance_norm], dtype=np.float32))
+        components.append(
+            np.array(
+                [rel_x_norm, rel_y_norm, sin_theta, cos_theta, distance_norm],
+                dtype=np.float32,
+            )
+        )
     else:
         components.append(np.zeros(3, dtype=np.float32))  # Target velocity
-        components.append(np.zeros(4, dtype=np.float32))  # Relative pose
+        components.append(np.zeros(5, dtype=np.float32))  # Relative pose
 
     return np.concatenate(components)
 
@@ -183,7 +205,8 @@ def flatten_gaplock_obs(obs_dict: Dict[str, Any], target_id: Optional[str] = Non
 def flatten_observation(
     obs_dict: Dict[str, Any],
     preset: str = 'gaplock',
-    target_id: Optional[str] = None
+    target_id: Optional[str] = None,
+    scales: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
     """Flatten observation dict based on preset.
 
@@ -191,6 +214,7 @@ def flatten_observation(
         obs_dict: Observation dict from environment
         preset: Observation preset name
         target_id: Target agent ID (for adversarial tasks)
+        scales: Optional normalization scales for preset-specific flattening
 
     Returns:
         Flat observation array
@@ -199,7 +223,7 @@ def flatten_observation(
         ValueError: If preset not supported
     """
     if preset == 'gaplock':
-        return flatten_gaplock_obs(obs_dict, target_id)
+        return flatten_gaplock_obs(obs_dict, target_id, scales=scales)
     else:
         raise ValueError(
             f"Unsupported observation preset: {preset}. "
