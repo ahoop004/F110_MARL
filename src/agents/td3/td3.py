@@ -110,6 +110,31 @@ class TD3Agent:
                 store_actions=True,
                 store_action_indices=False,
             )
+        def _coerce_float_list(value: Any, default: Iterable[float]) -> list[float]:
+            if value is None:
+                return list(default)
+            if isinstance(value, (int, float)):
+                return [float(value)]
+            if isinstance(value, (list, tuple)):
+                items: list[float] = []
+                for item in value:
+                    try:
+                        items.append(float(item))
+                    except (TypeError, ValueError):
+                        continue
+                return items if items else list(default)
+            return list(default)
+
+        her_thresholds = _coerce_float_list(cfg.get("her_thresholds"), [0.6, 1.0, 1.5])
+        her_bonuses = _coerce_float_list(cfg.get("her_bonuses"), [100.0, 50.0, 20.0])
+        if not her_thresholds or not her_bonuses:
+            self._her_pairs: list[tuple[float, float]] = []
+        else:
+            if len(her_bonuses) < len(her_thresholds):
+                her_bonuses = her_bonuses + [her_bonuses[-1]] * (len(her_thresholds) - len(her_bonuses))
+            elif len(her_bonuses) > len(her_thresholds):
+                her_bonuses = her_bonuses[:len(her_thresholds)]
+            self._her_pairs = sorted(zip(her_thresholds, her_bonuses), key=lambda pair: pair[0])
 
         action_low = np.asarray(cfg.get("action_low"), dtype=np.float32)
         action_high = np.asarray(cfg.get("action_high"), dtype=np.float32)
@@ -228,27 +253,22 @@ class TD3Agent:
 
         # Only apply HER to non-success transitions
         # (actual successes are handled by store_success_transition)
-        if done and info and info.get('success', False):
+        if done and info and (
+            info.get('success', False)
+            or info.get('target_collision', False)
+            or info.get('target_crash', False)
+        ):
             return  # Already a real success, don't augment
 
+        if not self._her_pairs:
+            return
+
         # Hindsight relabeling based on distance achieved
-        her_bonus = 0.0
-        store_in_success_buffer = False
-
-        if distance_to_target < 0.6:  # Very close approach (< 1 car length)
-            her_bonus = 100.0  # Large bonus
-            store_in_success_buffer = True
-        elif distance_to_target < 1.0:  # Close approach
-            her_bonus = 50.0   # Medium bonus
-            store_in_success_buffer = True
-        elif distance_to_target < 1.5:  # Moderate approach
-            her_bonus = 20.0   # Small bonus
-            store_in_success_buffer = True
-
-        if store_in_success_buffer:
-            # Augment reward and store in success buffer
-            augmented_reward = reward + her_bonus
-            self.success_buffer.add(obs, action, augmented_reward, next_obs, done, info)
+        for threshold, bonus in self._her_pairs:
+            if distance_to_target < threshold:
+                augmented_reward = reward + bonus
+                self.success_buffer.add(obs, action, augmented_reward, next_obs, done, info)
+                break
 
     # -------------------- Learning --------------------
 

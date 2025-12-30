@@ -16,7 +16,7 @@ environment:
     enabled: true
     window: 200
     activation_samples: 100
-    min_episode: 200
+    min_episode: 50
     enable_patience: 10
     disable_patience: 4
     cooldown: 40
@@ -115,6 +115,14 @@ agents:
       buffer_size: 1000000
       success_buffer_size: 200000
       success_buffer_ratio: 0.3
+      her_thresholds:
+      - 1.0
+      - 2.0
+      - 3.0
+      her_bonuses:
+      - 100.0
+      - 50.0
+      - 20.0
       batch_size: 256
       learning_starts: 20000
       max_grad_norm: 0.5
@@ -193,8 +201,8 @@ agents:
       window_size: 4
       bubble_radius: 3.5
       max_steer: 0.3
-      min_speed: 0.2
-      max_speed: 0.45
+      min_speed: 0.15
+      max_speed: 0.3
       steering_gain: 0.4
       fov: 4.71238898
       normalized: false

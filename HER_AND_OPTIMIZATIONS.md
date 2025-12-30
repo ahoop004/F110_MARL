@@ -2,6 +2,15 @@
 
 ## Summary of Changes
 
+**Four critical improvements for convergence:**
+
+1. **HER (Hindsight Experience Replay):** Learn from near-misses
+2. **Idle Penalty Removed:** Agent can move slowly for precision
+3. **Collision Neutral:** Mutual crashes = 0.0 (encourages aggression)
+4. **Hyperparameters Optimized:** Faster credit, more exploration, more capacity
+
+---
+
 ### 1. ✅ Hindsight Experience Replay (HER) - IMPLEMENTED
 
 **What is HER?**
@@ -67,13 +76,34 @@ Before (with idle penalty):
 After (without idle penalty):
   Timeout: +60 shaping - 2.5 step - 100 terminal = -42.5
   Success: +12 shaping - 0.5 step + 200 terminal = +211.5
+  Mutual Collision: +12 shaping - 0.5 step + 0 terminal = +11.5
 
 Advantage for success: +254 points!
 ```
 
+### 3. ✅ Collision Reward Set to NEUTRAL (0.0)
+
+**Rationale:**
+- Mutual crashes (both agents crash) are now **neutral** instead of penalized
+- **Old:** collision = -40.0
+- **New:** collision = 0.0
+
+**Terminal Reward Structure:**
+```
+Success (target crash, attacker survives):  +200.0  ← Best outcome!
+Mutual Collision (both crash):               0.0   ← Neutral (neither won)
+Self-crash (attacker crashes alone):        -20.0  ← Minor failure
+Timeout (max steps):                       -100.0  ← Major failure
+```
+
+**Impact:**
+- Encourages **aggressive pursuit** without fear of mutual crashes
+- Agent learns: "Better to crash together (0) than crash alone (-20)"
+- Agent still strongly prefers clean success (+200) over mutual crash (0)
+
 ---
 
-### 3. ✅ TD3 Optimizations
+### 4. ✅ TD3 Optimizations
 
 All changes in [scenarios/v2/gaplock_td3_easier.yaml](scenarios/v2/gaplock_td3_easier.yaml):
 
@@ -97,7 +127,7 @@ All changes in [scenarios/v2/gaplock_td3_easier.yaml](scenarios/v2/gaplock_td3_e
 
 ---
 
-### 4. ✅ SAC Optimizations
+### 5. ✅ SAC Optimizations
 
 All changes in [scenarios/v2/gaplock_sac_easier.yaml](scenarios/v2/gaplock_sac_easier.yaml):
 
@@ -110,7 +140,7 @@ All changes in [scenarios/v2/gaplock_sac_easier.yaml](scenarios/v2/gaplock_sac_e
 
 ---
 
-### 5. ✅ PPO Optimizations
+### 6. ✅ PPO Optimizations
 
 All changes in [scenarios/v2/gaplock_ppo_easier.yaml](scenarios/v2/gaplock_ppo_easier.yaml):
 
