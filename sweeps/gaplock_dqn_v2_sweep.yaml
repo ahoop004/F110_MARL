@@ -42,15 +42,15 @@ parameters:
     min: 0.8
     max: 1.0
 
-  agents.car_0.params.epsilon_final:
+  agents.car_0.params.epsilon_end:
     distribution: uniform
     min: 0.01
     max: 0.1
 
-  agents.car_0.params.epsilon_decay_steps:
+  agents.car_0.params.epsilon_decay:
     distribution: int_uniform
-    min: 20000
-    max: 80000
+    min: 500
+    max: 1500
 
   agents.car_0.params.target_update_interval:
     distribution: int_uniform

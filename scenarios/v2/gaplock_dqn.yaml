@@ -178,8 +178,9 @@ agents:
       noisy_layers: false
       epsilon_enabled: true
       epsilon_start: 1.0
-      epsilon_final: 0.05
-      epsilon_decay_steps: 50000
+      epsilon_end: 0.05
+      epsilon_decay: 1000
+      epsilon_unit: episode
       max_grad_norm: 0.5
     observation:
       preset: gaplock
