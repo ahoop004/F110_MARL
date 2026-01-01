@@ -1,0 +1,94 @@
+name: gaplock_rainbow_comprehensive
+description: Comprehensive Rainbow DQN hyperparameter sweep tuning all Rainbow-specific components for gaplock scenario
+
+method: bayes
+metric:
+  name: train/return_mean
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_rainbow.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 1500
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 1500
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  # Learning rate
+  agents.car_0.params.lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+
+  # Noisy Networks exploration
+  agents.car_0.params.noisy_sigma0:
+    distribution: uniform
+    min: 0.1
+    max: 0.8
+
+  # Multi-step returns (n-step)
+  agents.car_0.params.n_step:
+    distribution: int_uniform
+    min: 1
+    max: 5
+
+  # Distributional RL - number of atoms
+  agents.car_0.params.atoms:
+    distribution: q_uniform
+    min: 21
+    max: 101
+    q: 10
+
+  # Distributional RL - value range
+  agents.car_0.params.v_min:
+    distribution: uniform
+    min: -300.0
+    max: -150.0
+
+  agents.car_0.params.v_max:
+    distribution: uniform
+    min: 250.0
+    max: 400.0
+
+  # Target network update frequency
+  agents.car_0.params.target_update_interval:
+    distribution: int_uniform
+    min: 500
+    max: 2000
+
+  # Batch size
+  agents.car_0.params.batch_size:
+    distribution: q_uniform
+    min: 128
+    max: 512
+    q: 64
+
+  # PER alpha (prioritization exponent)
+  agents.car_0.params.per_alpha:
+    distribution: uniform
+    min: 0.4
+    max: 0.8
+
+  # PER beta start (importance sampling correction)
+  agents.car_0.params.per_beta_start:
+    distribution: uniform
+    min: 0.3
+    max: 0.6
