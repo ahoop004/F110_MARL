@@ -171,7 +171,7 @@ agents:
       - 256
       buffer_size: 1000000
       success_buffer_size: 200000
-      success_buffer_ratio: 0.2
+      success_buffer_ratio: 0.4
       batch_size: 256
       learning_starts: 2500
       target_update_interval: 1000

@@ -79,3 +79,9 @@ parameters:
     distribution: uniform
     min: 0.4
     max: 0.6
+
+  # Success buffer ratio (how much of each batch comes from successful episodes)
+  agents.car_0.params.success_buffer_ratio:
+    distribution: uniform
+    min: 0.3
+    max: 0.6
