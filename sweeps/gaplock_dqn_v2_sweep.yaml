@@ -1,0 +1,58 @@
+name: gaplock_dqn_lr_epsilon
+description: DQN hyperparameter sweep focused on learning rates and epsilon-greedy exploration for gaplock scenario
+
+method: bayes
+metric:
+  name: train/return_mean
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_dqn.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 1500
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 1500
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  agents.car_0.params.lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+
+  agents.car_0.params.epsilon_start:
+    distribution: uniform
+    min: 0.8
+    max: 1.0
+
+  agents.car_0.params.epsilon_final:
+    distribution: uniform
+    min: 0.01
+    max: 0.1
+
+  agents.car_0.params.epsilon_decay_steps:
+    distribution: int_uniform
+    min: 20000
+    max: 80000
+
+  agents.car_0.params.target_update_interval:
+    distribution: int_uniform
+    min: 500
+    max: 2000
