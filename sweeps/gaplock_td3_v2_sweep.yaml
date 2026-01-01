@@ -1,0 +1,58 @@
+name: gaplock_td3_lr_exploration
+description: TD3 hyperparameter sweep focused on learning rates and exploration for gaplock scenario
+
+method: bayes
+metric:
+  name: train/return_mean
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_td3.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 1500
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 1500
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  agents.car_0.params.lr_actor:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+
+  agents.car_0.params.lr_critic:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+
+  agents.car_0.params.exploration_noise:
+    distribution: uniform
+    min: 0.05
+    max: 0.2
+
+  agents.car_0.params.policy_noise:
+    distribution: uniform
+    min: 0.1
+    max: 0.3
+
+  agents.car_0.params.noise_clip:
+    distribution: uniform
+    min: 0.3
+    max: 0.7
