@@ -112,10 +112,14 @@ def main():
     run_id = wandb.run.id
     set_run_id_env(run_id)
 
+    # Create run name with algorithm prefix
+    base_name = scenario['wandb'].get('name', scenario['experiment']['name'])
+    run_name = f"{algorithm}_{wandb.run.name}" if algorithm != 'unknown' else wandb.run.name
+
     # Create wandb logger (already initialized)
     wandb_logger = WandbLogger(
         project=scenario['wandb'].get('project', 'marl-f110'),
-        name=scenario['wandb'].get('name', scenario['experiment']['name']),
+        name=run_name,
         config=scenario,
         tags=scenario['wandb'].get('tags', []),
         group=scenario['wandb'].get('group', None),
