@@ -19,13 +19,13 @@ command:
 early_terminate:
   type: hyperband
   min_iter: 300
-  max_iter: 1500
+  max_iter: 1000
   s: 2
   eta: 3
 
 parameters:
   episodes:
-    value: 1500
+    value: 1000
 
   seed:
     distribution: int_uniform

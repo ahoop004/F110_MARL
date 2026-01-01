@@ -1,5 +1,5 @@
-name: gaplock_rainbow_comprehensive
-description: Comprehensive Rainbow DQN hyperparameter sweep tuning all Rainbow-specific components for gaplock scenario
+name: gaplock_rainbow_stable
+description: Stable Rainbow DQN hyperparameter sweep with constrained ranges to prevent catastrophic forgetting
 
 method: bayes
 metric:
@@ -19,13 +19,13 @@ command:
 early_terminate:
   type: hyperband
   min_iter: 300
-  max_iter: 1500
+  max_iter: 1000
   s: 2
   eta: 3
 
 parameters:
   episodes:
-    value: 1500
+    value: 1000
 
   seed:
     distribution: int_uniform
@@ -36,59 +36,46 @@ parameters:
   agents.car_0.params.lr:
     distribution: log_uniform_values
     min: 0.0001
-    max: 0.001
+    max: 0.0005
 
-  # Noisy Networks exploration
+  # Noisy Networks exploration (reduced for stability)
   agents.car_0.params.noisy_sigma0:
     distribution: uniform
-    min: 0.1
-    max: 0.8
+    min: 0.2
+    max: 0.5
 
-  # Multi-step returns (n-step)
+  # Multi-step returns (capped at 3 for stability)
   agents.car_0.params.n_step:
     distribution: int_uniform
     min: 1
-    max: 5
+    max: 3
 
-  # Distributional RL - number of atoms
+  # Distributional RL - number of atoms (standard Rainbow uses 51)
   agents.car_0.params.atoms:
     distribution: q_uniform
-    min: 21
-    max: 101
+    min: 31
+    max: 51
     q: 10
 
-  # Distributional RL - value range
+  # Distributional RL - value range (tightened to actual reward range)
   agents.car_0.params.v_min:
     distribution: uniform
-    min: -300.0
-    max: -150.0
+    min: -200.0
+    max: -100.0
 
   agents.car_0.params.v_max:
     distribution: uniform
-    min: 250.0
-    max: 400.0
+    min: 200.0
+    max: 300.0
 
-  # Target network update frequency
+  # Target network update frequency (increased for stability)
   agents.car_0.params.target_update_interval:
     distribution: int_uniform
-    min: 500
-    max: 2000
+    min: 1000
+    max: 2500
 
-  # Batch size
-  agents.car_0.params.batch_size:
-    distribution: q_uniform
-    min: 128
-    max: 512
-    q: 64
-
-  # PER alpha (prioritization exponent)
+  # PER alpha (reduced to prevent overfitting to failures)
   agents.car_0.params.per_alpha:
     distribution: uniform
     min: 0.4
-    max: 0.8
-
-  # PER beta start (importance sampling correction)
-  agents.car_0.params.per_beta_start:
-    distribution: uniform
-    min: 0.3
     max: 0.6
