@@ -1,0 +1,190 @@
+name: gaplock_wavelet_episodic_sweep
+description: Wavelet-based episodic memory agent sweep for gaplock adversarial task
+
+method: bayes
+metric:
+  name: car_0/rolling/avg_reward
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_wavelet.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 2500
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 2500
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  # ===== Learning Rate =====
+  agents.car_0.params.learning_rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+
+  # ===== Batch Size =====
+  agents.car_0.params.batch_size:
+    distribution: q_uniform
+    min: 16
+    max: 64
+    q: 16
+
+  # ===== Loss Weights =====
+  # Policy loss weight (primary objective)
+  agents.car_0.params.loss_weights.policy:
+    distribution: uniform
+    min: 0.8
+    max: 1.5
+
+  # Value loss weight
+  agents.car_0.params.loss_weights.value:
+    distribution: uniform
+    min: 0.3
+    max: 0.8
+
+  # Reconstruction loss weight (auxiliary task)
+  agents.car_0.params.loss_weights.reconstruction:
+    distribution: uniform
+    min: 0.05
+    max: 0.3
+
+  # Forward model loss weight (auxiliary task)
+  agents.car_0.params.loss_weights.forward:
+    distribution: uniform
+    min: 0.05
+    max: 0.3
+
+  # ===== Encoder Architecture =====
+  # Latent dimension
+  agents.car_0.params.encoder.latent_dim:
+    distribution: q_uniform
+    min: 64
+    max: 256
+    q: 64
+
+  # RNN hidden size
+  agents.car_0.params.encoder.rnn.hidden_size:
+    distribution: q_uniform
+    min: 128
+    max: 512
+    q: 128
+
+  # RNN type
+  agents.car_0.params.encoder.rnn.type:
+    values: ['lstm', 'gru', 'rnn']
+
+  # RNN dropout
+  agents.car_0.params.encoder.rnn.dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
+
+  # ===== Wavelet Transform =====
+  # Wavelet type (compare different wavelets)
+  agents.car_0.params.wavelet.type:
+    values: ['identity', 'haar', 'db2', 'db4']
+
+  # ===== Chunk Parameters =====
+  # Chunk size (must maintain 5x5 grid: 25)
+  agents.car_0.params.chunk_size:
+    value: 25
+
+  # Chunk stride (overlap amount)
+  agents.car_0.params.chunk_stride:
+    distribution: int_uniform
+    min: 8
+    max: 15
+
+  # ===== Buffer Configuration =====
+  # Chronological buffer capacity
+  agents.car_0.params.chronological_buffer.max_capacity:
+    distribution: q_uniform
+    min: 5000
+    max: 20000
+    q: 5000
+
+  # Episodic buffer capacity
+  agents.car_0.params.episodic_buffer.capacity:
+    distribution: q_uniform
+    min: 500
+    max: 2000
+    q: 500
+
+  # Selection mode (uniform vs priority)
+  agents.car_0.params.episodic_buffer.selection_mode:
+    values: ['uniform', 'priority']
+
+  # PER alpha (for priority mode)
+  agents.car_0.params.episodic_buffer.alpha:
+    distribution: uniform
+    min: 0.5
+    max: 0.7
+
+  # PER beta (for priority mode)
+  agents.car_0.params.episodic_buffer.beta:
+    distribution: uniform
+    min: 0.3
+    max: 0.5
+
+  # ===== Training Schedule =====
+  # Warmup chunks before training
+  agents.car_0.params.warmup_chunks:
+    distribution: int_uniform
+    min: 50
+    max: 150
+
+  # Update frequency
+  agents.car_0.params.update_freq:
+    distribution: int_uniform
+    min: 2
+    max: 8
+
+  # ===== Discount Factor =====
+  agents.car_0.params.gamma:
+    distribution: uniform
+    min: 0.99
+    max: 0.999
+
+  # ===== Gradient Clipping =====
+  agents.car_0.params.max_grad_norm:
+    distribution: uniform
+    min: 0.5
+    max: 2.0
+
+  # ===== Policy Head Architecture =====
+  # Hidden layer sizes (first layer)
+  agents.car_0.params.heads.policy_head.hidden_dims[0]:
+    distribution: q_uniform
+    min: 128
+    max: 512
+    q: 128
+
+  # Hidden layer sizes (second layer)
+  agents.car_0.params.heads.policy_head.hidden_dims[1]:
+    distribution: q_uniform
+    min: 128
+    max: 512
+    q: 128
+
+  # ===== Value Head Architecture =====
+  agents.car_0.params.heads.value_head.hidden_dims[0]:
+    distribution: q_uniform
+    min: 128
+    max: 512
+    q: 128
