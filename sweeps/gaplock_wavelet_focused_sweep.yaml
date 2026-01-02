@@ -3,7 +3,7 @@ description: Focused sweep on most impactful hyperparameters for wavelet episodi
 
 method: bayes
 metric:
-  name: car_0/rolling/avg_reward
+  name: car_0/rolling/success_rate
   goal: maximize
 
 project: marl-f110

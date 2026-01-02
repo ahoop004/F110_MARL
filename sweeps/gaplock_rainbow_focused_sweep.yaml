@@ -3,7 +3,7 @@ description: Focused Rainbow DQN sweep with discretized parameters for efficient
 
 method: bayes
 metric:
-  name: car_0/rolling/avg_reward
+  name: car_0/rolling/success_rate
   goal: maximize
 
 project: marl-f110

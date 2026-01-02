@@ -3,7 +3,7 @@ description: SAC hyperparameter sweep focused on learning rates and exploration 
 
 method: bayes
 metric:
-  name: car_0/rolling/avg_reward
+  name: car_0/rolling/success_rate
   goal: maximize
 
 project: marl-f110

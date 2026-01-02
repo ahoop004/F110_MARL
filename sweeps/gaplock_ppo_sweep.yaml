@@ -3,7 +3,7 @@ description: PPO hyperparameter sweep - uncomment parameters to add to search
 
 method: bayes
 metric:
-  name: car_0/rolling/avg_reward
+  name: car_0/rolling/success_rate
   goal: maximize
 
 project: marl-f110

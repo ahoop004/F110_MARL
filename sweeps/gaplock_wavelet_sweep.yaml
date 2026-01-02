@@ -3,7 +3,7 @@ description: Wavelet-based episodic memory agent sweep for gaplock adversarial t
 
 method: bayes
 metric:
-  name: car_0/rolling/avg_reward
+  name: car_0/rolling/success_rate
   goal: maximize
 
 project: marl-f110
