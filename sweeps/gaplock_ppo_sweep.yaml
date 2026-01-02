@@ -38,7 +38,7 @@ parameters:
 
   # Learning rate (discretized)
   agents.car_0.params.lr:
-    values: [0.0001, 0.0002, 0.0005, 0.001]
+    values: [0.0001, 0.0002]
 
   # Entropy coefficient (exploration bonus, discretized)
   agents.car_0.params.entropy_coef:
@@ -49,41 +49,83 @@ parameters:
     values: [0.1, 0.2, 0.3]
 
   # ============================================================================
-  # FIXED PARAMETERS - Using good defaults (uncomment to re-enable sweeping)
+  # CORE PPO HYPERPARAMETERS - Discretized and commented
   # ============================================================================
 
-  # GAE lambda (advantage estimation)
-  # Fixed to 0.95; uncomment to sweep
-  # agents.car_0.params.gae_lambda:
-  #   values: [0.9, 0.95, 0.98]
+  # --- Discount Factor ---
+  # Controls how much the agent values future rewards vs immediate rewards
+  # Higher = more long-term planning, Lower = more myopic behavior
+  # Default: 0.995
+  agents.car_0.params.gamma:
+    values: [0.99, 0.995, 0.999]
 
-  # Value function loss coefficient
-  # agents.car_0.params.vf_coef:
-  #   values: [0.5, 1.0, 2.0]
+  # --- GAE Lambda (Generalized Advantage Estimation) ---
+  # Trades off bias vs variance in advantage estimation
+  # Higher = lower variance but more bias, Lower = higher variance but less bias
+  # Default: 0.95
+  agents.car_0.params.gae_lambda:
+    values: [0.90, 0.95, 0.98]
 
-  # Max gradient norm (for gradient clipping)
+  # --- Value Loss Coefficient ---
+  # Weight of value function loss in total loss
+  # Higher = emphasize accurate value prediction
+  # Default: 0.5
+  agents.car_0.params.value_loss_coef:
+    values: [0.25, 0.5, 1.0, 2.0]
+
+  # --- Max Gradient Norm (Gradient Clipping) ---
+  # Prevents exploding gradients by clipping
+  # Lower = more conservative updates, Higher = faster but less stable learning
+  # Default: 0.5
   # agents.car_0.params.max_grad_norm:
-  #   values: [0.5, 1.0, 2.0]
-
-  # Number of epochs per update
-  # agents.car_0.params.n_epochs:
-  #   values: [5, 10, 15]
-
-  # Minibatch size
-  # agents.car_0.params.batch_size:
-  #   values: [64, 128, 256]
+  #   values: [0.3, 0.5, 1.0, 2.0]
 
   # ============================================================================
-  # ALTERNATIVE CONFIGURATIONS - Continuous ranges
+  # TRAINING CONFIGURATION - Discretized and commented
   # ============================================================================
+
+  # --- Number of Epochs ---
+  # How many times to iterate over each batch of experience
+  # Higher = more learning from each experience but risk overfitting
+  # Default: 10
+  agents.car_0.params.n_epochs:
+    values: [5, 10, 15, 20]
+
+  # --- Batch Size ---
+  # Number of samples per minibatch during training
+  # Larger = more stable gradients but slower, Smaller = noisier but faster
+  # Default: 256
+  agents.car_0.params.batch_size:
+    values: [64, 128, 256, 512]
+
+  # ============================================================================
+  # NETWORK ARCHITECTURE - Discretized and commented
+  # ============================================================================
+
+  # --- Hidden Layer Dimensions ---
+  # Size and depth of the neural network
+  # Larger = more capacity but slower and risk overfitting
+  # Default: [256, 256]
+  # agents.car_0.params.hidden_dims:
+  #   values: [
+  #     [128, 128],
+  #     [256, 256],
+  #     [512, 512],
+  #     [256, 256, 256],
+  #   ]
+
+  # ============================================================================
+  # ALTERNATIVE: CONTINUOUS RANGES
+  # ============================================================================
+  # Use these instead of discrete values for continuous optimization
 
   # CONTINUOUS LEARNING RATE
   # agents.car_0.params.lr:
   #   distribution: log_uniform_values
-  #   min: 0.0001
+  #   min: 0.00005
   #   max: 0.001
 
-  # CONTINUOUS ENTROPY COEF
+  # CONTINUOUS ENTROPY COEFFICIENT
   # agents.car_0.params.entropy_coef:
   #   distribution: uniform
   #   min: 0.0
@@ -95,10 +137,45 @@ parameters:
   #   min: 0.1
   #   max: 0.3
 
+  # CONTINUOUS GAMMA
+  # agents.car_0.params.gamma:
+  #   distribution: uniform
+  #   min: 0.99
+  #   max: 0.999
+
+  # CONTINUOUS GAE LAMBDA
+  # agents.car_0.params.gae_lambda:
+  #   distribution: uniform
+  #   min: 0.90
+  #   max: 0.98
+
+  # CONTINUOUS VALUE LOSS COEF
+  # agents.car_0.params.value_loss_coef:
+  #   distribution: log_uniform_values
+  #   min: 0.25
+  #   max: 2.0
+
+  # CONTINUOUS MAX GRAD NORM
+  # agents.car_0.params.max_grad_norm:
+  #   distribution: log_uniform_values
+  #   min: 0.3
+  #   max: 2.0
+
 # ============================================================================
 # CURRENT CONFIGURATION SUMMARY
 # ============================================================================
 # Active parameters: 3 (lr, entropy_coef, clip_epsilon)
 # Search space: 4 × 4 × 3 = 48 combinations
-# Fixed in scenario: gae_lambda=0.95, vf_coef=0.5, max_grad_norm=0.5
+#
+# Scenario baseline (gaplock_ppo.yaml):
+#   lr: 0.0005
+#   gamma: 0.995
+#   gae_lambda: 0.95
+#   clip_epsilon: 0.2
+#   entropy_coef: 0.02
+#   value_loss_coef: 0.5
+#   max_grad_norm: 0.5
+#   hidden_dims: [256, 256]
+#   batch_size: 256
+#   n_epochs: 10
 # ============================================================================
