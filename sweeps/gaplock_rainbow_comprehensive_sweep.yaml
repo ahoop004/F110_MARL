@@ -3,7 +3,7 @@ description: Stable Rainbow DQN hyperparameter sweep with constrained ranges to 
 
 method: bayes
 metric:
-  name: train/return_mean
+  name: car_0/rolling/avg_reward
   goal: maximize
 
 project: marl-f110

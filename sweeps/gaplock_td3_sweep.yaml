@@ -1,0 +1,106 @@
+name: gaplock_td3_sweep
+description: TD3 hyperparameter sweep - uncomment parameters to add to search
+
+method: bayes
+metric:
+  name: car_0/rolling/avg_reward
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_td3.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 1000
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 1000
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  # ============================================================================
+  # ACTIVE PARAMETERS - Currently being swept
+  # ============================================================================
+
+  # Actor learning rate (discretized)
+  agents.car_0.params.lr_actor:
+    values: [0.0001, 0.0002, 0.0005, 0.001]
+
+  # Critic learning rate (discretized)
+  agents.car_0.params.lr_critic:
+    values: [0.0001, 0.0002, 0.0005, 0.001]
+
+  # Exploration noise during training (discretized)
+  agents.car_0.params.exploration_noise:
+    values: [0.05, 0.1, 0.15, 0.2]
+
+  # Policy noise for target smoothing (discretized)
+  agents.car_0.params.policy_noise:
+    values: [0.1, 0.2, 0.3]
+
+  # ============================================================================
+  # FIXED PARAMETERS - Using good defaults (uncomment to re-enable sweeping)
+  # ============================================================================
+
+  # Noise clip for target policy smoothing
+  # Fixed to 0.5; uncomment to sweep
+  # agents.car_0.params.noise_clip:
+  #   values: [0.3, 0.5, 0.7]
+
+  # Target network update rate (tau)
+  # agents.car_0.params.tau:
+  #   values: [0.005, 0.01, 0.02]
+
+  # Policy update delay
+  # agents.car_0.params.policy_delay:
+  #   values: [2, 3, 4]
+
+  # ============================================================================
+  # ALTERNATIVE CONFIGURATIONS - Continuous ranges
+  # ============================================================================
+
+  # CONTINUOUS ACTOR LR
+  # agents.car_0.params.lr_actor:
+  #   distribution: log_uniform_values
+  #   min: 0.0001
+  #   max: 0.001
+
+  # CONTINUOUS CRITIC LR
+  # agents.car_0.params.lr_critic:
+  #   distribution: log_uniform_values
+  #   min: 0.0001
+  #   max: 0.001
+
+  # CONTINUOUS EXPLORATION NOISE
+  # agents.car_0.params.exploration_noise:
+  #   distribution: uniform
+  #   min: 0.05
+  #   max: 0.2
+
+  # CONTINUOUS POLICY NOISE
+  # agents.car_0.params.policy_noise:
+  #   distribution: uniform
+  #   min: 0.1
+  #   max: 0.3
+
+# ============================================================================
+# CURRENT CONFIGURATION SUMMARY
+# ============================================================================
+# Active parameters: 4 (lr_actor, lr_critic, exploration_noise, policy_noise)
+# Search space: 4 × 4 × 4 × 3 = 192 combinations
+# Fixed in scenario: noise_clip=0.5, tau=0.005, policy_delay=2
+# ============================================================================

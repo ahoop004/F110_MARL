@@ -1,0 +1,59 @@
+name: gaplock_rainbow_focused
+description: Focused Rainbow DQN sweep with discretized parameters for efficient search
+
+method: bayes
+metric:
+  name: car_0/rolling/avg_reward
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_rainbow.yaml
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 1000
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 1000
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  # Learning rate (discretized to 4 values)
+  agents.car_0.params.lr:
+    values: [0.0001, 0.0002, 0.0003, 0.0005]
+
+  # Noisy Networks exploration (discretized to 3 values)
+  agents.car_0.params.noisy_sigma0:
+    values: [0.25, 0.35, 0.45]
+
+  # Multi-step returns (3 values)
+  agents.car_0.params.n_step:
+    values: [1, 2, 3]
+
+  # Target network update frequency (discretized to 3 values)
+  agents.car_0.params.target_update_interval:
+    values: [1000, 1500, 2000]
+
+  # Success buffer ratio (discretized to 4 values)
+  agents.car_0.params.success_buffer_ratio:
+    values: [0.3, 0.4, 0.5, 0.6]
+
+# Fixed parameters (set in scenario):
+# - atoms: 51 (standard Rainbow)
+# - v_min: -150 (centered on reward range)
+# - v_max: 250 (centered on reward range)
+# - per_alpha: 0.5 (balanced prioritization)

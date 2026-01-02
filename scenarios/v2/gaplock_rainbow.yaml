@@ -176,12 +176,13 @@ agents:
       learning_starts: 2500
       target_update_interval: 1000
       noisy_layers: true
-      noisy_sigma0: 0.5
+      noisy_sigma0: 0.35
       atoms: 51
-      v_min: -250.0
-      v_max: 300.0
-      n_step: 3
+      v_min: -150.0
+      v_max: 250.0
+      n_step: 2
       use_per: true
+      per_alpha: 0.5
       epsilon_enabled: false
       max_grad_norm: 0.5
     observation:
