@@ -472,7 +472,22 @@ class EnhancedTrainingLoop:
 
                         # Update off-policy agents every step (they internally check if buffer is ready)
                         try:
-                            agent.update()
+                            step_update_stats = agent.update()
+
+                            # Log per-step training metrics to wandb
+                            if self.wandb_logger and step_update_stats:
+                                log_dict = {}
+                                algo_name = self.agent_algorithms.get(agent_id, None)
+
+                                for stat_name, stat_value in step_update_stats.items():
+                                    if algo_name:
+                                        log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
+                                    else:
+                                        log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
+
+                                # Use global step counter (episode * max_steps + current_step)
+                                global_step = episode_num * self.max_steps_per_episode + episode_steps
+                                self.wandb_logger.log_metrics(log_dict, step=global_step)
                         except Exception as e:
                             logger.error(f"Agent {agent_id} update failed at episode {episode_num}, step {episode_steps}: {e}")
                             # Continue training - this update will be skipped but training continues
