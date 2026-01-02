@@ -144,6 +144,14 @@ def register_builtin_agents():
     except ImportError:
         pass
 
+    try:
+        from agents.episodic import WaveletEpisodicAgent
+        AgentFactory.register("wavelet_episodic", WaveletEpisodicAgent)
+        AgentFactory.register("wavelet", WaveletEpisodicAgent)
+        AgentFactory.register("episodic", WaveletEpisodicAgent)
+    except ImportError:
+        pass
+
 
 # Register agents on import
 register_builtin_agents()

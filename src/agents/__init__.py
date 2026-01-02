@@ -7,6 +7,7 @@ from .dqn.dqn import DQNAgent
 from .sac.sac import SACAgent
 from .rainbow.r_dqn import RainbowDQNAgent
 from .ftg import FTGAgent
+from .episodic import WaveletEpisodicAgent
 
 __all__ = [
     "PPOAgent",
@@ -16,4 +17,5 @@ __all__ = [
     "SACAgent",
     "RainbowDQNAgent",
     "FTGAgent",
+    "WaveletEpisodicAgent",
 ]
