@@ -271,18 +271,18 @@ agents:
     params:
       max_distance: 12.0
       window_size: 4
-      bubble_radius: 2
-      max_steer: 0.32
+      bubble_radius: 3
+      max_steer: 0.42
       min_speed: 0.2
       max_speed: 1.0
-      steering_gain: 0.3
+      steering_gain: 0.35
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.6
       mode: lidar
       gap_min_range: 0.4
       target_mode: center
-      wall_avoid_kick: 0.0
+      wall_avoid_kick: 0.02
       panic_factor_near: 1.0
       panic_factor_very_near: 1.0
       use_disparity_extender: true

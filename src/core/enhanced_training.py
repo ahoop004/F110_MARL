@@ -359,7 +359,14 @@ class EnhancedTrainingLoop:
 
                     # Cache for reuse in storage phase
                     flat_obs_cache[agent_id] = flat_obs
-                    actions[agent_id] = agent.act(flat_obs, deterministic=False)
+
+                    # Pass info to agent for curriculum-based velocity control (if supported)
+                    agent_info = info.get(agent_id, {}) if info else {}
+                    try:
+                        actions[agent_id] = agent.act(flat_obs, deterministic=False, info=agent_info)
+                    except TypeError:
+                        # Agent doesn't support info parameter (backward compatibility)
+                        actions[agent_id] = agent.act(flat_obs, deterministic=False)
 
             # Step environment with error handling
             try:
@@ -485,6 +492,7 @@ class EnhancedTrainingLoop:
 
             # Update observations and done flags
             obs = next_obs
+            info = step_info  # Update info for next iteration (for curriculum velocity control)
             for agent_id in self.agents.keys():
                 done[agent_id] = terminations.get(agent_id, False) or truncations.get(agent_id, False)
 

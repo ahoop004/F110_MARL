@@ -132,32 +132,72 @@ class WaveletEpisodicAgent:
         print(f"  Encoder: {self.encoder}")
         print(f"  Device: {self.device}")
 
-    def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
+    def act(self, obs: np.ndarray, deterministic: bool = False, info: Optional[Dict] = None) -> np.ndarray:
         """Select action for current observation.
 
         Strategy:
-            - If chronological buffer < chunk_size: random exploration (warmup)
-            - Else: extract recent chunk, encode, query policy head
+            - Use model immediately (no random warmup)
+            - If buffer < chunk_size: pad with current obs to create partial chunk
+            - Override velocity with locked speed if curriculum is active
 
         Args:
             obs: Current observation
             deterministic: Whether to act deterministically (for evaluation)
+            info: Optional info dict containing locked_velocity and lock_speed_active
 
         Returns:
             action: (act_dim,) action vector [steering, velocity]
         """
-        # Warmup: random exploration
-        if len(self.chronological_buffer) < self.chunk_size:
-            action = np.random.uniform(self.action_low, self.action_high)
-            return action
+        # Extract recent chunk or create partial chunk
+        buffer_size = len(self.chronological_buffer)
 
-        # Extract recent chunk
-        try:
+        if buffer_size == 0:
+            # First step: create chunk from repeated current observation
+            chunk_data = {
+                'observations': np.tile(obs, (self.chunk_size, 1)),
+                'actions': np.zeros((self.chunk_size, self.act_dim)),
+                'rewards': np.zeros(self.chunk_size),
+                'next_observations': np.tile(obs, (self.chunk_size, 1)),
+                'dones': np.zeros(self.chunk_size, dtype=bool),
+            }
+        elif buffer_size < self.chunk_size:
+            # Partial chunk: get what we have and pad with current obs
+            try:
+                chunk_data = self.chronological_buffer.get_recent_window(buffer_size)
+                # Pad to chunk_size by repeating last observation
+                padding_needed = self.chunk_size - buffer_size
+                chunk_data['observations'] = np.vstack([
+                    chunk_data['observations'],
+                    np.tile(obs, (padding_needed, 1))
+                ])
+                chunk_data['actions'] = np.vstack([
+                    chunk_data['actions'],
+                    np.zeros((padding_needed, self.act_dim))
+                ])
+                chunk_data['rewards'] = np.concatenate([
+                    chunk_data['rewards'],
+                    np.zeros(padding_needed)
+                ])
+                chunk_data['next_observations'] = np.vstack([
+                    chunk_data['next_observations'],
+                    np.tile(obs, (padding_needed, 1))
+                ])
+                chunk_data['dones'] = np.concatenate([
+                    chunk_data['dones'],
+                    np.zeros(padding_needed, dtype=bool)
+                ])
+            except ValueError:
+                # Fallback: repeat current obs
+                chunk_data = {
+                    'observations': np.tile(obs, (self.chunk_size, 1)),
+                    'actions': np.zeros((self.chunk_size, self.act_dim)),
+                    'rewards': np.zeros(self.chunk_size),
+                    'next_observations': np.tile(obs, (self.chunk_size, 1)),
+                    'dones': np.zeros(self.chunk_size, dtype=bool),
+                }
+        else:
+            # Full chunk available
             chunk_data = self.chronological_buffer.get_recent_window(self.chunk_size)
-        except ValueError:
-            # Fallback to random if window extraction fails
-            action = np.random.uniform(self.action_low, self.action_high)
-            return action
 
         # Create and transform chunk
         chunk_grid = self._create_chunk_grid(chunk_data)
@@ -175,6 +215,13 @@ class WaveletEpisodicAgent:
 
         # Scale action from [-1, 1] (tanh output) to [action_low, action_high]
         action_scaled = self.action_low + (action + 1.0) * 0.5 * (self.action_high - self.action_low)
+
+        # Override velocity with locked speed if curriculum is active
+        if info is not None and info.get('lock_speed_active', False):
+            locked_velocity = info.get('locked_velocity')
+            if locked_velocity is not None:
+                # Keep steering from model, override velocity (index 1)
+                action_scaled[1] = locked_velocity
 
         return action_scaled
 

@@ -1291,6 +1291,16 @@ class F110ParallelEnv(ParallelEnv):
                 else:
                     infos[agent_id]["target_collision"] = False
 
+                # Add locked speed info for curriculum-based velocity control
+                if agent_id in self._locked_velocities:
+                    infos[agent_id]["locked_velocity"] = float(self._locked_velocities[agent_id])
+                    infos[agent_id]["lock_speed_active"] = bool(
+                        self._lock_speed_steps > 0 and self._episode_step_count <= self._lock_speed_steps
+                    )
+                else:
+                    infos[agent_id]["locked_velocity"] = None
+                    infos[agent_id]["lock_speed_active"] = False
+
         # advance and cull finished agents
         self._elapsed_steps += 1
         self.agents = [aid for aid in self.possible_agents if not (terminations[aid] or truncations[aid])]
