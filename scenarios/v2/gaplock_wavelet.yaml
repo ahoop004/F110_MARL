@@ -13,7 +13,7 @@ environment:
   - spawn_2
   - spawn_1
   timestep: 0.01
-  render: true
+  render: false
   spawn_curriculum:
     enabled: true
     window: 200
