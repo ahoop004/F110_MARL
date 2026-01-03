@@ -10,7 +10,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from src.core.obs_flatten import flatten_observation
-from src.rewards.strategy import RewardStrategy
+from src.rewards.base import RewardStrategy
 
 
 class SB3SingleAgentWrapper(gym.Env):
