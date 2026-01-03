@@ -1,5 +1,5 @@
 experiment:
-  name: gaplock_sb3_qrdqn_baseline
+  name: dqn
   episodes: 2500
   seed: 42
   normalize_observations: false
@@ -142,10 +142,10 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: sb3_qrdqn
+    algorithm: sb3_dqn
     target_id: car_1
     params:
-      # SB3 QR-DQN parameters
+      # SB3 DQN parameters
       action_set:
       - - 1.0
         - 0.0
@@ -280,8 +280,8 @@ wandb:
   project: marl-f110
   entity: ahoop004-old-dominion-university
   tags:
-  - sb3_qrdqn
+  - sb3_dqn
   - dqn
   - comparison
   - gaplock
-  notes: SB3 QR-DQN comparison for gaplock adversarial task (distributional RL with quantile regression)
+  notes: SB3 DQN comparison for gaplock adversarial task (discrete actions with epsilon-greedy)

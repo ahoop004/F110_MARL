@@ -1,5 +1,5 @@
 experiment:
-  name: gaplock_sb3_a2c_baseline
+  name: a2c
   episodes: 2500
   seed: 42
   normalize_observations: false

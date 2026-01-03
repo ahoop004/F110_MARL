@@ -1,5 +1,5 @@
 experiment:
-  name: gaplock_sb3_ppo_curriculum
+  name: td3
   episodes: 6000  # Increased for curriculum
   seed: 42
   normalize_observations: false
@@ -143,21 +143,21 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: sb3_ppo
+    algorithm: sb3_td3
     target_id: car_1
     params:
-      # SB3 PPO parameters (using proven SB3 defaults)
+      # SB3 SAC parameters (using proven SB3 defaults)
       learning_rate: 0.0003
       gamma: 0.995
-      n_steps: 2048  # Steps per update
-      n_epochs: 10  # Epochs per update
-      gae_lambda: 0.95  # Advantage estimation
-      clip_range: 0.2  # PPO clip parameter
-      ent_coef: 0.02  # Entropy coefficient
+      tau: 0.005
+      ent_coef: auto  # Automatic entropy tuning
+      target_entropy: auto
       hidden_dims:
       - 256
       - 256
+      buffer_size: 1000000
       batch_size: 256
+      learning_starts: 1000
     observation:
       preset: gaplock
     reward:
@@ -543,7 +543,7 @@ wandb:
   tags:
   - improved
   - curriculum_v2
-  - ppo
+  - td3
   - comparison
   - gaplock
-  notes: "PPO curriculum for gaplock adversarial task (Note: PPO won't train properly with run_v2.py - use run_sb3_curriculum.py instead)"
+  notes: SAC curriculum for gaplock adversarial task

@@ -1,5 +1,5 @@
 experiment:
-  name: gaplock_sb3_sac_curriculum
+  name: tqc
   episodes: 6000  # Increased for curriculum
   seed: 42
   normalize_observations: false
@@ -143,7 +143,7 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: sb3_sac
+    algorithm: sb3_tqc
     target_id: car_1
     params:
       # SB3 SAC parameters (using proven SB3 defaults)
@@ -543,7 +543,7 @@ wandb:
   tags:
   - improved
   - curriculum_v2
-  - sac
+  - tqc
   - comparison
   - gaplock
   notes: SAC curriculum for gaplock adversarial task

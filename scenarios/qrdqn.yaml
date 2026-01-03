@@ -1,5 +1,5 @@
 experiment:
-  name: gaplock_sb3_ddpg_baseline
+  name: qrdqn
   episodes: 2500
   seed: 42
   normalize_observations: false
@@ -32,7 +32,6 @@ environment:
       spawn_points:
       - spawn_pinch_right
       - spawn_pinch_left
-      # - spawn_pinch_ahead
       speed_range:
       - 0.44
       - 0.44
@@ -143,20 +142,41 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: sb3_ddpg
+    algorithm: sb3_qrdqn
     target_id: car_1
     params:
-      # SB3 DDPG parameters (using proven SB3 defaults)
-      learning_rate: 0.0003
+      # SB3 QR-DQN parameters
+      action_set:
+      - - 1.0
+        - 0.0
+      - - 1.0
+        - 0.3
+      - - 1.0
+        - -0.3
+      - - 0.7
+        - 0.0
+      - - 0.7
+        - 0.3
+      - - 0.7
+        - -0.3
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.3
+      - - 0.5
+        - -0.3
+      learning_rate: 0.0005
       gamma: 0.995
       tau: 0.005
-      action_noise_sigma: 0.1  # Action noise for exploration
       hidden_dims:
       - 256
       - 256
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 1000
+      learning_starts: 2500
+      exploration_fraction: 0.1
+      exploration_initial_eps: 1.0
+      exploration_final_eps: 0.05
     observation:
       preset: gaplock
     reward:
@@ -260,7 +280,8 @@ wandb:
   project: marl-f110
   entity: ahoop004-old-dominion-university
   tags:
-  - ddpg
+  - sb3_qrdqn
+  - dqn
   - comparison
   - gaplock
-  notes: DDPG comparison for gaplock adversarial task (simpler predecessor to TD3)
+  notes: SB3 QR-DQN comparison for gaplock adversarial task (distributional RL with quantile regression)
