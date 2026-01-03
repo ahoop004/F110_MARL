@@ -187,8 +187,9 @@ class SB3AgentBase:
             print(f"Warning: SB3 training step failed: {e}")
             return None
 
-        # Return dummy metrics (SB3 doesn't expose per-step metrics easily)
-        return {'steps': self._steps}
+        # Return None to avoid wandb step conflicts
+        # SB3 doesn't expose useful per-step metrics anyway
+        return None
 
     def save(self, path: str) -> None:
         """Save model."""
