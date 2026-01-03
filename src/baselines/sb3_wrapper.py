@@ -11,6 +11,7 @@ from gymnasium import spaces
 
 from src.core.obs_flatten import flatten_observation
 from src.rewards.base import RewardStrategy
+from src.metrics.outcomes import determine_outcome
 
 
 class SB3SingleAgentWrapper(gym.Env):
@@ -216,11 +217,11 @@ class SB3SingleAgentWrapper(gym.Env):
 
         # Get actions from other agents (if they exist)
         if self.other_agents:
-            # Get current observations for other agents
+            # Get current observations for other agents from stored obs dict
             for agent_id, agent in self.other_agents.items():
                 # Other agents select their own actions
                 # (This assumes they have an act() method)
-                obs = self.env.get_agent_obs(agent_id) if hasattr(self.env, 'get_agent_obs') else None
+                obs = self.current_obs_dict.get(agent_id) if self.current_obs_dict else None
                 if obs is not None and hasattr(agent, 'act'):
                     actions[agent_id] = agent.act(obs)
 
@@ -239,6 +240,11 @@ class SB3SingleAgentWrapper(gym.Env):
         terminated = bool(done_dict[self.agent_id])
         truncated = bool(truncated_dict[self.agent_id])
         info = info_dict.get(self.agent_id, {})
+
+        # Determine episode outcome for curriculum tracking
+        if terminated or truncated:
+            outcome = determine_outcome(info, truncated=truncated)
+            info['is_success'] = outcome.is_success()
 
         # Compute reward using custom strategy if provided
         if self.reward_strategy and prev_obs_dict:
