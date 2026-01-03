@@ -134,7 +134,7 @@ class CurriculumCallback(BaseCallback):
                     'curriculum/spawn/stage_index': curriculum_state['stage_index'],
                     'curriculum/spawn/success_rate': curriculum_state['success_rate'] or 0.0,
                     'curriculum/spawn/stage_success_rate': curriculum_state['stage_success_rate'] or 0.0,
-                }, step=self.episode_count)
+                })
 
         # Update phased curriculum
         if self.phases:
@@ -216,7 +216,7 @@ class CurriculumCallback(BaseCallback):
                 'curriculum/phased/phase_episodes': self.phase_episodes,
                 'curriculum/phased/success_rate': success_rate,
                 'curriculum/phased/patience': self.patience_counter,
-            }, step=self.episode_count)
+            })
 
     def _apply_phase(self, phase_idx: int):
         """Apply configuration for a curriculum phase."""
