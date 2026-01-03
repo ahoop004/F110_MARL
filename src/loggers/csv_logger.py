@@ -202,12 +202,172 @@ class CSVLogger:
         with open(summary_file, 'w') as f:
             json.dump(summary, f, indent=2)
 
+    def log_eval_episode(
+        self,
+        eval_episode: int,
+        training_episode: int,
+        outcome: str,
+        success: bool,
+        reward: float,
+        steps: int,
+        spawn_point: str,
+        spawn_speed: float,
+        extra: Optional[Dict[str, Any]] = None,
+    ):
+        """Log individual evaluation episode to CSV.
+
+        Args:
+            eval_episode: Evaluation episode number (continuous counter)
+            training_episode: Training episode that triggered this eval
+            outcome: Episode outcome (e.g., "TARGET_CRASH", "SELF_CRASH")
+            success: Whether episode was successful
+            reward: Total episode reward
+            steps: Number of steps in episode
+            spawn_point: Spawn point name
+            spawn_speed: Initial spawn speed
+            extra: Additional fields to include (optional)
+        """
+        if not self.enabled:
+            return
+
+        # Build episode data
+        episode_data = {
+            'eval_episode': eval_episode,
+            'training_episode': training_episode,
+            'outcome': outcome,
+            'success': int(success),
+            'reward': reward,
+            'steps': steps,
+            'spawn_point': spawn_point,
+            'spawn_speed': spawn_speed,
+        }
+
+        if extra:
+            episode_data.update(extra)
+
+        # Write to eval episodes CSV
+        self._write_eval_episode_row(episode_data)
+
+    def log_eval_aggregate(
+        self,
+        training_episode: int,
+        eval_episode_start: int,
+        eval_episode_end: int,
+        num_episodes: int,
+        success_count: int,
+        success_rate: float,
+        avg_reward: float,
+        std_reward: float,
+        avg_steps: float,
+        std_steps: float,
+        outcome_counts: Dict[str, int],
+        extra: Optional[Dict[str, Any]] = None,
+    ):
+        """Log aggregate evaluation results to CSV.
+
+        Args:
+            training_episode: Training episode that triggered this eval
+            eval_episode_start: First eval episode number
+            eval_episode_end: Last eval episode number
+            num_episodes: Number of eval episodes
+            success_count: Number of successful episodes
+            success_rate: Success rate (0.0 to 1.0)
+            avg_reward: Average reward
+            std_reward: Standard deviation of reward
+            avg_steps: Average steps
+            std_steps: Standard deviation of steps
+            outcome_counts: Dict mapping outcome -> count
+            extra: Additional fields to include (optional)
+        """
+        if not self.enabled:
+            return
+
+        # Build aggregate data
+        aggregate_data = {
+            'training_episode': training_episode,
+            'eval_episode_start': eval_episode_start,
+            'eval_episode_end': eval_episode_end,
+            'num_episodes': num_episodes,
+            'success_count': success_count,
+            'success_rate': success_rate,
+            'avg_reward': avg_reward,
+            'std_reward': std_reward,
+            'avg_steps': avg_steps,
+            'std_steps': std_steps,
+        }
+
+        # Add outcome counts as separate columns
+        for outcome, count in outcome_counts.items():
+            aggregate_data[f'outcome_{outcome}'] = count
+
+        if extra:
+            aggregate_data.update(extra)
+
+        # Write to eval aggregate CSV
+        self._write_eval_aggregate_row(aggregate_data)
+
+    def _write_eval_episode_row(self, row_data: Dict[str, Any]):
+        """Write row to eval episodes CSV.
+
+        Args:
+            row_data: Row data dict
+        """
+        # Initialize eval episode CSV writer on first write
+        if not hasattr(self, '_eval_episode_writer') or self._eval_episode_writer is None:
+            # Determine fieldnames from first row
+            self._eval_episode_fieldnames = list(row_data.keys())
+
+            # Open CSV file
+            eval_episode_file = self.output_dir / "eval_episodes.csv"
+            self._eval_episode_csv = open(eval_episode_file, 'w', newline='')
+            self._eval_episode_writer = csv.DictWriter(
+                self._eval_episode_csv,
+                fieldnames=self._eval_episode_fieldnames,
+                extrasaction='ignore'
+            )
+            self._eval_episode_writer.writeheader()
+            self._eval_episode_csv.flush()
+
+        # Write row
+        self._eval_episode_writer.writerow(row_data)
+        self._eval_episode_csv.flush()
+
+    def _write_eval_aggregate_row(self, row_data: Dict[str, Any]):
+        """Write row to eval aggregate CSV.
+
+        Args:
+            row_data: Row data dict
+        """
+        # Initialize eval aggregate CSV writer on first write
+        if not hasattr(self, '_eval_aggregate_writer') or self._eval_aggregate_writer is None:
+            # Determine fieldnames from first row
+            self._eval_aggregate_fieldnames = list(row_data.keys())
+
+            # Open CSV file
+            eval_aggregate_file = self.output_dir / "eval_aggregate.csv"
+            self._eval_aggregate_csv = open(eval_aggregate_file, 'w', newline='')
+            self._eval_aggregate_writer = csv.DictWriter(
+                self._eval_aggregate_csv,
+                fieldnames=self._eval_aggregate_fieldnames,
+                extrasaction='ignore'
+            )
+            self._eval_aggregate_writer.writeheader()
+            self._eval_aggregate_csv.flush()
+
+        # Write row
+        self._eval_aggregate_writer.writerow(row_data)
+        self._eval_aggregate_csv.flush()
+
     def close(self):
         """Close CSV files and flush buffers."""
         if self._episode_csv:
             self._episode_csv.close()
         if self._agent_csv:
             self._agent_csv.close()
+        if hasattr(self, '_eval_episode_csv') and self._eval_episode_csv:
+            self._eval_episode_csv.close()
+        if hasattr(self, '_eval_aggregate_csv') and self._eval_aggregate_csv:
+            self._eval_aggregate_csv.close()
 
     def __del__(self):
         """Cleanup on deletion."""

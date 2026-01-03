@@ -1016,38 +1016,100 @@ class EnhancedTrainingLoop:
                 f"(eval episodes {self.total_eval_episodes + 1}-{self.total_eval_episodes + self.evaluation_config.num_episodes})..."
             )
 
+        # Enter eval mode in Rich dashboard
+        if self.rich_console:
+            self.rich_console.enter_eval_mode(
+                num_eval_episodes=self.evaluation_config.num_episodes,
+                training_episode=episode_num
+            )
+
+        # Track eval start for CSV/aggregate logging
+        eval_episode_start = self.total_eval_episodes + 1
+
         # Run evaluation
         eval_result = self.evaluator.evaluate(verbose=False)
 
-        # Log each eval episode individually for continuous plots
-        if self.wandb_logger:
-            for ep_data in eval_result.episodes:
-                self.total_eval_episodes += 1
+        # Log each eval episode individually to WandB, CSV, and Rich dashboard
+        successes_so_far = 0
+        for idx, ep_data in enumerate(eval_result.episodes):
+            self.total_eval_episodes += 1
+
+            # Track success rate so far (for Rich dashboard)
+            if ep_data['success']:
+                successes_so_far += 1
+            success_rate_so_far = successes_so_far / (idx + 1)
+
+            # Log to WandB
+            if self.wandb_logger:
                 self.wandb_logger.log_metrics({
                     'eval/episode_reward': ep_data['reward'],
                     'eval/episode_steps': ep_data['steps'],
                     'eval/episode_success': int(ep_data['success']),
                     'eval/spawn_point': ep_data['spawn_point'],
-                    'eval/training_episode': episode_num,  # Track which training ep this eval came from
+                    'eval/training_episode': episode_num,
                 }, step=self.total_eval_episodes)
 
-        # Log aggregate results (using last eval episode as step for aggregate metrics)
+            # Log to CSV
+            if self.csv_logger:
+                self.csv_logger.log_eval_episode(
+                    eval_episode=self.total_eval_episodes,
+                    training_episode=episode_num,
+                    outcome=ep_data['outcome'],
+                    success=ep_data['success'],
+                    reward=ep_data['reward'],
+                    steps=ep_data['steps'],
+                    spawn_point=ep_data['spawn_point'],
+                    spawn_speed=ep_data['spawn_speed'],
+                )
+
+            # Update Rich dashboard
+            if self.rich_console:
+                self.rich_console.update_eval_episode(
+                    eval_episode_num=idx + 1,
+                    outcome=ep_data['outcome'],
+                    reward=ep_data['reward'],
+                    steps=ep_data['steps'],
+                    spawn_point=ep_data['spawn_point'],
+                    success_rate_so_far=success_rate_so_far,
+                )
+
+        # Log aggregate results (use training episode as step to align with training plots)
         if self.wandb_logger:
-            self.wandb_logger.log_metrics({
+            agg_metrics = {
                 'eval_agg/success_rate': eval_result.success_rate,
                 'eval_agg/avg_reward': eval_result.avg_reward,
                 'eval_agg/avg_episode_length': eval_result.avg_episode_length,
                 'eval_agg/std_reward': eval_result.std_reward,
                 'eval_agg/std_episode_length': eval_result.std_episode_length,
-                'eval_agg/training_episode': episode_num,
-            }, step=self.total_eval_episodes)
+            }
 
-            # Log outcome distribution (aggregate)
+            # Add outcome distribution to aggregate metrics
             for outcome, count in eval_result.outcome_counts.items():
                 pct = (count / eval_result.num_episodes) * 100
-                self.wandb_logger.log_metrics({
-                    f'eval_agg/outcome_{outcome}': pct,
-                }, step=self.total_eval_episodes)
+                agg_metrics[f'eval_agg/outcome_{outcome}'] = pct
+
+            # Log with training episode number as step (aligns with training plots)
+            self.wandb_logger.log_metrics(agg_metrics, step=episode_num)
+
+        # Log aggregate results to CSV
+        if self.csv_logger:
+            self.csv_logger.log_eval_aggregate(
+                training_episode=episode_num,
+                eval_episode_start=eval_episode_start,
+                eval_episode_end=self.total_eval_episodes,
+                num_episodes=eval_result.num_episodes,
+                success_count=eval_result.success_count,
+                success_rate=eval_result.success_rate,
+                avg_reward=eval_result.avg_reward,
+                std_reward=eval_result.std_reward,
+                avg_steps=eval_result.avg_episode_length,
+                std_steps=eval_result.std_episode_length,
+                outcome_counts=eval_result.outcome_counts,
+            )
+
+        # Exit eval mode in Rich dashboard
+        if self.rich_console:
+            self.rich_console.exit_eval_mode()
 
         # Log to console (aggregate summary)
         if self.console_logger:

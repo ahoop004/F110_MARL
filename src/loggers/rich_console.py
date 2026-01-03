@@ -86,6 +86,19 @@ class RichConsole:
         self.last_update_time = None
         self.episode_times = deque(maxlen=100)
 
+        # Evaluation mode tracking
+        self.eval_mode = False
+        self.eval_episode_current = 0
+        self.eval_episode_total = 0
+        self.eval_current_outcome = "UNKNOWN"
+        self.eval_current_reward = 0.0
+        self.eval_current_steps = 0
+        self.eval_success_rate = 0.0
+        self.eval_spawn_point = ""
+
+        # Store training state for restore after eval
+        self._training_state_backup = None
+
     def start(self):
         """Start live display."""
         if not self.enabled:
@@ -206,14 +219,23 @@ class RichConsole:
         elapsed_str = str(elapsed).split('.')[0]  # Remove microseconds
 
         header_text = Text()
-        header_text.append("F110 MARL Training", style="bold cyan")
-        header_text.append(f" | Episode {self.current_episode}", style="bold white")
-        header_text.append(f" | Elapsed: {elapsed_str}", style="dim")
-        header_text.append(f" | {self.episodes_per_sec:.2f} ep/s", style="dim")
 
-        layout["header"].update(Panel(header_text, style="cyan"))
+        if self.eval_mode:
+            # Evaluation mode header
+            header_text.append("F110 MARL ", style="bold cyan")
+            header_text.append("EVALUATION MODE", style="bold yellow on red")
+            header_text.append(f" | Eval Episode {self.eval_episode_current}/{self.eval_episode_total}", style="bold white")
+            header_text.append(f" | Elapsed: {elapsed_str}", style="dim")
+            layout["header"].update(Panel(header_text, style="yellow"))
+        else:
+            # Training mode header
+            header_text.append("F110 MARL Training", style="bold cyan")
+            header_text.append(f" | Episode {self.current_episode}", style="bold white")
+            header_text.append(f" | Elapsed: {elapsed_str}", style="dim")
+            header_text.append(f" | {self.episodes_per_sec:.2f} ep/s", style="dim")
+            layout["header"].update(Panel(header_text, style="cyan"))
 
-        # Body - metrics table
+        # Body - metrics table (different for eval mode)
         layout["body"].update(self._create_metrics_table())
 
         return layout
@@ -222,8 +244,13 @@ class RichConsole:
         """Create metrics table with current statistics.
 
         Returns:
-            Rich Table with training metrics
+            Rich Table with training or evaluation metrics
         """
+        # Show eval metrics if in eval mode
+        if self.eval_mode:
+            return self._create_eval_metrics_table()
+
+        # Otherwise show training metrics
         table = Table(title="Training Metrics", show_header=True, header_style="bold magenta")
 
         table.add_column("Metric", style="cyan", width=25)
@@ -323,6 +350,60 @@ class RichConsole:
 
         return table
 
+    def _create_eval_metrics_table(self) -> Table:
+        """Create evaluation metrics table.
+
+        Returns:
+            Rich Table with evaluation metrics
+        """
+        table = Table(title="Evaluation Metrics", show_header=True, header_style="bold yellow")
+
+        table.add_column("Metric", style="cyan", width=25)
+        table.add_column("Value", justify="right", style="white", width=20)
+
+        # Progress
+        table.add_row("", "")  # Spacer
+        table.add_row("[bold]Progress", "")
+        table.add_row(
+            "  Episode",
+            f"{self.eval_episode_current}/{self.eval_episode_total}"
+        )
+        progress_pct = (self.eval_episode_current / self.eval_episode_total * 100) if self.eval_episode_total > 0 else 0
+        table.add_row(
+            "  Progress",
+            f"{progress_pct:.0f}%"
+        )
+
+        # Current episode
+        table.add_row("", "")  # Spacer
+        table.add_row("[bold]Current Episode", "")
+        table.add_row(
+            "  Spawn Point",
+            self.eval_spawn_point or "N/A"
+        )
+        table.add_row(
+            "  Outcome",
+            self._format_outcome(self.eval_current_outcome)
+        )
+        table.add_row(
+            "  Steps",
+            f"{self.eval_current_steps}"
+        )
+        table.add_row(
+            "  Reward",
+            f"{self.eval_current_reward:.2f}"
+        )
+
+        # Aggregate results so far
+        table.add_row("", "")  # Spacer
+        table.add_row("[bold]Results (So Far)", "")
+        table.add_row(
+            "  Success Rate",
+            self._format_percentage(self.eval_success_rate, good_threshold=0.5)
+        )
+
+        return table
+
     def _format_outcome(self, outcome: str) -> Text:
         """Format outcome with color coding.
 
@@ -400,6 +481,88 @@ class RichConsole:
                 color = "red"
 
         return Text(pct_str, style=f"bold {color}")
+
+    def enter_eval_mode(self, num_eval_episodes: int, training_episode: int):
+        """Enter evaluation mode and backup training state.
+
+        Args:
+            num_eval_episodes: Total number of eval episodes to run
+            training_episode: Training episode that triggered this eval
+        """
+        if not self.enabled or self.live is None:
+            return
+
+        # Backup current training state
+        self._training_state_backup = {
+            'episode': self.current_episode,
+            'steps': self.current_steps,
+            'return': self.current_return,
+            'outcome': self.current_outcome,
+        }
+
+        # Enter eval mode
+        self.eval_mode = True
+        self.eval_episode_current = 0
+        self.eval_episode_total = num_eval_episodes
+        self.eval_current_outcome = "RUNNING"
+        self.eval_current_reward = 0.0
+        self.eval_current_steps = 0
+        self.eval_success_rate = 0.0
+        self.eval_spawn_point = ""
+
+        # Update display
+        self.live.update(self._generate_layout())
+
+    def update_eval_episode(
+        self,
+        eval_episode_num: int,
+        outcome: str,
+        reward: float,
+        steps: int,
+        spawn_point: str,
+        success_rate_so_far: float,
+    ):
+        """Update evaluation episode progress.
+
+        Args:
+            eval_episode_num: Current eval episode number (1-indexed)
+            outcome: Episode outcome
+            reward: Episode reward
+            steps: Episode steps
+            spawn_point: Spawn point name
+            success_rate_so_far: Success rate so far in this eval run
+        """
+        if not self.enabled or self.live is None or not self.eval_mode:
+            return
+
+        self.eval_episode_current = eval_episode_num
+        self.eval_current_outcome = outcome
+        self.eval_current_reward = reward
+        self.eval_current_steps = steps
+        self.eval_spawn_point = spawn_point
+        self.eval_success_rate = success_rate_so_far
+
+        # Update display
+        self.live.update(self._generate_layout())
+
+    def exit_eval_mode(self):
+        """Exit evaluation mode and restore training state."""
+        if not self.enabled or self.live is None or not self.eval_mode:
+            return
+
+        # Restore training state
+        if self._training_state_backup:
+            self.current_episode = self._training_state_backup['episode']
+            self.current_steps = self._training_state_backup['steps']
+            self.current_return = self._training_state_backup['return']
+            self.current_outcome = self._training_state_backup['outcome']
+            self._training_state_backup = None
+
+        # Exit eval mode
+        self.eval_mode = False
+
+        # Update display to show training again
+        self.live.update(self._generate_layout())
 
 
 __all__ = ['RichConsole']
