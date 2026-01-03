@@ -119,10 +119,7 @@ class TrainingLoop:
                     # Update done flag
                     if episode_done:
                         done[agent_id] = True
-
-                        # For on-policy agents, finish the path
-                        if is_on_policy_agent(agent):
-                            agent.finish_path()
+                        # Note: On-policy agents will call finish_path() internally in their update() method
 
             # Update observation
             obs = next_obs

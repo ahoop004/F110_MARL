@@ -513,12 +513,8 @@ class EnhancedTrainingLoop:
 
             episode_steps += 1
 
-        # Finish paths for on-policy agents
-        for agent_id, agent in self.agents.items():
-            if is_on_policy_agent(agent):
-                agent.finish_path()
-
         # Update agents and collect trainer stats
+        # Note: On-policy agents will call finish_path() internally in their update() method
         trainer_stats = {}
         for agent_id, agent in self.agents.items():
             update_stats = None
@@ -527,6 +523,10 @@ class EnhancedTrainingLoop:
                 if update_stats:
                     # Namespace stats by agent_id
                     trainer_stats[agent_id] = update_stats
+                else:
+                    # Debug: Log when update returns None for on-policy agents
+                    if is_on_policy_agent(agent):
+                        logger.debug(f"On-policy agent {agent_id} update() returned None at episode {episode_num}")
             except Exception as e:
                 logger.error(f"Agent {agent_id} update failed after episode {episode_num}: {e}")
                 # Continue with next agent
@@ -545,6 +545,8 @@ class EnhancedTrainingLoop:
                     else:
                         # Fallback to old style if algorithm not specified
                         log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
+
+                logger.debug(f"Logging {len(log_dict)} metrics to WandB for {agent_id} at episode {episode_num}")
                 self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Determine episode outcome for each agent
