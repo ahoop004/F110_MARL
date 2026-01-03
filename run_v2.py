@@ -205,6 +205,13 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
     # Initialize W&B logger
     wandb_config = scenario.get('wandb', {})
     wandb_enabled = wandb_config.get('enabled', False)
+    default_algo = "unknown"
+    for agent_cfg in scenario.get('agents', {}).values():
+        algo = agent_cfg.get('algorithm', '').lower()
+        if algo and algo not in ['ftg', 'pp', 'pure_pursuit']:
+            default_algo = algo
+            break
+    default_group = scenario.get('experiment', {}).get('name')
 
     if wandb_enabled:
         console_logger.print_info("Initializing Weights & Biases...")
@@ -214,7 +221,8 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             name=wandb_config.get('name', scenario['experiment']['name']),
             config=scenario,
             tags=wandb_config.get('tags', []),
-            group=wandb_config.get('group', None),
+            group=wandb_config.get('group', default_group),
+            job_type=wandb_config.get('job_type', default_algo),
             entity=wandb_config.get('entity', None),
             notes=wandb_config.get('notes', None),
             mode=wandb_config.get('mode', 'online'),

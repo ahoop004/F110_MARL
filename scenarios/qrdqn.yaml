@@ -275,6 +275,286 @@ agents:
           wall_avoid_kick: 0.12
           panic_factor_near: 1.2
           panic_factor_very_near: 1.4
+
+# IMPROVED Phased Curriculum with Overlap & Longer Patience
+curriculum:
+  type: phased
+  start_phase: 0
+
+  phases:
+    # Phase 1: Foundation
+    - name: "1_foundation"
+      description: "Learn basics against weak defender"
+      criteria:
+        success_rate: 0.70
+        avg_reward: 50.0
+        min_episodes: 100
+        patience: 500
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.44, 0.44]
+      lock_speed_steps: 800
+      ftg:
+        steering_gain: 0.25
+        bubble_radius: 2.0
+
+    # Phase 2a-c: Lock Reduction
+    - name: "2a_reduce_lock_600"
+      description: "Reduce speed lock to 600"
+      criteria:
+        success_rate: 0.65
+        min_episodes: 75
+        patience: 400
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.44, 0.44]
+      lock_speed_steps: 600
+      ftg:
+        steering_gain: 0.25
+        bubble_radius: 2.0
+      keep_foundation: 0.10
+
+    - name: "2b_reduce_lock_400"
+      description: "Reduce speed lock to 400"
+      criteria:
+        success_rate: 0.65
+        min_episodes: 75
+        patience: 400
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.44, 0.44]
+      lock_speed_steps: 400
+      ftg:
+        steering_gain: 0.25
+        bubble_radius: 2.0
+      keep_foundation: 0.10
+      keep_previous: 0.15
+
+    - name: "2c_reduce_lock_200"
+      description: "Reduce speed lock to 200"
+      criteria:
+        success_rate: 0.65
+        min_episodes: 75
+        patience: 400
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.44, 0.44]
+      lock_speed_steps: 200
+      ftg:
+        steering_gain: 0.25
+        bubble_radius: 2.0
+      keep_foundation: 0.10
+      keep_previous: 0.20
+
+    # Phase 3: Speed Variation
+    - name: "3a_speed_narrow"
+      description: "Tight speed variation (±0.02)"
+      criteria:
+        success_rate: 0.60
+        min_episodes: 75
+        patience: 400
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.42, 0.46]
+      lock_speed_steps: 100
+      ftg:
+        steering_gain: 0.25
+        bubble_radius: 2.0
+      keep_foundation: 0.15
+      keep_previous: 0.20
+
+    - name: "3b_speed_medium"
+      description: "Medium speed range (±0.09)"
+      criteria:
+        success_rate: 0.55
+        min_episodes: 75
+        patience: 450
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.35, 0.55]
+      lock_speed_steps: 100
+      ftg:
+        steering_gain: 0.27
+        bubble_radius: 2.1
+      keep_foundation: 0.15
+      keep_previous: 0.25
+
+    - name: "3c_speed_wide"
+      description: "Wide speed range (±0.14)"
+      criteria:
+        success_rate: 0.50
+        min_episodes: 100
+        patience: 500
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left]
+        speed_range: [0.30, 0.70]
+      lock_speed_steps: 50
+      ftg:
+        steering_gain: 0.30
+        bubble_radius: 2.2
+      keep_foundation: 0.15
+      keep_previous: 0.25
+
+    # Phase 4: Spatial Variation
+    - name: "4a_add_ahead"
+      description: "Add pinch ahead"
+      criteria:
+        success_rate: 0.50
+        min_episodes: 100
+        patience: 500
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead]
+        speed_range: [0.30, 0.70]
+      lock_speed_steps: 50
+      ftg:
+        steering_gain: 0.30
+        bubble_radius: 2.2
+      keep_foundation: 0.15
+      keep_previous: 0.25
+
+    - name: "4b_add_approach"
+      description: "Add approach scenarios"
+      criteria:
+        success_rate: 0.45
+        min_episodes: 100
+        patience: 550
+      spawn:
+        points: [spawn_pinch_right, spawn_pinch_left, spawn_pinch_ahead,
+                 spawn_approach_0.0C, spawn_approach_0.3L, spawn_approach_0.3R]
+        speed_range: [0.30, 0.80]
+      lock_speed_steps: 0
+      ftg:
+        steering_gain: 0.32
+        bubble_radius: 2.4
+      keep_foundation: 0.15
+      keep_previous: 0.25
+
+    - name: "4c_all_spawns"
+      description: "All spawn positions"
+      criteria:
+        success_rate: 0.40
+        min_episodes: 125
+        patience: 600
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      lock_speed_steps: 0
+      ftg:
+        steering_gain: 0.35
+        bubble_radius: 2.5
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    # Phase 5: FTG Resistance (Granular)
+    - name: "5a_ftg_light"
+      description: "Light FTG"
+      criteria:
+        success_rate: 0.38
+        min_episodes: 125
+        patience: 600
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.37
+        bubble_radius: 2.6
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5b_ftg_moderate_low"
+      description: "Moderate-low FTG"
+      criteria:
+        success_rate: 0.35
+        min_episodes: 125
+        patience: 600
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.40
+        bubble_radius: 2.7
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5c_ftg_moderate"
+      description: "Moderate FTG"
+      criteria:
+        success_rate: 0.33
+        min_episodes: 150
+        patience: 650
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.43
+        bubble_radius: 2.8
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5d_ftg_moderate_high"
+      description: "Moderate-high FTG"
+      criteria:
+        success_rate: 0.30
+        min_episodes: 150
+        patience: 650
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.46
+        bubble_radius: 2.9
+        target_mode: farthest
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5e_ftg_strong"
+      description: "Strong FTG"
+      criteria:
+        success_rate: 0.28
+        min_episodes: 150
+        patience: 700
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.50
+        bubble_radius: 3.0
+        target_mode: farthest
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5f_ftg_very_strong"
+      description: "Very strong FTG"
+      criteria:
+        success_rate: 0.25
+        min_episodes: 150
+        patience: 700
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.55
+        bubble_radius: 3.2
+        target_mode: farthest
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
+    - name: "5g_ftg_expert"
+      description: "Expert FTG - final challenge"
+      criteria:
+        success_rate: 0.22
+        min_episodes: 200
+        patience: 800
+      spawn:
+        points: all
+        speed_range: [0.30, 1.0]
+      ftg:
+        steering_gain: 0.60
+        bubble_radius: 3.5
+        target_mode: farthest
+      keep_foundation: 0.20
+      keep_previous: 0.25
+
 wandb:
   enabled: true
   project: marl-f110

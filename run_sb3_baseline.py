@@ -70,6 +70,7 @@ from src.core.setup import create_training_setup
 from src.core.obs_flatten import flatten_observation
 from src.baselines.sb3_wrapper import SB3SingleAgentWrapper
 from src.baselines.sb3_curriculum_callback import CurriculumCallback
+from src.loggers import RichConsole
 
 
 def parse_args():
@@ -391,6 +392,8 @@ def main():
                 project=scenario.get('wandb', {}).get('project', 'marl-f110'),
                 entity=scenario.get('wandb', {}).get('entity'),
                 tags=scenario_tags,
+                group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
+                job_type=scenario.get('wandb', {}).get('job_type', args.algo),
                 config={
                     'algorithm': args.algo,
                     'scenario': args.scenario,
@@ -450,6 +453,9 @@ def main():
     tensorboard_dir = output_dir / 'tensorboard'
     tensorboard_dir.mkdir(parents=True, exist_ok=True)
 
+    # Initialize Rich console dashboard
+    rich_console = RichConsole(enabled=True)
+
     # Create callbacks
     callbacks = []
 
@@ -471,8 +477,14 @@ def main():
         )
         callbacks.append(wandb_callback)
 
-    # Curriculum callback
-    if spawn_curriculum or curriculum_config:
+    # Curriculum/metrics callback
+    enable_metrics_callback = bool(
+        spawn_curriculum
+        or curriculum_config
+        or wandb_run
+        or getattr(rich_console, "enabled", False)
+    )
+    if enable_metrics_callback:
         curriculum_callback = CurriculumCallback(
             curriculum_config=curriculum_config,
             spawn_curriculum=spawn_curriculum,
@@ -480,10 +492,15 @@ def main():
             ftg_schedules=ftg_schedules,
             env_wrapper=wrapped_env,
             wandb_run=wandb_run,
+            rich_console=rich_console,
+            algo_name=args.algo,
             verbose=1,
         )
         callbacks.append(curriculum_callback)
-        print("Curriculum callback enabled")
+        if spawn_curriculum or curriculum_config:
+            print("Curriculum callback enabled")
+        elif getattr(rich_console, "enabled", False):
+            print("Rich console enabled")
 
     # Extract hyperparameters from scenario
     agent_params = sb3_agent_cfg.get('params', {})

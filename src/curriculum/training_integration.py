@@ -29,6 +29,13 @@ def add_curriculum_to_training_loop(
     """
     # Store curriculum reference
     training_loop.phased_curriculum = curriculum
+    if hasattr(training_loop, "rich_console") and training_loop.rich_console:
+        metrics = curriculum.get_metrics()
+        training_loop._phase_curriculum_state = {
+            "phase_index": metrics.get("curriculum/phase_idx"),
+            "phase_name": metrics.get("curriculum/phase_name"),
+            "phase_success_rate": metrics.get("curriculum/success_rate"),
+        }
 
     # Store original _run_episode method
     original_run_episode = training_loop._run_episode
@@ -91,6 +98,15 @@ def add_curriculum_to_training_loop(
             if training_loop.wandb_logger:
                 curriculum_metrics = curriculum.get_metrics()
                 training_loop.wandb_logger.log_metrics(curriculum_metrics, step=episode_num)
+            else:
+                curriculum_metrics = curriculum.get_metrics()
+
+            if hasattr(training_loop, "rich_console") and training_loop.rich_console:
+                training_loop._phase_curriculum_state = {
+                    "phase_index": curriculum_metrics.get("curriculum/phase_idx"),
+                    "phase_name": curriculum_metrics.get("curriculum/phase_name"),
+                    "phase_success_rate": curriculum_metrics.get("curriculum/success_rate"),
+                }
 
     # Replace _run_episode with wrapped version
     training_loop._run_episode = _run_episode_with_curriculum

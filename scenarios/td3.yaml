@@ -1,6 +1,6 @@
 experiment:
   name: td3
-  episodes: 6000  # Increased for curriculum
+  episodes: 2500
   seed: 42
   normalize_observations: false
 environment:

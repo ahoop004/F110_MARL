@@ -240,10 +240,20 @@ class SB3SingleAgentWrapper(gym.Env):
         terminated = bool(done_dict[self.agent_id])
         truncated = bool(truncated_dict[self.agent_id])
         info = info_dict.get(self.agent_id, {})
+        target_finished = False
+        if self.target_id and isinstance(info_dict, dict):
+            target_info = info_dict.get(self.target_id, {})
+            if isinstance(target_info, dict):
+                target_finished = bool(
+                    target_info.get("finish_line", False)
+                    or target_info.get("target_finished", False)
+                )
+        info["target_finished"] = target_finished
 
         # Determine episode outcome for curriculum tracking
         if terminated or truncated:
             outcome = determine_outcome(info, truncated=truncated)
+            info["outcome"] = outcome.value
             info['is_success'] = outcome.is_success()
 
         # Compute reward using custom strategy if provided

@@ -44,6 +44,7 @@ class WandbLogger:
         name: Optional[str] = None,
         tags: Optional[list] = None,
         group: Optional[str] = None,
+        job_type: Optional[str] = None,
         entity: Optional[str] = None,
         notes: Optional[str] = None,
         mode: str = "online",
@@ -58,6 +59,7 @@ class WandbLogger:
             name: Run name (optional, W&B will auto-generate if not provided)
             tags: List of tags for this run
             group: Group name for organizing runs
+            job_type: Job type for organizing runs
             entity: W&B entity (username or team name)
             notes: Notes about this run
             mode: W&B mode ("online", "offline", or "disabled")
@@ -102,6 +104,7 @@ class WandbLogger:
                 name=name,
                 tags=tags,
                 group=group,
+                job_type=job_type,
                 entity=entity,
                 notes=notes,
                 mode=mode,

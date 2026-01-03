@@ -131,9 +131,19 @@ class EnhancedTrainingLoop:
             for agent_id in agents.keys()
         }
 
+        # Primary agent selection for unified logging
+        self._non_trainable_algorithms = {"ftg", "pp", "pure_pursuit"}
+        self.primary_agent_id = self._get_primary_agent_id()
+        self.primary_target_id = (
+            self.target_ids.get(self.primary_agent_id)
+            if self.primary_agent_id
+            else None
+        )
+
         # Training state tracking
         self.training_start_time: Optional[float] = None
         self.episodes_trained: int = 0
+        self._phase_curriculum_state: Optional[Dict[str, Any]] = None
 
     def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
         """Flatten observation for agent if preset is configured.
@@ -475,19 +485,7 @@ class EnhancedTrainingLoop:
                             step_update_stats = agent.update()
 
                             # Log per-step training metrics to wandb
-                            if self.wandb_logger and step_update_stats:
-                                log_dict = {}
-                                algo_name = self.agent_algorithms.get(agent_id, None)
-
-                                for stat_name, stat_value in step_update_stats.items():
-                                    if algo_name:
-                                        log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
-                                    else:
-                                        log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
-
-                                # Use global step counter (episode * max_steps + current_step)
-                                global_step = episode_num * self.max_steps_per_episode + episode_steps
-                                self.wandb_logger.log_metrics(log_dict, step=global_step)
+                            # Per-step update stats are intentionally not logged to keep W&B clean.
                         except Exception as e:
                             logger.error(f"Agent {agent_id} update failed at episode {episode_num}, step {episode_steps}: {e}")
                             # Continue training - this update will be skipped but training continues
@@ -533,32 +531,32 @@ class EnhancedTrainingLoop:
                 continue
 
             # Log trainer stats to W&B
-            if self.wandb_logger and update_stats:
-                log_dict = {}
-                # Get algorithm name for this agent (if available)
-                algo_name = self.agent_algorithms.get(agent_id, None)
-
-                for stat_name, stat_value in update_stats.items():
-                    # Namespace by agent_id/algorithm/metric
-                    if algo_name:
-                        log_dict[f'{agent_id}/{algo_name}/{stat_name}'] = stat_value
-                    else:
-                        # Fallback to old style if algorithm not specified
-                        log_dict[f'trainer/{agent_id}/{stat_name}'] = stat_value
-
-                logger.debug(f"Logging {len(log_dict)} metrics to WandB for {agent_id} at episode {episode_num}")
-                self.wandb_logger.log_metrics(log_dict, step=episode_num)
+            # Per-episode update stats are intentionally not logged to keep W&B clean.
 
         # Determine episode outcome for each agent
         final_info = step_info if episode_steps > 0 else info
 
+        episode_metrics: Dict[str, Any] = {}
+        rolling_stats_by_agent: Dict[str, Dict[str, float]] = {}
+        outcomes_by_agent: Dict[str, EpisodeOutcome] = {}
+
         for agent_id in self.agents.keys():
             # Determine outcome using agent-specific info
             agent_info = final_info.get(agent_id, {}) if isinstance(final_info, dict) else {}
+            target_id = self.target_ids.get(agent_id)
+            if target_id and isinstance(final_info, dict):
+                target_info = final_info.get(target_id, {})
+                if isinstance(target_info, dict):
+                    agent_info = dict(agent_info)
+                    agent_info["target_finished"] = bool(
+                        target_info.get("finish_line", False)
+                        or target_info.get("target_finished", False)
+                    )
             agent_truncated = truncations.get(agent_id, False)
             outcome = self._determine_agent_outcome(
                 agent_id, agent_info, agent_truncated
             )
+            outcomes_by_agent[agent_id] = outcome
 
             # Create episode metrics
             metrics = self.metrics_trackers[agent_id].add_episode(
@@ -568,20 +566,13 @@ class EnhancedTrainingLoop:
                 steps=episode_steps,
                 reward_components=episode_reward_components.get(agent_id, {}),
             )
+            episode_metrics[agent_id] = metrics
 
             # Get rolling stats
             rolling_stats = self.metrics_trackers[agent_id].get_rolling_stats(
                 window=self.rolling_window
             )
-
-            # Log to W&B
-            if self.wandb_logger:
-                self.wandb_logger.log_episode(
-                    episode=episode_num,
-                    metrics=metrics,
-                    rolling_stats=rolling_stats,
-                    agent_id=agent_id,
-                )
+            rolling_stats_by_agent[agent_id] = rolling_stats
 
             # Populate success replay buffer for off-policy agents
             if outcome.is_success() and agent_id in success_transitions:
@@ -626,20 +617,51 @@ class EnhancedTrainingLoop:
                     rolling_stats=rolling_stats,
                 )
 
-            # Update Rich console (only for first agent to avoid duplicate updates)
-            if self.rich_console and agent_id == list(self.agents.keys())[0]:
-                self.rich_console.update_episode(
-                    episode=episode_num,
-                    outcome=outcome.value,
-                    reward=episode_rewards[agent_id],
-                    steps=episode_steps,
-                    outcome_stats=rolling_stats,
-                )
+        if self.wandb_logger and self.primary_agent_id in episode_metrics:
+            primary_id = self.primary_agent_id
+            metrics = episode_metrics[primary_id]
+            rolling_stats = rolling_stats_by_agent.get(primary_id, {})
+            primary_info = (
+                final_info.get(primary_id, {}) if isinstance(final_info, dict) else {}
+            )
+
+            target_finished = False
+            target_collision = False
+            if self.primary_target_id and isinstance(final_info, dict):
+                target_info = final_info.get(self.primary_target_id, {})
+                if isinstance(target_info, dict):
+                    target_finished = bool(
+                        target_info.get("finish_line", False)
+                        or target_info.get("target_finished", False)
+                    )
+                    target_collision = bool(target_info.get("collision", False))
+
+            if primary_info.get("target_collision") is not None:
+                target_collision = bool(primary_info.get("target_collision", False))
+
+            log_dict = {
+                "train/outcome": metrics.outcome.value,
+                "train/success": int(metrics.success),
+                "train/episode_reward": float(metrics.total_reward),
+                "train/episode_steps": int(metrics.steps),
+                "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
+                "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
+                "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
+            }
+
+            if self.primary_target_id:
+                log_dict.update({
+                    "target/success": int(target_finished),
+                    "target/crash": int(target_collision),
+                })
+
+            self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Update spawn curriculum if enabled (only for first/primary agent)
+        spawn_curriculum_state = None
         if self.spawn_curriculum:
             # Determine success for curriculum (use first agent's outcome)
-            primary_agent_id = list(self.agents.keys())[0]
+            primary_agent_id = self.primary_agent_id or list(self.agents.keys())[0]
             primary_outcome = determine_outcome(
                 final_info.get(primary_agent_id, {}),
                 truncations.get(primary_agent_id, False)
@@ -648,6 +670,7 @@ class EnhancedTrainingLoop:
 
             # Observe episode outcome
             curriculum_state = self.spawn_curriculum.observe(episode_num, success)
+            spawn_curriculum_state = curriculum_state
 
             # Log curriculum state transition
             if curriculum_state['changed']:
@@ -671,6 +694,35 @@ class EnhancedTrainingLoop:
                     'curriculum/success_rate': curriculum_state['success_rate'] or 0.0,
                     'curriculum/stage_success_rate': curriculum_state['stage_success_rate'] or 0.0,
                 }, step=episode_num)
+
+        # Update Rich console once per episode (use primary agent metrics)
+        if self.rich_console:
+            primary_id = self.primary_agent_id or list(self.agents.keys())[0]
+            if primary_id in episode_metrics:
+                metrics = episode_metrics[primary_id]
+                rolling_stats = rolling_stats_by_agent.get(primary_id, {})
+                algo_name = None
+                if self.agent_algorithms:
+                    algo_name = self.agent_algorithms.get(primary_id)
+                curriculum_state = {}
+                if spawn_curriculum_state:
+                    curriculum_state.update({
+                        "stage": spawn_curriculum_state.get("stage"),
+                        "stage_index": spawn_curriculum_state.get("stage_index"),
+                        "stage_success_rate": spawn_curriculum_state.get("stage_success_rate"),
+                    })
+                if self._phase_curriculum_state:
+                    curriculum_state.update(self._phase_curriculum_state)
+
+                self.rich_console.update_episode(
+                    episode=episode_num,
+                    outcome=metrics.outcome.value,
+                    reward=metrics.total_reward,
+                    steps=metrics.steps,
+                    outcome_stats=rolling_stats,
+                    curriculum_state=curriculum_state or None,
+                    algo_name=algo_name,
+                )
 
         # Handle checkpointing
         if self.checkpoint_manager:
@@ -993,11 +1045,16 @@ class EnhancedTrainingLoop:
         Returns:
             Agent ID of primary trainable agent, or None if none found
         """
+        if self.agent_algorithms:
+            for agent_id, algo in self.agent_algorithms.items():
+                if not algo:
+                    continue
+                if algo.lower() not in self._non_trainable_algorithms:
+                    return agent_id
         for agent_id, agent in self.agents.items():
-            # Skip non-trainable agents
             if hasattr(agent, 'get_state'):
                 return agent_id
-        return None
+        return next(iter(self.agents), None)
 
     def load_checkpoint(self, checkpoint_path: str) -> Dict[str, Any]:
         """Load checkpoint and restore agent states.
