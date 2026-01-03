@@ -116,6 +116,14 @@ class WandbLogger:
                 self.wandb_run_id = self.run.id
                 self.wandb_run_name = self.run.name
                 self.wandb_url = self.run.get_url()
+                try:
+                    wandb.define_metric("train/*", step_metric="train/episode")
+                    wandb.define_metric("target/*", step_metric="train/episode")
+                    wandb.define_metric("curriculum/*", step_metric="train/episode")
+                    wandb.define_metric("eval/*", step_metric="eval/episode")
+                    wandb.define_metric("eval_agg/*", step_metric="eval/episode")
+                except Exception:
+                    pass
         else:
             self.run = None
 

@@ -175,6 +175,7 @@ class CurriculumCallback(BaseCallback):
             self.wandb_run.log({
                 "train/outcome": outcome_value,
                 "train/success": int(success),
+                "train/episode": int(self.episode_count),
                 "train/episode_reward": float(reward),
                 "train/episode_steps": int(length),
                 "train/success_rate": success_rate,
@@ -182,7 +183,7 @@ class CurriculumCallback(BaseCallback):
                 "train/steps_mean": steps_mean,
                 "target/success": int(bool(target_finished)),
                 "target/crash": int(bool(target_collision)),
-            }, step=self.episode_count)
+            }, step=self.num_timesteps)
 
         spawn_state = None
         # Update spawn curriculum if available
@@ -202,10 +203,11 @@ class CurriculumCallback(BaseCallback):
             # Log spawn curriculum metrics
             if self.wandb_run:
                 self.wandb_run.log({
+                    'train/episode': int(self.episode_count),
                     'curriculum/spawn/stage_index': spawn_state['stage_index'],
                     'curriculum/spawn/success_rate': spawn_state['success_rate'] or 0.0,
                     'curriculum/spawn/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
-                })
+                }, step=self.num_timesteps)
 
         # Update phased curriculum
         if self.phases:
@@ -329,11 +331,12 @@ class CurriculumCallback(BaseCallback):
             success_rate = recent_successes / recent_episodes if recent_episodes > 0 else 0.0
 
             self.wandb_run.log({
+                'train/episode': int(self.episode_count),
                 'curriculum/phased/phase': self.current_phase,
                 'curriculum/phased/phase_episodes': self.phase_episodes,
                 'curriculum/phased/success_rate': success_rate,
                 'curriculum/phased/patience': self.patience_counter,
-            })
+            }, step=self.num_timesteps)
 
     def _apply_phase(self, phase_idx: int):
         """Apply configuration for a curriculum phase."""

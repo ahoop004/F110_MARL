@@ -406,6 +406,14 @@ def main():
                 sync_tensorboard=True,
                 notes=scenario.get('wandb', {}).get('notes'),
             )
+            try:
+                wandb.define_metric("train/*", step_metric="train/episode")
+                wandb.define_metric("target/*", step_metric="train/episode")
+                wandb.define_metric("curriculum/*", step_metric="train/episode")
+                wandb.define_metric("eval/*", step_metric="eval/episode")
+                wandb.define_metric("eval_agg/*", step_metric="eval/episode")
+            except Exception:
+                pass
 
     # Setup curriculum if enabled in scenario
     spawn_curriculum = None

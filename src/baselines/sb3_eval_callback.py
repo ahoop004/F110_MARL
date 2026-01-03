@@ -116,12 +116,13 @@ class SB3EvaluationCallback(BaseCallback):
             if self.wandb_run:
                 self.total_eval_episodes += 1
                 self.wandb_run.log({
+                    "eval/episode": int(self.total_eval_episodes),
                     "eval/episode_reward": ep_reward,
                     "eval/episode_steps": steps,
                     "eval/episode_success": int(success),
                     "eval/spawn_point": spawn_point,
                     "eval/training_episode": training_episode if training_episode is not None else self.episode_count,
-                }, step=self.total_eval_episodes)
+                }, step=self.num_timesteps)
 
         if not rewards:
             return
@@ -134,6 +135,7 @@ class SB3EvaluationCallback(BaseCallback):
 
         if self.wandb_run:
             agg_metrics = {
+                "eval/episode": int(self.total_eval_episodes),
                 "eval_agg/success_rate": success_rate,
                 "eval_agg/avg_reward": avg_reward,
                 "eval_agg/std_reward": std_reward,
@@ -147,7 +149,7 @@ class SB3EvaluationCallback(BaseCallback):
 
             self.wandb_run.log(
                 agg_metrics,
-                step=self.total_eval_episodes,
+                step=self.num_timesteps,
             )
 
         if self.verbose > 0:

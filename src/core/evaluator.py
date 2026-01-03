@@ -4,7 +4,7 @@ Provides deterministic evaluation with fixed scenarios for consistent
 performance measurement during and after training.
 """
 
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Callable
 import numpy as np
 from pettingzoo import ParallelEnv
 
@@ -177,11 +177,17 @@ class Evaluator:
             else None
         )
 
-    def evaluate(self, verbose: bool = False) -> EvaluationResult:
+    def evaluate(
+        self,
+        verbose: bool = False,
+        on_episode_end: Optional[Callable[[Dict[str, Any], int, int], None]] = None,
+    ) -> EvaluationResult:
         """Run evaluation and return results.
 
         Args:
             verbose: Print progress during evaluation (default: False)
+            on_episode_end: Optional callback invoked after each episode
+                Signature: (episode_result, episode_index, total_episodes)
 
         Returns:
             EvaluationResult with aggregate statistics and per-episode data
@@ -204,6 +210,9 @@ class Evaluator:
             # Run episode
             episode_result = self._run_episode(spawn_point, spawn_speed, ep_idx)
             episodes.append(episode_result)
+
+            if on_episode_end:
+                on_episode_end(episode_result, ep_idx + 1, self.config.num_episodes)
 
             if verbose:
                 outcome = episode_result['outcome']

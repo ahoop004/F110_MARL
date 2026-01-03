@@ -693,6 +693,7 @@ class EnhancedTrainingLoop:
             log_dict = {
                 "train/outcome": metrics.outcome.value,
                 "train/success": int(metrics.success),
+                "train/episode": int(episode_num),
                 "train/episode_reward": float(metrics.total_reward),
                 "train/episode_steps": int(metrics.steps),
                 "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
@@ -746,6 +747,7 @@ class EnhancedTrainingLoop:
             # Log curriculum metrics to W&B
             if self.wandb_logger:
                 self.wandb_logger.log_metrics({
+                    'train/episode': int(episode_num),
                     'curriculum/stage': curriculum_state['stage'],
                     'curriculum/stage_index': curriculum_state['stage_index'],
                     'curriculum/success_rate': curriculum_state['success_rate'] or 0.0,
@@ -1026,28 +1028,28 @@ class EnhancedTrainingLoop:
         # Track eval start for CSV/aggregate logging
         eval_episode_start = self.total_eval_episodes + 1
 
-        # Run evaluation
-        eval_result = self.evaluator.evaluate(verbose=False)
-
-        # Log each eval episode individually to WandB, CSV, and Rich dashboard
+        # Run evaluation and stream per-episode logging
         successes_so_far = 0
-        for idx, ep_data in enumerate(eval_result.episodes):
+
+        def _handle_eval_episode(ep_data: Dict[str, Any], eval_idx: int, total_eval: int) -> None:
+            nonlocal successes_so_far
             self.total_eval_episodes += 1
 
             # Track success rate so far (for Rich dashboard)
             if ep_data['success']:
                 successes_so_far += 1
-            success_rate_so_far = successes_so_far / (idx + 1)
+            success_rate_so_far = successes_so_far / max(1, eval_idx)
 
             # Log to WandB
             if self.wandb_logger:
                 self.wandb_logger.log_metrics({
+                    'eval/episode': int(self.total_eval_episodes),
                     'eval/episode_reward': ep_data['reward'],
                     'eval/episode_steps': ep_data['steps'],
                     'eval/episode_success': int(ep_data['success']),
                     'eval/spawn_point': ep_data['spawn_point'],
                     'eval/training_episode': episode_num,
-                }, step=self.total_eval_episodes)
+                }, step=episode_num)
 
             # Log to CSV
             if self.csv_logger:
@@ -1065,7 +1067,7 @@ class EnhancedTrainingLoop:
             # Update Rich dashboard
             if self.rich_console:
                 self.rich_console.update_eval_episode(
-                    eval_episode_num=idx + 1,
+                    eval_episode_num=eval_idx,
                     outcome=ep_data['outcome'],
                     reward=ep_data['reward'],
                     steps=ep_data['steps'],
@@ -1073,9 +1075,15 @@ class EnhancedTrainingLoop:
                     success_rate_so_far=success_rate_so_far,
                 )
 
-        # Log aggregate results (use training episode as step to align with training plots)
+        eval_result = self.evaluator.evaluate(
+            verbose=False,
+            on_episode_end=_handle_eval_episode,
+        )
+
+        # Log aggregate results (keep step monotonic for W&B)
         if self.wandb_logger:
             agg_metrics = {
+                'eval/episode': int(self.total_eval_episodes),
                 'eval_agg/success_rate': eval_result.success_rate,
                 'eval_agg/avg_reward': eval_result.avg_reward,
                 'eval_agg/avg_episode_length': eval_result.avg_episode_length,
@@ -1088,8 +1096,7 @@ class EnhancedTrainingLoop:
                 pct = (count / eval_result.num_episodes) * 100
                 agg_metrics[f'eval_agg/outcome_{outcome}'] = pct
 
-            # Log with eval episode count as step (aligns eval plots to eval episodes)
-            self.wandb_logger.log_metrics(agg_metrics, step=self.total_eval_episodes)
+            self.wandb_logger.log_metrics(agg_metrics, step=episode_num)
 
         # Log aggregate results to CSV
         if self.csv_logger:
