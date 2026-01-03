@@ -87,19 +87,15 @@ def add_curriculum_to_training_loop(
                 if training_loop.console_logger:
                     training_loop.console_logger.print_success(msg)
 
-                # Log to WandB
-                if training_loop.wandb_logger:
-                    training_loop.wandb_logger.log_metrics({
-                        'curriculum/advancement': 1,
-                        'curriculum/forced_advancement': int(advancement_info['forced']),
-                    }, step=episode_num)
+            curriculum_metrics = curriculum.get_metrics()
 
-            # Log curriculum metrics to WandB
+            # Log minimal curriculum metrics to WandB
             if training_loop.wandb_logger:
-                curriculum_metrics = curriculum.get_metrics()
-                training_loop.wandb_logger.log_metrics(curriculum_metrics, step=episode_num)
-            else:
-                curriculum_metrics = curriculum.get_metrics()
+                training_loop.wandb_logger.log_metrics({
+                    'train/episode': int(episode_num),
+                    'curriculum/stage': curriculum_metrics.get('curriculum/phase_name'),
+                    'curriculum/stage_success_rate': curriculum_metrics.get('curriculum/success_rate') or 0.0,
+                }, step=episode_num)
 
             if hasattr(training_loop, "rich_console") and training_loop.rich_console:
                 training_loop._phase_curriculum_state = {

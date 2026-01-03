@@ -744,13 +744,11 @@ class EnhancedTrainingLoop:
                         stage_index=curriculum_state['stage_index'],
                     )
 
-            # Log curriculum metrics to W&B
-            if self.wandb_logger:
+            # Log minimal curriculum metrics to W&B (skip if phased curriculum is active)
+            if self.wandb_logger and not getattr(self, "phased_curriculum", None):
                 self.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
                     'curriculum/stage': curriculum_state['stage'],
-                    'curriculum/stage_index': curriculum_state['stage_index'],
-                    'curriculum/success_rate': curriculum_state['success_rate'] or 0.0,
                     'curriculum/stage_success_rate': curriculum_state['stage_success_rate'] or 0.0,
                 }, step=episode_num)
 

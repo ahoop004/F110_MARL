@@ -200,13 +200,12 @@ class CurriculumCallback(BaseCallback):
                         stage_index=spawn_state['stage_index']
                     )
 
-            # Log spawn curriculum metrics
-            if self.wandb_run:
+            # Log minimal curriculum metrics if no phased curriculum
+            if self.wandb_run and not self.phases:
                 self.wandb_run.log({
                     'train/episode': int(self.episode_count),
-                    'curriculum/spawn/stage_index': spawn_state['stage_index'],
-                    'curriculum/spawn/success_rate': spawn_state['success_rate'] or 0.0,
-                    'curriculum/spawn/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
+                    'curriculum/stage': spawn_state['stage'],
+                    'curriculum/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
                 }, step=self.num_timesteps)
 
         # Update phased curriculum
@@ -324,18 +323,20 @@ class CurriculumCallback(BaseCallback):
                         self.patience_counter = 0
                         self._apply_phase(self.current_phase)
 
-        # Log phased curriculum metrics
-        if self.wandb_run:
+        # Log minimal phased curriculum metrics
+        if self.wandb_run and self.phases:
             recent_successes = sum(self.episode_successes[-self.window_size:])
             recent_episodes = len(self.episode_successes)
             success_rate = recent_successes / recent_episodes if recent_episodes > 0 else 0.0
 
+            phase_name = None
+            if 0 <= self.current_phase < len(self.phases):
+                phase_name = self.phases[self.current_phase].get("name")
+
             self.wandb_run.log({
                 'train/episode': int(self.episode_count),
-                'curriculum/phased/phase': self.current_phase,
-                'curriculum/phased/phase_episodes': self.phase_episodes,
-                'curriculum/phased/success_rate': success_rate,
-                'curriculum/phased/patience': self.patience_counter,
+                'curriculum/stage': phase_name,
+                'curriculum/stage_success_rate': success_rate,
             }, step=self.num_timesteps)
 
     def _apply_phase(self, phase_idx: int):
