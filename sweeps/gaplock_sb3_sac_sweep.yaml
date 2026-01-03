@@ -1,0 +1,87 @@
+name: gaplock_sb3_sac_sweep
+description: SB3 SAC hyperparameter sweep for gaplock task
+
+method: bayes
+metric:
+  name: rollout/ep_rew_mean
+  goal: maximize
+
+project: marl-f110
+entity: ahoop004-old-dominion-university
+
+command:
+  - ${env}
+  - python
+  - run_sb3_sweep.py
+  - --scenario
+  - scenarios/v2/gaplock_sb3_sac.yaml
+  - --algo
+  - sac
+
+early_terminate:
+  type: hyperband
+  min_iter: 300
+  max_iter: 2500
+  s: 2
+  eta: 3
+
+parameters:
+  episodes:
+    value: 2500
+
+  seed:
+    distribution: int_uniform
+    min: 0
+    max: 999999
+
+  # ============================================================================
+  # ACTIVE PARAMETERS - Currently being swept
+  # ============================================================================
+
+  # Learning rate
+  agents.car_0.params.learning_rate:
+    values: [0.0001, 0.0003, 0.0005, 0.001]
+
+  # Entropy coefficient (auto or fixed value)
+  # Using 'auto' enables automatic entropy tuning
+  agents.car_0.params.ent_coef:
+    values: ['auto', 0.1, 0.2]
+
+  # Batch size
+  agents.car_0.params.batch_size:
+    values: [128, 256, 512]
+
+  # ============================================================================
+  # FIXED PARAMETERS - Using good defaults (uncomment to re-enable sweeping)
+  # ============================================================================
+
+  # Discount factor
+  # agents.car_0.params.gamma:
+  #   values: [0.99, 0.995, 0.999]
+
+  # Target network update rate
+  # agents.car_0.params.tau:
+  #   values: [0.005, 0.01, 0.02]
+
+  # Buffer size
+  # agents.car_0.params.buffer_size:
+  #   values: [500000, 1000000, 2000000]
+
+  # Target entropy (for automatic tuning)
+  # agents.car_0.params.target_entropy:
+  #   values: ['auto', -2.0, -1.0]
+
+  # Network architecture
+  # agents.car_0.params.hidden_dims:
+  #   values: [
+  #     [128, 128],
+  #     [256, 256],
+  #     [512, 512],
+  #   ]
+
+# ============================================================================
+# CURRENT CONFIGURATION SUMMARY
+# ============================================================================
+# Active parameters: 3 (learning_rate, ent_coef, batch_size)
+# Search space: 4 × 3 × 3 = 36 combinations
+# ============================================================================

@@ -1,8 +1,9 @@
 experiment:
-  name: gaplock_sb3_tqc_curriculum
-  episodes: 6000  # Increased for curriculum
+  name: gaplock_sac_phased_curriculum_improved
+  episodes: 6000  # Increased for longer curriculum
   seed: 42
   normalize_observations: false
+
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
@@ -13,6 +14,8 @@ environment:
   - spawn_1
   timestep: 0.01
   render: false
+
+  # Base spawn curriculum (will be modified by phased curriculum)
   spawn_curriculum:
     enabled: true
     window: 200
@@ -21,106 +24,39 @@ environment:
     enable_patience: 5
     disable_patience: 3
     cooldown: 20
-    lock_speed_steps: 550
+    lock_speed_steps: 800
     lock_speed_schedule:
       by_stage:
-        optimal_fixed: 550
-        optimal_varied_speed: 350
-        full_random: 200
+        optimal_fixed: 800
     stages:
     - name: optimal_fixed
       spawn_points:
       - spawn_pinch_right
       - spawn_pinch_left
-      # - spawn_pinch_ahead
       speed_range:
       - 0.44
       - 0.44
-      enable_rate: 0.7
-    - name: optimal_varied_speed
-      spawn_points:
-      - spawn_pinch_right
-      - spawn_pinch_left
-      - spawn_pinch_ahead
-      - spawn_approach_0.0C
-      - spawn_approach_0.3L
-      - spawn_approach_0.3R
-      speed_range:
-      - 0.3
-      - 1.0
-      enable_rate: 0.65
-      disable_rate: 0.5
-    - name: full_random
-      spawn_points: all
-      speed_range:
-      - 0.3
-      - 1.0
-      disable_rate: 0.45
+      enable_rate: 1.0
     spawn_configs:
       spawn_pinch_right:
-        car_0:
-        - -45.569
-        - -1.0
-        - 0.2
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
+        car_0: [-45.569, -1.0, 0.2]
+        car_1: [-46.769, -0.7, 0.0]
       spawn_pinch_left:
-        car_0:
-        - -45.569
-        - -0.4
-        - -0.2
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
+        car_0: [-45.569, -0.4, -0.2]
+        car_1: [-46.769, -0.7, 0.0]
       spawn_pinch_ahead:
-        car_0:
-        - -45.569
-        - -0.7
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
+        car_0: [-45.569, -0.7, 0.0]
+        car_1: [-46.769, -0.7, 0.0]
       spawn_approach_0.0C:
-        car_0:
-        - -49.269
-        - -0.7
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
+        car_0: [-49.269, -0.7, 0.0]
+        car_1: [-46.769, -0.7, 0.0]
       spawn_approach_0.3L:
-        car_0:
-        - -49.269
-        - -0.4
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
+        car_0: [-49.269, -0.4, 0.0]
+        car_1: [-46.769, -0.7, 0.0]
       spawn_approach_0.3R:
-        car_0:
-        - -49.269
-        - -1.0
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-  visualization:
-    reward_ring:
-      enabled: false
-      preferred_radius: 1.5
-    heatmap:
-      enabled: false
-      extent_m: 6.0
-      cell_size_m: 0.25
-      alpha: 0.22
-      update_frequency: 5
+        car_0: [-49.269, -1.0, 0.0]
+        car_1: [-46.769, -0.7, 0.0]
+
   vehicle_params:
     mu: 1.0489
     C_Sf: 4.718
@@ -140,81 +76,40 @@ environment:
     a_max: 2.0
     v_min: -1.0
     v_max: 1.0
+
 agents:
   car_0:
     role: attacker
-    algorithm: sb3_tqc
+    algorithm: sac
     target_id: car_1
     params:
-      # SB3 SAC parameters (using proven SB3 defaults)
-      learning_rate: 0.0003
+      lr_actor: 0.0003
+      lr_critic: 0.0003
       gamma: 0.995
       tau: 0.005
-      ent_coef: auto  # Automatic entropy tuning
-      target_entropy: auto
-      hidden_dims:
-      - 256
-      - 256
+      alpha: 0.2
+      target_entropy: -1.0
+      auto_alpha: true
+      hidden_dims: [256, 256]
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 1000
+      warmup_steps: 1000
     observation:
       preset: gaplock
     reward:
       preset: gaplock_full
-      overrides:
-        forcing:
-          enabled: true
-          pinch_pockets:
-            enabled: true
-            anchor_forward: 1.2
-            anchor_lateral: 0.35
-            sigma: 0.55
-            weight: 0.004
-            peak: 1.0
-            floor: -0.5
-            power: 2.0
-          clearance:
-            enabled: true
-            weight: 0.003
-            band_min: 0.3
-            band_max: 3.2
-            clip: 0.015
-            time_scaled: true
-          turn:
-            enabled: true
-            weight: 0.006
-            clip: 0.015
-            time_scaled: true
-        distance:
-          enabled: false
-          near_distance: 1.0
-          far_distance: 2.5
-          reward_near: 0.004
-          penalty_far: 0.002
-        heading:
-          enabled: true
-          coefficient: 0.001
-        speed:
-          enabled: true
-          bonus_coef: 0.0005
-        step_reward: -0.001
-        terminal:
-          target_crash: 200.0
-          self_crash: -20.0
-          timeout: -100.0
-          collision: 0.0
+
   car_1:
     role: defender
     algorithm: ftg
     params:
       max_distance: 12.0
       window_size: 4
-      bubble_radius: 3
+      bubble_radius: 2.0
       max_steer: 0.42
       min_speed: 0.2
       max_speed: 1.0
-      steering_gain: 0.35
+      steering_gain: 0.25
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.6
@@ -228,34 +123,6 @@ agents:
       disparity_threshold: 0.35
       vehicle_width: 0.225
       safety_margin: 0.08
-      no_cutback_enabled: true
-      cutback_clearance: 0.9
-      cutback_hold_steps: 8
-    ftg_schedule:
-      enabled: true
-      by_stage:
-        optimal_varied_speed:
-          max_speed: 0.6
-          steering_gain: 0.4
-          steer_smooth: 0.4
-          bubble_radius: 2.5
-          safety_margin: 0.1
-          gap_min_range: 0.55
-          target_mode: center
-          wall_avoid_kick: 0.05
-          panic_factor_near: 1.1
-          panic_factor_very_near: 1.25
-        full_random:
-          max_speed: 1.0
-          steering_gain: 0.6
-          steer_smooth: 0.3
-          bubble_radius: 3.0
-          safety_margin: 0.15
-          gap_min_range: 0.65
-          target_mode: farthest
-          wall_avoid_kick: 0.12
-          panic_factor_near: 1.2
-          panic_factor_very_near: 1.4
 
 # IMPROVED Phased Curriculum with Overlap & Longer Patience
 curriculum:
@@ -263,14 +130,17 @@ curriculum:
   start_phase: 0
 
   phases:
-    # Phase 1: Foundation
+    # ========================================================================
+    # PHASE 1: Foundation - Learn basics against weak, locked-speed defender
+    # ========================================================================
     - name: "1_foundation"
-      description: "Learn basics against weak defender"
+      description: "Learn basic attack patterns against stationary-speed defender"
       criteria:
         success_rate: 0.70
         avg_reward: 50.0
-        min_episodes: 100
-        patience: 500
+        min_episodes: 100  # Increased from 50
+        patience: 500      # Increased from 300 (for off-policy)
+        window_size: 100
       spawn:
         points: [spawn_pinch_right, spawn_pinch_left]
         speed_range: [0.44, 0.44]
@@ -278,10 +148,15 @@ curriculum:
       ftg:
         steering_gain: 0.25
         bubble_radius: 2.0
+        safety_margin: 0.05
+        gap_min_range: 0.4
 
-    # Phase 2a-c: Lock Reduction
+    # ========================================================================
+    # PHASE 2: Speed Lock Reduction - Defender can adjust speed mid-episode
+    # (One axis: reduce lock_speed_steps only)
+    # ========================================================================
     - name: "2a_reduce_lock_600"
-      description: "Reduce speed lock to 600"
+      description: "Reduce speed lock to 600 steps"
       criteria:
         success_rate: 0.65
         min_episodes: 75
@@ -293,10 +168,11 @@ curriculum:
       ftg:
         steering_gain: 0.25
         bubble_radius: 2.0
-      keep_foundation: 0.10
+        safety_margin: 0.05
+      keep_foundation: 0.10  # 10% foundation episodes
 
     - name: "2b_reduce_lock_400"
-      description: "Reduce speed lock to 400"
+      description: "Reduce speed lock to 400 steps"
       criteria:
         success_rate: 0.65
         min_episodes: 75
@@ -308,11 +184,12 @@ curriculum:
       ftg:
         steering_gain: 0.25
         bubble_radius: 2.0
+        safety_margin: 0.05
       keep_foundation: 0.10
-      keep_previous: 0.15
+      keep_previous: 0.15  # 15% previous phase
 
     - name: "2c_reduce_lock_200"
-      description: "Reduce speed lock to 200"
+      description: "Reduce speed lock to 200 steps"
       criteria:
         success_rate: 0.65
         min_episodes: 75
@@ -324,23 +201,28 @@ curriculum:
       ftg:
         steering_gain: 0.25
         bubble_radius: 2.0
+        safety_margin: 0.05
       keep_foundation: 0.10
       keep_previous: 0.20
 
-    # Phase 3: Speed Variation
+    # ========================================================================
+    # PHASE 3: Speed Variation - Handle different defender speeds
+    # (One axis: widen speed_range only, symmetric around 0.44)
+    # ========================================================================
     - name: "3a_speed_narrow"
-      description: "Tight speed variation (±0.02)"
+      description: "Tight speed variation around optimal (±0.02)"
       criteria:
         success_rate: 0.60
         min_episodes: 75
         patience: 400
       spawn:
         points: [spawn_pinch_right, spawn_pinch_left]
-        speed_range: [0.42, 0.46]
+        speed_range: [0.42, 0.46]  # Symmetric around 0.44
       lock_speed_steps: 100
       ftg:
         steering_gain: 0.25
         bubble_radius: 2.0
+        safety_margin: 0.05
       keep_foundation: 0.15
       keep_previous: 0.20
 
@@ -352,11 +234,12 @@ curriculum:
         patience: 450
       spawn:
         points: [spawn_pinch_right, spawn_pinch_left]
-        speed_range: [0.35, 0.55]
+        speed_range: [0.35, 0.55]  # Still symmetric
       lock_speed_steps: 100
       ftg:
         steering_gain: 0.27
         bubble_radius: 2.1
+        safety_margin: 0.06
       keep_foundation: 0.15
       keep_previous: 0.25
 
@@ -368,17 +251,21 @@ curriculum:
         patience: 500
       spawn:
         points: [spawn_pinch_right, spawn_pinch_left]
-        speed_range: [0.30, 0.70]
+        speed_range: [0.30, 0.70]  # Symmetric
       lock_speed_steps: 50
       ftg:
         steering_gain: 0.30
         bubble_radius: 2.2
+        safety_margin: 0.07
       keep_foundation: 0.15
       keep_previous: 0.25
 
-    # Phase 4: Spatial Variation
+    # ========================================================================
+    # PHASE 4: Spatial Variation - Different geometric scenarios
+    # (One axis: add spawn diversity only)
+    # ========================================================================
     - name: "4a_add_ahead"
-      description: "Add pinch ahead"
+      description: "Add pinch ahead scenario"
       criteria:
         success_rate: 0.50
         min_episodes: 100
@@ -390,6 +277,7 @@ curriculum:
       ftg:
         steering_gain: 0.30
         bubble_radius: 2.2
+        safety_margin: 0.07
       keep_foundation: 0.15
       keep_previous: 0.25
 
@@ -407,6 +295,7 @@ curriculum:
       ftg:
         steering_gain: 0.32
         bubble_radius: 2.4
+        safety_margin: 0.08
       keep_foundation: 0.15
       keep_previous: 0.25
 
@@ -423,12 +312,16 @@ curriculum:
       ftg:
         steering_gain: 0.35
         bubble_radius: 2.5
-      keep_foundation: 0.20
+        safety_margin: 0.08
+      keep_foundation: 0.20  # Increased overlap
       keep_previous: 0.25
 
-    # Phase 5: FTG Resistance (Granular)
+    # ========================================================================
+    # PHASE 5: FTG Resistance - Increasingly competent defender
+    # (One axis: increase FTG parameters only, MORE GRANULAR)
+    # ========================================================================
     - name: "5a_ftg_light"
-      description: "Light FTG"
+      description: "Light FTG resistance (baseline)"
       criteria:
         success_rate: 0.38
         min_episodes: 125
@@ -436,14 +329,19 @@ curriculum:
       spawn:
         points: all
         speed_range: [0.30, 1.0]
+      lock_speed_steps: 0
       ftg:
-        steering_gain: 0.37
+        steering_gain: 0.37  # Small increment from 0.35
         bubble_radius: 2.6
+        safety_margin: 0.09
+        gap_min_range: 0.45
+        panic_factor_near: 1.05
+        panic_factor_very_near: 1.1
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5b_ftg_moderate_low"
-      description: "Moderate-low FTG"
+      description: "Moderate-low FTG resistance"
       criteria:
         success_rate: 0.35
         min_episodes: 125
@@ -452,13 +350,17 @@ curriculum:
         points: all
         speed_range: [0.30, 1.0]
       ftg:
-        steering_gain: 0.40
+        steering_gain: 0.40  # Gradual increase
         bubble_radius: 2.7
+        safety_margin: 0.10
+        gap_min_range: 0.50
+        panic_factor_near: 1.1
+        panic_factor_very_near: 1.15
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5c_ftg_moderate"
-      description: "Moderate FTG"
+      description: "Moderate FTG resistance"
       criteria:
         success_rate: 0.33
         min_episodes: 150
@@ -469,11 +371,15 @@ curriculum:
       ftg:
         steering_gain: 0.43
         bubble_radius: 2.8
+        safety_margin: 0.11
+        gap_min_range: 0.55
+        panic_factor_near: 1.15
+        panic_factor_very_near: 1.2
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5d_ftg_moderate_high"
-      description: "Moderate-high FTG"
+      description: "Moderate-high FTG resistance"
       criteria:
         success_rate: 0.30
         min_episodes: 150
@@ -484,12 +390,17 @@ curriculum:
       ftg:
         steering_gain: 0.46
         bubble_radius: 2.9
+        safety_margin: 0.12
+        gap_min_range: 0.58
         target_mode: farthest
+        panic_factor_near: 1.18
+        panic_factor_very_near: 1.25
+        wall_avoid_kick: 0.06
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5e_ftg_strong"
-      description: "Strong FTG"
+      description: "Strong FTG resistance"
       criteria:
         success_rate: 0.28
         min_episodes: 150
@@ -500,12 +411,17 @@ curriculum:
       ftg:
         steering_gain: 0.50
         bubble_radius: 3.0
+        safety_margin: 0.13
+        gap_min_range: 0.60
         target_mode: farthest
+        panic_factor_near: 1.2
+        panic_factor_very_near: 1.3
+        wall_avoid_kick: 0.08
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5f_ftg_very_strong"
-      description: "Very strong FTG"
+      description: "Very strong FTG resistance"
       criteria:
         success_rate: 0.25
         min_episodes: 150
@@ -516,12 +432,17 @@ curriculum:
       ftg:
         steering_gain: 0.55
         bubble_radius: 3.2
+        safety_margin: 0.14
+        gap_min_range: 0.62
         target_mode: farthest
+        panic_factor_near: 1.25
+        panic_factor_very_near: 1.4
+        wall_avoid_kick: 0.10
       keep_foundation: 0.20
       keep_previous: 0.25
 
     - name: "5g_ftg_expert"
-      description: "Expert FTG - final challenge"
+      description: "Expert FTG resistance - final challenge"
       criteria:
         success_rate: 0.22
         min_episodes: 200
@@ -532,7 +453,12 @@ curriculum:
       ftg:
         steering_gain: 0.60
         bubble_radius: 3.5
+        safety_margin: 0.15
+        gap_min_range: 0.65
         target_mode: farthest
+        panic_factor_near: 1.3
+        panic_factor_very_near: 1.5
+        wall_avoid_kick: 0.12
       keep_foundation: 0.20
       keep_previous: 0.25
 
@@ -541,9 +467,8 @@ wandb:
   project: marl-f110
   entity: ahoop004-old-dominion-university
   tags:
+  - sac
+  - phased_curriculum_v2
   - improved
-  - curriculum_v2
-  - tqc
-  - comparison
-  - gaplock
-  notes: SAC curriculum for gaplock adversarial task
+  - overlap
+  notes: "Improved phased curriculum with: (1) overlap/mixture sampling to prevent forgetting, (2) longer patience for off-policy, (3) more granular FTG progression, (4) symmetric speed expansion"

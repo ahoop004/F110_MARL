@@ -640,6 +640,23 @@ def main():
             obs_clip=float(scenario.get('experiment', {}).get('obs_clip', 10.0)),
         )
 
+        # Setup phased curriculum if configured
+        phased_curriculum = None
+        if 'curriculum' in scenario and scenario['curriculum'].get('type') == 'phased':
+            console_logger.print_info("Setting up phased curriculum...")
+            try:
+                from src.curriculum.training_integration import setup_curriculum_from_scenario
+                phased_curriculum = setup_curriculum_from_scenario(scenario, training_loop)
+                if phased_curriculum:
+                    console_logger.print_success(
+                        f"Phased curriculum: {len(phased_curriculum.phases)} phases, "
+                        f"starting at '{phased_curriculum.get_current_phase().name}'"
+                    )
+            except Exception as e:
+                console_logger.print_warning(f"Failed to setup phased curriculum: {e}")
+                import traceback
+                traceback.print_exc()
+
         # Load checkpoint if resuming
         if args.resume and checkpoint_manager:
             resume_info = checkpoint_manager.get_resume_info()

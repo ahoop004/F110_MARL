@@ -142,131 +142,148 @@ def resolve_observation_preset(agent_cfg: dict) -> str | None:
     return None
 
 
-def create_sb3_agent(algo_name: str, env, seed: int = 42):
-    """Create SB3 agent with good default hyperparameters.
+def create_sb3_agent(algo_name: str, env, params: dict = None, seed: int = 42, tensorboard_log: str = None):
+    """Create SB3 agent with hyperparameters from scenario or defaults.
 
     Args:
         algo_name: Algorithm name ('sac', 'td3', 'ppo', 'a2c', 'ddpg', 'tqc', 'dqn', 'qrdqn')
         env: Gym environment
+        params: Hyperparameters dict from scenario (optional)
         seed: Random seed
+        tensorboard_log: Path to tensorboard log directory
 
     Returns:
         SB3 model
     """
+    if params is None:
+        params = {}
+
+    # Build policy_kwargs from params
+    policy_kwargs = {}
+    if 'hidden_dims' in params:
+        policy_kwargs['net_arch'] = params['hidden_dims']
+    else:
+        policy_kwargs['net_arch'] = [256, 256]  # Default
+
     common_kwargs = {
         'policy': 'MlpPolicy',
         'env': env,
         'verbose': 1,
         'seed': seed,
+        'tensorboard_log': tensorboard_log,
+        'policy_kwargs': policy_kwargs,
     }
 
     if algo_name == 'sac':
         return SAC(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
-            ent_coef='auto',  # Automatic entropy tuning
-            target_entropy='auto',
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
+            ent_coef=params.get('ent_coef', 'auto'),
+            target_entropy=params.get('target_entropy', 'auto'),
+            learning_starts=params.get('learning_starts', 1000),
         )
     elif algo_name == 'td3':
         return TD3(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
-            policy_delay=2,
-            target_policy_noise=0.2,
-            target_noise_clip=0.5,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
+            policy_delay=params.get('policy_delay', 2),
+            target_policy_noise=params.get('target_policy_noise', 0.2),
+            target_noise_clip=params.get('target_noise_clip', 0.5),
+            learning_starts=params.get('learning_starts', 1000),
         )
     elif algo_name == 'ppo':
         return PPO(
             **common_kwargs,
-            learning_rate=3e-4,
-            n_steps=2048,
-            batch_size=256,
-            gamma=0.995,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.02,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            n_steps=params.get('n_steps', 2048),
+            batch_size=params.get('batch_size', 256),
+            gamma=params.get('gamma', 0.995),
+            gae_lambda=params.get('gae_lambda', 0.95),
+            clip_range=params.get('clip_range', 0.2),
+            ent_coef=params.get('ent_coef', 0.02),
+            n_epochs=params.get('n_epochs', 10),
+            vf_coef=params.get('vf_coef', 0.5),
+            max_grad_norm=params.get('max_grad_norm', 0.5),
         )
     elif algo_name == 'a2c':
         return A2C(
             **common_kwargs,
-            learning_rate=3e-4,
-            n_steps=5,
-            gamma=0.995,
-            gae_lambda=1.0,
-            ent_coef=0.0,
-            vf_coef=0.5,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            n_steps=params.get('n_steps', 5),
+            gamma=params.get('gamma', 0.995),
+            gae_lambda=params.get('gae_lambda', 1.0),
+            ent_coef=params.get('ent_coef', 0.0),
+            vf_coef=params.get('vf_coef', 0.5),
+            max_grad_norm=params.get('max_grad_norm', 0.5),
         )
     elif algo_name == 'ddpg':
         from stable_baselines3.common.noise import NormalActionNoise
         n_actions = env.action_space.shape[0]
+        action_noise_sigma = params.get('action_noise_sigma', 0.1)
         action_noise = NormalActionNoise(
             mean=np.zeros(n_actions),
-            sigma=0.1 * np.ones(n_actions)
+            sigma=action_noise_sigma * np.ones(n_actions)
         )
         return DDPG(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
             action_noise=action_noise,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_starts=params.get('learning_starts', 1000),
         )
     elif algo_name == 'tqc':
         if not CONTRIB_AVAILABLE or TQC is None:
             raise ImportError("TQC requires sb3-contrib. Install with: pip install sb3-contrib")
         return TQC(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
-            ent_coef='auto',
-            target_entropy='auto',
-            top_quantiles_to_drop_per_net=2,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
+            ent_coef=params.get('ent_coef', 'auto'),
+            target_entropy=params.get('target_entropy', 'auto'),
+            top_quantiles_to_drop_per_net=params.get('top_quantiles_to_drop_per_net', 2),
+            learning_starts=params.get('learning_starts', 1000),
         )
     elif algo_name == 'dqn':
         return DQN(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
-            exploration_fraction=0.1,
-            exploration_final_eps=0.05,
-            exploration_initial_eps=1.0,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
+            exploration_fraction=params.get('exploration_fraction', 0.1),
+            exploration_final_eps=params.get('exploration_final_eps', 0.05),
+            exploration_initial_eps=params.get('exploration_initial_eps', 1.0),
+            learning_starts=params.get('learning_starts', 1000),
         )
     elif algo_name == 'qrdqn':
         if not CONTRIB_AVAILABLE or QRDQN is None:
             raise ImportError("QR-DQN requires sb3-contrib. Install with: pip install sb3-contrib")
         return QRDQN(
             **common_kwargs,
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=256,
-            tau=0.005,
-            gamma=0.995,
-            exploration_fraction=0.1,
-            exploration_final_eps=0.05,
-            exploration_initial_eps=1.0,
-            policy_kwargs=dict(net_arch=[256, 256]),
+            learning_rate=params.get('learning_rate', 3e-4),
+            buffer_size=params.get('buffer_size', 1_000_000),
+            batch_size=params.get('batch_size', 256),
+            tau=params.get('tau', 0.005),
+            gamma=params.get('gamma', 0.995),
+            exploration_fraction=params.get('exploration_fraction', 0.1),
+            exploration_final_eps=params.get('exploration_final_eps', 0.05),
+            exploration_initial_eps=params.get('exploration_initial_eps', 1.0),
+            learning_starts=params.get('learning_starts', 1000),
         )
     else:
         raise ValueError(f"Unknown algorithm: {algo_name}")
@@ -355,6 +372,10 @@ def main():
     output_dir = Path(args.output_dir) / args.algo / f"seed_{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create tensorboard log directory (required for wandb sync)
+    tensorboard_dir = output_dir / 'tensorboard'
+    tensorboard_dir.mkdir(parents=True, exist_ok=True)
+
     # Create callbacks
     callbacks = []
 
@@ -376,9 +397,18 @@ def main():
         )
         callbacks.append(wandb_callback)
 
+    # Extract hyperparameters from scenario
+    agent_params = sb3_agent_cfg.get('params', {})
+
     # Create SB3 agent
     print(f"Creating {args.algo.upper()} agent...")
-    model = create_sb3_agent(args.algo, wrapped_env, seed=args.seed)
+    model = create_sb3_agent(
+        args.algo,
+        wrapped_env,
+        params=agent_params,
+        seed=args.seed,
+        tensorboard_log=str(tensorboard_dir)
+    )
 
     # Calculate total timesteps
     # Approximate: episodes * avg_steps_per_episode
@@ -390,6 +420,9 @@ def main():
     print(f"  Episodes: {args.episodes}")
     print(f"  Total timesteps: {total_timesteps:,}")
     print(f"  Output directory: {output_dir}")
+    print(f"  TensorBoard logs: {tensorboard_dir}")
+    if wandb_run is not None:
+        print(f"  WandB run: {wandb_run.name}")
     print()
 
     # Train
