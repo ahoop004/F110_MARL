@@ -70,6 +70,8 @@ from src.core.setup import create_training_setup
 from src.core.obs_flatten import flatten_observation
 from src.baselines.sb3_wrapper import SB3SingleAgentWrapper
 from src.baselines.sb3_curriculum_callback import CurriculumCallback
+from src.baselines.sb3_eval_callback import SB3EvaluationCallback
+from src.core.evaluator import EvaluationConfig
 from src.loggers import RichConsole
 
 
@@ -459,6 +461,7 @@ def main():
 
     # Create callbacks
     callbacks = []
+    eval_wrapped_env = None
 
     # Checkpoint callback
     checkpoint_callback = CheckpointCallback(
@@ -502,6 +505,65 @@ def main():
             print("Curriculum callback enabled")
         elif getattr(rich_console, "enabled", False):
             print("Rich console enabled")
+
+    # Evaluation callback (SB3)
+    eval_cfg = scenario.get('evaluation', {})
+    if eval_cfg.get('enabled', False):
+        env_config = scenario.get('environment', {})
+        spawn_configs = env_config.get('spawn_configs', {})
+        if not spawn_configs and 'spawn_curriculum' in env_config:
+            spawn_configs = env_config['spawn_curriculum'].get('spawn_configs', {})
+
+        if not spawn_configs:
+            print("Warning: evaluation enabled but no spawn_configs provided; skipping eval")
+        else:
+            eval_config = EvaluationConfig(
+                num_episodes=eval_cfg.get('num_episodes', 10),
+                deterministic=eval_cfg.get('deterministic', True),
+                spawn_points=eval_cfg.get('spawn_points', ['spawn_pinch_left', 'spawn_pinch_right']),
+                spawn_speeds=eval_cfg.get('spawn_speeds', [0.44, 0.44]),
+                lock_speed_steps=eval_cfg.get('lock_speed_steps', 0),
+                ftg_override=eval_cfg.get('ftg_override', {}),
+                max_steps=env_config.get('max_steps', 2500),
+            )
+
+            # Create evaluation environment/agents
+            eval_env, eval_agents, eval_reward_strategies = create_training_setup(scenario)
+            eval_reward_strategy = eval_reward_strategies.get(sb3_agent_id)
+            eval_wrapped_env = SB3SingleAgentWrapper(
+                eval_env,
+                agent_id=sb3_agent_id,
+                obs_dim=obs_dim,
+                action_low=action_low if action_low is not None else np.array([-0.46, -1.0]),
+                action_high=action_high if action_high is not None else np.array([0.46, 1.0]),
+                observation_preset=observation_preset,
+                target_id=target_id,
+                reward_strategy=eval_reward_strategy,
+            )
+            eval_wrapped_env.set_other_agents(eval_agents)
+            eval_wrapped_env = Monitor(eval_wrapped_env)
+
+            # Apply FTG overrides for evaluation
+            if eval_config.ftg_override:
+                for agent in eval_agents.values():
+                    apply_config = getattr(agent, "apply_config", None)
+                    if callable(apply_config):
+                        apply_config(eval_config.ftg_override)
+
+            eval_every_n_episodes = eval_cfg.get('frequency', 100)
+            eval_freq = max(1, int(eval_every_n_episodes) * int(env_config.get('max_steps', 2500)))
+            callbacks.append(SB3EvaluationCallback(
+                eval_env=eval_wrapped_env,
+                evaluation_config=eval_config,
+                spawn_configs=spawn_configs,
+                eval_freq=eval_freq,
+                wandb_run=wandb_run,
+                verbose=1,
+            ))
+            print(
+                f"Evaluation: {eval_config.num_episodes} episodes "
+                f"every {eval_every_n_episodes} training episodes"
+            )
 
     # Extract hyperparameters from scenario
     agent_params = sb3_agent_cfg.get('params', {})
@@ -553,6 +615,8 @@ def main():
 
         # Close environment
         wrapped_env.close()
+        if eval_wrapped_env is not None:
+            eval_wrapped_env.close()
 
     print("\nTraining complete!")
 

@@ -519,6 +519,7 @@ def main():
                         config=spawn_config,
                         available_spawn_points=spawn_configs
                     )
+                    env.spawn_configs = spawn_configs
                     console_logger.print_success(
                         f"Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
                         f"starting at '{spawn_curriculum.current_stage.name}'"
@@ -603,6 +604,8 @@ def main():
             spawn_configs = env_config.get('spawn_configs', {})
             if not spawn_configs and 'spawn_curriculum' in env_config:
                 spawn_configs = env_config['spawn_curriculum'].get('spawn_configs', {})
+            if spawn_configs:
+                env.spawn_configs = spawn_configs
 
             evaluation_config = EvaluationConfig(
                 num_episodes=eval_cfg.get('num_episodes', 10),

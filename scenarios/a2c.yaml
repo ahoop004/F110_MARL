@@ -255,6 +255,21 @@ agents:
           panic_factor_near: 1.2
           panic_factor_very_near: 1.4
 
+# Evaluation configuration (optional)
+# Uncomment to enable periodic evaluation during training
+evaluation:
+  enabled: true
+  frequency: 100  # Run evaluation every 100 training episodes
+  num_episodes: 12  # Number of episodes per evaluation run
+  deterministic: true  # Use deterministic actions
+  spawn_points: [spawn_pinch_left, spawn_pinch_right, spawn_pinch_ahead, spawn_approach_0.0C, spawn_approach_0.3L, spawn_approach_0.3R]  # Sequential fixed spawns
+  spawn_speeds: [0.0, 0.0]  # Initial speeds for each spawn point
+  lock_speed_steps: 0  # No speed locking during eval
+  ftg_override:  # Full FTG strength for evaluation
+    max_speed: 1.0
+    bubble_radius: 3.0
+    steering_gain: 0.35
+
 # IMPROVED Phased Curriculum with Overlap & Longer Patience
 curriculum:
   type: phased
