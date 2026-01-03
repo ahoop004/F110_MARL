@@ -156,7 +156,8 @@ def register_builtin_agents():
     try:
         from agents.sb3_agents import (
             SB3SACAgent, SB3TD3Agent, SB3DDPGAgent,
-            SB3PPOAgent, SB3A2CAgent, SB3TQCAgent
+            SB3PPOAgent, SB3A2CAgent, SB3TQCAgent,
+            SB3DQNAgent, SB3QRDQNAgent
         )
         AgentFactory.register("sb3_sac", SB3SACAgent)
         AgentFactory.register("sb3_td3", SB3TD3Agent)
@@ -164,6 +165,8 @@ def register_builtin_agents():
         AgentFactory.register("sb3_ppo", SB3PPOAgent)
         AgentFactory.register("sb3_a2c", SB3A2CAgent)
         AgentFactory.register("sb3_tqc", SB3TQCAgent)
+        AgentFactory.register("sb3_dqn", SB3DQNAgent)
+        AgentFactory.register("sb3_qrdqn", SB3QRDQNAgent)
     except ImportError:
         pass  # SB3 not installed
 

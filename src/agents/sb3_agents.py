@@ -488,8 +488,9 @@ class SB3DQNAgent(SB3AgentBase):
         if not DQN_AVAILABLE:
             raise ImportError("DQN not available. Make sure stable-baselines3 is installed.")
 
-        # Parse action set for discretization
-        action_set = cfg.get('action_set')
+        # Parse action set for discretization (can be in cfg or params)
+        params = cfg.get('params', {})
+        action_set = cfg.get('action_set') or params.get('action_set')
         if action_set is None:
             raise ValueError("SB3DQNAgent requires 'action_set' parameter for action discretization")
 
@@ -541,14 +542,40 @@ class SB3DQNAgent(SB3AgentBase):
         # Get discrete action index from DQN
         action_idx, _ = self.model.predict(obs, deterministic=deterministic)
 
+        # Store action index for later use in store_transition
+        self._last_action_idx = int(action_idx)
+
         # Convert to continuous action using action set
-        continuous_action = self.action_set[int(action_idx)]
+        continuous_action = self.action_set[self._last_action_idx]
 
         # Store action index in info for tracking
         if info is not None:
-            info['action_index'] = int(action_idx)
+            info['action_index'] = self._last_action_idx
 
         return continuous_action
+
+    def store_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict] = None
+    ) -> None:
+        """Store transition using action index instead of continuous action."""
+        if self.model is None or not hasattr(self.model, 'replay_buffer'):
+            return
+
+        # Use the stored action index instead of the continuous action
+        action_idx = np.array([self._last_action_idx], dtype=np.int64)
+
+        # SB3 replay buffer expects specific format
+        infos = [info] if info is not None else [{}]
+        self.model.replay_buffer.add(
+            obs, next_obs, action_idx, reward, done, infos
+        )
+        self._steps += 1
 
 
 class SB3QRDQNAgent(SB3AgentBase):
@@ -558,8 +585,9 @@ class SB3QRDQNAgent(SB3AgentBase):
         if not QRDQN_AVAILABLE:
             raise ImportError("sb3-contrib required for QR-DQN. Install with: pip install sb3-contrib")
 
-        # Parse action set for discretization
-        action_set = cfg.get('action_set')
+        # Parse action set for discretization (can be in cfg or params)
+        params = cfg.get('params', {})
+        action_set = cfg.get('action_set') or params.get('action_set')
         if action_set is None:
             raise ValueError("SB3QRDQNAgent requires 'action_set' parameter for action discretization")
 
@@ -611,14 +639,40 @@ class SB3QRDQNAgent(SB3AgentBase):
         # Get discrete action index from QR-DQN
         action_idx, _ = self.model.predict(obs, deterministic=deterministic)
 
+        # Store action index for later use in store_transition
+        self._last_action_idx = int(action_idx)
+
         # Convert to continuous action using action set
-        continuous_action = self.action_set[int(action_idx)]
+        continuous_action = self.action_set[self._last_action_idx]
 
         # Store action index in info for tracking
         if info is not None:
-            info['action_index'] = int(action_idx)
+            info['action_index'] = self._last_action_idx
 
         return continuous_action
+
+    def store_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        info: Optional[Dict] = None
+    ) -> None:
+        """Store transition using action index instead of continuous action."""
+        if self.model is None or not hasattr(self.model, 'replay_buffer'):
+            return
+
+        # Use the stored action index instead of the continuous action
+        action_idx = np.array([self._last_action_idx], dtype=np.int64)
+
+        # SB3 replay buffer expects specific format
+        infos = [info] if info is not None else [{}]
+        self.model.replay_buffer.add(
+            obs, next_obs, action_idx, reward, done, infos
+        )
+        self._steps += 1
 
 
 __all__ = [
