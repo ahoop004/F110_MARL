@@ -116,3 +116,48 @@ class ReplayBuffer:
         if any(info is not None for info in infos):
             batch["infos"] = infos
         return batch
+
+    def sample_sequences(self, batch_size: int, sequence_length: int = 5) -> Dict[str, np.ndarray]:
+        """Sample sequences of consecutive transitions.
+
+        Args:
+            batch_size: Number of sequences to sample
+            sequence_length: Length of each sequence (default: 5)
+
+        Returns:
+            Dictionary with arrays of shape (batch_size, sequence_length, ...)
+
+        Raises:
+            ValueError: If not enough samples for sequences
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
+        if self._size < sequence_length:
+            raise ValueError(f"Not enough samples for sequences ({self._size} < {sequence_length})")
+
+        # Sample start indices ensuring we have enough consecutive samples
+        # Avoid wrapping around the buffer by limiting max start index
+        max_start_idx = self._size - sequence_length
+        if max_start_idx < 0:
+            raise ValueError("Not enough consecutive samples in buffer")
+
+        start_indices = np.random.randint(0, max_start_idx + 1, size=batch_size)
+
+        # Build sequences by taking consecutive indices
+        # Shape: (batch_size, sequence_length)
+        sequence_indices = start_indices[:, None] + np.arange(sequence_length)[None, :]
+
+        # Sample sequences
+        batch = {
+            "obs": self._observations[sequence_indices],  # (batch, seq_len, obs_dim)
+            "rewards": self._rewards[sequence_indices],    # (batch, seq_len, 1)
+            "next_obs": self._next_observations[sequence_indices],  # (batch, seq_len, obs_dim)
+            "dones": self._dones[sequence_indices],        # (batch, seq_len, 1)
+        }
+
+        if self.store_actions and self._actions is not None:
+            batch["actions"] = self._actions[sequence_indices]  # (batch, seq_len, action_dim)
+
+        return batch

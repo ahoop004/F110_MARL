@@ -1,0 +1,161 @@
+"""Stable-Baselines3 wrapper for F110 multi-agent environment.
+
+Converts PettingZoo ParallelEnv to single-agent Gymnasium environment
+for training with SB3 algorithms (SAC, TD3, PPO).
+"""
+
+from typing import Any, Dict, Optional, Tuple
+import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+
+
+class SB3SingleAgentWrapper(gym.Env):
+    """Wrapper to convert multi-agent F110 env to single-agent for SB3.
+
+    Wraps one agent (attacker) while other agents (e.g., FTG defender)
+    run their own policies.
+
+    Args:
+        env: PettingZoo ParallelEnv (F110 environment)
+        agent_id: ID of agent to control (default: 'car_0')
+        obs_dim: Observation dimension (default: 126 for gaplock)
+        action_low: Action space lower bounds (default: [-0.46, -1.0])
+        action_high: Action space upper bounds (default: [0.46, 1.0])
+
+    Example:
+        >>> from src.core.setup import create_training_setup
+        >>> env, agents, _ = create_training_setup(scenario)
+        >>>
+        >>> # Wrap for SB3
+        >>> wrapped_env = SB3SingleAgentWrapper(
+        ...     env,
+        ...     agent_id='car_0',
+        ...     obs_dim=126
+        ... )
+        >>>
+        >>> # Train with SB3
+        >>> from stable_baselines3 import SAC
+        >>> model = SAC("MlpPolicy", wrapped_env)
+        >>> model.learn(total_timesteps=1000000)
+    """
+
+    def __init__(
+        self,
+        env,
+        agent_id: str = 'car_0',
+        obs_dim: int = 126,
+        action_low: np.ndarray = np.array([-0.46, -1.0]),
+        action_high: np.ndarray = np.array([0.46, 1.0]),
+    ):
+        super().__init__()
+
+        self.env = env
+        self.agent_id = agent_id
+
+        # Define observation space (Box for continuous observations)
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(obs_dim,),
+            dtype=np.float32
+        )
+
+        # Define action space (Box for continuous actions)
+        self.action_space = spaces.Box(
+            low=action_low,
+            high=action_high,
+            dtype=np.float32
+        )
+
+        # Store agents dict for non-SB3 agents
+        self.other_agents = None
+
+    def set_other_agents(self, agents: Dict[str, Any]):
+        """Set other agents (e.g., FTG defender) that act in environment.
+
+        Args:
+            agents: Dict mapping agent_id to agent object
+        """
+        self.other_agents = {
+            aid: agent for aid, agent in agents.items()
+            if aid != self.agent_id
+        }
+
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Reset environment and return initial observation.
+
+        Args:
+            seed: Random seed
+            options: Additional options
+
+        Returns:
+            obs: Initial observation for controlled agent
+            info: Info dict
+        """
+        # Reset underlying environment
+        obs_dict, info_dict = self.env.reset(seed=seed, options=options)
+
+        # Extract observation for controlled agent
+        obs = obs_dict[self.agent_id].astype(np.float32)
+        info = info_dict.get(self.agent_id, {})
+
+        return obs, info
+
+    def step(
+        self,
+        action: np.ndarray
+    ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+        """Take a step in the environment.
+
+        Args:
+            action: Action for controlled agent
+
+        Returns:
+            obs: Next observation
+            reward: Reward
+            terminated: Whether episode ended (goal reached or failed)
+            truncated: Whether episode was truncated (time limit)
+            info: Info dict
+        """
+        # Build action dict for all agents
+        actions = {self.agent_id: action}
+
+        # Get actions from other agents (if they exist)
+        if self.other_agents:
+            # Get current observations for other agents
+            for agent_id, agent in self.other_agents.items():
+                # Other agents select their own actions
+                # (This assumes they have an act() method)
+                obs = self.env.get_agent_obs(agent_id) if hasattr(self.env, 'get_agent_obs') else None
+                if obs is not None and hasattr(agent, 'act'):
+                    actions[agent_id] = agent.act(obs)
+
+        # Step environment with all actions
+        obs_dict, reward_dict, done_dict, truncated_dict, info_dict = self.env.step(actions)
+
+        # Extract results for controlled agent
+        obs = obs_dict[self.agent_id].astype(np.float32)
+        reward = float(reward_dict[self.agent_id])
+        terminated = bool(done_dict[self.agent_id])
+        truncated = bool(truncated_dict[self.agent_id])
+        info = info_dict.get(self.agent_id, {})
+
+        return obs, reward, terminated, truncated, info
+
+    def render(self):
+        """Render environment (delegates to underlying env)."""
+        if hasattr(self.env, 'render'):
+            return self.env.render()
+
+    def close(self):
+        """Close environment."""
+        if hasattr(self.env, 'close'):
+            self.env.close()
+
+
+__all__ = ['SB3SingleAgentWrapper']

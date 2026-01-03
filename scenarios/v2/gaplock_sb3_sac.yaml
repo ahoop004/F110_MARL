@@ -1,9 +1,8 @@
 experiment:
-  name: gaplock_wavelet_episodic
+  name: gaplock_sb3_sac_baseline
   episodes: 2500
   seed: 42
   normalize_observations: false
-
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
@@ -13,7 +12,7 @@ environment:
   - spawn_2
   - spawn_1
   timestep: 0.01
-  render: false
+  render: true
   spawn_curriculum:
     enabled: true
     window: 200
@@ -33,6 +32,7 @@ environment:
       spawn_points:
       - spawn_pinch_right
       - spawn_pinch_left
+      # - spawn_pinch_ahead
       speed_range:
       - 0.44
       - 0.44
@@ -140,93 +140,26 @@ environment:
     a_max: 2.0
     v_min: -1.0
     v_max: 1.0
-
 agents:
   car_0:
     role: attacker
-    algorithm: wavelet_episodic
+    algorithm: sb3_sac
     target_id: car_1
     params:
-      # Chunk parameters (5×5 grid structure)
-      chunk_size: 25
-      chunk_stride: 12
-      grid_shape: [5, 5]
-      n_channels: 5
-
-      # Buffers
-      chronological_buffer:
-        max_capacity: 10000
-      episodic_buffer:
-        capacity: 1000
-        selection_mode: "uniform"  # "uniform" or "priority"
-        alpha: 0.6
-        beta: 0.4
-        beta_increment: 0.001
-
-      # Wavelet transform
-      wavelet:
-        type: "identity"  # "haar", "db2", "db4", "db6", "morlet", "identity"
-        mode: "symmetric"
-        level: null
-
-      # Encoder (CNN-RNN hybrid)
-      encoder:
-        latent_dim: 128
-        cnn:
-          channels: [32, 64, 128]
-          kernel_size: 3
-          pooling: [2, 2, null]
-        rnn:
-          use: true
-          type: "rnn"
-          hidden_size: 256
-          num_layers: 2
-          dropout: 0.1
-
-      # Multi-task heads
-      heads:
-        policy_head:
-          hidden_dims: [256, 256]
-          activation: "relu"
-          output_activation: "tanh"
-        value_head:
-          hidden_dims: [256, 128]
-        reconstruction_head:
-          hidden_dims: [256, 512]
-        forward_head:
-          hidden_dims: [256, 512]
-
-      # Loss weights
-      loss_weights:
-        policy: 1.0
-        value: 0.5
-        reconstruction: 0.1
-        forward: 0.1
-
-      # Optimization
-      learning_rate: 3.0e-4
-      batch_size: 32
-      max_grad_norm: 1.0
-      warmup_chunks: 100
-      update_freq: 4
+      # SB3 SAC parameters (using proven SB3 defaults)
+      learning_rate: 0.0003
       gamma: 0.995
-
-      # Exploration
-      exploration_noise: 0.15  # Gaussian noise std added to actions during training
-
-      # Action constraints (same as SAC)
-      action_low: [-0.46, -1.0]   # [steering_min, velocity_min]
-      action_high: [0.46, 1.0]    # [steering_max, velocity_max]
-      prevent_reverse: true
-      prevent_reverse_min_speed: 0.01
-      prevent_reverse_speed_index: 1
-
-      # Device
-      device: "cuda"  # "cuda" or "cpu"
-
+      tau: 0.005
+      ent_coef: auto  # Automatic entropy tuning
+      target_entropy: auto
+      hidden_dims:
+      - 256
+      - 256
+      buffer_size: 1000000
+      batch_size: 256
+      learning_starts: 1000
     observation:
       preset: gaplock
-
     reward:
       preset: gaplock_full
       overrides:
@@ -255,6 +188,10 @@ agents:
             time_scaled: true
         distance:
           enabled: false
+          near_distance: 1.0
+          far_distance: 2.5
+          reward_near: 0.004
+          penalty_far: 0.002
         heading:
           enabled: true
           coefficient: 0.001
@@ -267,7 +204,6 @@ agents:
           self_crash: -20.0
           timeout: -100.0
           collision: 0.0
-
   car_1:
     role: defender
     algorithm: ftg
@@ -320,13 +256,12 @@ agents:
           wall_avoid_kick: 0.12
           panic_factor_near: 1.2
           panic_factor_very_near: 1.4
-
 wandb:
-  enabled: true  # Set to true to enable wandb logging
+  enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
   tags:
-  - wavelet_episodic
-  - episodic_memory
+  - sac
+  - comparison
   - gaplock
-  notes: Wavelet-based episodic memory agent for gaplock adversarial task
+  notes: SAC comparison for gaplock adversarial task

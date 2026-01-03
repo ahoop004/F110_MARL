@@ -152,6 +152,21 @@ def register_builtin_agents():
     except ImportError:
         pass
 
+    # Stable-Baselines3 agents
+    try:
+        from agents.sb3_agents import (
+            SB3SACAgent, SB3TD3Agent, SB3DDPGAgent,
+            SB3PPOAgent, SB3A2CAgent, SB3TQCAgent
+        )
+        AgentFactory.register("sb3_sac", SB3SACAgent)
+        AgentFactory.register("sb3_td3", SB3TD3Agent)
+        AgentFactory.register("sb3_ddpg", SB3DDPGAgent)
+        AgentFactory.register("sb3_ppo", SB3PPOAgent)
+        AgentFactory.register("sb3_a2c", SB3A2CAgent)
+        AgentFactory.register("sb3_tqc", SB3TQCAgent)
+    except ImportError:
+        pass  # SB3 not installed
+
 
 # Register agents on import
 register_builtin_agents()

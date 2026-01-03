@@ -32,6 +32,13 @@ parameters:
     min: 0
     max: 999999
 
+  # ===== Exploration Noise =====
+  # Gaussian noise added to actions during training (TD3-style)
+  agents.car_0.params.exploration_noise:
+    distribution: uniform
+    min: 0.05
+    max: 0.3
+
   # ===== Learning Rate =====
   agents.car_0.params.learning_rate:
     distribution: log_uniform_values

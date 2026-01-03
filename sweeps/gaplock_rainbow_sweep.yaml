@@ -27,10 +27,10 @@ parameters:
   episodes:
     value: 1000
 
-  seed:
-    distribution: int_uniform
-    min: 0
-    max: 999999
+  # seed:
+  #   distribution: int_uniform
+  #   min: 0
+  #   max: 999999
 
   # ============================================================================
   # ACTIVE PARAMETERS - Currently being swept

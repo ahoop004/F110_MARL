@@ -25,7 +25,7 @@ early_terminate:
 
 parameters:
   episodes:
-    value: 1000
+    value: 1500
 
   seed:
     distribution: int_uniform

@@ -121,6 +121,9 @@ class WaveletEpisodicAgent:
         self.max_grad_norm = cfg.get('max_grad_norm', 1.0)
         self.gamma = cfg.get('gamma', 0.99)
 
+        # Exploration parameters
+        self.exploration_noise = cfg.get('exploration_noise', 0.1)  # Gaussian noise std
+
         # State
         self.step_count = 0
         self.update_count = 0
@@ -212,6 +215,11 @@ class WaveletEpisodicAgent:
             action_tensor = self.heads['policy'](latent)  # (1, act_dim)
 
         action = action_tensor.squeeze(0).cpu().numpy()
+
+        # Add exploration noise (TD3-style) during training
+        if not deterministic and self.exploration_noise > 0:
+            noise = np.random.normal(0, self.exploration_noise, size=action.shape)
+            action = np.clip(action + noise, -1.0, 1.0)
 
         # Scale action from [-1, 1] (tanh output) to [action_low, action_high]
         action_scaled = self.action_low + (action + 1.0) * 0.5 * (self.action_high - self.action_low)
@@ -460,8 +468,8 @@ class WaveletEpisodicAgent:
             recon_max_error = (reconstructed_chunks - wavelet_chunks).abs().max().item()
 
             # Forward model quality metrics
-            forward_mse = F.mse_loss(predicted_next_chunks, next_wavelet_chunks).item()
-            forward_mae = (predicted_next_chunks - next_wavelet_chunks).abs().mean().item()
+            forward_mse = F.mse_loss(predicted_next_chunks, wavelet_chunks).item()
+            forward_mae = (predicted_next_chunks - wavelet_chunks).abs().mean().item()
 
             # Action statistics
             action_mean = predicted_actions.mean().item()

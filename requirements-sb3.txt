@@ -1,0 +1,9 @@
+# Stable-Baselines3 requirements for baseline experiments
+
+stable-baselines3>=2.0.0
+sb3-contrib>=2.0.0  # For TQC and other advanced algorithms
+gymnasium>=0.29.0
+tensorboard>=2.14.0
+
+# Optional but recommended
+wandb>=0.15.0  # For experiment tracking
