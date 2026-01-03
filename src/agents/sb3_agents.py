@@ -37,7 +37,7 @@ except ImportError:
 
 
 class DummyEnv(gym.Env):
-    """Dummy environment for SB3 initialization.
+    """Dummy environment for SB3 initialization (continuous actions).
 
     SB3 requires a gym.Env to initialize models, but we handle
     the actual environment interaction in the training loop.
@@ -52,6 +52,31 @@ class DummyEnv(gym.Env):
         self.action_space = spaces.Box(
             low=action_low, high=action_high, dtype=np.float32
         )
+
+    def reset(self, **kwargs):
+        return self.observation_space.sample(), {}
+
+    def step(self, action):
+        obs = self.observation_space.sample()
+        reward = 0.0
+        terminated = False
+        truncated = False
+        info = {}
+        return obs, reward, terminated, truncated, info
+
+
+class DummyDiscreteEnv(gym.Env):
+    """Dummy environment for SB3 initialization (discrete actions).
+
+    Used for DQN-based algorithms that operate on discretized action spaces.
+    """
+
+    def __init__(self, obs_dim: int, n_actions: int):
+        super().__init__()
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
+        )
+        self.action_space = spaces.Discrete(n_actions)
 
     def reset(self, **kwargs):
         return self.observation_space.sample(), {}
@@ -456,6 +481,146 @@ class SB3TQCAgent(SB3AgentBase):
         self._setup_done = True
 
 
+class SB3DQNAgent(SB3AgentBase):
+    """DQN agent using Stable-Baselines3 with discretized actions."""
+
+    def __init__(self, cfg: Dict[str, Any]):
+        if not DQN_AVAILABLE:
+            raise ImportError("DQN not available. Make sure stable-baselines3 is installed.")
+
+        # Parse action set for discretization
+        action_set = cfg.get('action_set')
+        if action_set is None:
+            raise ValueError("SB3DQNAgent requires 'action_set' parameter for action discretization")
+
+        self.action_set = np.asarray(action_set, dtype=np.float32)
+        if self.action_set.ndim != 2:
+            raise ValueError("action_set must be 2D array of shape (n_actions, act_dim)")
+
+        self.n_discrete_actions = self.action_set.shape[0]
+
+        # Set DQN-specific params BEFORE calling super().__init__
+        params = cfg.get('params', {})
+        self.exploration_fraction = params.get('exploration_fraction', 0.1)
+        self.exploration_final_eps = params.get('exploration_final_eps', 0.05)
+        self.exploration_initial_eps = params.get('exploration_initial_eps', 1.0)
+
+        # Now initialize base class
+        super().__init__(cfg, DQN)
+
+        # Create model after all attributes are set
+        dummy_env = DummyDiscreteEnv(self.obs_dim, self.n_discrete_actions)
+        self._create_model(dummy_env)
+
+    def _create_model(self, env):
+        """Create DQN model."""
+        self.model = DQN(
+            policy='MlpPolicy',
+            env=env,
+            learning_rate=self.learning_rate,
+            buffer_size=self.buffer_size,
+            batch_size=self.batch_size,
+            tau=self.tau,
+            gamma=self.gamma,
+            learning_starts=self.learning_starts,
+            exploration_fraction=self.exploration_fraction,
+            exploration_final_eps=self.exploration_final_eps,
+            exploration_initial_eps=self.exploration_initial_eps,
+            policy_kwargs=self.policy_kwargs,
+            device=self.device,
+            verbose=0,
+        )
+        self._setup_logger()
+        self._setup_done = True
+
+    def act(self, obs: np.ndarray, deterministic: bool = False, info: Optional[Dict] = None) -> np.ndarray:
+        """Select action - returns continuous action from discrete index."""
+        if not self._setup_done:
+            raise RuntimeError("Model not initialized.")
+
+        # Get discrete action index from DQN
+        action_idx, _ = self.model.predict(obs, deterministic=deterministic)
+
+        # Convert to continuous action using action set
+        continuous_action = self.action_set[int(action_idx)]
+
+        # Store action index in info for tracking
+        if info is not None:
+            info['action_index'] = int(action_idx)
+
+        return continuous_action
+
+
+class SB3QRDQNAgent(SB3AgentBase):
+    """QR-DQN agent using SB3-Contrib with discretized actions."""
+
+    def __init__(self, cfg: Dict[str, Any]):
+        if not QRDQN_AVAILABLE:
+            raise ImportError("sb3-contrib required for QR-DQN. Install with: pip install sb3-contrib")
+
+        # Parse action set for discretization
+        action_set = cfg.get('action_set')
+        if action_set is None:
+            raise ValueError("SB3QRDQNAgent requires 'action_set' parameter for action discretization")
+
+        self.action_set = np.asarray(action_set, dtype=np.float32)
+        if self.action_set.ndim != 2:
+            raise ValueError("action_set must be 2D array of shape (n_actions, act_dim)")
+
+        self.n_discrete_actions = self.action_set.shape[0]
+
+        # Set QR-DQN-specific params BEFORE calling super().__init__
+        params = cfg.get('params', {})
+        self.exploration_fraction = params.get('exploration_fraction', 0.1)
+        self.exploration_final_eps = params.get('exploration_final_eps', 0.05)
+        self.exploration_initial_eps = params.get('exploration_initial_eps', 1.0)
+
+        # Now initialize base class
+        super().__init__(cfg, QRDQN)
+
+        # Create model after all attributes are set
+        dummy_env = DummyDiscreteEnv(self.obs_dim, self.n_discrete_actions)
+        self._create_model(dummy_env)
+
+    def _create_model(self, env):
+        """Create QR-DQN model."""
+        self.model = QRDQN(
+            policy='MlpPolicy',
+            env=env,
+            learning_rate=self.learning_rate,
+            buffer_size=self.buffer_size,
+            batch_size=self.batch_size,
+            tau=self.tau,
+            gamma=self.gamma,
+            learning_starts=self.learning_starts,
+            exploration_fraction=self.exploration_fraction,
+            exploration_final_eps=self.exploration_final_eps,
+            exploration_initial_eps=self.exploration_initial_eps,
+            policy_kwargs=self.policy_kwargs,
+            device=self.device,
+            verbose=0,
+        )
+        self._setup_logger()
+        self._setup_done = True
+
+    def act(self, obs: np.ndarray, deterministic: bool = False, info: Optional[Dict] = None) -> np.ndarray:
+        """Select action - returns continuous action from discrete index."""
+        if not self._setup_done:
+            raise RuntimeError("Model not initialized.")
+
+        # Get discrete action index from QR-DQN
+        action_idx, _ = self.model.predict(obs, deterministic=deterministic)
+
+        # Convert to continuous action using action set
+        continuous_action = self.action_set[int(action_idx)]
+
+        # Store action index in info for tracking
+        if info is not None:
+            info['action_index'] = int(action_idx)
+
+        return continuous_action
+
+
 __all__ = [
     'SB3SACAgent',
     'SB3TD3Agent',
@@ -463,4 +628,6 @@ __all__ = [
     'SB3PPOAgent',
     'SB3A2CAgent',
     'SB3TQCAgent',
+    'SB3DQNAgent',
+    'SB3QRDQNAgent',
 ]
