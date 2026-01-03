@@ -2,21 +2,29 @@
 """Train SB3 baseline agents for F110 gaplock task.
 
 This script provides baselines using Stable-Baselines3 (SB3) implementations
-of SAC, TD3, and PPO. These are well-tested, proven algorithms that should
+of various RL algorithms. These are well-tested, proven algorithms that should
 converge reliably.
+
+Supported algorithms:
+    - Off-policy (continuous): sac, td3, ddpg, tqc
+    - Off-policy (discrete): dqn, qrdqn
+    - On-policy: ppo, a2c
 
 Usage:
     # Train SAC baseline
-    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sac.yaml
+    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sb3_sac.yaml
 
     # Train TD3 baseline
-    python run_sb3_baseline.py --algo td3 --scenario scenarios/v2/gaplock_td3.yaml
+    python run_sb3_baseline.py --algo td3 --scenario scenarios/v2/gaplock_sb3_td3.yaml
 
     # Train PPO baseline
-    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_ppo.yaml
+    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_sb3_ppo.yaml
+
+    # Train A2C baseline
+    python run_sb3_baseline.py --algo a2c --scenario scenarios/v2/gaplock_sb3_a2c.yaml
 
     # With wandb logging
-    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sac.yaml --wandb
+    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sb3_sac.yaml --wandb
 """
 
 import argparse
@@ -24,9 +32,18 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from stable_baselines3 import SAC, TD3, PPO
+from stable_baselines3 import SAC, TD3, PPO, DDPG, A2C, DQN
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
+
+# Optional sb3-contrib algorithms
+try:
+    from sb3_contrib import TQC, QRDQN
+    CONTRIB_AVAILABLE = True
+except ImportError:
+    CONTRIB_AVAILABLE = False
+    TQC = None
+    QRDQN = None
 
 # Optional wandb integration
 try:
@@ -50,7 +67,7 @@ def parse_args():
         '--algo',
         type=str,
         required=True,
-        choices=['sac', 'td3', 'ppo'],
+        choices=['sac', 'td3', 'ppo', 'a2c', 'ddpg', 'tqc', 'dqn', 'qrdqn'],
         help='RL algorithm to use'
     )
     parser.add_argument(
@@ -89,7 +106,7 @@ def create_sb3_agent(algo_name: str, env, seed: int = 42):
     """Create SB3 agent with good default hyperparameters.
 
     Args:
-        algo_name: Algorithm name ('sac', 'td3', 'ppo')
+        algo_name: Algorithm name ('sac', 'td3', 'ppo', 'a2c', 'ddpg', 'tqc', 'dqn', 'qrdqn')
         env: Gym environment
         seed: Random seed
 
@@ -138,6 +155,77 @@ def create_sb3_agent(algo_name: str, env, seed: int = 42):
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=0.02,
+            policy_kwargs=dict(net_arch=[256, 256]),
+        )
+    elif algo_name == 'a2c':
+        return A2C(
+            **common_kwargs,
+            learning_rate=3e-4,
+            n_steps=5,
+            gamma=0.995,
+            gae_lambda=1.0,
+            ent_coef=0.0,
+            vf_coef=0.5,
+            policy_kwargs=dict(net_arch=[256, 256]),
+        )
+    elif algo_name == 'ddpg':
+        from stable_baselines3.common.noise import NormalActionNoise
+        n_actions = env.action_space.shape[0]
+        action_noise = NormalActionNoise(
+            mean=np.zeros(n_actions),
+            sigma=0.1 * np.ones(n_actions)
+        )
+        return DDPG(
+            **common_kwargs,
+            learning_rate=3e-4,
+            buffer_size=1_000_000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.995,
+            action_noise=action_noise,
+            policy_kwargs=dict(net_arch=[256, 256]),
+        )
+    elif algo_name == 'tqc':
+        if not CONTRIB_AVAILABLE or TQC is None:
+            raise ImportError("TQC requires sb3-contrib. Install with: pip install sb3-contrib")
+        return TQC(
+            **common_kwargs,
+            learning_rate=3e-4,
+            buffer_size=1_000_000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.995,
+            ent_coef='auto',
+            target_entropy='auto',
+            top_quantiles_to_drop_per_net=2,
+            policy_kwargs=dict(net_arch=[256, 256]),
+        )
+    elif algo_name == 'dqn':
+        return DQN(
+            **common_kwargs,
+            learning_rate=3e-4,
+            buffer_size=1_000_000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.995,
+            exploration_fraction=0.1,
+            exploration_final_eps=0.05,
+            exploration_initial_eps=1.0,
+            policy_kwargs=dict(net_arch=[256, 256]),
+        )
+    elif algo_name == 'qrdqn':
+        if not CONTRIB_AVAILABLE or QRDQN is None:
+            raise ImportError("QR-DQN requires sb3-contrib. Install with: pip install sb3-contrib")
+        return QRDQN(
+            **common_kwargs,
+            learning_rate=3e-4,
+            buffer_size=1_000_000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.995,
+            exploration_fraction=0.1,
+            exploration_final_eps=0.05,
+            exploration_initial_eps=1.0,
             policy_kwargs=dict(net_arch=[256, 256]),
         )
     else:
