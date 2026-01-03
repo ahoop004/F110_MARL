@@ -551,12 +551,11 @@ def main():
                         apply_config(eval_config.ftg_override)
 
             eval_every_n_episodes = eval_cfg.get('frequency', 100)
-            eval_freq = max(1, int(eval_every_n_episodes) * int(env_config.get('max_steps', 2500)))
             callbacks.append(SB3EvaluationCallback(
                 eval_env=eval_wrapped_env,
                 evaluation_config=eval_config,
                 spawn_configs=spawn_configs,
-                eval_freq=eval_freq,
+                eval_every_n_episodes=eval_every_n_episodes,
                 wandb_run=wandb_run,
                 verbose=1,
             ))

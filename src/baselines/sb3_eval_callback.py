@@ -16,7 +16,7 @@ class SB3EvaluationCallback(BaseCallback):
         eval_env: Any,
         evaluation_config: Any,
         spawn_configs: Dict[str, Any],
-        eval_freq: int,
+        eval_every_n_episodes: int,
         wandb_run: Optional[Any] = None,
         verbose: int = 0,
     ):
@@ -24,17 +24,37 @@ class SB3EvaluationCallback(BaseCallback):
         self.eval_env = eval_env
         self.config = evaluation_config
         self.spawn_configs = spawn_configs or {}
-        self.eval_freq = max(1, int(eval_freq)) if eval_freq else 0
+        self.eval_every_n_episodes = max(1, int(eval_every_n_episodes)) if eval_every_n_episodes else 0
         self.wandb_run = wandb_run
+        self.episode_count = 0
+        self.total_eval_episodes = 0
 
     def _on_step(self) -> bool:
-        if self.eval_freq <= 0:
+        if self.eval_every_n_episodes <= 0:
             return True
-        if self.n_calls % self.eval_freq == 0:
-            self._run_eval()
+        done_count = self._count_episode_ends()
+        if done_count > 0:
+            for _ in range(done_count):
+                self.episode_count += 1
+                if self.episode_count % self.eval_every_n_episodes == 0:
+                    self._run_eval(training_episode=self.episode_count)
         return True
 
-    def _run_eval(self) -> None:
+    def _count_episode_ends(self) -> int:
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return 0
+            done_flags = np.logical_or(terminated, truncated)
+        else:
+            done_flags = dones
+        if isinstance(done_flags, (list, tuple, np.ndarray)):
+            return int(np.sum(done_flags))
+        return int(bool(done_flags))
+
+    def _run_eval(self, training_episode: Optional[int] = None) -> None:
         if not self.spawn_configs:
             if self.verbose > 0:
                 print("Eval skipped: spawn_configs missing")
@@ -93,6 +113,16 @@ class SB3EvaluationCallback(BaseCallback):
             success_count += int(success)
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
 
+            if self.wandb_run:
+                self.total_eval_episodes += 1
+                self.wandb_run.log({
+                    "eval/episode_reward": ep_reward,
+                    "eval/episode_steps": steps,
+                    "eval/episode_success": int(success),
+                    "eval/spawn_point": spawn_point,
+                    "eval/training_episode": training_episode if training_episode is not None else self.episode_count,
+                }, step=self.total_eval_episodes)
+
         if not rewards:
             return
 
@@ -115,7 +145,10 @@ class SB3EvaluationCallback(BaseCallback):
                 pct = (count / num_episodes) if num_episodes > 0 else 0.0
                 agg_metrics[f"eval_agg/outcome_{outcome}"] = pct
 
-            self.wandb_run.log(agg_metrics, step=self.num_timesteps)
+            self.wandb_run.log(
+                agg_metrics,
+                step=self.total_eval_episodes,
+            )
 
         if self.verbose > 0:
             print(

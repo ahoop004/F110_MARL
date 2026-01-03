@@ -1088,8 +1088,8 @@ class EnhancedTrainingLoop:
                 pct = (count / eval_result.num_episodes) * 100
                 agg_metrics[f'eval_agg/outcome_{outcome}'] = pct
 
-            # Log with training episode number as step (aligns with training plots)
-            self.wandb_logger.log_metrics(agg_metrics, step=episode_num)
+            # Log with eval episode count as step (aligns eval plots to eval episodes)
+            self.wandb_logger.log_metrics(agg_metrics, step=self.total_eval_episodes)
 
         # Log aggregate results to CSV
         if self.csv_logger:
