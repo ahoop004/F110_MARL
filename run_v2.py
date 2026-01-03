@@ -585,18 +585,60 @@ def main():
             )
 
             console_logger.print_success(f"Checkpoint dir: {checkpoint_dir}")
-
-            # Handle resume if requested
-            if args.resume:
-                resume_info = checkpoint_manager.get_resume_info()
-                if resume_info:
-                    console_logger.print_info(f"Resuming from episode {resume_info['episode']}...")
-                    # We'll load the checkpoint after creating the training loop
-                    start_episode = resume_info['episode'] + 1
-                else:
-                    console_logger.print_warning("No checkpoint found to resume from, starting fresh")
         else:
             console_logger.print_info("Checkpointing disabled")
+
+        # Parse evaluation configuration from scenario
+        evaluation_config = None
+        eval_every_n_episodes = None
+        best_eval_model_tracker = None
+        eval_cfg = scenario.get('evaluation', {})
+        if eval_cfg.get('enabled', False):
+            from src.core.evaluator import EvaluationConfig
+
+            console_logger.print_info("Configuring evaluation...")
+
+            # Get spawn configs for evaluator (can be at two locations)
+            env_config = scenario.get('environment', {})
+            spawn_configs = env_config.get('spawn_configs', {})
+            if not spawn_configs and 'spawn_curriculum' in env_config:
+                spawn_configs = env_config['spawn_curriculum'].get('spawn_configs', {})
+
+            evaluation_config = EvaluationConfig(
+                num_episodes=eval_cfg.get('num_episodes', 10),
+                deterministic=eval_cfg.get('deterministic', True),
+                spawn_points=eval_cfg.get('spawn_points', ['spawn_pinch_left', 'spawn_pinch_right']),
+                spawn_speeds=eval_cfg.get('spawn_speeds', [0.44, 0.44]),
+                lock_speed_steps=eval_cfg.get('lock_speed_steps', 0),
+                ftg_override=eval_cfg.get('ftg_override', {}),
+                max_steps=scenario['environment'].get('max_steps', 2500),
+            )
+            eval_every_n_episodes = eval_cfg.get('frequency', 100)
+
+            # Create separate best model tracker for evaluation results
+            if checkpoint_manager:
+                best_eval_model_tracker = BestModelTracker(
+                    window_size=5,  # Smaller window since eval runs less frequently
+                    metric_name="eval_success_rate",
+                    higher_is_better=True,
+                    min_improvement=0.02,  # Require 2% improvement for eval
+                    patience=2,
+                )
+
+            console_logger.print_success(
+                f"Evaluation: {evaluation_config.num_episodes} episodes "
+                f"every {eval_every_n_episodes} training episodes"
+            )
+
+        # Checkpoint resume handling
+        if checkpoint_manager and args.resume:
+            resume_info = checkpoint_manager.get_resume_info()
+            if resume_info:
+                console_logger.print_info(f"Resuming from episode {resume_info['episode']}...")
+                # We'll load the checkpoint after creating the training loop
+                start_episode = resume_info['episode'] + 1
+            else:
+                console_logger.print_warning("No checkpoint found to resume from, starting fresh")
 
         # Initialize CSV logger (uses same output directory as checkpoints)
         csv_logger = None
@@ -640,6 +682,9 @@ def main():
             rich_console=rich_console,
             checkpoint_manager=checkpoint_manager,
             best_model_tracker=best_model_tracker,
+            best_eval_model_tracker=best_eval_model_tracker,
+            evaluation_config=evaluation_config,
+            eval_every_n_episodes=eval_every_n_episodes,
             max_steps_per_episode=scenario['environment'].get('max_steps', 5000),
             save_every_n_episodes=args.save_every if not args.no_checkpoints else None,
             normalize_observations=bool(

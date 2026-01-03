@@ -19,6 +19,7 @@ from core.obs_flatten import flatten_observation
 from core.spawn_curriculum import SpawnCurriculumManager
 from core.checkpoint_manager import CheckpointManager
 from core.best_model_tracker import BestModelTracker
+from core.evaluator import Evaluator, EvaluationConfig
 from metrics import MetricsTracker, determine_outcome, EpisodeOutcome
 from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 from rewards.base import RewardStrategy
@@ -62,6 +63,9 @@ class EnhancedTrainingLoop:
         rich_console: Optional[RichConsole] = None,
         checkpoint_manager: Optional[CheckpointManager] = None,
         best_model_tracker: Optional[BestModelTracker] = None,
+        best_eval_model_tracker: Optional[BestModelTracker] = None,
+        evaluation_config: Optional[EvaluationConfig] = None,
+        eval_every_n_episodes: Optional[int] = None,
         max_steps_per_episode: int = 5000,
         rolling_window: int = 100,
         save_every_n_episodes: Optional[int] = None,
@@ -87,7 +91,10 @@ class EnhancedTrainingLoop:
             csv_logger: Optional CSV/JSON file logger
             rich_console: Optional Rich live dashboard for real-time metrics
             checkpoint_manager: Optional CheckpointManager for saving/loading models
-            best_model_tracker: Optional BestModelTracker for tracking best models
+            best_model_tracker: Optional BestModelTracker for tracking best training models
+            best_eval_model_tracker: Optional BestModelTracker for tracking best eval models
+            evaluation_config: Optional EvaluationConfig for periodic evaluation
+            eval_every_n_episodes: Run evaluation every N episodes (None = disabled)
             max_steps_per_episode: Max steps per episode
             rolling_window: Window size for rolling statistics
             save_every_n_episodes: Save checkpoint every N episodes (None = disabled)
@@ -108,10 +115,29 @@ class EnhancedTrainingLoop:
         self.rich_console = rich_console
         self.checkpoint_manager = checkpoint_manager
         self.best_model_tracker = best_model_tracker
+        self.best_eval_model_tracker = best_eval_model_tracker
+        self.evaluation_config = evaluation_config
+        self.eval_every_n_episodes = eval_every_n_episodes
         self.max_steps_per_episode = max_steps_per_episode
         self.rolling_window = rolling_window
         self.save_every_n_episodes = save_every_n_episodes
         self.obs_scales = self._resolve_obs_scales()
+
+        # Create evaluator if evaluation is enabled
+        self.evaluator: Optional[Evaluator] = None
+        if self.evaluation_config and self.eval_every_n_episodes:
+            # Get spawn configs from environment (if available)
+            spawn_configs = getattr(env, 'spawn_configs', {})
+            self.evaluator = Evaluator(
+                env=env,
+                agents=agents,
+                config=evaluation_config,
+                observation_presets=observation_presets,
+                target_ids=target_ids,
+                obs_normalizer=None,  # Don't use normalization for eval
+                obs_scales=self.obs_scales,
+                spawn_configs=spawn_configs,
+            )
 
         # Observation normalization
         self.normalize_observations = normalize_observations
@@ -144,6 +170,12 @@ class EnhancedTrainingLoop:
         self.training_start_time: Optional[float] = None
         self.episodes_trained: int = 0
         self._phase_curriculum_state: Optional[Dict[str, Any]] = None
+        self._current_spawn_stage: Optional[str] = None
+        self._current_spawn_mapping: Dict[str, str] = {}
+
+        # Evaluation tracking (separate counter for continuous eval plots)
+        self.total_eval_episodes: int = 0
+        self.last_eval_training_episode: int = -1
 
     def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
         """Flatten observation for agent if preset is configured.
@@ -332,10 +364,21 @@ class EnhancedTrainingLoop:
             })
             # Store spawn info for logging
             self._current_spawn_stage = spawn_info['stage']
+            self._current_spawn_mapping = dict(spawn_info.get('spawn_points', {}))
         else:
             # Standard reset
             obs, info = self.env.reset()
             self._current_spawn_stage = None
+            self._current_spawn_mapping = {}
+
+        # Capture spawn points from env info (random spawn mode)
+        if isinstance(info, dict):
+            for agent_id, agent_info in info.items():
+                if not isinstance(agent_info, dict):
+                    continue
+                spawn_point = agent_info.get("spawn_point")
+                if spawn_point and agent_id not in self._current_spawn_mapping:
+                    self._current_spawn_mapping[agent_id] = spawn_point
 
         for agent_id, reward_strategy in self.agent_rewards.items():
             reward_strategy.reset()
@@ -610,11 +653,19 @@ class EnhancedTrainingLoop:
                         latest_metrics = agent_tracker.get_latest(1)[0]
                         agent_metrics_dict[aid] = latest_metrics.to_dict()
 
+                spawn_point = self._current_spawn_mapping.get(agent_id)
+                spawn_stage = self._current_spawn_stage
+                csv_extra = {
+                    "spawn_point": spawn_point or "",
+                    "spawn_stage": spawn_stage or "",
+                }
+
                 self.csv_logger.log_episode(
                     episode=episode_num,
                     metrics=metrics,
                     agent_metrics=agent_metrics_dict,
                     rolling_stats=rolling_stats,
+                    extra=csv_extra,
                 )
 
         if self.wandb_logger and self.primary_agent_id in episode_metrics:
@@ -648,6 +699,12 @@ class EnhancedTrainingLoop:
                 "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
                 "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
             }
+
+            spawn_point = self._current_spawn_mapping.get(primary_id)
+            if spawn_point:
+                log_dict["train/spawn_point"] = spawn_point
+            if self._current_spawn_stage:
+                log_dict["train/spawn_stage"] = self._current_spawn_stage
 
             if self.primary_target_id:
                 log_dict.update({
@@ -723,6 +780,11 @@ class EnhancedTrainingLoop:
                     curriculum_state=curriculum_state or None,
                     algo_name=algo_name,
                 )
+
+        # Handle periodic evaluation
+        if self.evaluator and self.eval_every_n_episodes:
+            if (episode_num + 1) % self.eval_every_n_episodes == 0:
+                self._run_periodic_evaluation(episode_num)
 
         # Handle checkpointing
         if self.checkpoint_manager:
@@ -936,6 +998,110 @@ class EnhancedTrainingLoop:
             }
         return stats
 
+    def _run_periodic_evaluation(self, episode_num: int):
+        """Run periodic evaluation and track best eval model.
+
+        Args:
+            episode_num: Current episode number (training episodes)
+        """
+        if not self.evaluator:
+            return
+
+        # Track which training episode triggered this eval
+        self.last_eval_training_episode = episode_num
+
+        if self.console_logger:
+            self.console_logger.print_info(
+                f"Running evaluation at training episode {episode_num + 1} "
+                f"(eval episodes {self.total_eval_episodes + 1}-{self.total_eval_episodes + self.evaluation_config.num_episodes})..."
+            )
+
+        # Run evaluation
+        eval_result = self.evaluator.evaluate(verbose=False)
+
+        # Log each eval episode individually for continuous plots
+        if self.wandb_logger:
+            for ep_data in eval_result.episodes:
+                self.total_eval_episodes += 1
+                self.wandb_logger.log_metrics({
+                    'eval/episode_reward': ep_data['reward'],
+                    'eval/episode_steps': ep_data['steps'],
+                    'eval/episode_success': int(ep_data['success']),
+                    'eval/spawn_point': ep_data['spawn_point'],
+                    'eval/training_episode': episode_num,  # Track which training ep this eval came from
+                }, step=self.total_eval_episodes)
+
+        # Log aggregate results (using last eval episode as step for aggregate metrics)
+        if self.wandb_logger:
+            self.wandb_logger.log_metrics({
+                'eval_agg/success_rate': eval_result.success_rate,
+                'eval_agg/avg_reward': eval_result.avg_reward,
+                'eval_agg/avg_episode_length': eval_result.avg_episode_length,
+                'eval_agg/std_reward': eval_result.std_reward,
+                'eval_agg/std_episode_length': eval_result.std_episode_length,
+                'eval_agg/training_episode': episode_num,
+            }, step=self.total_eval_episodes)
+
+            # Log outcome distribution (aggregate)
+            for outcome, count in eval_result.outcome_counts.items():
+                pct = (count / eval_result.num_episodes) * 100
+                self.wandb_logger.log_metrics({
+                    f'eval_agg/outcome_{outcome}': pct,
+                }, step=self.total_eval_episodes)
+
+        # Log to console (aggregate summary)
+        if self.console_logger:
+            self.console_logger.print_info(
+                f"Eval complete: Success rate={eval_result.success_rate:.2%}, "
+                f"Avg reward={eval_result.avg_reward:.2f}, "
+                f"Avg steps={eval_result.avg_episode_length:.1f} "
+                f"(eval episodes {self.total_eval_episodes - self.evaluation_config.num_episodes + 1}-{self.total_eval_episodes})"
+            )
+
+        # Check if this is a new best eval model
+        if self.best_eval_model_tracker and self.checkpoint_manager:
+            is_new_best_eval = self.best_eval_model_tracker.is_new_best(
+                eval_result.success_rate,
+                episode_num
+            )
+
+            if is_new_best_eval:
+                # Save checkpoint for best eval model
+                agent_states = {}
+                optimizer_states = {}
+
+                for agent_id, agent in self.agents.items():
+                    if hasattr(agent, 'get_state'):
+                        agent_states[agent_id] = agent.get_state()
+                    if hasattr(agent, 'get_optimizer_state'):
+                        optimizer_states[agent_id] = agent.get_optimizer_state()
+
+                # Save with eval_best type
+                try:
+                    checkpoint_path = self.checkpoint_manager.save_checkpoint(
+                        episode=episode_num,
+                        agent_states=agent_states,
+                        optimizer_states=optimizer_states if optimizer_states else None,
+                        training_state={'eval_result': eval_result.to_dict()},
+                        checkpoint_type="best_eval",
+                        metric_value=eval_result.success_rate,
+                    )
+
+                    # Update best eval model tracker
+                    self.best_eval_model_tracker.update_best(
+                        value=eval_result.success_rate,
+                        episode=episode_num,
+                        checkpoint_path=checkpoint_path
+                    )
+
+                    if self.console_logger:
+                        smoothed = self.best_eval_model_tracker.get_smoothed_value()
+                        self.console_logger.print_info(
+                            f"New best eval model! Eval success rate: {smoothed:.2%} @ episode {episode_num}"
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to save best eval checkpoint at episode {episode_num}: {e}")
+
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.
 
@@ -987,6 +1153,8 @@ class EnhancedTrainingLoop:
             training_state = {
                 'episode': episode_num,
                 'rolling_stats': rolling_stats,
+                'total_eval_episodes': self.total_eval_episodes,
+                'last_eval_training_episode': self.last_eval_training_episode,
             }
 
             if self.spawn_curriculum:
@@ -1087,8 +1255,15 @@ class EnhancedTrainingLoop:
                 if agent_id in self.agents and hasattr(self.agents[agent_id], 'load_optimizer_state'):
                     self.agents[agent_id].load_optimizer_state(state)
 
+        # Restore eval counters from training state
+        training_state = checkpoint.get('training_state', {})
+        if 'total_eval_episodes' in training_state:
+            self.total_eval_episodes = training_state['total_eval_episodes']
+        if 'last_eval_training_episode' in training_state:
+            self.last_eval_training_episode = training_state['last_eval_training_episode']
+
         # Return training state for caller to handle
-        return checkpoint.get('training_state', {})
+        return training_state
 
 
 __all__ = ['EnhancedTrainingLoop']

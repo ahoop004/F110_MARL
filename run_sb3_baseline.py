@@ -391,6 +391,7 @@ def main():
             wandb_run = wandb.init(
                 project=scenario.get('wandb', {}).get('project', 'marl-f110'),
                 entity=scenario.get('wandb', {}).get('entity'),
+                name=scenario.get('wandb', {}).get('name', scenario.get('experiment', {}).get('name')),
                 tags=scenario_tags,
                 group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
                 job_type=scenario.get('wandb', {}).get('job_type', args.algo),

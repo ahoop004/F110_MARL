@@ -48,6 +48,10 @@ class CheckpointManager:
         self.keep_latest_n = keep_latest_n
         self.keep_every_n_episodes = keep_every_n_episodes
 
+        # Extract algorithm and hash from run_metadata for checkpoint naming
+        self.algorithm = run_metadata.algorithm
+        self.run_hash = self._extract_run_hash(run_metadata.run_id)
+
         # Metadata file path
         self.metadata_path = self.checkpoint_dir / "run_metadata.json"
 
@@ -79,13 +83,17 @@ class CheckpointManager:
         Checkpoint format:
             checkpoint_ep{episode:06d}.pt or checkpoint_best_ep{episode:06d}.pt
         """
-        # Generate checkpoint filename
+        # Generate checkpoint filename with algo_hash prefix
+        prefix = f"{self.algorithm}_{self.run_hash}"
+
         if checkpoint_type == "best":
-            filename = f"checkpoint_best_ep{episode:06d}.pt"
+            filename = f"{prefix}_best_ep{episode:06d}.pt"
+        elif checkpoint_type == "best_eval":
+            filename = f"{prefix}_eval_best_ep{episode:06d}.pt"
         elif checkpoint_type == "final":
-            filename = f"checkpoint_final_ep{episode:06d}.pt"
+            filename = f"{prefix}_final_ep{episode:06d}.pt"
         else:
-            filename = f"checkpoint_ep{episode:06d}.pt"
+            filename = f"{prefix}_ep{episode:06d}.pt"
 
         checkpoint_path = self.checkpoint_dir / filename
 
@@ -154,7 +162,7 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         # Load from disk
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
         return checkpoint
 
@@ -172,8 +180,8 @@ class CheckpointManager:
         Args:
             best_checkpoints: List of (checkpoint_path, metric_value) tuples for best models
         """
-        # Get all checkpoint files
-        all_checkpoints = list(self.checkpoint_dir.glob("checkpoint_*.pt"))
+        # Get all checkpoint files (both old and new naming formats)
+        all_checkpoints = list(self.checkpoint_dir.glob("*.pt"))
 
         if not all_checkpoints:
             return
@@ -264,7 +272,7 @@ class CheckpointManager:
                 - is_best: bool
                 - is_final: bool
         """
-        checkpoint_files = list(self.checkpoint_dir.glob("checkpoint_*.pt"))
+        checkpoint_files = list(self.checkpoint_dir.glob("*.pt"))
 
         checkpoints = []
         for ckpt_path in checkpoint_files:
@@ -314,6 +322,25 @@ class CheckpointManager:
             return int(match.group(1))
         return None
 
+    def _extract_run_hash(self, run_id: str) -> str:
+        """Extract hash from run_id for checkpoint naming.
+
+        Args:
+            run_id: Run identifier (e.g., 'sac_sb3_sac_s42_1767463361_fa4f')
+
+        Returns:
+            Last 4 characters of run_id as hash
+        """
+        if not run_id:
+            return "unkn"
+
+        # Extract last 4 characters as hash
+        # Run IDs typically end with a short hash like 'fa4f'
+        if len(run_id) >= 4:
+            return run_id[-4:]
+        else:
+            return run_id
+
     def get_resume_info(self) -> Optional[Dict[str, Any]]:
         """Get information needed to resume training.
 
@@ -344,7 +371,7 @@ class CheckpointManager:
 
         # Load checkpoint to get episode number
         try:
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
             episode = checkpoint['episode']
         except Exception:
             return None

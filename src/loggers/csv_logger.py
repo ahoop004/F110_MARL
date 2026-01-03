@@ -78,6 +78,7 @@ class CSVLogger:
         metrics: Any,  # EpisodeMetrics
         agent_metrics: Optional[Dict[str, Any]] = None,
         rolling_stats: Optional[Dict[str, float]] = None,
+        extra: Optional[Dict[str, Any]] = None,
     ):
         """Log episode metrics to CSV.
 
@@ -86,6 +87,7 @@ class CSVLogger:
             metrics: EpisodeMetrics instance (primary agent)
             agent_metrics: Dict mapping agent_id -> per-agent metrics (optional)
             rolling_stats: Rolling statistics dict (optional)
+            extra: Additional fields to include in episode metrics (optional)
         """
         if not self.enabled:
             return
@@ -99,6 +101,8 @@ class CSVLogger:
             for key, value in rolling_stats.items():
                 if key not in ['outcome_counts', 'outcome_rates', 'total_episodes']:
                     episode_data[f'rolling_{key}'] = value
+        if extra:
+            episode_data.update(extra)
 
         # Write episode metrics
         self._write_episode_row(episode_data)
