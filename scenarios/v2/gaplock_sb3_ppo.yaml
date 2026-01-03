@@ -264,4 +264,4 @@ wandb:
   - ppo
   - comparison
   - gaplock
-  notes: PPO comparison for gaplock adversarial task (Note: PPO won't train properly with run_v2.py - use run_sb3_baseline.py instead)
+  notes: "PPO comparison for gaplock adversarial task (Note: PPO won't train properly with run_v2.py - use run_sb3_baseline.py instead)"

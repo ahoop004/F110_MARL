@@ -36,13 +36,13 @@ class RichConsole:
 
     def __init__(
         self,
-        refresh_rate: float = 4.0,
+        refresh_rate: float = 0.1,
         enabled: bool = True,
     ):
         """Initialize Rich console dashboard.
 
         Args:
-            refresh_rate: Display refresh rate in Hz (default: 4.0)
+            refresh_rate: Display refresh rate in Hz (default: 0.1, only updates on explicit calls)
             enabled: Enable/disable Rich console (default: True, auto-disabled if Rich unavailable)
         """
         self.enabled = enabled and RICH_AVAILABLE

@@ -605,9 +605,8 @@ def main():
             )
             console_logger.print_info(f"CSV output dir: {output_dir}")
 
-        # Initialize Rich console dashboard
+        # Initialize Rich console dashboard (only updates at end of each episode)
         rich_console = RichConsole(
-            refresh_rate=4.0,
             enabled=True,
         )
 

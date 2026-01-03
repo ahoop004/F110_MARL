@@ -262,4 +262,4 @@ wandb:
   - a2c
   - comparison
   - gaplock
-  notes: A2C comparison for gaplock adversarial task (Note: A2C won't train properly with run_v2.py - use run_sb3_baseline.py instead)
+  notes: "A2C comparison for gaplock adversarial task (Note: A2C won't train properly with run_v2.py - use run_sb3_baseline.py instead)"
