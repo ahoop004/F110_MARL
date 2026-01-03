@@ -355,7 +355,7 @@ class EnhancedTrainingLoop:
         """
         # Sample spawn configuration if curriculum enabled
         if self.spawn_curriculum:
-            spawn_info = self.spawn_curriculum.sample_spawn()
+            spawn_info = self.spawn_curriculum.sample_spawn(episode=episode_num)
             # Reset with spawn configuration
             obs, info = self.env.reset(options={
                 'poses': spawn_info['poses'],

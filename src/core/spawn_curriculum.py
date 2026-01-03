@@ -93,6 +93,24 @@ class SpawnCurriculumManager:
         self.disable_patience_default = max(1, int(config.get('disable_patience', 3)))
         self.cooldown = max(0, int(config.get('cooldown', 20)))
 
+        # Smoothing parameters
+        ema_alpha = config.get('ema_alpha', 0.2)
+        try:
+            ema_alpha_value = float(ema_alpha)
+        except (TypeError, ValueError):
+            ema_alpha_value = 0.0
+        self.ema_alpha = max(0.0, min(1.0, ema_alpha_value))
+        self.use_ema = self.ema_alpha > 0.0
+
+        # Stage blending parameters
+        blend_prob = config.get('blend_previous_prob', 0.3)
+        try:
+            blend_prob_value = float(blend_prob)
+        except (TypeError, ValueError):
+            blend_prob_value = 0.0
+        self.blend_previous_prob = max(0.0, min(1.0, blend_prob_value))
+        self.blend_decay_episodes = max(0, int(config.get('blend_decay_episodes', 50)))
+
         # Parse stages
         self.stages = self._parse_stages(config.get('stages', []))
         if not self.stages:
@@ -104,6 +122,7 @@ class SpawnCurriculumManager:
         self.stage_histories: Dict[int, deque] = {
             i: deque(maxlen=self.window) for i in range(len(self.stages))
         }
+        self.stage_ema: Dict[int, Optional[float]] = {i: None for i in range(len(self.stages))}
 
         # Apply initial lock speed schedule if configured
         self._apply_lock_speed_schedule(self.current_stage_idx)
@@ -112,6 +131,8 @@ class SpawnCurriculumManager:
         self.promote_streak = 0
         self.regress_streak = 0
         self.last_transition_episode = -self.cooldown  # Allow immediate first transition
+        self._blend_source_stage_idx: Optional[int] = None
+        self._blend_start_episode: Optional[int] = None
 
     def _parse_stages(self, raw_stages: List[Dict[str, Any]]) -> List[SpawnStage]:
         """Parse stage configurations from config.
@@ -226,6 +247,28 @@ class SpawnCurriculumManager:
             except (TypeError, ValueError):
                 self.lock_speed_steps = self.lock_speed_steps_default
 
+    def _get_lock_speed_for_stage(self, stage_idx: int) -> int:
+        """Resolve lock_speed_steps for a specific stage without mutating state."""
+        if not self.lock_speed_schedule:
+            return self.lock_speed_steps_default
+        stage = self.stages[stage_idx]
+        value = None
+        by_stage = self.lock_speed_schedule.get('by_stage', {})
+        by_index = self.lock_speed_schedule.get('by_stage_index', {})
+        if stage.name in by_stage:
+            value = by_stage.get(stage.name)
+        if value is None:
+            if stage_idx in by_index:
+                value = by_index.get(stage_idx)
+            elif str(stage_idx) in by_index:
+                value = by_index.get(str(stage_idx))
+        if value is None:
+            return self.lock_speed_steps_default
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return self.lock_speed_steps_default
+
     @property
     def current_stage(self) -> SpawnStage:
         """Get current stage configuration."""
@@ -245,11 +288,27 @@ class SpawnCurriculumManager:
             return None
         return float(sum(history) / len(history))
 
+    def _update_stage_ema(self, stage_idx: int, value: float) -> None:
+        """Update EMA success rate for a stage."""
+        if not self.use_ema:
+            return
+        current = self.stage_ema.get(stage_idx)
+        if current is None:
+            self.stage_ema[stage_idx] = value
+            return
+        self.stage_ema[stage_idx] = (self.ema_alpha * value) + ((1.0 - self.ema_alpha) * current)
+
+    def _get_stage_rate(self, stage_idx: int) -> Optional[float]:
+        """Get smoothed success rate for a stage."""
+        if self.use_ema:
+            return self.stage_ema.get(stage_idx)
+        return self._stage_success_rate(stage_idx)
+
     def _can_transition(self, episode: int) -> bool:
         """Check if cooldown period has elapsed since last transition."""
         return episode >= (self.last_transition_episode + self.cooldown)
 
-    def _can_advance(self, episode: int, success_rate: float) -> bool:
+    def _can_advance(self, episode: int, success_rate: Optional[float]) -> bool:
         """Check if conditions are met to advance to next stage.
 
         Args:
@@ -266,7 +325,8 @@ class SpawnCurriculumManager:
         # Check basic requirements
         if episode < self.min_episode:
             return False
-        if len(self.success_history) < self.activation_samples:
+        stage_history = self.stage_histories.get(self.current_stage_idx)
+        if stage_history is None or len(stage_history) < self.activation_samples:
             return False
         if success_rate is None:
             return False
@@ -285,7 +345,7 @@ class SpawnCurriculumManager:
 
         return self.promote_streak >= enable_patience
 
-    def _can_regress(self, episode: int, success_rate: float) -> bool:
+    def _can_regress(self, episode: int, success_rate: Optional[float]) -> bool:
         """Check if conditions are met to regress to previous stage.
 
         Args:
@@ -300,7 +360,8 @@ class SpawnCurriculumManager:
             return False
 
         # Check basic requirements
-        if len(self.success_history) < self.activation_samples:
+        stage_history = self.stage_histories.get(self.current_stage_idx)
+        if stage_history is None or len(stage_history) < self.activation_samples:
             return False
         if success_rate is None:
             return False
@@ -326,6 +387,7 @@ class SpawnCurriculumManager:
             stage_idx: Index of stage to transition to
             episode: Current episode number
         """
+        old_idx = self.current_stage_idx
         self.current_stage_idx = stage_idx
         self.last_transition_episode = episode
         self.promote_streak = 0
@@ -333,7 +395,15 @@ class SpawnCurriculumManager:
 
         # Clear history for new stage to get fresh statistics
         self.stage_histories[stage_idx].clear()
+        self.stage_ema[stage_idx] = None
         self._apply_lock_speed_schedule(stage_idx)
+
+        if self.blend_previous_prob > 0.0 and old_idx != stage_idx:
+            self._blend_source_stage_idx = old_idx
+            self._blend_start_episode = episode
+        else:
+            self._blend_source_stage_idx = None
+            self._blend_start_episode = None
 
     def observe(self, episode: int, success: bool) -> Dict[str, Any]:
         """Record episode outcome and update curriculum state.
@@ -354,24 +424,28 @@ class SpawnCurriculumManager:
         value = 1.0 if success else 0.0
         self.success_history.append(value)
         self.stage_histories[self.current_stage_idx].append(value)
+        self._update_stage_ema(self.current_stage_idx, value)
 
         # Get current metrics
         success_rate = self.success_rate
-        stage_success_rate = self._stage_success_rate(self.current_stage_idx)
+        stage_success_rate = self._get_stage_rate(self.current_stage_idx)
 
         changed = False
 
         # Check for advancement
-        if self._can_advance(episode, success_rate):
+        if self._can_advance(episode, stage_success_rate):
             old_idx = self.current_stage_idx
             self._transition_to_stage(self.current_stage_idx + 1, episode)
             changed = self.current_stage_idx != old_idx
 
         # Check for regression
-        elif self._can_regress(episode, success_rate):
+        elif self._can_regress(episode, stage_success_rate):
             old_idx = self.current_stage_idx
             self._transition_to_stage(self.current_stage_idx - 1, episode)
             changed = self.current_stage_idx != old_idx
+
+        if changed:
+            stage_success_rate = self._get_stage_rate(self.current_stage_idx)
 
         return {
             'changed': changed,
@@ -381,8 +455,11 @@ class SpawnCurriculumManager:
             'stage_success_rate': stage_success_rate,
         }
 
-    def sample_spawn(self) -> Dict[str, Any]:
+    def sample_spawn(self, episode: Optional[int] = None) -> Dict[str, Any]:
         """Sample spawn configuration for current stage.
+
+        Args:
+            episode: Optional episode number for blend decay scheduling.
 
         Returns:
             Dict with:
@@ -391,7 +468,26 @@ class SpawnCurriculumManager:
                 - velocities: Dict mapping agent_id -> initial velocity (only car_0)
                 - stage: Current stage name
         """
-        stage = self.current_stage
+        stage_idx = self.current_stage_idx
+        if self._blend_source_stage_idx is not None and self.blend_previous_prob > 0.0:
+            if episode is None or self._blend_start_episode is None:
+                blend_prob = self.blend_previous_prob
+            elif self.blend_decay_episodes > 0:
+                elapsed = max(0, int(episode - self._blend_start_episode))
+                remaining = max(0.0, 1.0 - (elapsed / self.blend_decay_episodes))
+                blend_prob = self.blend_previous_prob * remaining
+            else:
+                blend_prob = self.blend_previous_prob
+
+            if blend_prob > 0.0 and np.random.random() < blend_prob:
+                stage_idx = self._blend_source_stage_idx
+
+        stage = self.stages[stage_idx]
+        lock_speed_steps = (
+            self.lock_speed_steps
+            if stage_idx == self.current_stage_idx
+            else self._get_lock_speed_for_stage(stage_idx)
+        )
 
         # Select spawn points
         if stage.spawn_points == 'all':
@@ -438,7 +534,7 @@ class SpawnCurriculumManager:
             'spawn_points': spawn_mapping,
             'poses': poses_array,
             'velocities': velocities,  # Dict {agent_id: velocity}
-            'lock_speed_steps': self.lock_speed_steps,  # Steps to lock speed
+            'lock_speed_steps': lock_speed_steps,  # Steps to lock speed
             'stage': stage.name,
         }
 
