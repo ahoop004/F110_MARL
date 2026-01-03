@@ -98,57 +98,11 @@ class AgentFactory:
 def register_builtin_agents():
     """Register all built-in agents."""
     try:
-        from agents.ppo.ppo import PPOAgent
-        AgentFactory.register("ppo", PPOAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.ppo.rec_ppo import RecurrentPPOAgent
-        AgentFactory.register("rec_ppo", RecurrentPPOAgent)
-        AgentFactory.register("recurrent_ppo", RecurrentPPOAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.td3.td3 import TD3Agent
-        AgentFactory.register("td3", TD3Agent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.sac.sac import SACAgent
-        AgentFactory.register("sac", SACAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.dqn.dqn import DQNAgent
-        AgentFactory.register("dqn", DQNAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.rainbow.r_dqn import RainbowDQNAgent
-        AgentFactory.register("rainbow", RainbowDQNAgent)
-        AgentFactory.register("rainbow_dqn", RainbowDQNAgent)
-    except ImportError:
-        pass
-
-    try:
         from agents.ftg import FTGAgent
         AgentFactory.register("ftg", FTGAgent)
         AgentFactory.register("follow_gap", FTGAgent)
         AgentFactory.register("gap_follow", FTGAgent)
         AgentFactory.register("followthegap", FTGAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.episodic import WaveletEpisodicAgent
-        AgentFactory.register("wavelet_episodic", WaveletEpisodicAgent)
-        AgentFactory.register("wavelet", WaveletEpisodicAgent)
-        AgentFactory.register("episodic", WaveletEpisodicAgent)
     except ImportError:
         pass
 
