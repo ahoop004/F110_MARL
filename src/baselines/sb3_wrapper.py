@@ -10,6 +10,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from src.core.obs_flatten import flatten_observation
+from src.rewards.strategy import RewardStrategy
 
 
 class SB3SingleAgentWrapper(gym.Env):
@@ -51,6 +52,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_high: np.ndarray = np.array([0.46, 1.0]),
         observation_preset: Optional[str] = None,
         target_id: Optional[str] = None,
+        reward_strategy: Optional[RewardStrategy] = None,
     ):
         super().__init__()
 
@@ -58,6 +60,7 @@ class SB3SingleAgentWrapper(gym.Env):
         self.agent_id = agent_id
         self.observation_preset = observation_preset
         self.target_id = target_id
+        self.reward_strategy = reward_strategy
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -79,6 +82,10 @@ class SB3SingleAgentWrapper(gym.Env):
 
         # Resolve observation scales from environment
         self.obs_scales = self._resolve_obs_scales()
+
+        # Track episode state for reward computation
+        self.current_obs_dict = None
+        self.episode_steps = 0
 
     def _resolve_obs_scales(self) -> Dict[str, float]:
         """Resolve fixed observation scales from the environment."""
@@ -178,6 +185,10 @@ class SB3SingleAgentWrapper(gym.Env):
         # Reset underlying environment
         obs_dict, info_dict = self.env.reset(seed=seed, options=options)
 
+        # Store current observations for reward computation
+        self.current_obs_dict = obs_dict
+        self.episode_steps = 0
+
         # Extract observation for controlled agent
         obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
         info = info_dict.get(self.agent_id, {})
@@ -213,17 +224,83 @@ class SB3SingleAgentWrapper(gym.Env):
                 if obs is not None and hasattr(agent, 'act'):
                     actions[agent_id] = agent.act(obs)
 
+        # Store previous observations
+        prev_obs_dict = self.current_obs_dict
+
         # Step environment with all actions
         obs_dict, reward_dict, done_dict, truncated_dict, info_dict = self.env.step(actions)
 
+        # Store current observations for next step
+        self.current_obs_dict = obs_dict
+        self.episode_steps += 1
+
         # Extract results for controlled agent
         obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
-        reward = float(reward_dict[self.agent_id])
         terminated = bool(done_dict[self.agent_id])
         truncated = bool(truncated_dict[self.agent_id])
         info = info_dict.get(self.agent_id, {})
 
+        # Compute reward using custom strategy if provided
+        if self.reward_strategy and prev_obs_dict:
+            reward_info = self._build_reward_info(
+                prev_obs=prev_obs_dict,
+                next_obs=obs_dict,
+                info=info_dict,
+                terminated=terminated,
+                truncated=truncated,
+            )
+            reward, components = self.reward_strategy.compute(reward_info)
+            reward = float(reward)
+            # Optionally store components in info for logging
+            if components:
+                info['reward_components'] = components
+        else:
+            # Use environment's default reward
+            reward = float(reward_dict[self.agent_id])
+
         return obs, reward, terminated, truncated, info
+
+    def _build_reward_info(
+        self,
+        prev_obs: Dict[str, Any],
+        next_obs: Dict[str, Any],
+        info: Dict[str, Any],
+        terminated: bool,
+        truncated: bool,
+    ) -> Dict[str, Any]:
+        """Build reward info dict for custom reward computation.
+
+        Args:
+            prev_obs: Previous observations for all agents
+            next_obs: Next observations for all agents
+            info: Step info from environment
+            terminated: Whether episode terminated
+            truncated: Whether episode was truncated
+
+        Returns:
+            Reward info dict for RewardStrategy.compute()
+        """
+        # Get timestep from environment if available
+        timestep = getattr(self.env, 'timestep', 0.01)
+
+        # Extract info for this agent
+        info_for_agent = info.get(self.agent_id, {}) if isinstance(info, dict) else {}
+
+        reward_info = {
+            'obs': prev_obs.get(self.agent_id, {}),
+            'next_obs': next_obs.get(self.agent_id, {}),
+            'info': info_for_agent,
+            'step': self.episode_steps,
+            'done': terminated or truncated,
+            'truncated': truncated,
+            'timestep': timestep,
+        }
+
+        # Add target obs if target_id is specified (for adversarial tasks)
+        if self.target_id and self.target_id in next_obs:
+            reward_info['target_obs'] = next_obs[self.target_id]
+
+        return reward_info
 
     def render(self):
         """Render environment (delegates to underlying env)."""

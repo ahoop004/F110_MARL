@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Train SB3 baseline agents for F110 gaplock task.
+"""Train SB3 baseline agents for F110 gaplock task with full curriculum support.
 
 This script provides baselines using Stable-Baselines3 (SB3) implementations
-of various RL algorithms. These are well-tested, proven algorithms that should
-converge reliably.
+of various RL algorithms with full support for curriculum learning from scenario files.
+
+Features:
+    - Custom reward strategies from scenario configs
+    - Spawn curriculum (environment-level difficulty progression)
+    - Phased curriculum (multi-stage training with advancement criteria)
+    - FTG opponent scheduling (dynamic difficulty adjustment)
+    - WandB integration with automatic curriculum metrics logging
+    - All configuration driven by scenario YAML files
 
 Supported algorithms:
     - Off-policy (continuous): sac, td3, ddpg, tqc
@@ -11,20 +18,23 @@ Supported algorithms:
     - On-policy: ppo, a2c
 
 Usage:
-    # Train SAC baseline
-    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sb3_sac.yaml
+    # Basic training (uses all settings from scenario)
+    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_sb3_ppo.yaml --wandb
 
-    # Train TD3 baseline
-    python run_sb3_baseline.py --algo td3 --scenario scenarios/v2/gaplock_sb3_td3.yaml
+    # Override episodes from command line
+    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_sb3_ppo.yaml --wandb --episodes 10000
 
-    # Train PPO baseline
-    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_sb3_ppo.yaml
+    # Custom seed
+    python run_sb3_baseline.py --algo ppo --scenario scenarios/v2/gaplock_sb3_ppo.yaml --wandb --seed 123
 
-    # Train A2C baseline
-    python run_sb3_baseline.py --algo a2c --scenario scenarios/v2/gaplock_sb3_a2c.yaml
-
-    # With wandb logging
-    python run_sb3_baseline.py --algo sac --scenario scenarios/v2/gaplock_sb3_sac.yaml --wandb
+Note:
+    The scenario file controls all training parameters including:
+    - Episodes, seed, environment settings
+    - Reward configuration
+    - Spawn curriculum stages and criteria
+    - Phased curriculum progression
+    - FTG opponent schedules
+    - WandB project, tags, and notes
 """
 
 import argparse
@@ -59,6 +69,7 @@ from src.core.scenario import load_and_expand_scenario
 from src.core.setup import create_training_setup
 from src.core.obs_flatten import flatten_observation
 from src.baselines.sb3_wrapper import SB3SingleAgentWrapper
+from src.baselines.sb3_curriculum_callback import CurriculumCallback
 
 
 def parse_args():
@@ -81,8 +92,8 @@ def parse_args():
     parser.add_argument(
         '--episodes',
         type=int,
-        default=2500,
-        help='Number of episodes to train (default: 2500)'
+        default=None,
+        help='Number of episodes to train (default: use value from scenario)'
     )
     parser.add_argument(
         '--wandb',
@@ -92,8 +103,8 @@ def parse_args():
     parser.add_argument(
         '--seed',
         type=int,
-        default=42,
-        help='Random seed (default: 42)'
+        default=None,
+        help='Random seed (default: use value from scenario)'
     )
     parser.add_argument(
         '--output-dir',
@@ -296,9 +307,16 @@ def main():
     print(f"Loading scenario: {args.scenario}")
     scenario = load_and_expand_scenario(args.scenario)
 
-    # Override episodes if specified
-    if args.episodes:
+    # Use episodes from scenario unless overridden by command line
+    if not args.episodes:
+        args.episodes = scenario.get('experiment', {}).get('episodes', 2500)
+    else:
+        # Override scenario episodes with command line value
         scenario['experiment']['episodes'] = args.episodes
+
+    # Use seed from scenario unless overridden by command line
+    if args.seed is None:
+        args.seed = scenario.get('experiment', {}).get('seed', 42)
 
     # Create environment and agents (including FTG defender)
     print("Creating environment...")
@@ -331,6 +349,9 @@ def main():
         action_low = action_space.low
         action_high = action_space.high
 
+    # Get reward strategy for the SB3 agent if available
+    reward_strategy = reward_strategies.get(sb3_agent_id)
+
     # Wrap environment for SB3
     print("Wrapping environment for SB3...")
     wrapped_env = SB3SingleAgentWrapper(
@@ -341,7 +362,13 @@ def main():
         action_high=action_high if action_high is not None else np.array([0.46, 1.0]),
         observation_preset=observation_preset,
         target_id=target_id,
+        reward_strategy=reward_strategy,
     )
+
+    if reward_strategy:
+        print(f"Using custom reward strategy for {sb3_agent_id}")
+    else:
+        print(f"Using environment default rewards for {sb3_agent_id}")
 
     # Set other agents (FTG defender) so they can act
     wrapped_env.set_other_agents(agents)
@@ -355,10 +382,15 @@ def main():
         if not WANDB_AVAILABLE:
             print("Warning: wandb requested but not available. Skipping.")
         else:
+            # Determine tags from scenario
+            scenario_tags = scenario.get('wandb', {}).get('tags', [])
+            if not scenario_tags:
+                scenario_tags = ['sb3', args.algo, 'baseline']
+
             wandb_run = wandb.init(
                 project=scenario.get('wandb', {}).get('project', 'marl-f110'),
                 entity=scenario.get('wandb', {}).get('entity'),
-                tags=['sb3', args.algo, 'baseline'],
+                tags=scenario_tags,
                 config={
                     'algorithm': args.algo,
                     'scenario': args.scenario,
@@ -366,7 +398,49 @@ def main():
                     'seed': args.seed,
                 },
                 sync_tensorboard=True,
+                notes=scenario.get('wandb', {}).get('notes'),
             )
+
+    # Setup curriculum if enabled in scenario
+    spawn_curriculum = None
+    spawn_config = scenario.get('environment', {}).get('spawn_curriculum', {})
+    if spawn_config.get('enabled', False):
+        from src.core.spawn_curriculum import SpawnCurriculumManager
+
+        spawn_configs = spawn_config.get('spawn_configs', {})
+        if spawn_configs:
+            print("Creating spawn curriculum...")
+            try:
+                spawn_curriculum = SpawnCurriculumManager(
+                    config=spawn_config,
+                    available_spawn_points=spawn_configs
+                )
+                print(f"  Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
+                      f"starting at '{spawn_curriculum.current_stage.name}'")
+            except Exception as e:
+                print(f"Warning: Failed to create spawn curriculum: {e}")
+                spawn_curriculum = None
+        else:
+            print("Warning: Spawn curriculum enabled but no spawn_configs provided")
+
+    # Get FTG schedules from scenario
+    ftg_schedules = {}
+    ftg_agents_dict = {}
+    for agent_id, agent_config in scenario.get('agents', {}).items():
+        if agent_config.get('algorithm', '').lower() == 'ftg':
+            schedule = agent_config.get('ftg_schedule')
+            if isinstance(schedule, dict) and schedule.get('enabled', False):
+                ftg_schedules[agent_id] = schedule
+                if agent_id in agents:
+                    ftg_agents_dict[agent_id] = agents[agent_id]
+
+    if ftg_schedules:
+        print(f"Loaded FTG schedules for {len(ftg_schedules)} agents")
+
+    # Get curriculum config from scenario
+    curriculum_config = scenario.get('curriculum')
+    if curriculum_config and curriculum_config.get('phases'):
+        print(f"Loaded phased curriculum with {len(curriculum_config['phases'])} phases")
 
     # Create output directory
     output_dir = Path(args.output_dir) / args.algo / f"seed_{args.seed}"
@@ -396,6 +470,20 @@ def main():
             verbose=2,
         )
         callbacks.append(wandb_callback)
+
+    # Curriculum callback
+    if spawn_curriculum or curriculum_config:
+        curriculum_callback = CurriculumCallback(
+            curriculum_config=curriculum_config,
+            spawn_curriculum=spawn_curriculum,
+            ftg_agents=ftg_agents_dict,
+            ftg_schedules=ftg_schedules,
+            env_wrapper=wrapped_env,
+            wandb_run=wandb_run,
+            verbose=1,
+        )
+        callbacks.append(curriculum_callback)
+        print("Curriculum callback enabled")
 
     # Extract hyperparameters from scenario
     agent_params = sb3_agent_cfg.get('params', {})
