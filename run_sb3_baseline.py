@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from gymnasium import spaces
 from stable_baselines3 import SAC, TD3, PPO, DDPG, A2C, DQN
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
@@ -56,6 +57,7 @@ except ImportError:
 
 from src.core.scenario import load_and_expand_scenario
 from src.core.setup import create_training_setup
+from src.core.obs_flatten import flatten_observation
 from src.baselines.sb3_wrapper import SB3SingleAgentWrapper
 
 
@@ -100,6 +102,44 @@ def parse_args():
         help='Directory to save models (default: ./sb3_models)'
     )
     return parser.parse_args()
+
+
+def get_space_dim(space) -> int:
+    """Get total dimension of a gym space."""
+    if isinstance(space, spaces.Dict):
+        return sum(get_space_dim(s) for s in space.spaces.values())
+    if isinstance(space, spaces.Box):
+        return int(np.prod(space.shape))
+    if isinstance(space, spaces.Discrete):
+        return 1
+    if isinstance(space, spaces.MultiDiscrete):
+        return len(space.nvec)
+    return 1
+
+
+def resolve_sb3_agent_config(scenario: dict, algo_name: str):
+    """Pick the SB3-controlled agent config from the scenario."""
+    agents_cfg = scenario.get('agents', {})
+    target_algo = f"sb3_{algo_name}".lower()
+    for agent_id, cfg in agents_cfg.items():
+        if str(cfg.get('algorithm', '')).lower() == target_algo:
+            return agent_id, cfg
+    if 'car_0' in agents_cfg:
+        return 'car_0', agents_cfg['car_0']
+    if agents_cfg:
+        first_id = next(iter(agents_cfg))
+        return first_id, agents_cfg[first_id]
+    raise ValueError("No agents configured in scenario")
+
+
+def resolve_observation_preset(agent_cfg: dict) -> str | None:
+    obs_cfg = agent_cfg.get('observation')
+    if isinstance(obs_cfg, dict):
+        if 'preset' in obs_cfg:
+            return obs_cfg['preset']
+        if obs_cfg:
+            return 'gaplock'
+    return None
 
 
 def create_sb3_agent(algo_name: str, env, seed: int = 42):
@@ -247,12 +287,43 @@ def main():
     print("Creating environment...")
     env, agents, reward_strategies = create_training_setup(scenario)
 
+    sb3_agent_id, sb3_agent_cfg = resolve_sb3_agent_config(scenario, args.algo)
+    observation_preset = resolve_observation_preset(sb3_agent_cfg)
+    target_id = sb3_agent_cfg.get('target_id')
+
+    obs_space = env.observation_spaces.get(sb3_agent_id)
+    if obs_space is None:
+        raise ValueError(f"Agent '{sb3_agent_id}' not found in observation spaces")
+
+    if observation_preset:
+        dummy_obs = obs_space.sample()
+        if target_id:
+            dummy_obs = dict(dummy_obs)
+            dummy_obs['central_state'] = obs_space.sample()
+        flat_dummy = flatten_observation(dummy_obs, preset=observation_preset, target_id=target_id)
+        obs_dim = int(flat_dummy.shape[0])
+    else:
+        obs_dim = get_space_dim(obs_space)
+
+    action_space = env.action_spaces.get(sb3_agent_id)
+    if action_space is None:
+        raise ValueError(f"Agent '{sb3_agent_id}' not found in action spaces")
+    action_low = None
+    action_high = None
+    if isinstance(action_space, spaces.Box):
+        action_low = action_space.low
+        action_high = action_space.high
+
     # Wrap environment for SB3
     print("Wrapping environment for SB3...")
     wrapped_env = SB3SingleAgentWrapper(
         env,
-        agent_id='car_0',  # Attacker
-        obs_dim=126,  # Gaplock observation dimension
+        agent_id=sb3_agent_id,
+        obs_dim=obs_dim,
+        action_low=action_low if action_low is not None else np.array([-0.46, -1.0]),
+        action_high=action_high if action_high is not None else np.array([0.46, 1.0]),
+        observation_preset=observation_preset,
+        target_id=target_id,
     )
 
     # Set other agents (FTG defender) so they can act

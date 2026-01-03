@@ -179,7 +179,7 @@ class SB3SingleAgentWrapper(gym.Env):
         obs_dict, info_dict = self.env.reset(seed=seed, options=options)
 
         # Extract observation for controlled agent
-        obs = obs_dict[self.agent_id].astype(np.float32)
+        obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
         info = info_dict.get(self.agent_id, {})
 
         return obs, info
@@ -217,7 +217,7 @@ class SB3SingleAgentWrapper(gym.Env):
         obs_dict, reward_dict, done_dict, truncated_dict, info_dict = self.env.step(actions)
 
         # Extract results for controlled agent
-        obs = obs_dict[self.agent_id].astype(np.float32)
+        obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
         reward = float(reward_dict[self.agent_id])
         terminated = bool(done_dict[self.agent_id])
         truncated = bool(truncated_dict[self.agent_id])
