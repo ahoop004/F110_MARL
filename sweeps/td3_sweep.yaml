@@ -34,8 +34,11 @@ command:
   - ${env}
   - python3
   - ${program}
+  - --algo
+  - td3
   - --scenario
   - ${scenario}
+  - --wandb
   - --override
   - agents.car_0.params.learning_rate=${learning_rate}
   - --override

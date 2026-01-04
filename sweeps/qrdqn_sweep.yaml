@@ -37,8 +37,11 @@ command:
   - ${env}
   - python3
   - ${program}
+  - --algo
+  - qrdqn
   - --scenario
   - ${scenario}
+  - --wandb
   - --override
   - agents.car_0.params.learning_rate=${learning_rate}
   - --override
@@ -47,5 +50,3 @@ command:
   - agents.car_0.params.exploration_final_eps=${exploration_final_eps}
   - --override
   - agents.car_0.params.batch_size=${batch_size}
-  - --override
-  - agents.car_0.params.hidden_dims=${hidden_dims}

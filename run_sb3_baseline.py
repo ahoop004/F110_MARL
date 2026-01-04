@@ -115,7 +115,63 @@ def parse_args():
         default='./sb3_models',
         help='Directory to save models (default: ./sb3_models)'
     )
+    parser.add_argument(
+        '--override',
+        type=str,
+        action='append',
+        default=[],
+        help='Override scenario parameters (e.g., agents.car_0.params.learning_rate=0.001)'
+    )
     return parser.parse_args()
+
+
+def apply_overrides(scenario: dict, overrides: list[str]) -> dict:
+    """Apply command-line overrides to scenario dictionary.
+
+    Args:
+        scenario: Scenario dictionary
+        overrides: List of override strings in format "key.subkey.param=value"
+
+    Returns:
+        Modified scenario dictionary
+    """
+    for override in overrides:
+        if '=' not in override:
+            print(f"Warning: Invalid override format '{override}', skipping")
+            continue
+
+        path, value_str = override.split('=', 1)
+        keys = path.split('.')
+
+        # Try to parse value as number, boolean, or keep as string
+        value = value_str
+        try:
+            # Try int
+            value = int(value_str)
+        except ValueError:
+            try:
+                # Try float
+                value = float(value_str)
+            except ValueError:
+                # Try boolean
+                if value_str.lower() in ('true', 'false'):
+                    value = value_str.lower() == 'true'
+                elif value_str.lower() == 'none':
+                    value = None
+                # Otherwise keep as string
+
+        # Navigate to the correct nested dictionary
+        current = scenario
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+
+        # Set the value
+        current[keys[-1]] = value
+        print(f"Override: {path} = {value} ({type(value).__name__})")
+
+    return scenario
 
 
 def get_space_dim(space) -> int:
@@ -309,6 +365,11 @@ def main():
     # Load scenario
     print(f"Loading scenario: {args.scenario}")
     scenario = load_and_expand_scenario(args.scenario)
+
+    # Apply command-line overrides
+    if args.override:
+        print(f"\nApplying {len(args.override)} override(s):")
+        scenario = apply_overrides(scenario, args.override)
 
     # Use episodes from scenario unless overridden by command line
     if not args.episodes:
