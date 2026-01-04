@@ -1,0 +1,36 @@
+program: run_sb3_baseline.py
+method: grid
+metric:
+  name: eval/success_rate
+  goal: maximize
+
+parameters:
+  scenario:
+    value: scenarios/sac.yaml
+
+  # Learning rate
+  learning_rate:
+    values: [0.0001, 0.0005]
+
+  # Discount factor
+  gamma:
+    values: [0.995, 0.999]
+
+  # Batch size
+  batch_size:
+    values: [128, 256]
+
+# Total combinations: 2 * 2 * 2 = 8 runs (quick test)
+
+command:
+  - ${env}
+  - python3
+  - ${program}
+  - --scenario
+  - ${scenario}
+  - --override
+  - agents.car_0.params.learning_rate=${learning_rate}
+  - --override
+  - agents.car_0.params.gamma=${gamma}
+  - --override
+  - agents.car_0.params.batch_size=${batch_size}

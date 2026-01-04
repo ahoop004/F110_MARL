@@ -114,11 +114,16 @@ class SB3EvaluationCallback(BaseCallback):
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
 
             if self.wandb_run:
+                reward_value = float(ep_reward)
+                if not np.isfinite(reward_value):
+                    reward_value = 0.0
                 self.total_eval_episodes += 1
                 self.wandb_run.log({
                     "eval/episode": int(self.total_eval_episodes),
-                    "eval/episode_reward": ep_reward,
-                    "eval/episode_steps": steps,
+                }, step=self.num_timesteps)
+                self.wandb_run.log({
+                    "eval/episode_reward": reward_value,
+                    "eval/episode_steps": int(steps),
                     "eval/episode_success": int(success),
                     "eval/spawn_point": spawn_point,
                     "eval/training_episode": training_episode if training_episode is not None else self.episode_count,

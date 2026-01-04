@@ -1,0 +1,49 @@
+program: run_sb3_baseline.py
+method: grid
+metric:
+  name: eval/success_rate
+  goal: maximize
+
+parameters:
+  scenario:
+    value: scenarios/ppo.yaml
+
+  # Learning rate
+  learning_rate:
+    values: [0.0001, 0.0003, 0.0005]
+
+  # Discount factor
+  gamma:
+    values: [0.99, 0.995, 0.999]
+
+  # PPO clip parameter
+  clip_range:
+    values: [0.1, 0.2, 0.3]
+
+  # Entropy coefficient
+  ent_coef:
+    values: [0.0, 0.01, 0.02]
+
+  # Steps per update
+  n_steps:
+    values: [1024, 2048]
+
+# Total combinations: 3 * 3 * 3 * 3 * 2 = 162 runs
+# Recommend reducing: remove some gamma/clip_range/ent_coef values
+
+command:
+  - ${env}
+  - python3
+  - ${program}
+  - --scenario
+  - ${scenario}
+  - --override
+  - agents.car_0.params.learning_rate=${learning_rate}
+  - --override
+  - agents.car_0.params.gamma=${gamma}
+  - --override
+  - agents.car_0.params.clip_range=${clip_range}
+  - --override
+  - agents.car_0.params.ent_coef=${ent_coef}
+  - --override
+  - agents.car_0.params.n_steps=${n_steps}

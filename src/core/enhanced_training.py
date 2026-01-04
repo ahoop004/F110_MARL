@@ -1040,10 +1040,15 @@ class EnhancedTrainingLoop:
 
             # Log to WandB
             if self.wandb_logger:
+                reward_value = float(ep_data['reward'])
+                if not np.isfinite(reward_value):
+                    reward_value = 0.0
                 self.wandb_logger.log_metrics({
                     'eval/episode': int(self.total_eval_episodes),
-                    'eval/episode_reward': ep_data['reward'],
-                    'eval/episode_steps': ep_data['steps'],
+                }, step=episode_num)
+                self.wandb_logger.log_metrics({
+                    'eval/episode_reward': reward_value,
+                    'eval/episode_steps': int(ep_data['steps']),
                     'eval/episode_success': int(ep_data['success']),
                     'eval/spawn_point': ep_data['spawn_point'],
                     'eval/training_episode': episode_num,

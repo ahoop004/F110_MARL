@@ -407,10 +407,14 @@ def main():
                 notes=scenario.get('wandb', {}).get('notes'),
             )
             try:
+                wandb.define_metric("train/episode")
                 wandb.define_metric("train/*", step_metric="train/episode")
                 wandb.define_metric("target/*", step_metric="train/episode")
                 wandb.define_metric("curriculum/*", step_metric="train/episode")
-                wandb.define_metric("eval/*", step_metric="eval/episode")
+                wandb.define_metric("eval/episode")
+                wandb.define_metric("eval/episode_*", step_metric="eval/episode")
+                wandb.define_metric("eval/training_episode", step_metric="eval/episode")
+                wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
                 wandb.define_metric("eval_agg/*", step_metric="eval/episode")
             except Exception:
                 pass
