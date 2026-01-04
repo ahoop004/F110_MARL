@@ -371,6 +371,26 @@ def main():
         print(f"\nApplying {len(args.override)} override(s):")
         scenario = apply_overrides(scenario, args.override)
 
+    # Apply WandB sweep config if running in a sweep
+    try:
+        import wandb
+        if wandb.run is not None and hasattr(wandb.config, 'keys'):
+            wandb_params = dict(wandb.config)
+            # Filter out non-hyperparameter keys that WandB might add
+            param_overrides = []
+            for key, value in wandb_params.items():
+                # Skip WandB metadata keys
+                if key.startswith('_') or key in ['method', 'metric', 'program']:
+                    continue
+                override_path = f"agents.car_0.params.{key}"
+                param_overrides.append(f"{override_path}={value}")
+
+            if param_overrides:
+                print(f"\nApplying WandB sweep config ({len(param_overrides)} parameter(s)):")
+                scenario = apply_overrides(scenario, param_overrides)
+    except (ImportError, AttributeError):
+        pass
+
     # Use episodes from scenario unless overridden by command line
     if not args.episodes:
         args.episodes = scenario.get('experiment', {}).get('episodes', 2500)

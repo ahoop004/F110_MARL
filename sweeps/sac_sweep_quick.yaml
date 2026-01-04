@@ -28,9 +28,3 @@ command:
   - --scenario
   - scenarios/sac.yaml
   - --wandb
-  - --override
-  - agents.car_0.params.learning_rate=${learning_rate}
-  - --override
-  - agents.car_0.params.gamma=${gamma}
-  - --override
-  - agents.car_0.params.batch_size=${batch_size}

@@ -25,9 +25,3 @@ command:
 - --scenario
 - scenarios/ppo.yaml
 - --wandb
-- --override
-- agents.car_0.params.learning_rate=${learning_rate}
-- --override
-- agents.car_0.params.clip_range=${clip_range}
-- --override
-- agents.car_0.params.ent_coef=${ent_coef}
