@@ -55,6 +55,7 @@ class SB3SingleAgentWrapper(gym.Env):
         target_id: Optional[str] = None,
         reward_strategy: Optional[RewardStrategy] = None,
         action_set: Optional[np.ndarray] = None,
+        spawn_curriculum: Optional[Any] = None,
     ):
         super().__init__()
 
@@ -63,6 +64,9 @@ class SB3SingleAgentWrapper(gym.Env):
         self.observation_preset = observation_preset
         self.target_id = target_id
         self.reward_strategy = reward_strategy
+        self.spawn_curriculum = spawn_curriculum
+        self._episode_count = 0
+        self._last_spawn_info: Optional[Dict[str, Any]] = None
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -194,6 +198,18 @@ class SB3SingleAgentWrapper(gym.Env):
             obs: Initial observation for controlled agent
             info: Info dict
         """
+        # Apply spawn curriculum if configured and no explicit options provided
+        if options is None and self.spawn_curriculum is not None:
+            spawn_info = self.spawn_curriculum.sample_spawn(episode=self._episode_count)
+            self._last_spawn_info = spawn_info
+            options = {
+                'poses': spawn_info['poses'],
+                'velocities': spawn_info['velocities'],
+                'lock_speed_steps': spawn_info['lock_speed_steps'],
+            }
+        else:
+            self._last_spawn_info = None
+
         # Reset underlying environment
         obs_dict, info_dict = self.env.reset(seed=seed, options=options)
 
@@ -204,6 +220,13 @@ class SB3SingleAgentWrapper(gym.Env):
         # Extract observation for controlled agent
         obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
         info = info_dict.get(self.agent_id, {})
+        if self._last_spawn_info:
+            spawn_mapping = self._last_spawn_info.get('spawn_points', {})
+            spawn_point = spawn_mapping.get(self.agent_id)
+            if spawn_point:
+                info = dict(info)
+                info['spawn_point'] = spawn_point
+        self._episode_count += 1
 
         return obs, info
 

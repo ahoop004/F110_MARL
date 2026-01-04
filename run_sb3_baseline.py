@@ -521,6 +521,30 @@ def main():
         if action_set is None:
             raise ValueError(f"{args.algo.upper()} requires 'action_set' parameter for action discretization")
 
+    # Setup curriculum if enabled in scenario
+    spawn_curriculum = None
+    spawn_config = scenario.get('environment', {}).get('spawn_curriculum', {})
+    if spawn_config.get('enabled', False):
+        from src.core.spawn_curriculum import SpawnCurriculumManager
+
+        spawn_configs = spawn_config.get('spawn_configs', {})
+        if spawn_configs:
+            print("Creating spawn curriculum...")
+            try:
+                spawn_curriculum = SpawnCurriculumManager(
+                    config=spawn_config,
+                    available_spawn_points=spawn_configs
+                )
+                print(
+                    f"  Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
+                    f"starting at '{spawn_curriculum.current_stage.name}'"
+                )
+            except Exception as e:
+                print(f"Warning: Failed to create spawn curriculum: {e}")
+                spawn_curriculum = None
+        else:
+            print("Warning: Spawn curriculum enabled but no spawn_configs provided")
+
     # Wrap environment for SB3
     print("Wrapping environment for SB3...")
     wrapped_env = SB3SingleAgentWrapper(
@@ -533,6 +557,7 @@ def main():
         target_id=target_id,
         reward_strategy=reward_strategy,
         action_set=np.array(action_set) if action_set is not None else None,
+        spawn_curriculum=spawn_curriculum,
     )
 
     if reward_strategy:
@@ -560,28 +585,6 @@ def main():
             wandb.define_metric("eval_agg/*", step_metric="eval/episode")
         except Exception:
             pass
-
-    # Setup curriculum if enabled in scenario
-    spawn_curriculum = None
-    spawn_config = scenario.get('environment', {}).get('spawn_curriculum', {})
-    if spawn_config.get('enabled', False):
-        from src.core.spawn_curriculum import SpawnCurriculumManager
-
-        spawn_configs = spawn_config.get('spawn_configs', {})
-        if spawn_configs:
-            print("Creating spawn curriculum...")
-            try:
-                spawn_curriculum = SpawnCurriculumManager(
-                    config=spawn_config,
-                    available_spawn_points=spawn_configs
-                )
-                print(f"  Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
-                      f"starting at '{spawn_curriculum.current_stage.name}'")
-            except Exception as e:
-                print(f"Warning: Failed to create spawn curriculum: {e}")
-                spawn_curriculum = None
-        else:
-            print("Warning: Spawn curriculum enabled but no spawn_configs provided")
 
     # Get FTG schedules from scenario
     ftg_schedules = {}
