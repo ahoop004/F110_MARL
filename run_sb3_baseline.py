@@ -411,6 +411,16 @@ def main():
                     },
                     sync_tensorboard=True,
                 )
+                if wandb_run is not None:
+                    try:
+                        sweep_name = scenario.get('wandb', {}).get(
+                            'name', scenario.get('experiment', {}).get('name')
+                        )
+                        algo_label = str(args.algo).lower()
+                        wandb_run.name = f"{sweep_name}_{algo_label}_{wandb_run.id}"
+                        wandb_run.save()
+                    except Exception:
+                        pass
 
                 if wandb.config:
                     wandb_params = dict(wandb.config)

@@ -1,4 +1,4 @@
-program: run_sb3_baseline.py
+program: run.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
@@ -34,6 +34,8 @@ command:
 - ${env}
 - python3
 - ${program}
+- --runner
+- sb3
 - --algo
 - ddpg
 - --scenario
