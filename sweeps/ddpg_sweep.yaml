@@ -1,5 +1,7 @@
 program: run_sb3_baseline.py
 method: grid
+project: marl-f110
+entity: ahoop004-old-dominion-university
 metric:
   name: eval/success_rate
   goal: maximize
