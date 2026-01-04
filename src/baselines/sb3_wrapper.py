@@ -54,6 +54,7 @@ class SB3SingleAgentWrapper(gym.Env):
         observation_preset: Optional[str] = None,
         target_id: Optional[str] = None,
         reward_strategy: Optional[RewardStrategy] = None,
+        action_set: Optional[np.ndarray] = None,
     ):
         super().__init__()
 
@@ -71,12 +72,22 @@ class SB3SingleAgentWrapper(gym.Env):
             dtype=np.float32
         )
 
-        # Define action space (Box for continuous actions)
-        self.action_space = spaces.Box(
-            low=action_low,
-            high=action_high,
-            dtype=np.float32
-        )
+        # Define action space (Discrete or Box)
+        self.action_set = action_set
+        if action_set is not None:
+            # Discrete action space for DQN/QR-DQN
+            action_set_array = np.asarray(action_set, dtype=np.float32)
+            if action_set_array.ndim != 2:
+                raise ValueError("action_set must be 2D array of shape (n_actions, action_dim)")
+            self.action_set = action_set_array
+            self.action_space = spaces.Discrete(len(action_set_array))
+        else:
+            # Continuous action space for SAC/TD3/PPO
+            self.action_space = spaces.Box(
+                low=action_low,
+                high=action_high,
+                dtype=np.float32
+            )
 
         # Store agents dict for non-SB3 agents
         self.other_agents = None
@@ -203,7 +214,7 @@ class SB3SingleAgentWrapper(gym.Env):
         """Take a step in the environment.
 
         Args:
-            action: Action for controlled agent
+            action: Action for controlled agent (discrete index or continuous action)
 
         Returns:
             obs: Next observation
@@ -212,8 +223,15 @@ class SB3SingleAgentWrapper(gym.Env):
             truncated: Whether episode was truncated (time limit)
             info: Info dict
         """
+        # Convert discrete action to continuous if using action_set
+        if self.action_set is not None:
+            action_idx = int(action)
+            continuous_action = self.action_set[action_idx]
+        else:
+            continuous_action = action
+
         # Build action dict for all agents
-        actions = {self.agent_id: action}
+        actions = {self.agent_id: continuous_action}
 
         # Get actions from other agents (if they exist)
         if self.other_agents:

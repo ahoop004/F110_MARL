@@ -436,6 +436,16 @@ def main():
     # Get reward strategy for the SB3 agent if available
     reward_strategy = reward_strategies.get(sb3_agent_id)
 
+    # Extract action_set if present (for DQN/QR-DQN)
+    action_set = None
+    if args.algo in ['dqn', 'qrdqn']:
+        # Check in agent config or params for action_set
+        agent_cfg = scenario.get('agents', {}).get(sb3_agent_id, {})
+        params = agent_cfg.get('params', {})
+        action_set = agent_cfg.get('action_set') or params.get('action_set')
+        if action_set is None:
+            raise ValueError(f"{args.algo.upper()} requires 'action_set' parameter for action discretization")
+
     # Wrap environment for SB3
     print("Wrapping environment for SB3...")
     wrapped_env = SB3SingleAgentWrapper(
@@ -447,6 +457,7 @@ def main():
         observation_preset=observation_preset,
         target_id=target_id,
         reward_strategy=reward_strategy,
+        action_set=np.array(action_set) if action_set is not None else None,
     )
 
     if reward_strategy:
@@ -632,6 +643,7 @@ def main():
                 observation_preset=observation_preset,
                 target_id=target_id,
                 reward_strategy=eval_reward_strategy,
+                action_set=np.array(action_set) if action_set is not None else None,
             )
             eval_wrapped_env.set_other_agents(eval_agents)
             eval_wrapped_env = Monitor(eval_wrapped_env)
