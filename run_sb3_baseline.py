@@ -175,6 +175,17 @@ def apply_overrides(scenario: dict, overrides: list[str]) -> dict:
     return scenario
 
 
+def set_nested_value(config: dict, path: str, value) -> None:
+    """Set a nested dictionary value using dot-notation path."""
+    keys = path.split('.')
+    current = config
+    for key in keys[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    current[keys[-1]] = value
+
+
 def get_space_dim(space) -> int:
     """Get total dimension of a gym space."""
     if isinstance(space, spaces.Dict):
@@ -372,31 +383,95 @@ def main():
         print(f"\nApplying {len(args.override)} override(s):")
         scenario = apply_overrides(scenario, args.override)
 
-    # Check if running in a WandB sweep (before wandb.init)
-    # WandB sets WANDB_SWEEP_ID environment variable when running a sweep
+    # Check if running in a WandB sweep
     in_sweep = 'WANDB_SWEEP_ID' in os.environ or 'WANDB_SWEEP_PARAM_PATH' in os.environ
-
-    # Apply WandB sweep config if running in a sweep
-    # Note: This happens BEFORE wandb.init(), so we can't access wandb.config yet
-    # The sweep parameters will be available after wandb.init() in the wandb section
     sweep_params_applied = {}
 
+    # Resolve the SB3-controlled agent ID early for sweep overrides
+    sb3_agent_id, _ = resolve_sb3_agent_config(scenario, args.algo)
+
+    # Initialize wandb early for sweeps so we can apply params before env creation
+    wandb_run = None
+    if args.wandb:
+        if not WANDB_AVAILABLE:
+            print("Warning: wandb requested but not available. Skipping.")
+        else:
+            scenario_tags = scenario.get('wandb', {}).get('tags', [])
+            if not scenario_tags:
+                scenario_tags = ['sb3', args.algo, 'baseline']
+
+            if in_sweep:
+                print("Running in WandB sweep - using sweep configuration")
+                wandb_run = wandb.init(
+                    config={
+                        'algorithm': args.algo,
+                        'scenario': args.scenario,
+                        'episodes': scenario.get('experiment', {}).get('episodes', 2500),
+                        'seed': scenario.get('experiment', {}).get('seed', 42),
+                    },
+                    sync_tensorboard=True,
+                )
+
+                if wandb.config:
+                    wandb_params = dict(wandb.config)
+                    for key, value in wandb_params.items():
+                        if key.startswith('_') or key in [
+                            'method', 'metric', 'program', 'algorithm', 'scenario'
+                        ]:
+                            continue
+                        if key == 'episodes':
+                            scenario.setdefault('experiment', {})['episodes'] = value
+                            sweep_params_applied[key] = value
+                            continue
+                        if key == 'seed':
+                            scenario.setdefault('experiment', {})['seed'] = value
+                            sweep_params_applied[key] = value
+                            continue
+
+                        override_path = key if '.' in key else f"agents.{sb3_agent_id}.params.{key}"
+                        set_nested_value(scenario, override_path, value)
+                        sweep_params_applied[key] = value
+
+                    if sweep_params_applied:
+                        print(f"\nApplying WandB sweep parameters ({len(sweep_params_applied)} parameter(s)):")
+                        for key, value in sweep_params_applied.items():
+                            print(f"  {key} = {value}")
+            else:
+                wandb_run = wandb.init(
+                    project=scenario.get('wandb', {}).get('project', 'marl-f110'),
+                    entity=scenario.get('wandb', {}).get('entity'),
+                    name=scenario.get('wandb', {}).get('name', scenario.get('experiment', {}).get('name')),
+                    tags=scenario_tags,
+                    group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
+                    job_type=scenario.get('wandb', {}).get('job_type', args.algo),
+                    config={
+                        'algorithm': args.algo,
+                        'scenario': args.scenario,
+                        'episodes': args.episodes or scenario.get('experiment', {}).get('episodes', 2500),
+                        'seed': args.seed if args.seed is not None else scenario.get('experiment', {}).get('seed', 42),
+                    },
+                    sync_tensorboard=True,
+                    notes=scenario.get('wandb', {}).get('notes'),
+                )
+
     # Use episodes from scenario unless overridden by command line
-    if not args.episodes:
+    if args.episodes is None:
         args.episodes = scenario.get('experiment', {}).get('episodes', 2500)
     else:
-        # Override scenario episodes with command line value
-        scenario['experiment']['episodes'] = args.episodes
+        scenario.setdefault('experiment', {})['episodes'] = args.episodes
 
     # Use seed from scenario unless overridden by command line
     if args.seed is None:
         args.seed = scenario.get('experiment', {}).get('seed', 42)
+    else:
+        scenario.setdefault('experiment', {})['seed'] = args.seed
+
+    # Re-resolve SB3 agent config after sweep overrides
+    sb3_agent_id, sb3_agent_cfg = resolve_sb3_agent_config(scenario, args.algo)
 
     # Create environment and agents (including FTG defender)
     print("Creating environment...")
     env, agents, reward_strategies = create_training_setup(scenario)
-
-    sb3_agent_id, sb3_agent_cfg = resolve_sb3_agent_config(scenario, args.algo)
     observation_preset = resolve_observation_preset(sb3_agent_cfg)
     target_id = sb3_agent_cfg.get('target_id')
 
@@ -461,73 +536,13 @@ def main():
     # Wrap with Monitor for logging
     wrapped_env = Monitor(wrapped_env)
 
-    # Initialize wandb if requested
-    wandb_run = None
-    if args.wandb:
-        if not WANDB_AVAILABLE:
-            print("Warning: wandb requested but not available. Skipping.")
-        else:
-            # Determine tags from scenario
-            scenario_tags = scenario.get('wandb', {}).get('tags', [])
-            if not scenario_tags:
-                scenario_tags = ['sb3', args.algo, 'baseline']
-
-            # When in a sweep, let WandB control project/entity/name/group
-            # The sweep configuration sets these automatically
-            if in_sweep:
-                print("Running in WandB sweep - using sweep configuration")
-                # In sweep mode, call wandb.init() with minimal config
-                # WandB will use sweep's project/entity/name automatically
-                wandb_run = wandb.init(
-                    config={
-                        'algorithm': args.algo,
-                        'scenario': args.scenario,
-                        'episodes': args.episodes,
-                        'seed': args.seed,
-                    },
-                    sync_tensorboard=True,
-                )
-
-                # After init, apply sweep parameters from wandb.config
-                if wandb.config:
-                    wandb_params = dict(wandb.config)
-                    param_overrides = []
-                    for key, value in wandb_params.items():
-                        # Skip metadata and our scenario config keys
-                        if key.startswith('_') or key in ['method', 'metric', 'program', 'algorithm', 'scenario', 'episodes', 'seed']:
-                            continue
-                        override_path = f"agents.car_0.params.{key}"
-                        param_overrides.append(f"{override_path}={value}")
-                        sweep_params_applied[key] = value
-
-                    if param_overrides:
-                        print(f"\nApplying WandB sweep parameters ({len(param_overrides)} parameter(s)):")
-                        for key, value in sweep_params_applied.items():
-                            print(f"  {key} = {value}")
-                        scenario = apply_overrides(scenario, param_overrides)
-            else:
-                # Normal run - use scenario configuration
-                wandb_run = wandb.init(
-                    project=scenario.get('wandb', {}).get('project', 'marl-f110'),
-                    entity=scenario.get('wandb', {}).get('entity'),
-                    name=scenario.get('wandb', {}).get('name', scenario.get('experiment', {}).get('name')),
-                    tags=scenario_tags,
-                    group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
-                    job_type=scenario.get('wandb', {}).get('job_type', args.algo),
-                    config={
-                        'algorithm': args.algo,
-                        'scenario': args.scenario,
-                        'episodes': args.episodes,
-                        'seed': args.seed,
-                    },
-                    sync_tensorboard=True,
-                    notes=scenario.get('wandb', {}).get('notes'),
-                )
-            try:
-                wandb.define_metric("train/episode")
-                wandb.define_metric("train/*", step_metric="train/episode")
-                wandb.define_metric("target/*", step_metric="train/episode")
-                wandb.define_metric("curriculum/*", step_metric="train/episode")
+    # Define wandb metrics once run is initialized
+    if wandb_run is not None:
+        try:
+            wandb.define_metric("train/episode")
+            wandb.define_metric("train/*", step_metric="train/episode")
+            wandb.define_metric("target/*", step_metric="train/episode")
+            wandb.define_metric("curriculum/*", step_metric="train/episode")
                 wandb.define_metric("eval/episode")
                 wandb.define_metric("eval/episode_*", step_metric="eval/episode")
                 wandb.define_metric("eval/training_episode", step_metric="eval/episode")
