@@ -1,0 +1,38 @@
+program: run_sb3_baseline.py
+method: grid
+metric:
+  name: eval/success_rate
+  goal: maximize
+parameters:
+  learning_rate:
+    values:
+    - 0.0003
+    - 0.0007
+    - 0.001
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
+  n_steps:
+    values:
+    - 5
+    - 8
+    - 16
+  ent_coef:
+    values:
+    - 0.0
+    - 0.01
+  vf_coef:
+    values:
+    - 0.25
+    - 0.5
+command:
+- ${env}
+- python3
+- ${program}
+- --algo
+- a2c
+- --scenario
+- scenarios/a2c.yaml
+- --wandb

@@ -1,0 +1,39 @@
+program: run_sb3_baseline.py
+method: grid
+metric:
+  name: eval/success_rate
+  goal: maximize
+parameters:
+  learning_rate:
+    values:
+    - 0.0001
+    - 0.0003
+    - 0.0005
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
+  tau:
+    values:
+    - 0.005
+    - 0.01
+    - 0.02
+  batch_size:
+    values:
+    - 128
+    - 256
+  action_noise_sigma:
+    values:
+    - 0.05
+    - 0.1
+    - 0.2
+command:
+- ${env}
+- python3
+- ${program}
+- --algo
+- ddpg
+- --scenario
+- scenarios/ddpg.yaml
+- --wandb

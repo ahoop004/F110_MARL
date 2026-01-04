@@ -372,6 +372,7 @@ def main():
         scenario = apply_overrides(scenario, args.override)
 
     # Apply WandB sweep config if running in a sweep
+    sweep_params_applied = {}
     try:
         import wandb
         if wandb.run is not None and hasattr(wandb.config, 'keys'):
@@ -379,14 +380,17 @@ def main():
             # Filter out non-hyperparameter keys that WandB might add
             param_overrides = []
             for key, value in wandb_params.items():
-                # Skip WandB metadata keys
-                if key.startswith('_') or key in ['method', 'metric', 'program']:
+                # Skip WandB metadata keys and scenario config
+                if key.startswith('_') or key in ['method', 'metric', 'program', 'algorithm', 'scenario', 'episodes', 'seed']:
                     continue
                 override_path = f"agents.car_0.params.{key}"
                 param_overrides.append(f"{override_path}={value}")
+                sweep_params_applied[key] = value
 
             if param_overrides:
                 print(f"\nApplying WandB sweep config ({len(param_overrides)} parameter(s)):")
+                for key, value in sweep_params_applied.items():
+                    print(f"  {key} = {value}")
                 scenario = apply_overrides(scenario, param_overrides)
     except (ImportError, AttributeError):
         pass
@@ -477,27 +481,44 @@ def main():
         if not WANDB_AVAILABLE:
             print("Warning: wandb requested but not available. Skipping.")
         else:
+            # Check if running in a sweep (wandb.run already exists)
+            in_sweep = wandb.run is not None
+
             # Determine tags from scenario
             scenario_tags = scenario.get('wandb', {}).get('tags', [])
             if not scenario_tags:
                 scenario_tags = ['sb3', args.algo, 'baseline']
 
-            wandb_run = wandb.init(
-                project=scenario.get('wandb', {}).get('project', 'marl-f110'),
-                entity=scenario.get('wandb', {}).get('entity'),
-                name=scenario.get('wandb', {}).get('name', scenario.get('experiment', {}).get('name')),
-                tags=scenario_tags,
-                group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
-                job_type=scenario.get('wandb', {}).get('job_type', args.algo),
-                config={
+            # When in a sweep, don't override project/entity/name/group
+            # The sweep controller sets these automatically
+            if in_sweep:
+                print("Running in WandB sweep - using sweep configuration")
+                wandb_run = wandb.run
+                # Update config with scenario info
+                wandb.config.update({
                     'algorithm': args.algo,
                     'scenario': args.scenario,
                     'episodes': args.episodes,
                     'seed': args.seed,
-                },
-                sync_tensorboard=True,
-                notes=scenario.get('wandb', {}).get('notes'),
-            )
+                }, allow_val_change=True)
+            else:
+                # Normal run - use scenario configuration
+                wandb_run = wandb.init(
+                    project=scenario.get('wandb', {}).get('project', 'marl-f110'),
+                    entity=scenario.get('wandb', {}).get('entity'),
+                    name=scenario.get('wandb', {}).get('name', scenario.get('experiment', {}).get('name')),
+                    tags=scenario_tags,
+                    group=scenario.get('wandb', {}).get('group', scenario.get('experiment', {}).get('name')),
+                    job_type=scenario.get('wandb', {}).get('job_type', args.algo),
+                    config={
+                        'algorithm': args.algo,
+                        'scenario': args.scenario,
+                        'episodes': args.episodes,
+                        'seed': args.seed,
+                    },
+                    sync_tensorboard=True,
+                    notes=scenario.get('wandb', {}).get('notes'),
+                )
             try:
                 wandb.define_metric("train/episode")
                 wandb.define_metric("train/*", step_metric="train/episode")

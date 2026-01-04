@@ -141,7 +141,8 @@ class SB3EvaluationCallback(BaseCallback):
         if self.wandb_run:
             agg_metrics = {
                 "eval/episode": int(self.total_eval_episodes),
-                "eval_agg/success_rate": success_rate,
+                "eval/success_rate": success_rate,  # Primary metric for sweeps
+                "eval_agg/success_rate": success_rate,  # Keep for backwards compatibility
                 "eval_agg/avg_reward": avg_reward,
                 "eval_agg/std_reward": std_reward,
                 "eval_agg/avg_episode_length": avg_steps,
