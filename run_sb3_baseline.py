@@ -38,6 +38,7 @@ Note:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -371,29 +372,14 @@ def main():
         print(f"\nApplying {len(args.override)} override(s):")
         scenario = apply_overrides(scenario, args.override)
 
-    # Apply WandB sweep config if running in a sweep
-    sweep_params_applied = {}
-    try:
-        import wandb
-        if wandb.run is not None and hasattr(wandb.config, 'keys'):
-            wandb_params = dict(wandb.config)
-            # Filter out non-hyperparameter keys that WandB might add
-            param_overrides = []
-            for key, value in wandb_params.items():
-                # Skip WandB metadata keys and scenario config
-                if key.startswith('_') or key in ['method', 'metric', 'program', 'algorithm', 'scenario', 'episodes', 'seed']:
-                    continue
-                override_path = f"agents.car_0.params.{key}"
-                param_overrides.append(f"{override_path}={value}")
-                sweep_params_applied[key] = value
+    # Check if running in a WandB sweep (before wandb.init)
+    # WandB sets WANDB_SWEEP_ID environment variable when running a sweep
+    in_sweep = 'WANDB_SWEEP_ID' in os.environ or 'WANDB_SWEEP_PARAM_PATH' in os.environ
 
-            if param_overrides:
-                print(f"\nApplying WandB sweep config ({len(param_overrides)} parameter(s)):")
-                for key, value in sweep_params_applied.items():
-                    print(f"  {key} = {value}")
-                scenario = apply_overrides(scenario, param_overrides)
-    except (ImportError, AttributeError):
-        pass
+    # Apply WandB sweep config if running in a sweep
+    # Note: This happens BEFORE wandb.init(), so we can't access wandb.config yet
+    # The sweep parameters will be available after wandb.init() in the wandb section
+    sweep_params_applied = {}
 
     # Use episodes from scenario unless overridden by command line
     if not args.episodes:
@@ -481,26 +467,44 @@ def main():
         if not WANDB_AVAILABLE:
             print("Warning: wandb requested but not available. Skipping.")
         else:
-            # Check if running in a sweep (wandb.run already exists)
-            in_sweep = wandb.run is not None
-
             # Determine tags from scenario
             scenario_tags = scenario.get('wandb', {}).get('tags', [])
             if not scenario_tags:
                 scenario_tags = ['sb3', args.algo, 'baseline']
 
-            # When in a sweep, don't override project/entity/name/group
-            # The sweep controller sets these automatically
+            # When in a sweep, let WandB control project/entity/name/group
+            # The sweep configuration sets these automatically
             if in_sweep:
                 print("Running in WandB sweep - using sweep configuration")
-                wandb_run = wandb.run
-                # Update config with scenario info
-                wandb.config.update({
-                    'algorithm': args.algo,
-                    'scenario': args.scenario,
-                    'episodes': args.episodes,
-                    'seed': args.seed,
-                }, allow_val_change=True)
+                # In sweep mode, call wandb.init() with minimal config
+                # WandB will use sweep's project/entity/name automatically
+                wandb_run = wandb.init(
+                    config={
+                        'algorithm': args.algo,
+                        'scenario': args.scenario,
+                        'episodes': args.episodes,
+                        'seed': args.seed,
+                    },
+                    sync_tensorboard=True,
+                )
+
+                # After init, apply sweep parameters from wandb.config
+                if wandb.config:
+                    wandb_params = dict(wandb.config)
+                    param_overrides = []
+                    for key, value in wandb_params.items():
+                        # Skip metadata and our scenario config keys
+                        if key.startswith('_') or key in ['method', 'metric', 'program', 'algorithm', 'scenario', 'episodes', 'seed']:
+                            continue
+                        override_path = f"agents.car_0.params.{key}"
+                        param_overrides.append(f"{override_path}={value}")
+                        sweep_params_applied[key] = value
+
+                    if param_overrides:
+                        print(f"\nApplying WandB sweep parameters ({len(param_overrides)} parameter(s)):")
+                        for key, value in sweep_params_applied.items():
+                            print(f"  {key} = {value}")
+                        scenario = apply_overrides(scenario, param_overrides)
             else:
                 # Normal run - use scenario configuration
                 wandb_run = wandb.init(
