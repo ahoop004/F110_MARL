@@ -543,13 +543,13 @@ def main():
             wandb.define_metric("train/*", step_metric="train/episode")
             wandb.define_metric("target/*", step_metric="train/episode")
             wandb.define_metric("curriculum/*", step_metric="train/episode")
-                wandb.define_metric("eval/episode")
-                wandb.define_metric("eval/episode_*", step_metric="eval/episode")
-                wandb.define_metric("eval/training_episode", step_metric="eval/episode")
-                wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
-                wandb.define_metric("eval_agg/*", step_metric="eval/episode")
-            except Exception:
-                pass
+            wandb.define_metric("eval/episode")
+            wandb.define_metric("eval/episode_*", step_metric="eval/episode")
+            wandb.define_metric("eval/training_episode", step_metric="eval/episode")
+            wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
+            wandb.define_metric("eval_agg/*", step_metric="eval/episode")
+        except Exception:
+            pass
 
     # Setup curriculum if enabled in scenario
     spawn_curriculum = None
