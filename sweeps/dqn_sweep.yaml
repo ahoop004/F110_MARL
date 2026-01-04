@@ -3,49 +3,46 @@ method: grid
 metric:
   name: eval/success_rate
   goal: maximize
-
 parameters:
-  scenario:
-    value: scenarios/dqn.yaml
-
-  # Learning rate
   learning_rate:
-    values: [0.0003, 0.0005, 0.001]
-
-  # Discount factor
+    values:
+    - 0.0003
+    - 0.0005
+    - 0.001
   gamma:
-    values: [0.99, 0.995, 0.999]
-
-  # Final exploration epsilon
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
   exploration_final_eps:
-    values: [0.01, 0.05, 0.1]
-
-  # Exploration fraction
+    values:
+    - 0.01
+    - 0.05
+    - 0.1
   exploration_fraction:
-    values: [0.1, 0.2]
-
-  # Batch size
+    values:
+    - 0.1
+    - 0.2
   batch_size:
-    values: [128, 256]
-
-# Total combinations: 3 * 3 * 3 * 2 * 2 = 108 runs
-
+    values:
+    - 128
+    - 256
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --algo
-  - dqn
-  - --scenario
-  - ${scenario}
-  - --wandb
-  - --override
-  - agents.car_0.params.learning_rate=${learning_rate}
-  - --override
-  - agents.car_0.params.gamma=${gamma}
-  - --override
-  - agents.car_0.params.exploration_final_eps=${exploration_final_eps}
-  - --override
-  - agents.car_0.params.exploration_fraction=${exploration_fraction}
-  - --override
-  - agents.car_0.params.batch_size=${batch_size}
+- ${env}
+- python3
+- ${program}
+- --algo
+- dqn
+- --scenario
+- scenarios/dqn.yaml
+- --wandb
+- --override
+- agents.car_0.params.learning_rate=${learning_rate}
+- --override
+- agents.car_0.params.gamma=${gamma}
+- --override
+- agents.car_0.params.exploration_final_eps=${exploration_final_eps}
+- --override
+- agents.car_0.params.exploration_fraction=${exploration_fraction}
+- --override
+- agents.car_0.params.batch_size=${batch_size}

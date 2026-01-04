@@ -5,9 +5,6 @@ metric:
   goal: maximize
 
 parameters:
-  scenario:
-    value: scenarios/sac.yaml
-
   # Learning rate
   learning_rate:
     values: [0.0001, 0.0005]
@@ -29,7 +26,7 @@ command:
   - --algo
   - sac
   - --scenario
-  - ${scenario}
+  - scenarios/sac.yaml
   - --wandb
   - --override
   - agents.car_0.params.learning_rate=${learning_rate}

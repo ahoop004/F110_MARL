@@ -3,37 +3,31 @@ method: grid
 metric:
   name: eval/success_rate
   goal: maximize
-
 parameters:
-  scenario:
-    value: scenarios/ppo.yaml
-
-  # Learning rate
   learning_rate:
-    values: [0.0001, 0.0005]
-
-  # PPO clip parameter
+    values:
+    - 0.0001
+    - 0.0005
   clip_range:
-    values: [0.1, 0.2]
-
-  # Entropy coefficient
+    values:
+    - 0.1
+    - 0.2
   ent_coef:
-    values: [0.0, 0.02]
-
-# Total combinations: 2 * 2 * 2 = 8 runs (quick test)
-
+    values:
+    - 0.0
+    - 0.02
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --algo
-  - ppo
-  - --scenario
-  - ${scenario}
-  - --wandb
-  - --override
-  - agents.car_0.params.learning_rate=${learning_rate}
-  - --override
-  - agents.car_0.params.clip_range=${clip_range}
-  - --override
-  - agents.car_0.params.ent_coef=${ent_coef}
+- ${env}
+- python3
+- ${program}
+- --algo
+- ppo
+- --scenario
+- scenarios/ppo.yaml
+- --wandb
+- --override
+- agents.car_0.params.learning_rate=${learning_rate}
+- --override
+- agents.car_0.params.clip_range=${clip_range}
+- --override
+- agents.car_0.params.ent_coef=${ent_coef}

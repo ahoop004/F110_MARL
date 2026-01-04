@@ -3,49 +3,46 @@ method: grid
 metric:
   name: eval/success_rate
   goal: maximize
-
 parameters:
-  scenario:
-    value: scenarios/td3.yaml
-
-  # Learning rate
   learning_rate:
-    values: [0.0001, 0.0003, 0.0005]
-
-  # Discount factor
+    values:
+    - 0.0001
+    - 0.0003
+    - 0.0005
   gamma:
-    values: [0.99, 0.995, 0.999]
-
-  # Target network update rate
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
   tau:
-    values: [0.005, 0.01, 0.02]
-
-  # Batch size
+    values:
+    - 0.005
+    - 0.01
+    - 0.02
   batch_size:
-    values: [128, 256]
-
-  # Policy delay (TD3-specific)
+    values:
+    - 128
+    - 256
   policy_delay:
-    values: [2, 3]
-
-# Total combinations: 3 * 3 * 3 * 2 * 2 = 108 runs
-
+    values:
+    - 2
+    - 3
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --algo
-  - td3
-  - --scenario
-  - ${scenario}
-  - --wandb
-  - --override
-  - agents.car_0.params.learning_rate=${learning_rate}
-  - --override
-  - agents.car_0.params.gamma=${gamma}
-  - --override
-  - agents.car_0.params.tau=${tau}
-  - --override
-  - agents.car_0.params.batch_size=${batch_size}
-  - --override
-  - agents.car_0.params.policy_delay=${policy_delay}
+- ${env}
+- python3
+- ${program}
+- --algo
+- td3
+- --scenario
+- scenarios/td3.yaml
+- --wandb
+- --override
+- agents.car_0.params.learning_rate=${learning_rate}
+- --override
+- agents.car_0.params.gamma=${gamma}
+- --override
+- agents.car_0.params.tau=${tau}
+- --override
+- agents.car_0.params.batch_size=${batch_size}
+- --override
+- agents.car_0.params.policy_delay=${policy_delay}

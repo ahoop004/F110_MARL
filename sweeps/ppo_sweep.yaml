@@ -3,50 +3,47 @@ method: grid
 metric:
   name: eval/success_rate
   goal: maximize
-
 parameters:
-  scenario:
-    value: scenarios/ppo.yaml
-
-  # Learning rate
   learning_rate:
-    values: [0.0001, 0.0003, 0.0005]
-
-  # Discount factor
+    values:
+    - 0.0001
+    - 0.0003
+    - 0.0005
   gamma:
-    values: [0.99, 0.995, 0.999]
-
-  # PPO clip parameter
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
   clip_range:
-    values: [0.1, 0.2, 0.3]
-
-  # Entropy coefficient
+    values:
+    - 0.1
+    - 0.2
+    - 0.3
   ent_coef:
-    values: [0.0, 0.01, 0.02]
-
-  # Steps per update
+    values:
+    - 0.0
+    - 0.01
+    - 0.02
   n_steps:
-    values: [1024, 2048]
-
-# Total combinations: 3 * 3 * 3 * 3 * 2 = 162 runs
-# Recommend reducing: remove some gamma/clip_range/ent_coef values
-
+    values:
+    - 1024
+    - 2048
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --algo
-  - ppo
-  - --scenario
-  - ${scenario}
-  - --wandb
-  - --override
-  - agents.car_0.params.learning_rate=${learning_rate}
-  - --override
-  - agents.car_0.params.gamma=${gamma}
-  - --override
-  - agents.car_0.params.clip_range=${clip_range}
-  - --override
-  - agents.car_0.params.ent_coef=${ent_coef}
-  - --override
-  - agents.car_0.params.n_steps=${n_steps}
+- ${env}
+- python3
+- ${program}
+- --algo
+- ppo
+- --scenario
+- scenarios/ppo.yaml
+- --wandb
+- --override
+- agents.car_0.params.learning_rate=${learning_rate}
+- --override
+- agents.car_0.params.gamma=${gamma}
+- --override
+- agents.car_0.params.clip_range=${clip_range}
+- --override
+- agents.car_0.params.ent_coef=${ent_coef}
+- --override
+- agents.car_0.params.n_steps=${n_steps}
