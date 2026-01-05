@@ -33,7 +33,6 @@ command:
 - ${env}
 - python3
 - ${program}
-- a2c
 - --scenario
 - scenarios/a2c.yaml
 - --wandb
