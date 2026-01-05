@@ -125,7 +125,7 @@ class WandbLogger:
                     wandb.define_metric("eval/episode_*", step_metric="eval/episode")
                     wandb.define_metric("eval/training_episode", step_metric="eval/episode")
                     wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
-                    wandb.define_metric("eval_agg/*", step_metric="eval/episode")
+                    wandb.define_metric("eval_agg/*", step_metric="train/episode")
                 except Exception:
                     pass
         else:
