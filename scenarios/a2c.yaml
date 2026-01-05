@@ -238,7 +238,7 @@ curriculum:
       description: "Lock 600 steps"
       criteria:
         window_size: 10
-        success_rate: 0.68
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -254,7 +254,7 @@ curriculum:
       description: "Lock 400 steps"
       criteria:
         window_size: 10
-        success_rate: 0.66
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -271,7 +271,7 @@ curriculum:
       description: "Lock 200 steps"
       criteria:
         window_size: 10
-        success_rate: 0.64
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -288,7 +288,7 @@ curriculum:
       description: "Lock 100 steps"
       criteria:
         window_size: 10
-        success_rate: 0.62
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -305,7 +305,7 @@ curriculum:
       description: "Lock 50 steps"
       criteria:
         window_size: 10
-        success_rate: 0.60
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -322,7 +322,7 @@ curriculum:
       description: "No speed lock"
       criteria:
         window_size: 10
-        success_rate: 0.58
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -342,7 +342,7 @@ curriculum:
       description: "Reduce speed to 0.35"
       criteria:
         window_size: 10
-        success_rate: 0.60
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -359,7 +359,7 @@ curriculum:
       description: "Reduce speed to 0.25"
       criteria:
         window_size: 10
-        success_rate: 0.65
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -393,7 +393,7 @@ curriculum:
       description: "Reduce speed to 0.05"
       criteria:
         window_size: 10
-        success_rate: 0.75
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -427,7 +427,7 @@ curriculum:
       description: "Speed at 0.0"
       criteria:
         window_size: 10
-        success_rate: 0.75
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -464,7 +464,7 @@ curriculum:
       description: "Add spawn_approach_0.0C (4 spawns)"
       criteria:
         window_size: 10
-        success_rate: 0.65
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -482,7 +482,7 @@ curriculum:
       description: "Add spawn_approach_0.3L (5 spawns)"
       criteria:
         window_size: 10
-        success_rate: 0.60
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -500,7 +500,7 @@ curriculum:
       description: "Add spawn_approach_0.3R (6 spawns)"
       criteria:
         window_size: 10
-        success_rate: 0.55
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -518,7 +518,7 @@ curriculum:
       description: "All spawn points"
       criteria:
         window_size: 10
-        success_rate: 0.50
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -538,7 +538,7 @@ curriculum:
       description: "Very light FTG (gain=0.30)"
       criteria:
         window_size: 10
-        success_rate: 0.48
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -555,7 +555,7 @@ curriculum:
       description: "Light FTG (gain=0.35)"
       criteria:
         window_size: 10
-        success_rate: 0.45
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -572,7 +572,7 @@ curriculum:
       description: "Moderate-low FTG (gain=0.40)"
       criteria:
         window_size: 10
-        success_rate: 0.40
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -589,7 +589,7 @@ curriculum:
       description: "Moderate FTG (gain=0.45)"
       criteria:
         window_size: 10
-        success_rate: 0.35
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -606,7 +606,7 @@ curriculum:
       description: "Moderate-high FTG (gain=0.50)"
       criteria:
         window_size: 10
-        success_rate: 0.30
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -624,7 +624,7 @@ curriculum:
       description: "Strong FTG (gain=0.55)"
       criteria:
         window_size: 10
-        success_rate: 0.28
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -642,7 +642,7 @@ curriculum:
       description: "Very strong FTG (gain=0.58)"
       criteria:
         window_size: 10
-        success_rate: 0.25
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
@@ -660,7 +660,7 @@ curriculum:
       description: "Expert FTG (gain=0.60) - final challenge"
       criteria:
         window_size: 10
-        success_rate: 0.22
+        success_rate: 0.70
         min_episodes: 10
         patience: 1000000
       spawn:
