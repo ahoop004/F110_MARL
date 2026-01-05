@@ -109,7 +109,7 @@ Key metrics to monitor:
 
 ## Notes
 
-- Each run trains for the full episode count specified in the scenario (typically 2500 episodes)
+- Each run trains for the full episode count specified in the scenario (typically 1500 episodes)
 - The curriculum will adapt automatically based on performance
 - Best hyperparameters may vary by curriculum phase
 - Consider running sweeps at different curriculum phases for phase-specific tuning

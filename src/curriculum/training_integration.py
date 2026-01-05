@@ -40,15 +40,34 @@ def add_curriculum_to_training_loop(
     # Store original _run_episode method
     original_run_episode = training_loop._run_episode
 
+    def _select_curriculum_agent_id() -> str:
+        """Pick the attacker/primary agent to drive curriculum updates."""
+        if scenario:
+            for agent_id, agent_config in scenario.get('agents', {}).items():
+                if str(agent_config.get('role', '')).lower() == 'attacker':
+                    return agent_id
+        primary_id = getattr(training_loop, "primary_agent_id", None)
+        if primary_id:
+            return primary_id
+        return list(training_loop.agents.keys())[0]
+
+    curriculum_agent_id = _select_curriculum_agent_id()
+
     def _run_episode_with_curriculum(episode_num: int):
         """Wrapped episode runner that applies curriculum config."""
         # Get current phase configuration (with mixture sampling)
         phase_config = curriculum.get_current_config(sample_mixture=True)
 
         # Apply curriculum to environment
-        from .curriculum_env import apply_curriculum_to_env, apply_curriculum_to_agent
+        from .curriculum_env import (
+            apply_curriculum_to_env,
+            apply_curriculum_to_agent,
+            apply_curriculum_to_spawn_curriculum,
+        )
 
         apply_curriculum_to_env(training_loop.env, phase_config)
+        if getattr(training_loop, "spawn_curriculum", None):
+            apply_curriculum_to_spawn_curriculum(training_loop.spawn_curriculum, phase_config)
 
         # Apply curriculum to agents (e.g., FTG)
         for agent_id, agent in training_loop.agents.items():
@@ -58,14 +77,17 @@ def add_curriculum_to_training_loop(
         original_run_episode(episode_num)
 
         # After episode, update curriculum
-        # Extract outcome from first agent's metrics
-        first_agent_id = list(training_loop.agents.keys())[0]
-        tracker = training_loop.metrics_trackers[first_agent_id]
+        # Extract outcome from attacker/primary agent's metrics
+        tracker = training_loop.metrics_trackers.get(curriculum_agent_id)
+        if tracker is None:
+            fallback_id = list(training_loop.agents.keys())[0]
+            tracker = training_loop.metrics_trackers.get(fallback_id)
 
-        if tracker.episodes:
+        if tracker and tracker.episodes:
             latest = tracker.get_latest(1)[0]
             outcome = latest.outcome.value if hasattr(latest.outcome, 'value') else str(latest.outcome)
             reward = latest.total_reward
+            success = outcome == 'target_crash'
 
             # Update curriculum
             advancement_info = curriculum.update(outcome, reward, episode_num)
@@ -93,6 +115,10 @@ def add_curriculum_to_training_loop(
             if training_loop.wandb_logger:
                 training_loop.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
+                    'train/success': int(success),
+                    'curriculum/phase_idx': curriculum_metrics.get('curriculum/phase_idx'),
+                    'curriculum/phase_name': curriculum_metrics.get('curriculum/phase_name'),
+                    'curriculum/phase_success_rate': curriculum_metrics.get('curriculum/success_rate') or 0.0,
                     'curriculum/stage': curriculum_metrics.get('curriculum/phase_name'),
                     'curriculum/stage_success_rate': curriculum_metrics.get('curriculum/success_rate') or 0.0,
                 }, step=episode_num)

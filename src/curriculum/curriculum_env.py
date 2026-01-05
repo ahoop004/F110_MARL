@@ -14,24 +14,37 @@ def apply_curriculum_to_env(env, phase_config: Dict[str, Any]) -> None:
         env: F110 environment instance
         phase_config: Phase configuration dict with 'spawn', 'ftg', etc.
     """
+    # Update spawn curriculum if it exists on the env
+    if hasattr(env, 'spawn_curriculum') and env.spawn_curriculum:
+        apply_curriculum_to_spawn_curriculum(env.spawn_curriculum, phase_config)
+
+
+def apply_curriculum_to_spawn_curriculum(spawn_curriculum, phase_config: Dict[str, Any]) -> None:
+    """Apply curriculum phase configuration to a spawn curriculum manager.
+
+    Args:
+        spawn_curriculum: SpawnCurriculumManager instance
+        phase_config: Phase configuration dict with 'spawn', 'ftg', etc.
+    """
     spawn_config = phase_config.get('spawn', {})
     lock_speed_steps = phase_config.get('lock_speed_steps')
 
-    # Update spawn curriculum if it exists
-    if hasattr(env, 'spawn_curriculum') and env.spawn_curriculum:
-        # Update speed lock duration
-        if lock_speed_steps is not None:
-            env.spawn_curriculum.lock_speed_steps = lock_speed_steps
+    if not spawn_curriculum:
+        return
 
-        # Update spawn points if specified
-        spawn_points = spawn_config.get('points')
-        if spawn_points:
-            _update_spawn_points(env.spawn_curriculum, spawn_points)
+    # Update speed lock duration
+    if lock_speed_steps is not None:
+        spawn_curriculum.lock_speed_steps = lock_speed_steps
 
-        # Update speed range if specified
-        speed_range = spawn_config.get('speed_range')
-        if speed_range and len(speed_range) == 2:
-            _update_speed_range(env.spawn_curriculum, speed_range)
+    # Update spawn points if specified
+    spawn_points = spawn_config.get('points')
+    if spawn_points:
+        _update_spawn_points(spawn_curriculum, spawn_points)
+
+    # Update speed range if specified
+    speed_range = spawn_config.get('speed_range')
+    if speed_range and len(speed_range) == 2:
+        _update_speed_range(spawn_curriculum, speed_range)
 
 
 def apply_curriculum_to_agent(agent, agent_id: str, phase_config: Dict[str, Any]) -> None:
@@ -69,6 +82,8 @@ def _update_spawn_points(spawn_curriculum, spawn_points: list) -> None:
             # Get all available spawn points from config
             if hasattr(spawn_curriculum, 'spawn_configs'):
                 current_stage.spawn_points = list(spawn_curriculum.spawn_configs.keys())
+            elif hasattr(spawn_curriculum, 'available_spawn_points'):
+                current_stage.spawn_points = list(spawn_curriculum.available_spawn_points.keys())
         else:
             current_stage.spawn_points = spawn_points
 
@@ -156,6 +171,7 @@ def restore_curriculum_from_checkpoint(
 
 __all__ = [
     'apply_curriculum_to_env',
+    'apply_curriculum_to_spawn_curriculum',
     'apply_curriculum_to_agent',
     'extract_outcome_from_info',
     'create_curriculum_checkpoint_data',

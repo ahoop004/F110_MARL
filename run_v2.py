@@ -352,7 +352,6 @@ def main():
                             scenario.setdefault('experiment', {})['seed'] = value
                             sweep_params_applied[key] = value
                             continue
-
                         # Apply to agent params
                         override_path = key if '.' in key else f"agents.{sb3_agent_id}.params.{key}"
                         set_nested_value(scenario, override_path, value)
@@ -562,15 +561,19 @@ def main():
             if attacker_id and defender_id and attacker_id not in target_ids:
                 target_ids[attacker_id] = defender_id
 
+        phased_curriculum_enabled = scenario.get('curriculum', {}).get('type') == 'phased'
+
         # Create spawn curriculum if enabled
         spawn_curriculum = None
-        spawn_config = scenario['environment'].get('spawn_curriculum', {})
+        env_config = scenario['environment']
+        spawn_configs = env_config.get('spawn_configs', {})
+        spawn_config = env_config.get('spawn_curriculum', {})
+        if not spawn_configs:
+            spawn_configs = spawn_config.get('spawn_configs', {})
         if spawn_config.get('enabled', False):
             from src.core.spawn_curriculum import SpawnCurriculumManager
 
             # Get spawn point configurations from environment
-            spawn_configs = spawn_config.get('spawn_configs', {})
-
             if spawn_configs:
                 console_logger.print_info("Creating spawn curriculum...")
                 try:
@@ -583,11 +586,45 @@ def main():
                         f"Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
                         f"starting at '{spawn_curriculum.current_stage.name}'"
                     )
+                    if phased_curriculum_enabled:
+                        console_logger.print_info(
+                            "Phased curriculum active: spawn curriculum progression disabled"
+                        )
                 except Exception as e:
                     console_logger.print_warning(f"Failed to create spawn curriculum: {e}")
                     spawn_curriculum = None
             else:
                 console_logger.print_warning("Spawn curriculum enabled but no spawn_configs provided")
+        elif phased_curriculum_enabled and spawn_configs:
+            from src.core.spawn_curriculum import SpawnCurriculumManager
+
+            console_logger.print_info("Creating spawn sampler for phased curriculum...")
+            try:
+                spawn_curriculum = SpawnCurriculumManager(
+                    config={
+                        'window': 1,
+                        'activation_samples': 1,
+                        'min_episode': 0,
+                        'enable_patience': 1,
+                        'disable_patience': 1,
+                        'cooldown': 0,
+                        'lock_speed_steps': 0,
+                        'stages': [
+                            {
+                                'name': 'phase_sampler',
+                                'spawn_points': 'all',
+                                'speed_range': [0.0, 0.0],
+                                'enable_rate': 1.0,
+                            }
+                        ],
+                    },
+                    available_spawn_points=spawn_configs
+                )
+                env.spawn_configs = spawn_configs
+                console_logger.print_success("Spawn sampler ready for phased curriculum")
+            except Exception as e:
+                console_logger.print_warning(f"Failed to create spawn sampler: {e}")
+                spawn_curriculum = None
 
         # Initialize checkpoint system
         checkpoint_manager = None
@@ -757,7 +794,7 @@ def main():
 
         # Setup phased curriculum if configured
         phased_curriculum = None
-        if 'curriculum' in scenario and scenario['curriculum'].get('type') == 'phased':
+        if phased_curriculum_enabled:
             console_logger.print_info("Setting up phased curriculum...")
             try:
                 from src.curriculum.training_integration import setup_curriculum_from_scenario
@@ -781,10 +818,23 @@ def main():
                     training_state = training_loop.load_checkpoint(resume_info['checkpoint_path'])
                     console_logger.print_success(f"Checkpoint loaded! Resuming from episode {start_episode}")
 
-                    # Restore curriculum stage if available
-                    if spawn_curriculum and 'curriculum_stage' in training_state:
+                    # Restore curriculum stage if available (spawn curriculum only)
+                    if spawn_curriculum and not phased_curriculum and 'curriculum_stage' in training_state:
                         saved_stage = training_state['curriculum_stage']
                         console_logger.print_info(f"Restored curriculum stage: {saved_stage}")
+                    if phased_curriculum and 'phased_curriculum' in training_state:
+                        from src.curriculum.curriculum_env import restore_curriculum_from_checkpoint
+                        restore_curriculum_from_checkpoint(
+                            phased_curriculum,
+                            training_state['phased_curriculum']
+                        )
+                        if hasattr(training_loop, "rich_console") and training_loop.rich_console:
+                            metrics = phased_curriculum.get_metrics()
+                            training_loop._phase_curriculum_state = {
+                                "phase_index": metrics.get("curriculum/phase_idx"),
+                                "phase_name": metrics.get("curriculum/phase_name"),
+                                "phase_success_rate": metrics.get("curriculum/success_rate"),
+                            }
 
                 except Exception as e:
                     console_logger.print_error(f"Failed to load checkpoint: {e}")

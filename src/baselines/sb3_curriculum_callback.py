@@ -194,8 +194,8 @@ class CurriculumCallback(BaseCallback):
             }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
         spawn_state = None
-        # Update spawn curriculum if available
-        if self.spawn_curriculum:
+        # Update spawn curriculum if available (skip when phased curriculum is active)
+        if self.spawn_curriculum and not self.phases:
             spawn_state = self.spawn_curriculum.observe(self.episode_count, success)
             if spawn_state['changed'] and self.verbose > 0:
                 print(f"\nSpawn curriculum: {spawn_state['stage']} "
@@ -333,18 +333,23 @@ class CurriculumCallback(BaseCallback):
 
         # Log minimal phased curriculum metrics
         if self.wandb_run and self.phases:
-            recent_successes = sum(self.episode_successes[-self.window_size:])
-            recent_episodes = len(self.episode_successes)
-            success_rate = recent_successes / recent_episodes if recent_episodes > 0 else 0.0
-
             phase_name = None
             if 0 <= self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")
 
+            phase_success_rate = (
+                self.phase_successes / self.phase_episodes
+                if self.phase_episodes > 0
+                else 0.0
+            )
+
             self.wandb_run.log({
                 'train/episode': int(self.episode_count),
+                'curriculum/phase_idx': int(self.current_phase),
+                'curriculum/phase_name': phase_name,
+                'curriculum/phase_success_rate': phase_success_rate,
                 'curriculum/stage': phase_name,
-                'curriculum/stage_success_rate': success_rate,
+                'curriculum/stage_success_rate': phase_success_rate,
             }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
     def _apply_phase(self, phase_idx: int):
@@ -369,6 +374,9 @@ class CurriculumCallback(BaseCallback):
             lock_speed_steps = phase.get('lock_speed_steps', 0)
             if hasattr(env, 'set_speed_lock'):
                 env.set_speed_lock(lock_speed_steps)
+        if self.spawn_curriculum:
+            from src.curriculum.curriculum_env import apply_curriculum_to_spawn_curriculum
+            apply_curriculum_to_spawn_curriculum(self.spawn_curriculum, phase)
 
         # Update FTG parameters
         ftg_config = phase.get('ftg', {})

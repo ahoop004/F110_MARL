@@ -13,14 +13,24 @@ parameters:
     - 0.0003
     - 0.0005
     - 0.0007
-  n_steps:
+  gamma:
     values:
-    - 5
-    - 20
-  ent_coef:
-    values:
-    - 0.0
-    - 0.01
+    - 0.97
+    - 0.985
+    - 0.99
+    - 0.995
+    - 0.999
+  # Optional parameters (uncomment to sweep):
+  # n_steps:
+  #   values:
+  #   - 5
+  #   - 10
+  #   - 20
+  # ent_coef:
+  #   values:
+  #   - 0.0
+  #   - 0.01
+  #   - 0.02
 command:
 - ${env}
 - python3

@@ -757,7 +757,7 @@ class EnhancedTrainingLoop:
 
         # Update spawn curriculum if enabled (only for first/primary agent)
         spawn_curriculum_state = None
-        if self.spawn_curriculum:
+        if self.spawn_curriculum and not getattr(self, "phased_curriculum", None):
             # Determine success for curriculum (use first agent's outcome)
             primary_agent_id = self.primary_agent_id or list(self.agents.keys())[0]
             primary_outcome = determine_outcome(
@@ -784,8 +784,8 @@ class EnhancedTrainingLoop:
                         stage_index=curriculum_state['stage_index'],
                     )
 
-            # Log minimal curriculum metrics to W&B (skip if phased curriculum is active)
-            if self.wandb_logger and not getattr(self, "phased_curriculum", None):
+            # Log minimal curriculum metrics to W&B
+            if self.wandb_logger:
                 self.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
                     'curriculum/stage': curriculum_state['stage'],
@@ -1322,6 +1322,11 @@ class EnhancedTrainingLoop:
 
             if self.spawn_curriculum:
                 training_state['curriculum_stage'] = self.spawn_curriculum.current_stage
+            if getattr(self, "phased_curriculum", None):
+                from curriculum.curriculum_env import create_curriculum_checkpoint_data
+                training_state['phased_curriculum'] = create_curriculum_checkpoint_data(
+                    self.phased_curriculum
+                )
 
             # Save checkpoint with error handling
             checkpoint_type = "best" if is_new_best else "periodic"
