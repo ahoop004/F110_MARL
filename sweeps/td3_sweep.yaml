@@ -36,3 +36,4 @@ command:
 - --scenario
 - scenarios/td3.yaml
 - --wandb
+name: TD3_sweep

@@ -25,3 +25,4 @@ command:
 - --scenario
 - scenarios/ppo.yaml
 - --wandb
+name: PPO_quick_sweep

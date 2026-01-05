@@ -5,26 +5,24 @@ entity: ahoop004-old-dominion-university
 metric:
   name: eval_agg/success_rate
   goal: maximize
-
 parameters:
-  # Learning rate
   learning_rate:
-    values: [0.0001, 0.0005]
-
-  # Discount factor
+    values:
+    - 0.0001
+    - 0.0005
   gamma:
-    values: [0.995, 0.999]
-
-  # Batch size
+    values:
+    - 0.995
+    - 0.999
   batch_size:
-    values: [128, 256]
-
-# Total combinations: 2 * 2 * 2 = 8 runs (quick test)
-
+    values:
+    - 128
+    - 256
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --scenario
-  - scenarios/sac.yaml
-  - --wandb
+- ${env}
+- python3
+- ${program}
+- --scenario
+- scenarios/sac.yaml
+- --wandb
+name: SAC_quick_sweep
