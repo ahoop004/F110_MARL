@@ -98,14 +98,14 @@ gamma:
 
 ## Expected Results
 
-Sweeps will optimize for `eval/success_rate` (evaluated periodically during training).
+Sweeps will optimize for `train/success_rate` (rolling window during training).
 
 Key metrics to monitor:
-- `eval/success_rate` - Success rate on evaluation episodes
-- `eval/mean_reward` - Average reward on evaluation episodes
 - `train/success_rate` - Training success rate (rolling window)
-- `curriculum/phase` - Current curriculum phase
-- `curriculum/success_rate` - Curriculum success rate
+- `train/reward_mean` - Rolling average reward
+- `eval_agg/success_rate` - Success rate on evaluation episodes (if enabled)
+- `eval_agg/avg_reward` - Average reward on evaluation episodes
+- `curriculum/stage` - Current curriculum stage
 
 ## Notes
 
