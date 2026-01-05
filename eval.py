@@ -307,10 +307,13 @@ def main():
     observation_presets = {}
     target_ids = {}
     for agent_id, agent_config in scenario['agents'].items():
-        # Observation preset
+        # Observation preset (infer when config is already expanded)
         obs_cfg = agent_config.get('observation', {})
-        if isinstance(obs_cfg, dict) and 'preset' in obs_cfg:
-            observation_presets[agent_id] = obs_cfg['preset']
+        if isinstance(obs_cfg, dict):
+            if 'preset' in obs_cfg:
+                observation_presets[agent_id] = obs_cfg['preset']
+            elif len(obs_cfg) > 0:
+                observation_presets[agent_id] = 'gaplock'
 
         # Target ID
         if 'target_id' in agent_config:
@@ -347,18 +350,36 @@ def main():
         if v_max:
             obs_scales['speed'] = float(abs(v_max))
 
-    # Create evaluation configuration
-    eval_config = EvaluationConfig(
-        num_episodes=args.num_episodes,
-        deterministic=True,
-        spawn_points=args.spawn_points,
-        spawn_speeds=args.spawn_speeds,
-        lock_speed_steps=0,  # No speed locking for eval
-        ftg_override={
+    # Create evaluation configuration (match training eval parameters when available)
+    eval_cfg = scenario.get('evaluation', {})
+    use_scenario_eval = bool(eval_cfg.get('enabled', False))
+
+    if use_scenario_eval:
+        eval_num_episodes = eval_cfg.get('num_episodes', 10)
+        eval_deterministic = eval_cfg.get('deterministic', True)
+        eval_spawn_points = eval_cfg.get('spawn_points', ['spawn_pinch_left', 'spawn_pinch_right'])
+        eval_spawn_speeds = eval_cfg.get('spawn_speeds', [0.44, 0.44])
+        eval_lock_speed_steps = eval_cfg.get('lock_speed_steps', 0)
+        eval_ftg_override = eval_cfg.get('ftg_override', {})
+    else:
+        eval_num_episodes = args.num_episodes
+        eval_deterministic = True
+        eval_spawn_points = args.spawn_points
+        eval_spawn_speeds = args.spawn_speeds
+        eval_lock_speed_steps = 0
+        eval_ftg_override = {
             'max_speed': 1.0,
             'bubble_radius': 3.0,
             'steering_gain': 0.35,
-        },
+        }
+
+    eval_config = EvaluationConfig(
+        num_episodes=eval_num_episodes,
+        deterministic=eval_deterministic,
+        spawn_points=eval_spawn_points,
+        spawn_speeds=eval_spawn_speeds,
+        lock_speed_steps=eval_lock_speed_steps,
+        ftg_override=eval_ftg_override,
         max_steps=scenario['environment'].get('max_steps', 2500),
     )
 
@@ -375,18 +396,22 @@ def main():
         config=eval_config,
         observation_presets=observation_presets,
         target_ids=target_ids,
-        obs_normalizer=None,  # Don't use normalization for eval
         obs_scales=obs_scales,
         spawn_configs=spawn_configs,
     )
 
     # Run evaluation
     print("Running evaluation...")
-    print(f"  Episodes: {args.num_episodes}")
-    print(f"  Spawn points: {args.spawn_points}")
-    print(f"  Spawn speeds: {args.spawn_speeds}")
-    print(f"  Deterministic: True")
-    print(f"  FTG: Full strength (max_speed=1.0, bubble_radius=3.0)")
+    if use_scenario_eval:
+        print("  Using scenario evaluation config")
+    print(f"  Episodes: {eval_num_episodes}")
+    print(f"  Spawn points: {eval_spawn_points}")
+    print(f"  Spawn speeds: {eval_spawn_speeds}")
+    print(f"  Deterministic: {eval_deterministic}")
+    if eval_ftg_override:
+        print(f"  FTG override: {eval_ftg_override}")
+    else:
+        print("  FTG override: None")
     print()
 
     result = evaluator.evaluate(verbose=args.verbose)
