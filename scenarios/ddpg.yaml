@@ -196,10 +196,10 @@ evaluation:
   spawn_points: [spawn_pinch_left, spawn_pinch_right, spawn_pinch_ahead]  # Sequential fixed spawns
   spawn_speeds: [0.0, 0.0]  # Initial speeds for each spawn point
   lock_speed_steps: 0  # No speed locking during eval
-  ftg_override:  # Full FTG strength for evaluation
+  ftg_override:  # FTG moderate-low cap for evaluation
     max_speed: 1.0
-    bubble_radius: 3.0
-    steering_gain: 0.35
+    bubble_radius: 2.6
+    steering_gain: 0.40
 
 # Systematic Phased Curriculum - Progressive Difficulty Scaling
 # Group 1: Lock Speed Reduction (7 phases)
@@ -586,94 +586,6 @@ curriculum:
       keep_foundation: 0.25
       keep_previous: 0.25
 
-    - name: "4_ftg_moderate"
-      description: "Moderate FTG (gain=0.45)"
-      criteria:
-        window_size: 10
-        success_rate: 0.70
-        min_episodes: 10
-        patience: 1000000
-      spawn:
-        points: all
-        speed_range: [0.0, 0.0]
-      lock_speed_steps: 0
-      ftg:
-        steering_gain: 0.45
-        bubble_radius: 2.8
-      keep_foundation: 0.25
-      keep_previous: 0.25
-
-    - name: "4_ftg_moderate_high"
-      description: "Moderate-high FTG (gain=0.50)"
-      criteria:
-        window_size: 10
-        success_rate: 0.70
-        min_episodes: 10
-        patience: 1000000
-      spawn:
-        points: all
-        speed_range: [0.0, 0.0]
-      lock_speed_steps: 0
-      ftg:
-        steering_gain: 0.50
-        bubble_radius: 3.0
-        target_mode: farthest
-      keep_foundation: 0.25
-      keep_previous: 0.25
-
-    - name: "4_ftg_strong"
-      description: "Strong FTG (gain=0.55)"
-      criteria:
-        window_size: 10
-        success_rate: 0.70
-        min_episodes: 10
-        patience: 1000000
-      spawn:
-        points: all
-        speed_range: [0.0, 0.0]
-      lock_speed_steps: 0
-      ftg:
-        steering_gain: 0.55
-        bubble_radius: 3.2
-        target_mode: farthest
-      keep_foundation: 0.25
-      keep_previous: 0.25
-
-    - name: "4_ftg_very_strong"
-      description: "Very strong FTG (gain=0.58)"
-      criteria:
-        window_size: 10
-        success_rate: 0.70
-        min_episodes: 10
-        patience: 1000000
-      spawn:
-        points: all
-        speed_range: [0.0, 0.0]
-      lock_speed_steps: 0
-      ftg:
-        steering_gain: 0.58
-        bubble_radius: 3.4
-        target_mode: farthest
-      keep_foundation: 0.25
-      keep_previous: 0.25
-
-    - name: "4_ftg_expert"
-      description: "Expert FTG (gain=0.60) - final challenge"
-      criteria:
-        window_size: 10
-        success_rate: 0.70
-        min_episodes: 10
-        patience: 1000000
-      spawn:
-        points: all
-        speed_range: [0.0, 0.0]
-      lock_speed_steps: 0
-      ftg:
-        steering_gain: 0.60
-        bubble_radius: 3.5
-        target_mode: farthest
-      keep_foundation: 0.25
-      keep_previous: 0.25
 wandb:
   enabled: true
   project: marl-f110
