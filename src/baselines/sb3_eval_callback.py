@@ -118,16 +118,18 @@ class SB3EvaluationCallback(BaseCallback):
                 if not np.isfinite(reward_value):
                     reward_value = 0.0
                 self.total_eval_episodes += 1
+                # Use training episode as step metric for consistency with run_v2
+                training_ep = training_episode if training_episode is not None else self.episode_count
                 self.wandb_run.log({
                     "eval/episode": int(self.total_eval_episodes),
-                }, step=self.num_timesteps)
+                }, step=training_ep)  # FIXED: Use training episode instead of num_timesteps
                 self.wandb_run.log({
                     "eval/episode_reward": reward_value,
                     "eval/episode_steps": int(steps),
                     "eval/episode_success": int(success),
                     "eval/spawn_point": spawn_point,
-                    "eval/training_episode": training_episode if training_episode is not None else self.episode_count,
-                }, step=self.num_timesteps)
+                    "eval/training_episode": training_ep,
+                }, step=training_ep)  # FIXED: Use training episode instead of num_timesteps
 
         if not rewards:
             return
@@ -139,10 +141,11 @@ class SB3EvaluationCallback(BaseCallback):
         std_steps = float(np.std(lengths))
 
         if self.wandb_run:
+            # Use training episode as step metric for consistency with run_v2
+            training_ep = training_episode if training_episode is not None else self.episode_count
             agg_metrics = {
                 "eval/episode": int(self.total_eval_episodes),
-                "eval/success_rate": success_rate,  # Primary metric for sweeps
-                "eval_agg/success_rate": success_rate,  # Keep for backwards compatibility
+                "eval_agg/success_rate": success_rate,  # Match run_v2 namespace
                 "eval_agg/avg_reward": avg_reward,
                 "eval_agg/std_reward": std_reward,
                 "eval_agg/avg_episode_length": avg_steps,
@@ -155,7 +158,7 @@ class SB3EvaluationCallback(BaseCallback):
 
             self.wandb_run.log(
                 agg_metrics,
-                step=self.num_timesteps,
+                step=training_ep,  # FIXED: Use training episode instead of num_timesteps
             )
 
         if self.verbose > 0:

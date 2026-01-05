@@ -571,20 +571,10 @@ def main():
     # Wrap with Monitor for logging
     wrapped_env = Monitor(wrapped_env)
 
-    # Define wandb metrics once run is initialized
-    if wandb_run is not None:
-        try:
-            wandb.define_metric("train/episode")
-            wandb.define_metric("train/*", step_metric="train/episode")
-            wandb.define_metric("target/*", step_metric="train/episode")
-            wandb.define_metric("curriculum/*", step_metric="train/episode")
-            wandb.define_metric("eval/episode")
-            wandb.define_metric("eval/episode_*", step_metric="eval/episode")
-            wandb.define_metric("eval/training_episode", step_metric="eval/episode")
-            wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
-            wandb.define_metric("eval_agg/*", step_metric="eval/episode")
-        except Exception:
-            pass
+    # REMOVED: Metric definitions that conflicted with actual logging behavior
+    # The callbacks now use episode_count as the step metric directly,
+    # so we don't need to redefine the step metric here.
+    # This prevents WandB from getting confused about which metric is the "real" step.
 
     # Get FTG schedules from scenario
     ftg_schedules = {}
@@ -625,7 +615,7 @@ def main():
         save_freq=10000,
         save_path=str(output_dir / 'checkpoints'),
         name_prefix=f'{args.algo}_model',
-        save_replay_buffer=True,
+        save_replay_buffer=False,
     )
     callbacks.append(checkpoint_callback)
 

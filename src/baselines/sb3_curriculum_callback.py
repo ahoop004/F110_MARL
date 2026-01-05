@@ -97,12 +97,18 @@ class CurriculumCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         """Called after each environment step."""
+        # Initialize processed episode counter for deduplication
+        if not hasattr(self, '_last_processed_ep_count'):
+            self._last_processed_ep_count = 0
+
         # Check for new episode info in the logger
         if len(self.model.ep_info_buffer) > 0:
             # Get the most recent episode
+            new_episode_count = 0
             for ep_info in self.model.ep_info_buffer:
                 # Only process if we haven't seen this episode yet
                 if 'r' in ep_info and 'l' in ep_info:
+                    new_episode_count += 1
                     # Check if this is a new episode (basic deduplication)
                     reward = ep_info['r']
                     # Process this episode
@@ -114,7 +120,9 @@ class CurriculumCallback(BaseCallback):
                         target_collision=ep_info.get('target_collision', False),
                         outcome=ep_info.get('outcome')
                     )
-            # Clear the buffer to avoid reprocessing
+
+            # Update counter and clear the buffer to avoid reprocessing
+            self._last_processed_ep_count += new_episode_count
             self.model.ep_info_buffer.clear()
         return True
 
@@ -183,7 +191,7 @@ class CurriculumCallback(BaseCallback):
                 "train/steps_mean": steps_mean,
                 "target/success": int(bool(target_finished)),
                 "target/crash": int(bool(target_collision)),
-            }, step=self.num_timesteps)
+            }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
         spawn_state = None
         # Update spawn curriculum if available
@@ -206,7 +214,7 @@ class CurriculumCallback(BaseCallback):
                     'train/episode': int(self.episode_count),
                     'curriculum/stage': spawn_state['stage'],
                     'curriculum/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
-                }, step=self.num_timesteps)
+                }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
         # Update phased curriculum
         if self.phases:
@@ -337,7 +345,7 @@ class CurriculumCallback(BaseCallback):
                 'train/episode': int(self.episode_count),
                 'curriculum/stage': phase_name,
                 'curriculum/stage_success_rate': success_rate,
-            }, step=self.num_timesteps)
+            }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
     def _apply_phase(self, phase_idx: int):
         """Apply configuration for a curriculum phase."""
