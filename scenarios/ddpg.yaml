@@ -2,7 +2,6 @@ experiment:
   name: ddpg
   episodes: 1500
   seed: 42
-  normalize_observations: false
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2

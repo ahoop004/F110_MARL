@@ -786,9 +786,6 @@ def main():
             eval_every_n_episodes=eval_every_n_episodes,
             max_steps_per_episode=scenario['environment'].get('max_steps', 5000),
             save_every_n_episodes=args.save_every if not args.no_checkpoints else None,
-            normalize_observations=bool(
-                scenario.get('experiment', {}).get('normalize_observations', True)
-            ),
             obs_clip=float(scenario.get('experiment', {}).get('obs_clip', 10.0)),
         )
 

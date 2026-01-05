@@ -45,7 +45,6 @@ def build_fingerprint(config: Dict[str, Any]) -> Optional[str]:
         "observation": agent_cfg.get("observation", {}),
         "action_set": agent_cfg.get("action_set") or agent_cfg.get("params", {}).get("action_set"),
         "reward": agent_cfg.get("reward", {}),
-        "normalize_observations": config.get("experiment", {}).get("normalize_observations"),
     }
 
     return json.dumps(fingerprint, sort_keys=True)
