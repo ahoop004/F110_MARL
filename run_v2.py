@@ -308,6 +308,65 @@ def main():
     # Initialize loggers with run ID
     wandb_logger, console_logger = initialize_loggers(scenario, args, run_id=run_id)
 
+    # Apply WandB sweep parameters if in sweep mode
+    if wandb_logger is not None:
+        try:
+            import wandb
+            if wandb.config and len(dict(wandb.config)) > 0:
+                console_logger.print_info("Detected WandB sweep mode - applying sweep parameters...")
+
+                def set_nested_value(d: dict, path: str, value):
+                    """Set nested dictionary value using dot notation."""
+                    keys = path.split('.')
+                    for key in keys[:-1]:
+                        if key not in d:
+                            d[key] = {}
+                        d = d[key]
+                    d[keys[-1]] = value
+
+                # Find the SB3 agent (first non-FTG agent)
+                sb3_agent_id = None
+                for agent_id, agent_cfg in scenario['agents'].items():
+                    algo = agent_cfg.get('algorithm', '').lower()
+                    if algo not in ['ftg', 'pp', 'pure_pursuit']:
+                        sb3_agent_id = agent_id
+                        break
+
+                if sb3_agent_id:
+                    sweep_params_applied = {}
+                    wandb_params = {k: wandb.config[k] for k in wandb.config}
+
+                    for key, value in wandb_params.items():
+                        # Skip WandB internal keys
+                        if key.startswith('_') or key in [
+                            'method', 'metric', 'program', 'algorithm', 'scenario'
+                        ]:
+                            continue
+
+                        # Handle special keys
+                        if key == 'episodes':
+                            scenario.setdefault('experiment', {})['episodes'] = value
+                            sweep_params_applied[key] = value
+                            continue
+                        if key == 'seed':
+                            scenario.setdefault('experiment', {})['seed'] = value
+                            sweep_params_applied[key] = value
+                            continue
+
+                        # Apply to agent params
+                        override_path = key if '.' in key else f"agents.{sb3_agent_id}.params.{key}"
+                        set_nested_value(scenario, override_path, value)
+                        sweep_params_applied[key] = value
+
+                    if sweep_params_applied:
+                        console_logger.print_success(
+                            f"Applied {len(sweep_params_applied)} sweep parameter(s) to {sb3_agent_id}"
+                        )
+                        for key, value in sweep_params_applied.items():
+                            console_logger.print_info(f"  {key} = {value}")
+        except Exception as e:
+            console_logger.print_warning(f"Failed to apply sweep parameters: {e}")
+
     # Print scenario summary
     print_scenario_summary(scenario, console_logger)
 
