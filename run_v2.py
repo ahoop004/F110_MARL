@@ -41,8 +41,14 @@ import os
 import sys
 from pathlib import Path
 
-from src.core.scenario import load_and_expand_scenario, ScenarioError
-from src.loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
+# Allow running from repo root without installing the package.
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
+if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from core.scenario import load_and_expand_scenario, ScenarioError
+from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 
 
 def parse_args():
@@ -282,10 +288,10 @@ def main():
     scenario = resolve_cli_overrides(scenario, args)
 
     # Resolve run ID early (for W&B and checkpoint alignment)
-    from src.core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
-    from src.core.run_metadata import RunMetadata
-    from src.core.checkpoint_manager import CheckpointManager
-    from src.core.best_model_tracker import BestModelTracker
+    from core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
+    from core.run_metadata import RunMetadata
+    from core.checkpoint_manager import CheckpointManager
+    from core.best_model_tracker import BestModelTracker
 
     # Get algorithm name for run ID
     algorithm = 'unknown'
@@ -393,10 +399,10 @@ def main():
 
     # Import training components
     try:
-        from src.core.enhanced_training import EnhancedTrainingLoop
-        from src.core.setup import create_training_setup
+        from core.enhanced_training import EnhancedTrainingLoop
+        from core.setup import create_training_setup
         # Rendering extensions imported lazily when needed (to avoid pyglet on HPC)
-        # from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+        # from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
     except ImportError as e:
         console_logger.print_error(f"Failed to import training components: {e}")
         import traceback
@@ -434,11 +440,11 @@ def main():
         # Extract reward parameters from attacker agent config
         reward_params = {}
         if attacker_id and 'reward' in scenario['agents'][attacker_id]:
-            from src.rewards.presets import load_preset, merge_config
+            from rewards.presets import load_preset, merge_config
 
             reward_config = scenario['agents'][attacker_id]['reward']
 
-            # Load preset if specified
+            full_config = None
             if 'preset' in reward_config:
                 preset_name = reward_config['preset']
                 try:
@@ -449,19 +455,24 @@ def main():
                         full_config = merge_config(base_config, overrides)
                     else:
                         full_config = base_config
-
-                    # Extract distance reward parameters
-                    if 'distance' in full_config:
-                        dist = full_config['distance']
-                        reward_params = {
-                            'near_distance': dist.get('near_distance', 1.0),
-                            'far_distance': dist.get('far_distance', 2.5),
-                            'reward_near': dist.get('reward_near', 0.12),
-                            'penalty_far': dist.get('penalty_far', 0.08),
-                        }
-                        console_logger.print_info(f"Extracted reward params: near={reward_params['near_distance']:.2f}m, far={reward_params['far_distance']:.2f}m")
                 except Exception as e:
                     console_logger.print_warning(f"Could not load reward preset: {e}")
+            else:
+                # Scenario may already be expanded; use config as-is.
+                full_config = reward_config
+
+            # Extract distance reward parameters
+            if isinstance(full_config, dict) and 'distance' in full_config:
+                dist = full_config['distance']
+                reward_params = {
+                    'near_distance': dist.get('near_distance', 1.0),
+                    'far_distance': dist.get('far_distance', 2.5),
+                    'reward_near': dist.get('reward_near', 0.12),
+                    'penalty_far': dist.get('penalty_far', 0.08),
+                }
+                console_logger.print_info(
+                    f"Extracted reward params: near={reward_params['near_distance']:.2f}m, far={reward_params['far_distance']:.2f}m"
+                )
 
         # Get visualization config from environment
         viz_config = scenario['environment'].get('visualization', {})
@@ -476,7 +487,7 @@ def main():
             extensions_added[0] = True
 
             # Lazy import rendering extensions (only when rendering is enabled)
-            from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+            from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
 
             # Add telemetry HUD
             telemetry = TelemetryHUD(renderer)
@@ -590,7 +601,7 @@ def main():
         if not spawn_configs:
             spawn_configs = spawn_config.get('spawn_configs', {})
         if spawn_config.get('enabled', False):
-            from src.core.spawn_curriculum import SpawnCurriculumManager
+            from core.spawn_curriculum import SpawnCurriculumManager
 
             # Get spawn point configurations from environment
             if spawn_configs:
@@ -615,7 +626,7 @@ def main():
             else:
                 console_logger.print_warning("Spawn curriculum enabled but no spawn_configs provided")
         elif phased_curriculum_enabled and spawn_configs:
-            from src.core.spawn_curriculum import SpawnCurriculumManager
+            from core.spawn_curriculum import SpawnCurriculumManager
 
             console_logger.print_info("Creating spawn sampler for phased curriculum...")
             try:
@@ -710,7 +721,7 @@ def main():
         best_eval_model_tracker = None
         eval_cfg = scenario.get('evaluation', {})
         if eval_cfg.get('enabled', False):
-            from src.core.evaluator import EvaluationConfig
+            from core.evaluator import EvaluationConfig
 
             console_logger.print_info("Configuring evaluation...")
 
@@ -761,7 +772,7 @@ def main():
         # Initialize CSV logger (uses same output directory as checkpoints)
         csv_logger = None
         if not args.no_checkpoints:
-            from src.core.run_id import get_output_dir
+            from core.run_id import get_output_dir
             output_dir = get_output_dir(
                 run_id=run_id,
                 scenario_name=scenario['experiment']['name']
@@ -812,7 +823,7 @@ def main():
         if phased_curriculum_enabled:
             console_logger.print_info("Setting up phased curriculum...")
             try:
-                from src.curriculum.training_integration import setup_curriculum_from_scenario
+                from curriculum.training_integration import setup_curriculum_from_scenario
                 phased_curriculum = setup_curriculum_from_scenario(scenario, training_loop)
                 if phased_curriculum:
                     console_logger.print_success(
@@ -838,7 +849,7 @@ def main():
                         saved_stage = training_state['curriculum_stage']
                         console_logger.print_info(f"Restored curriculum stage: {saved_stage}")
                     if phased_curriculum and 'phased_curriculum' in training_state:
-                        from src.curriculum.curriculum_env import restore_curriculum_from_checkpoint
+                        from curriculum.curriculum_env import restore_curriculum_from_checkpoint
                         restore_curriculum_from_checkpoint(
                             phased_curriculum,
                             training_state['phased_curriculum']

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, List
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from src.metrics.outcomes import determine_outcome, EpisodeOutcome
+from metrics.outcomes import determine_outcome, EpisodeOutcome
 
 
 class SB3EvaluationCallback(BaseCallback):

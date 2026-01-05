@@ -1291,6 +1291,17 @@ class F110ParallelEnv(ParallelEnv):
                 else:
                     infos[agent_id]["target_collision"] = False
 
+                # Add target finish status if finish line tracking is enabled
+                finish_crossed = self._finish_crossed
+                if (
+                    target_idx is not None
+                    and finish_crossed is not None
+                    and target_idx < len(finish_crossed)
+                ):
+                    infos[agent_id]["target_finished"] = bool(finish_crossed[target_idx])
+                else:
+                    infos[agent_id]["target_finished"] = False
+
                 # Add locked speed info for curriculum-based velocity control
                 if agent_id in self._locked_velocities:
                     infos[agent_id]["locked_velocity"] = float(self._locked_velocities[agent_id])

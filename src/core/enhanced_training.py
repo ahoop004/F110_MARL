@@ -870,9 +870,12 @@ class EnhancedTrainingLoop:
         if isinstance(info, dict):
             info_for_agent = info.get(agent_id, info)
 
+        # Use a single frame (post-step when available) for reward computation.
+        obs_source = next_obs if isinstance(next_obs, dict) else obs
+
         reward_info = {
-            'obs': obs.get(agent_id, {}),
-            'next_obs': next_obs.get(agent_id, {}),
+            'obs': obs_source.get(agent_id, {}) if isinstance(obs_source, dict) else {},
+            'next_obs': next_obs.get(agent_id, {}) if isinstance(next_obs, dict) else {},
             'info': info_for_agent,
             'step': step,
             'done': done,  # Actual done flag from environment
@@ -881,8 +884,8 @@ class EnhancedTrainingLoop:
         }
 
         # Add target obs if available (for adversarial tasks)
-        if target_id and target_id in next_obs:
-            reward_info['target_obs'] = next_obs[target_id]
+        if target_id and isinstance(obs_source, dict) and target_id in obs_source:
+            reward_info['target_obs'] = obs_source[target_id]
 
         return reward_info
 

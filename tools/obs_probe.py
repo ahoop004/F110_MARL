@@ -8,14 +8,22 @@ observations that would be passed into the training agents.
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
 
-from src.core.enhanced_training import EnhancedTrainingLoop
-from src.core.scenario import load_and_expand_scenario, ScenarioError
-from src.core.setup import create_training_setup
-from src.core.spawn_curriculum import SpawnCurriculumManager
+# Allow running from repo root without installing the package.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from core.enhanced_training import EnhancedTrainingLoop
+from core.scenario import load_and_expand_scenario, ScenarioError
+from core.setup import create_training_setup
+from core.spawn_curriculum import SpawnCurriculumManager
 
 
 def _extract_observation_presets(scenario: Dict[str, Any]) -> tuple[Dict[str, str], Dict[str, str]]:

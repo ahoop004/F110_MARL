@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, List
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from src.metrics.outcomes import EpisodeOutcome
+from metrics.outcomes import EpisodeOutcome
 
 class CurriculumCallback(BaseCallback):
     """Callback to handle curriculum learning progression for SB3.
@@ -375,7 +375,7 @@ class CurriculumCallback(BaseCallback):
             if hasattr(env, 'set_speed_lock'):
                 env.set_speed_lock(lock_speed_steps)
         if self.spawn_curriculum:
-            from src.curriculum.curriculum_env import apply_curriculum_to_spawn_curriculum
+            from curriculum.curriculum_env import apply_curriculum_to_spawn_curriculum
             apply_curriculum_to_spawn_curriculum(self.spawn_curriculum, phase)
 
         # Update FTG parameters

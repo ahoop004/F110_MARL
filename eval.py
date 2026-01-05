@@ -38,15 +38,18 @@ from typing import Dict, Any, Optional
 import numpy as np
 import torch
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Allow running from repo root without installing the package.
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
+if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from src.core.scenario import load_and_expand_scenario
-from src.core.setup import create_training_setup
-from src.core.checkpoint_manager import CheckpointManager
-from src.core.run_metadata import RunMetadata
-from src.core.evaluator import Evaluator, EvaluationConfig
-from src.core.obs_flatten import flatten_observation
+from core.scenario import load_and_expand_scenario
+from core.setup import create_training_setup
+from core.checkpoint_manager import CheckpointManager
+from core.run_metadata import RunMetadata
+from core.evaluator import Evaluator, EvaluationConfig
+from core.obs_flatten import flatten_observation
 from wrappers.normalize import ObservationNormalizer
 
 

@@ -9,9 +9,9 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from src.core.obs_flatten import flatten_observation
-from src.rewards.base import RewardStrategy
-from src.metrics.outcomes import determine_outcome
+from core.obs_flatten import flatten_observation
+from rewards.base import RewardStrategy
+from metrics.outcomes import determine_outcome
 
 
 class SB3SingleAgentWrapper(gym.Env):
@@ -28,7 +28,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_high: Action space upper bounds (default: [0.46, 1.0])
 
     Example:
-        >>> from src.core.setup import create_training_setup
+        >>> from core.setup import create_training_setup
         >>> env, agents, _ = create_training_setup(scenario)
         >>>
         >>> # Wrap for SB3
