@@ -1,23 +1,41 @@
-"""Terminal rewards for gaplock task.
+"""Terminal rewards for gaplock adversarial racing task.
 
-Handles episode-ending outcomes with appropriate rewards/penalties.
+Terminal rewards provide sparse signals at episode termination, encoding
+task success/failure. These are the dominant rewards (~100-200x larger than
+shaping rewards) that define the learning objective.
+
+Design Philosophy:
+- Sparse rewards: Only fire when done=True
+- Clear success signal: +200 for forcing target to crash
+- Strong failure penalties: -20 to -100 for various failure modes
+- Asymmetric: Success reward >> failure penalties (encourages risk-taking)
 """
 
 from typing import Dict
 
 
 class TerminalReward:
-    """Terminal rewards for episode outcomes.
+    """Terminal rewards for gaplock episode outcomes.
 
-    Provides rewards/penalties based on how the episode ends:
-    - target_crash: Target crashed, attacker survived (SUCCESS)
-    - self_crash: Attacker crashed alone (FAILURE)
-    - collision: Both crashed (FAILURE)
-    - timeout: Max steps reached (FAILURE)
-    - idle_stop: Attacker stopped moving (FAILURE)
-    - target_finish: Target crossed finish line (FAILURE)
+    The gaplock task is adversarial: an attacker tries to force a defender
+    to crash while avoiding crashing itself. Terminal rewards encode this:
 
-    Only fires on done=True steps.
+    SUCCESS (Attacker wins):
+    - target_crash: Target crashed, attacker survived → +200
+
+    FAILURE (Attacker loses):
+    - self_crash: Attacker crashed alone → -20
+    - collision: Both crashed (mutual destruction) → 0
+    - timeout: Max steps reached without success → -100
+    - target_finish: Target crossed finish line → penalty (rare)
+
+    Design Rationale:
+    - Large success reward (+200) encourages aggressive overtaking
+    - Moderate crash penalty (-20) allows learning from risky maneuvers
+    - Large timeout penalty (-100) prevents passive strategies
+    - Collision penalty (0) treats mutual crashes neutrally
+
+    Only fires on done=True steps (sparse reward signal).
     """
 
     def __init__(self, config: dict):

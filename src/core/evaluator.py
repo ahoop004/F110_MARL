@@ -11,7 +11,6 @@ from pettingzoo import ParallelEnv
 from core.protocol import Agent
 from core.obs_flatten import flatten_observation
 from metrics import determine_outcome, EpisodeOutcome
-from wrappers.normalize import ObservationNormalizer
 
 
 class EvaluationConfig:
@@ -144,7 +143,6 @@ class Evaluator:
         config: EvaluationConfig,
         observation_presets: Optional[Dict[str, str]] = None,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
-        obs_normalizer: Optional[ObservationNormalizer] = None,
         obs_scales: Optional[Dict[str, float]] = None,
         spawn_configs: Optional[Dict[str, Any]] = None,
     ):
@@ -156,16 +154,19 @@ class Evaluator:
             config: EvaluationConfig
             observation_presets: Optional dict mapping agent_id -> preset name
             target_ids: Optional dict mapping agent_id -> target_id
-            obs_normalizer: Optional observation normalizer (for consistency with training)
             obs_scales: Optional observation scales for flattening
             spawn_configs: Optional spawn configurations (if None, reads from env or uses default poses)
+
+        Note:
+            Observation normalization happens in flatten_observation() (obs_flatten.py)
+            which applies domain-specific bounded ranges. No additional running mean/std
+            normalization is applied during evaluation.
         """
         self.env = env
         self.agents = agents
         self.config = config
         self.observation_presets = observation_presets or {}
         self.target_ids = target_ids or {}
-        self.obs_normalizer = obs_normalizer
         self.obs_scales = obs_scales or {}
         self.spawn_configs = spawn_configs or getattr(env, 'spawn_configs', {})
 
@@ -184,6 +185,12 @@ class Evaluator:
     ) -> EvaluationResult:
         """Run evaluation and return results.
 
+        Evaluation is DETERMINISTIC for consistent performance measurement:
+        - Fixed spawn points (cycled sequentially for reproducibility)
+        - Deterministic policy (no exploration noise)
+        - FTG defender at full strength (configurable via ftg_override)
+        - No observation normalization updates (frozen stats from training)
+
         Args:
             verbose: Print progress during evaluation (default: False)
             on_episode_end: Optional callback invoked after each episode
@@ -192,14 +199,25 @@ class Evaluator:
         Returns:
             EvaluationResult with aggregate statistics and per-episode data
         """
-        # Apply FTG override if configured
+        # ========================================
+        # EVALUATION INITIALIZATION
+        # ========================================
+
+        # Override FTG defender parameters to full strength
+        # Example: max_speed=1.0, bubble_radius=3.0, steering_gain=0.35
+        # This ensures consistent evaluation difficulty regardless of training curriculum
         if self.config.ftg_override:
             self._apply_ftg_override()
 
         episodes = []
 
+        # ========================================
+        # EVALUATION LOOP (DETERMINISTIC)
+        # ========================================
+
         for ep_idx in range(self.config.num_episodes):
             # Sequential spawn selection (cycle through spawn points)
+            # Ensures consistent ordering for reproducible evaluation
             spawn_idx = ep_idx % len(self.config.spawn_points)
             spawn_point = self.config.spawn_points[spawn_idx]
             spawn_speed = self.config.spawn_speeds[spawn_idx] if spawn_idx < len(self.config.spawn_speeds) else 0.44
@@ -207,10 +225,11 @@ class Evaluator:
             if verbose:
                 print(f"Episode {ep_idx + 1}/{self.config.num_episodes}: {spawn_point} @ {spawn_speed:.2f} m/s")
 
-            # Run episode
+            # Run single evaluation episode (deterministic actions)
             episode_result = self._run_episode(spawn_point, spawn_speed, ep_idx)
             episodes.append(episode_result)
 
+            # Callback for logging/tracking (e.g., W&B, CSV)
             if on_episode_end:
                 on_episode_end(episode_result, ep_idx + 1, self.config.num_episodes)
 
@@ -220,7 +239,11 @@ class Evaluator:
                 steps = episode_result['steps']
                 print(f"  Result: {outcome}, Reward: {reward:.2f}, Steps: {steps}")
 
-        # Create result
+        # ========================================
+        # AGGREGATE RESULTS
+        # ========================================
+
+        # Compute aggregate statistics: success_rate, avg_reward, outcome_distribution
         result = EvaluationResult(
             episodes=episodes,
             agent_id=self.primary_agent_id,
@@ -239,12 +262,17 @@ class Evaluator:
 
         Args:
             spawn_point: Name of spawn point to use
+            spawn_speed: Initial velocity for agents
             episode_num: Episode number (for logging)
 
         Returns:
-            Dict with episode results
+            Dict with episode results (outcome, reward, steps, success)
         """
-        # Get spawn configuration
+        # ========================================
+        # EPISODE RESET
+        # ========================================
+
+        # Validate spawn point exists in configuration
         if spawn_point not in self.spawn_configs:
             raise ValueError(
                 f"Spawn point '{spawn_point}' not found in spawn_configs. "
@@ -253,13 +281,13 @@ class Evaluator:
 
         spawn_config = self.spawn_configs[spawn_point]
 
-        # Build poses array and velocities dict for reset
+        # Build poses array and velocities dict for environment reset
         poses_list = []
         velocities = {}
 
         for agent_id in sorted(self.agents.keys()):  # Sort for consistent ordering
             if agent_id in spawn_config:
-                pose = spawn_config[agent_id]
+                pose = spawn_config[agent_id]  # [x, y, theta]
                 poses_list.append(pose)
                 # Set initial velocity as scalar speed (environment expects this format)
                 velocities[agent_id] = spawn_speed
@@ -267,49 +295,53 @@ class Evaluator:
         # Convert poses to numpy array (N, 3) format expected by environment
         poses_array = np.array(poses_list, dtype=np.float32)
 
-        # Reset environment with spawn configuration
+        # Reset environment with fixed spawn configuration
         reset_options = {
             'poses': poses_array,
             'velocities': velocities,
-            'lock_speed_steps': self.config.lock_speed_steps,
+            'lock_speed_steps': self.config.lock_speed_steps,  # Usually 0 for eval
         }
 
         obs, info = self.env.reset(options=reset_options)
 
-        # Episode tracking
+        # Initialize episode tracking
         episode_reward = 0.0
         episode_steps = 0
         done = {agent_id: False for agent_id in self.agents.keys()}
 
-        # Run episode
+        # ========================================
+        # EPISODE EXECUTION (DETERMINISTIC)
+        # ========================================
+
         while not all(done.values()) and episode_steps < self.config.max_steps:
-            # Select actions (deterministic for eval)
+
+            # -------------------- ACTION SELECTION (DETERMINISTIC) --------------------
+
             actions = {}
             for agent_id, agent in self.agents.items():
                 if not done[agent_id]:
-                    # Flatten observation if preset configured
+                    # Flatten observation from dict to vector
+                    # NOTE: Normalization happens inside flatten_observation() using
+                    # domain-specific bounded ranges (LiDAR → [0,1], velocities → [-1,1], etc.)
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
 
-                    # Normalize observation if normalizer provided
-                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
-                        # Don't update stats during eval
-                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=False)
-
-                    # Get action (deterministic)
+                    # Select deterministic action (no exploration noise)
+                    # For Gaussian policies: uses mean action (μ) instead of sampling from N(μ, σ)
                     try:
                         actions[agent_id] = agent.act(flat_obs, deterministic=self.config.deterministic)
                     except TypeError:
-                        # Agent doesn't support deterministic parameter
+                        # Backward compatibility: some agents don't support deterministic parameter
                         actions[agent_id] = agent.act(flat_obs)
 
-            # Step environment
+            # -------------------- ENVIRONMENT STEP --------------------
+
             next_obs, rewards, terminations, truncations, step_info = self.env.step(actions)
 
-            # Track primary agent reward
+            # Track primary agent reward (usually the attacker being evaluated)
             if self.primary_agent_id:
                 episode_reward += rewards.get(self.primary_agent_id, 0.0)
 
-            # Update observations and done flags
+            # Update state for next iteration
             obs = next_obs
             info = step_info
             for agent_id in self.agents.keys():
