@@ -37,6 +37,7 @@ Example scenario file:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -213,13 +214,15 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             break
     default_group = scenario.get('experiment', {}).get('name')
 
+    sweep_mode = bool(os.environ.get("WANDB_SWEEP_ID"))
+
     if wandb_enabled:
         console_logger.print_info("Initializing Weights & Biases...")
 
         wandb_logger = WandbLogger(
             project=wandb_config.get('project', 'f110-marl'),
             name=wandb_config.get('name', scenario['experiment']['name']),
-            config=scenario,
+            config=None if sweep_mode else scenario,
             tags=wandb_config.get('tags', []),
             group=wandb_config.get('group', default_group),
             job_type=wandb_config.get('job_type', default_algo),
@@ -312,7 +315,8 @@ def main():
     if wandb_logger is not None:
         try:
             import wandb
-            if wandb.config and len(dict(wandb.config)) > 0:
+            sweep_mode = bool(os.environ.get("WANDB_SWEEP_ID") or getattr(wandb.run, "sweep_id", None))
+            if sweep_mode and wandb.config and len(dict(wandb.config)) > 0:
                 console_logger.print_info("Detected WandB sweep mode - applying sweep parameters...")
 
                 def set_nested_value(d: dict, path: str, value):
@@ -335,12 +339,19 @@ def main():
                 if sb3_agent_id:
                     sweep_params_applied = {}
                     wandb_params = {k: wandb.config[k] for k in wandb.config}
+                    agent_params = scenario.get('agents', {}).get(sb3_agent_id, {}).get('params', {})
+                    allowed_param_keys = set(agent_params.keys())
+                    skipped_keys = []
 
                     for key, value in wandb_params.items():
-                        # Skip WandB internal keys
-                        if key.startswith('_') or key in [
+                        # Skip WandB internal keys and flattened scenario keys
+                        if (
+                            key.startswith('_')
+                            or '/' in key
+                            or key in [
                             'method', 'metric', 'program', 'algorithm', 'scenario'
-                        ]:
+                            ]
+                        ):
                             continue
 
                         # Handle special keys
@@ -351,6 +362,9 @@ def main():
                         if key == 'seed':
                             scenario.setdefault('experiment', {})['seed'] = value
                             sweep_params_applied[key] = value
+                            continue
+                        if key not in allowed_param_keys and '.' not in key:
+                            skipped_keys.append(key)
                             continue
                         # Apply to agent params
                         override_path = key if '.' in key else f"agents.{sb3_agent_id}.params.{key}"
@@ -363,6 +377,11 @@ def main():
                         )
                         for key, value in sweep_params_applied.items():
                             console_logger.print_info(f"  {key} = {value}")
+                        if skipped_keys:
+                            skipped_str = ", ".join(sorted(skipped_keys))
+                            console_logger.print_warning(
+                                f"Skipped {len(skipped_keys)} sweep key(s) not in agent params: {skipped_str}"
+                            )
         except Exception as e:
             console_logger.print_warning(f"Failed to apply sweep parameters: {e}")
 
@@ -786,7 +805,6 @@ def main():
             eval_every_n_episodes=eval_every_n_episodes,
             max_steps_per_episode=scenario['environment'].get('max_steps', 5000),
             save_every_n_episodes=args.save_every if not args.no_checkpoints else None,
-            obs_clip=float(scenario.get('experiment', {}).get('obs_clip', 10.0)),
         )
 
         # Setup phased curriculum if configured
