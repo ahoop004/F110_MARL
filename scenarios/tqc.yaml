@@ -146,12 +146,13 @@ agents:
     algorithm: sb3_tqc
     target_id: car_1
     params:
-      # SB3 SAC parameters (using proven SB3 defaults)
+      # SB3 TQC parameters (using proven SB3 defaults)
       learning_rate: 0.0003
       gamma: 0.995
       tau: 0.005
       ent_coef: auto  # Automatic entropy tuning
       target_entropy: auto
+      top_quantiles_to_drop_per_net: 2
       hidden_dims:
       - 256
       - 256

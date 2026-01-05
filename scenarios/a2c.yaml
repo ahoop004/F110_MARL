@@ -147,7 +147,7 @@ agents:
     target_id: car_1
     params:
       # SB3 A2C parameters (using proven SB3 defaults)
-      learning_rate: 0.0007  # A2C typically uses higher LR
+      learning_rate: 0.0003
       gamma: 0.995
       n_steps: 5  # A2C uses fewer steps than PPO
       gae_lambda: 1.0  # No GAE by default

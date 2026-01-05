@@ -145,7 +145,7 @@ agents:
     algorithm: sb3_qrdqn
     target_id: car_1
     params:
-      # SB3 QR-DQN parameters
+      # SB3 QR-DQN parameters (using proven SB3 defaults)
       action_set:
       - - 1.0
         - -0.4
@@ -197,7 +197,7 @@ agents:
         - 0.2
       - - 0.2
         - 0.4
-      learning_rate: 0.0005
+      learning_rate: 0.0003
       gamma: 0.995
       tau: 0.005
       hidden_dims:
@@ -205,7 +205,7 @@ agents:
       - 256
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 2500
+      learning_starts: 1000
       exploration_fraction: 0.1
       exploration_initial_eps: 1.0
       exploration_final_eps: 0.05

@@ -146,18 +146,19 @@ agents:
     algorithm: sb3_td3
     target_id: car_1
     params:
-      # SB3 SAC parameters (using proven SB3 defaults)
+      # SB3 TD3 parameters (using proven SB3 defaults)
       learning_rate: 0.0003
       gamma: 0.995
       tau: 0.005
-      ent_coef: auto  # Automatic entropy tuning
-      target_entropy: auto
       hidden_dims:
       - 256
       - 256
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 1000
+      policy_delay: 2
+      target_policy_noise: 0.2
+      target_noise_clip: 0.5
     observation:
       preset: gaplock
     reward:
