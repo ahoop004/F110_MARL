@@ -176,6 +176,7 @@ class EnhancedTrainingLoop:
         # Evaluation tracking (separate counter for continuous eval plots)
         self.total_eval_episodes: int = 0
         self.last_eval_training_episode: int = -1
+        self.best_eval_per_phase: Dict[int, float] = {}
 
     def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
         """Flatten observation for agent if preset is configured.
@@ -1083,6 +1084,33 @@ class EnhancedTrainingLoop:
             on_episode_end=_handle_eval_episode,
         )
 
+        phase_info = self._get_phase_info()
+        eval_training_state = {'eval_result': eval_result.to_dict()}
+        if phase_info:
+            eval_training_state.update(phase_info)
+
+        agent_states: Optional[Dict[str, Any]] = None
+        optimizer_states: Optional[Dict[str, Any]] = None
+
+        def _collect_agent_states() -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+            nonlocal agent_states, optimizer_states
+            if agent_states is None:
+                agent_states = {}
+                optimizer_states = {}
+
+                for agent_id, agent in self.agents.items():
+                    if hasattr(agent, 'get_state'):
+                        agent_states[agent_id] = agent.get_state()
+                    if hasattr(agent, 'get_optimizer_state'):
+                        opt_state = agent.get_optimizer_state()
+                        if opt_state is not None:
+                            optimizer_states[agent_id] = opt_state
+
+                if not optimizer_states:
+                    optimizer_states = None
+
+            return agent_states, optimizer_states
+
         # Log aggregate results (keep step monotonic for W&B)
         if self.wandb_logger:
             agg_metrics = {
@@ -1139,14 +1167,7 @@ class EnhancedTrainingLoop:
 
             if is_new_best_eval:
                 # Save checkpoint for best eval model
-                agent_states = {}
-                optimizer_states = {}
-
-                for agent_id, agent in self.agents.items():
-                    if hasattr(agent, 'get_state'):
-                        agent_states[agent_id] = agent.get_state()
-                    if hasattr(agent, 'get_optimizer_state'):
-                        optimizer_states[agent_id] = agent.get_optimizer_state()
+                agent_states, optimizer_states = _collect_agent_states()
 
                 # Save with eval_best type
                 try:
@@ -1154,7 +1175,7 @@ class EnhancedTrainingLoop:
                         episode=episode_num,
                         agent_states=agent_states,
                         optimizer_states=optimizer_states if optimizer_states else None,
-                        training_state={'eval_result': eval_result.to_dict()},
+                        training_state=eval_training_state,
                         checkpoint_type="best_eval",
                         metric_value=eval_result.success_rate,
                     )
@@ -1173,6 +1194,33 @@ class EnhancedTrainingLoop:
                         )
                 except Exception as e:
                     logger.error(f"Failed to save best eval checkpoint at episode {episode_num}: {e}")
+
+        # Save best eval per phase (phased curriculum only)
+        if self.checkpoint_manager and phase_info.get("phase_index") is not None:
+            phase_index = phase_info["phase_index"]
+            best_value = self.best_eval_per_phase.get(phase_index)
+            if best_value is None or eval_result.success_rate > best_value:
+                agent_states, optimizer_states = _collect_agent_states()
+                try:
+                    checkpoint_path = self.checkpoint_manager.save_checkpoint(
+                        episode=episode_num,
+                        agent_states=agent_states,
+                        optimizer_states=optimizer_states if optimizer_states else None,
+                        training_state=eval_training_state,
+                        checkpoint_type=f"best_eval_phase_{phase_index}",
+                        metric_value=eval_result.success_rate,
+                    )
+                    self.best_eval_per_phase[phase_index] = eval_result.success_rate
+                    if self.console_logger:
+                        phase_name = phase_info.get("phase_name", phase_index)
+                        self.console_logger.print_info(
+                            f"New phase-best eval model ({phase_name}): "
+                            f"{eval_result.success_rate:.2%} @ episode {episode_num}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to save phase-best eval checkpoint at episode {episode_num}: {e}"
+                    )
 
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.
@@ -1228,6 +1276,10 @@ class EnhancedTrainingLoop:
                 'total_eval_episodes': self.total_eval_episodes,
                 'last_eval_training_episode': self.last_eval_training_episode,
             }
+
+            phase_info = self._get_phase_info()
+            if phase_info:
+                training_state.update(phase_info)
 
             if self.spawn_curriculum:
                 training_state['curriculum_stage'] = self.spawn_curriculum.current_stage
@@ -1295,6 +1347,22 @@ class EnhancedTrainingLoop:
             if hasattr(agent, 'get_state'):
                 return agent_id
         return next(iter(self.agents), None)
+
+    def _get_phase_info(self) -> Dict[str, Any]:
+        """Get phased curriculum info for checkpoint tagging."""
+        if not self._phase_curriculum_state:
+            return {}
+
+        phase_info: Dict[str, Any] = {}
+        phase_index = self._phase_curriculum_state.get("phase_index")
+        phase_name = self._phase_curriculum_state.get("phase_name")
+
+        if phase_index is not None:
+            phase_info["phase_index"] = int(phase_index)
+        if phase_name is not None:
+            phase_info["phase_name"] = str(phase_name)
+
+        return phase_info
 
     def load_checkpoint(self, checkpoint_path: str) -> Dict[str, Any]:
         """Load checkpoint and restore agent states.

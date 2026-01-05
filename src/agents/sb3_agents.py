@@ -201,6 +201,83 @@ class SB3AgentBase:
         self.model = self.model_class.load(path)
         self._setup_done = True
 
+    def get_state(self) -> Dict[str, Any]:
+        """Return model state for checkpointing."""
+        if self.model is None:
+            return {}
+
+        state: Dict[str, Any] = {}
+
+        policy = getattr(self.model, "policy", None)
+        if policy is not None:
+            try:
+                state["policy"] = {
+                    key: value.detach().cpu()
+                    for key, value in policy.state_dict().items()
+                }
+            except Exception:
+                pass
+
+        if hasattr(self.model, "get_parameters"):
+            try:
+                state["parameters"] = self.model.get_parameters()
+            except Exception:
+                pass
+
+        return state
+
+    def load_state(self, state: Dict[str, Any]) -> None:
+        """Load model state from checkpoint."""
+        if self.model is None or not state:
+            return
+
+        if "parameters" in state and hasattr(self.model, "set_parameters"):
+            try:
+                self.model.set_parameters(state["parameters"], exact_match=True)
+                return
+            except Exception:
+                pass
+
+        policy_state = state.get("policy")
+        if policy_state is not None and hasattr(self.model, "policy"):
+            self.model.policy.load_state_dict(policy_state)
+
+    def get_optimizer_state(self) -> Optional[Dict[str, Any]]:
+        """Return optimizer state for checkpointing."""
+        if self.model is None:
+            return None
+
+        optim_state: Dict[str, Any] = {}
+
+        policy = getattr(self.model, "policy", None)
+        if policy is not None:
+            optimizer = getattr(policy, "optimizer", None)
+            if optimizer is not None:
+                optim_state["policy_optimizer"] = optimizer.state_dict()
+
+        ent_coef_optimizer = getattr(self.model, "ent_coef_optimizer", None)
+        if ent_coef_optimizer is not None:
+            optim_state["ent_coef_optimizer"] = ent_coef_optimizer.state_dict()
+
+        if not optim_state:
+            return None
+        return optim_state
+
+    def load_optimizer_state(self, state: Dict[str, Any]) -> None:
+        """Load optimizer state from checkpoint."""
+        if self.model is None or not state:
+            return
+
+        policy = getattr(self.model, "policy", None)
+        if policy is not None:
+            optimizer = getattr(policy, "optimizer", None)
+            if optimizer is not None and "policy_optimizer" in state:
+                optimizer.load_state_dict(state["policy_optimizer"])
+
+        ent_coef_optimizer = getattr(self.model, "ent_coef_optimizer", None)
+        if ent_coef_optimizer is not None and "ent_coef_optimizer" in state:
+            ent_coef_optimizer.load_state_dict(state["ent_coef_optimizer"])
+
 
 class SB3SACAgent(SB3AgentBase):
     """SAC agent using Stable-Baselines3."""

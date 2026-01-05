@@ -90,6 +90,14 @@ class CheckpointManager:
             filename = f"{prefix}_best_ep{episode:06d}.pt"
         elif checkpoint_type == "best_eval":
             filename = f"{prefix}_eval_best_ep{episode:06d}.pt"
+        elif checkpoint_type.startswith("best_eval_phase"):
+            tag = checkpoint_type[len("best_eval_phase"):].lstrip("_")
+            if tag:
+                import re
+                safe_tag = re.sub(r'[^a-zA-Z0-9_-]+', '-', tag)
+                filename = f"{prefix}_eval_phase{safe_tag}_best_ep{episode:06d}.pt"
+            else:
+                filename = f"{prefix}_eval_phase_best_ep{episode:06d}.pt"
         elif checkpoint_type == "final":
             filename = f"{prefix}_final_ep{episode:06d}.pt"
         else:
