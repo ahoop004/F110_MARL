@@ -39,6 +39,6 @@ command:
 - python3
 - ${program}
 - --scenario
-- scenarios/td3.yaml
+- scenarios/td3_1.yaml
 - --wandb
 name: TD3_sweep

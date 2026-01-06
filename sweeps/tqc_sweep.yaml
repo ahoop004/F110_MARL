@@ -41,6 +41,6 @@ command:
 - python3
 - ${program}
 - --scenario
-- scenarios/tqc.yaml
+- scenarios/tqc_1.yaml
 - --wandb
 name: TQC_sweep
