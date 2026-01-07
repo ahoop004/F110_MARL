@@ -6,6 +6,7 @@ agent interface and training loop.
 
 from typing import Any, Dict, Optional
 import numpy as np
+import torch.nn as nn
 import gymnasium as gym
 from gymnasium import spaces
 
@@ -159,7 +160,34 @@ class SB3AgentBase:
         # Default: 2-layer MLP with 256 units each
         # Applied to both actor and critic networks
         hidden_dims = params.get('hidden_dims', [256, 256])
-        self.policy_kwargs = {'net_arch': hidden_dims}
+        pi_dims = params.get('pi_hidden_dims')
+        qf_dims = params.get('qf_hidden_dims')
+        supports_split = self.model_class.__name__ in {"SAC", "TD3", "TQC", "DDPG"}
+        if supports_split and (pi_dims is not None or qf_dims is not None):
+            if pi_dims is None:
+                pi_dims = hidden_dims
+            if qf_dims is None:
+                qf_dims = hidden_dims
+            net_arch = {'pi': pi_dims, 'qf': qf_dims}
+        else:
+            net_arch = hidden_dims
+        self.policy_kwargs = {'net_arch': net_arch}
+
+        activation = params.get('activation')
+        if activation is not None:
+            if isinstance(activation, str):
+                activation_key = activation.strip().lower()
+                activation_map = {
+                    "relu": nn.ReLU,
+                    "silu": nn.SiLU,
+                    "swish": nn.SiLU,
+                    "tanh": nn.Tanh,
+                }
+                if activation_key not in activation_map:
+                    raise ValueError(f"Unsupported activation '{activation}'. Use: relu, silu/swish, tanh.")
+                self.policy_kwargs['activation_fn'] = activation_map[activation_key]
+            else:
+                self.policy_kwargs['activation_fn'] = activation
 
         # Hindsight Experience Replay (HER) configuration (optional)
         her_cfg = params.get('her', {})

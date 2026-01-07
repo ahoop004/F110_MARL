@@ -1,0 +1,30 @@
+program: run_v2.py
+method: grid
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: train/success_rate
+  goal: maximize
+parameters:
+  hidden_dims:
+    values:
+    - - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+      - 256
+command:
+- ${env}
+- python3
+- ${program}
+- --scenario
+- scenarios/td3_1.yaml
+- --wandb
+name: TD3_mlp_sweep

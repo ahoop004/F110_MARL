@@ -112,6 +112,9 @@ agents:
       hidden_dims:
       - 256
       - 256
+      activation: relu
+      pi_hidden_dims: null
+      qf_hidden_dims: null
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 1000

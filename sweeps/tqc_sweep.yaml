@@ -8,7 +8,9 @@ metric:
 parameters:
   learning_rate:
     values:
+    - 0.00005
     - 0.0001
+    - 0.0002
   tau:
     values:
     - 0.006
@@ -16,27 +18,13 @@ parameters:
     - 0.009
     - 0.01
     - 0.012
-  her.enabled:
+  # Exploration sweep params
+  ent_coef:
     values:
-    - true
-  her.reward_mode:
-    values:
-    - replace
-  her.success_mode:
-    values:
-    - distance
-  her.distance_threshold:
-    values:
-    - 1.0
-  her.success_reward:
-    values:
-    - 0.0
-  her.failure_reward:
-    values:
-    - -1.0
-  her.done_on_success:
-    values:
-    - true
+    - auto
+    # - 0.01
+    # - 0.02
+    # - 0.05
   # Optional parameters (uncomment to sweep):
   # gamma:
   #   values:
@@ -47,12 +35,81 @@ parameters:
   #   values:
   #   - 128
   #   - 256
+  # target_entropy:
+  #   values:
+  #   - -1.0
+  #   - -2.0
+  #   - -3.0
+  # Architecture sweeps (uncomment to sweep):
   # hidden_dims:
   #   values:
   #   - - 256
   #     - 256
-  #   - - 512
-  #     - 512
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  pi_hidden_dims:
+    values:
+    - - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+      - 256
+  qf_hidden_dims:
+    values:
+    - - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+    - - 256
+      - 256
+      - 256
+      - 256
+      - 256
+  activation:
+    values:
+    - relu
+    - silu
+    - tanh
+  # HER sweeps (canonical, uncomment to sweep):
+  # her.enabled:
+  #   values:
+  #   - true
+  # her.reward_mode:
+  #   values:
+  #   - replace
+  # her.success_mode:
+  #   values:
+  #   - distance
+  # her.distance_threshold:
+  #   values:
+  #   - 1.0
+  # her.success_reward:
+  #   values:
+  #   - 0.0
+  # her.failure_reward:
+  #   values:
+  #   - -1.0
+  # her.done_on_success:
+  #   values:
+  #   - true
 command:
 - ${env}
 - python3

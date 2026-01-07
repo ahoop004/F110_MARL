@@ -16,44 +16,94 @@ parameters:
     - 0.009
     - 0.01
     - 0.012
+  # Exploration sweep params
   action_noise_sigma:
     values:
+    - 0.05
     - 0.1
-  her.enabled:
+    - 0.2
+  target_policy_noise:
     values:
-    - true
-  her.reward_mode:
+    - 0.1
+    - 0.2
+    - 0.3
+  target_noise_clip:
     values:
-    - replace
-  her.success_mode:
-    values:
-    - distance
-  her.distance_threshold:
-    values:
-    - 1.0
-  her.success_reward:
-    values:
-    - 0.0
-  her.failure_reward:
-    values:
-    - -1.0
-  her.done_on_success:
-    values:
-    - true
+    - 0.2
+    - 0.5
+    - 0.8
   # Optional parameters (uncomment to sweep):
-  gamma:
-    values:
-    - 0.99
-    - 0.995
-    - 0.999
-  batch_size:
-    values:
-    - 128
-    - 256
-  policy_delay:
-    values:
-    - 2
-    - 3
+  # gamma:
+  #   values:
+  #   - 0.99
+  #   - 0.995
+  #   - 0.999
+  # batch_size:
+  #   values:
+  #   - 128
+  #   - 256
+  # policy_delay:
+  #   values:
+  #   - 2
+  #   - 3
+  # Architecture sweeps (uncomment to sweep):
+  # hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  # pi_hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  # qf_hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  # activation:
+  #   values:
+  #   - relu
+  #   - silu
+  #   - tanh
+  # HER sweeps (canonical, uncomment to sweep):
+  # her.enabled:
+  #   values:
+  #   - true
+  # her.reward_mode:
+  #   values:
+  #   - replace
+  # her.success_mode:
+  #   values:
+  #   - distance
+  # her.distance_threshold:
+  #   values:
+  #   - 1.0
+  # her.success_reward:
+  #   values:
+  #   - 0.0
+  # her.failure_reward:
+  #   values:
+  #   - -1.0
+  # her.done_on_success:
+  #   values:
+  #   - true
 command:
 - ${env}
 - python3

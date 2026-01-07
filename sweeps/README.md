@@ -44,6 +44,14 @@ This directory contains WandB sweep configurations for hyperparameter tuning.
 - **sac_sweep_quick.yaml** - Smaller SAC sweep for testing
 - **ppo_sweep_quick.yaml** - Smaller PPO sweep for testing
 
+### Architecture Sweeps (TD3/TQC)
+- **td3_mlp_sweep.yaml** - TD3 deep MLP width/depth sweep
+- **td3_actor_critic_sweep.yaml** - TD3 actor/critic split sweep
+- **td3_activation_sweep.yaml** - TD3 activation sweep
+- **tqc_mlp_sweep.yaml** - TQC deep MLP width/depth sweep
+- **tqc_actor_critic_sweep.yaml** - TQC actor/critic split sweep
+- **tqc_activation_sweep.yaml** - TQC activation sweep
+
 ## Usage
 
 ### 1. Initialize a sweep
