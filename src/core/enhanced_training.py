@@ -9,6 +9,7 @@ Extends the basic TrainingLoop with:
 """
 
 from typing import Dict, Any, Optional, Tuple
+from collections import deque
 import time
 import logging
 import numpy as np
@@ -52,6 +53,7 @@ class EnhancedTrainingLoop:
         agents: Dict[str, Agent],
         agent_rewards: Optional[Dict[str, RewardStrategy]] = None,
         observation_presets: Optional[Dict[str, str]] = None,
+        frame_stacks: Optional[Dict[str, int]] = None,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
@@ -78,6 +80,7 @@ class EnhancedTrainingLoop:
                 If provided, these custom rewards override env rewards
             observation_presets: Optional dict mapping agent_id -> preset name
                 Used to flatten Dict observations. Flattening includes normalization.
+            frame_stacks: Optional dict mapping agent_id -> number of frames to stack
             target_ids: Optional dict mapping agent_id -> target_id
                 For adversarial tasks where agent observes target state
             agent_algorithms: Optional dict mapping agent_id -> algorithm name (e.g., 'ppo', 'sac')
@@ -109,6 +112,16 @@ class EnhancedTrainingLoop:
         self.agents = agents
         self.agent_rewards = agent_rewards or {}
         self.observation_presets = observation_presets or {}
+        self.frame_stacks = {}
+        if frame_stacks:
+            for agent_id, stack_size in frame_stacks.items():
+                try:
+                    stack_size = int(stack_size)
+                except (TypeError, ValueError):
+                    stack_size = 1
+                if stack_size < 1:
+                    stack_size = 1
+                self.frame_stacks[agent_id] = stack_size
         self.target_ids = target_ids or {}
         self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
@@ -126,6 +139,7 @@ class EnhancedTrainingLoop:
         self.rolling_window = rolling_window
         self.save_every_n_episodes = save_every_n_episodes
         self.obs_scales = self._resolve_obs_scales()
+        self._frame_buffers: Dict[str, deque] = {}
 
         # Create evaluator if evaluation is enabled
         self.evaluator: Optional[Evaluator] = None
@@ -137,6 +151,7 @@ class EnhancedTrainingLoop:
                 agents=agents,
                 config=evaluation_config,
                 observation_presets=observation_presets,
+                frame_stacks=self.frame_stacks,
                 target_ids=target_ids,
                 obs_scales=self.obs_scales,
                 spawn_configs=spawn_configs,
@@ -169,7 +184,13 @@ class EnhancedTrainingLoop:
         self.last_eval_training_episode: int = -1
         self.best_eval_per_phase: Dict[int, float] = {}
 
-    def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
+    def _flatten_obs(
+        self,
+        agent_id: str,
+        obs: Any,
+        all_obs: Optional[Dict[str, Any]] = None,
+        update_stack: bool = True,
+    ) -> Any:
         """Flatten observation for agent if preset is configured.
 
         Args:
@@ -181,29 +202,71 @@ class EnhancedTrainingLoop:
             Flattened observation if preset configured, otherwise original obs
         """
         if agent_id not in self.observation_presets:
-            return obs
-
-        preset = self.observation_presets[agent_id]
-        target_id = self.target_ids.get(agent_id, None)
-
-        # If target_id specified and we have all observations, add target state to obs
-        if target_id and all_obs and target_id in all_obs:
-            # Create combined observation dict with central_state
-            combined_obs = dict(obs)  # Copy agent's own observation
-            combined_obs['central_state'] = all_obs[target_id]  # Add target as central_state
-            return flatten_observation(
-                combined_obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
-            )
+            flat_obs = obs
         else:
-            return flatten_observation(
-                obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
+            preset = self.observation_presets[agent_id]
+            target_id = self.target_ids.get(agent_id, None)
+
+            # If target_id specified and we have all observations, add target state to obs
+            if target_id and all_obs and target_id in all_obs:
+                # Create combined observation dict with central_state
+                combined_obs = dict(obs)  # Copy agent's own observation
+                combined_obs['central_state'] = all_obs[target_id]  # Add target as central_state
+                flat_obs = flatten_observation(
+                    combined_obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+            else:
+                flat_obs = flatten_observation(
+                    obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+
+        return self._stack_obs(agent_id, flat_obs, update=update_stack)
+
+    def _stack_obs(self, agent_id: str, obs: Any, update: bool = True) -> Any:
+        stack_size = int(self.frame_stacks.get(agent_id, 1))
+        if stack_size <= 1:
+            return obs
+        if isinstance(obs, dict):
+            raise ValueError(
+                f"Frame stacking requires flattened observations for {agent_id}"
             )
+        if not isinstance(obs, np.ndarray):
+            try:
+                obs = np.asarray(obs, dtype=np.float32)
+            except Exception as exc:
+                raise ValueError(
+                    f"Frame stacking requires array observations for {agent_id}"
+                ) from exc
+        buffer = self._frame_buffers.get(agent_id)
+        if buffer is None:
+            buffer = deque(maxlen=stack_size)
+            self._frame_buffers[agent_id] = buffer
+        if len(buffer) == 0:
+            frames = [obs] * stack_size
+            if update:
+                buffer.extend(frames)
+            return np.concatenate(frames, axis=0)
+        if update:
+            buffer.append(obs)
+            frames = list(buffer)
+        else:
+            frames = list(buffer) + [obs]
+            if len(frames) > stack_size:
+                frames = frames[-stack_size:]
+        return np.concatenate(frames, axis=0)
+
+    def _reset_frame_buffers(self) -> None:
+        self._frame_buffers = {
+            agent_id: deque(maxlen=stack_size)
+            for agent_id, stack_size in self.frame_stacks.items()
+            if stack_size > 1
+        }
 
     def _resolve_obs_scales(self) -> Dict[str, float]:
         """Resolve fixed observation scales from the environment."""
@@ -373,6 +436,8 @@ class EnhancedTrainingLoop:
             self._current_spawn_stage = None
             self._current_spawn_mapping = {}
 
+        self._reset_frame_buffers()
+
         # Capture spawn points from env info (for logging in random spawn mode)
         if isinstance(info, dict):
             for agent_id, agent_info in info.items():
@@ -515,7 +580,12 @@ class EnhancedTrainingLoop:
 
                     # Process next observation for storage (flatten + normalize)
                     # Normalization is performed within flatten_observation()
-                    flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
+                    flat_next_obs = self._flatten_obs(
+                        agent_id,
+                        next_obs[agent_id],
+                        all_obs=next_obs,
+                        update_stack=False,
+                    )
 
                     # Extract termination flags
                     terminated = terminations.get(agent_id, False)

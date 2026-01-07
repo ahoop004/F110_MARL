@@ -119,6 +119,13 @@ class WandbLogger:
                 self.wandb_run_id = self.run.id
                 self.wandb_run_name = self.run.name
                 self.wandb_url = self.run.get_url()
+                if self.logging_config:
+                    try:
+                        logging_payload = {"wandb_logging": self.logging_config}
+                        flat_logging = self._flatten_config(logging_payload)
+                        wandb.config.update(flat_logging, allow_val_change=True)
+                    except Exception:
+                        pass
                 if self.should_log("define_metrics"):
                     try:
                         wandb.define_metric("train/episode")

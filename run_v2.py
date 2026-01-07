@@ -551,6 +551,7 @@ def main():
         observation_presets = {}
         target_ids = {}
         ftg_schedules = {}
+        frame_stacks = {}
 
         # First pass: collect observation presets and explicit target_ids
         for agent_id, agent_config in scenario['agents'].items():
@@ -569,6 +570,22 @@ def main():
             # Get target_id if specified (for adversarial tasks)
             if 'target_id' in agent_config:
                 target_ids[agent_id] = agent_config['target_id']
+
+            frame_stack = agent_config.get('frame_stack')
+            if frame_stack is not None:
+                try:
+                    frame_stack_value = int(frame_stack)
+                except (TypeError, ValueError):
+                    console_logger.print_warning(
+                        f"Invalid frame_stack for {agent_id}; defaulting to 1"
+                    )
+                    frame_stack_value = 1
+                if frame_stack_value < 1:
+                    console_logger.print_warning(
+                        f"frame_stack must be >= 1 for {agent_id}; defaulting to 1"
+                    )
+                    frame_stack_value = 1
+                frame_stacks[agent_id] = frame_stack_value
 
             # Collect FTG schedules (optional)
             if agent_config.get('algorithm', '').lower() == 'ftg':
@@ -802,6 +819,7 @@ def main():
             agents=agents,
             agent_rewards=reward_strategies,
             observation_presets=observation_presets,
+            frame_stacks=frame_stacks,
             target_ids=target_ids,
             agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,

@@ -198,10 +198,24 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
 
         action_dim = get_space_dim(action_space)
 
+        frame_stack = agent_config.get('frame_stack', 1)
+        if frame_stack is None:
+            frame_stack = 1
+        try:
+            frame_stack = int(frame_stack)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"frame_stack must be an integer >= 1 (agent {agent_id})") from exc
+        if frame_stack < 1:
+            raise ValueError(f"frame_stack must be >= 1 (agent {agent_id})")
+
+        if frame_stack > 1:
+            obs_dim *= frame_stack
+
         # Add dimension parameters (support both naming conventions)
         agent_kwargs['obs_dim'] = obs_dim
         agent_kwargs['action_dim'] = action_dim
         agent_kwargs['act_dim'] = action_dim  # Alias for PPO
+        agent_kwargs['frame_stack'] = frame_stack
 
         # Extract action bounds for continuous action spaces (SAC, TD3, etc.)
         if isinstance(action_space, spaces.Box):

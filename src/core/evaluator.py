@@ -5,6 +5,7 @@ performance measurement during and after training.
 """
 
 from typing import Dict, Any, Optional, List, Tuple, Callable
+from collections import deque
 import numpy as np
 from pettingzoo import ParallelEnv
 
@@ -142,6 +143,7 @@ class Evaluator:
         agents: Dict[str, Agent],
         config: EvaluationConfig,
         observation_presets: Optional[Dict[str, str]] = None,
+        frame_stacks: Optional[Dict[str, int]] = None,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         obs_scales: Optional[Dict[str, float]] = None,
         spawn_configs: Optional[Dict[str, Any]] = None,
@@ -153,6 +155,7 @@ class Evaluator:
             agents: Dict mapping agent_id -> Agent
             config: EvaluationConfig
             observation_presets: Optional dict mapping agent_id -> preset name
+            frame_stacks: Optional dict mapping agent_id -> number of frames to stack
             target_ids: Optional dict mapping agent_id -> target_id
             obs_scales: Optional observation scales for flattening
             spawn_configs: Optional spawn configurations (if None, reads from env or uses default poses)
@@ -166,9 +169,20 @@ class Evaluator:
         self.agents = agents
         self.config = config
         self.observation_presets = observation_presets or {}
+        self.frame_stacks = {}
+        if frame_stacks:
+            for agent_id, stack_size in frame_stacks.items():
+                try:
+                    stack_size = int(stack_size)
+                except (TypeError, ValueError):
+                    stack_size = 1
+                if stack_size < 1:
+                    stack_size = 1
+                self.frame_stacks[agent_id] = stack_size
         self.target_ids = target_ids or {}
         self.obs_scales = obs_scales or {}
         self.spawn_configs = spawn_configs or getattr(env, 'spawn_configs', {})
+        self._frame_buffers: Dict[str, deque] = {}
 
         # Get primary agent (first trainable agent)
         self.primary_agent_id = self._get_primary_agent_id()
@@ -303,6 +317,7 @@ class Evaluator:
         }
 
         obs, info = self.env.reset(options=reset_options)
+        self._reset_frame_buffers()
 
         # Initialize episode tracking
         episode_reward = 0.0
@@ -384,29 +399,64 @@ class Evaluator:
     def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
         """Flatten observation for agent if preset is configured."""
         if agent_id not in self.observation_presets:
-            return obs
-
-        preset = self.observation_presets[agent_id]
-        target_id = self.target_ids.get(agent_id, None)
-
-        # If target_id specified and we have all observations, add target state
-        if target_id and all_obs and target_id in all_obs:
-            # Create combined observation dict with central_state
-            combined_obs = dict(obs)
-            combined_obs['central_state'] = all_obs[target_id]
-            return flatten_observation(
-                combined_obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
-            )
+            flat_obs = obs
         else:
-            return flatten_observation(
-                obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
+            preset = self.observation_presets[agent_id]
+            target_id = self.target_ids.get(agent_id, None)
+
+            # If target_id specified and we have all observations, add target state
+            if target_id and all_obs and target_id in all_obs:
+                # Create combined observation dict with central_state
+                combined_obs = dict(obs)
+                combined_obs['central_state'] = all_obs[target_id]
+                flat_obs = flatten_observation(
+                    combined_obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+            else:
+                flat_obs = flatten_observation(
+                    obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+
+        return self._stack_obs(agent_id, flat_obs)
+
+    def _stack_obs(self, agent_id: str, obs: Any) -> Any:
+        stack_size = int(self.frame_stacks.get(agent_id, 1))
+        if stack_size <= 1:
+            return obs
+        if isinstance(obs, dict):
+            raise ValueError(
+                f"Frame stacking requires flattened observations for {agent_id}"
             )
+        if not isinstance(obs, np.ndarray):
+            try:
+                obs = np.asarray(obs, dtype=np.float32)
+            except Exception as exc:
+                raise ValueError(
+                    f"Frame stacking requires array observations for {agent_id}"
+                ) from exc
+        buffer = self._frame_buffers.get(agent_id)
+        if buffer is None:
+            buffer = deque(maxlen=stack_size)
+            self._frame_buffers[agent_id] = buffer
+        if len(buffer) == 0:
+            for _ in range(stack_size):
+                buffer.append(obs)
+        else:
+            buffer.append(obs)
+        return np.concatenate(list(buffer), axis=0)
+
+    def _reset_frame_buffers(self) -> None:
+        self._frame_buffers = {
+            agent_id: deque(maxlen=stack_size)
+            for agent_id, stack_size in self.frame_stacks.items()
+            if stack_size > 1
+        }
 
     def _apply_ftg_override(self) -> None:
         """Apply FTG parameter overrides for full-strength evaluation."""
