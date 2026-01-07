@@ -2,11 +2,11 @@ wandb:
   logging:
     # Comment out any key to disable that log group.
     # groups:
-    #   define_metrics: true
-    #   train: true
+      define_metrics: true
+      train: true
     #   target: true
     #   spawn: true
-    #   curriculum: true
+      curriculum: true
     #   curriculum_phase: true
     #   eval: true
     #   eval_agg: true
