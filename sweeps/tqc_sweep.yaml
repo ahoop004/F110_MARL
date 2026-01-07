@@ -13,11 +13,11 @@ parameters:
     - 0.0002
   tau:
     values:
-    - 0.006
-    - 0.008
-    - 0.009
+    - 0.001
+    - 0.005
+    # - 0.009
     - 0.01
-    - 0.012
+    # - 0.012
   # Exploration sweep params
   ent_coef:
     values:
