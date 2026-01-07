@@ -161,6 +161,29 @@ class SB3AgentBase:
         hidden_dims = params.get('hidden_dims', [256, 256])
         self.policy_kwargs = {'net_arch': hidden_dims}
 
+        # Hindsight Experience Replay (HER) configuration (optional)
+        her_cfg = params.get('her', {})
+        if isinstance(her_cfg, bool):
+            her_cfg = {'enabled': her_cfg}
+        if her_cfg is None:
+            her_cfg = {}
+        self.her_enabled = bool(her_cfg.get('enabled', False))
+        self.her_reward_mode = str(her_cfg.get('reward_mode', 'replace')).lower()
+        self.her_distance_threshold = float(her_cfg.get('distance_threshold', 1.0))
+        self.her_success_reward = float(her_cfg.get('success_reward', 1.0))
+        self.her_failure_reward = float(her_cfg.get('failure_reward', 0.0))
+        self.her_distance_scale = float(her_cfg.get('distance_scale', 1.0))
+        self.her_distance_offset = float(her_cfg.get('distance_offset', 0.0))
+        self.her_done_on_success = bool(her_cfg.get('done_on_success', False))
+        self.her_probability = float(her_cfg.get('probability', 1.0))
+        self.her_probability = max(0.0, min(1.0, self.her_probability))
+
+        distance_clip = her_cfg.get('distance_clip')
+        if isinstance(distance_clip, (list, tuple)) and len(distance_clip) == 2:
+            self.her_distance_clip = (float(distance_clip[0]), float(distance_clip[1]))
+        else:
+            self.her_distance_clip = None
+
         # Model creation deferred to subclass (after algorithm-specific params set)
 
     def _create_model(self, env):
@@ -232,6 +255,70 @@ class SB3AgentBase:
             obs, next_obs, action, reward, done, infos
         )
         self._steps += 1  # Track steps for learning_starts threshold
+
+    def _get_replay_action(self, action: np.ndarray) -> np.ndarray:
+        """Return the action to store in the replay buffer."""
+        return action
+
+    def _compute_her_reward(self, base_reward: float, distance: float) -> tuple[float, bool]:
+        """Compute HER reward and success flag from distance."""
+        success = distance <= self.her_distance_threshold
+        base_reward = float(base_reward) if base_reward is not None else 0.0
+
+        if self.her_reward_mode in ("replace", "sparse"):
+            reward = self.her_success_reward if success else self.her_failure_reward
+        elif self.her_reward_mode == "bonus":
+            bonus = self.her_success_reward if success else self.her_failure_reward
+            reward = base_reward + bonus
+        elif self.her_reward_mode == "distance":
+            reward = (-distance * self.her_distance_scale) + self.her_distance_offset
+            if self.her_distance_clip is not None:
+                reward = float(np.clip(reward, self.her_distance_clip[0], self.her_distance_clip[1]))
+        else:
+            reward = base_reward
+
+        return float(reward), success
+
+    def store_hindsight_transition(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool,
+        distance: float,
+        info: Optional[Dict] = None,
+    ) -> None:
+        """Store an optional HER relabeled transition (off-policy only)."""
+        if not self.her_enabled:
+            return
+        if self.model is None or not hasattr(self.model, 'replay_buffer'):
+            return
+
+        try:
+            distance_val = float(distance)
+        except (TypeError, ValueError):
+            return
+        if not np.isfinite(distance_val):
+            return
+        if self.her_probability < 1.0 and np.random.random() > self.her_probability:
+            return
+
+        her_reward, success = self._compute_her_reward(reward, distance_val)
+        her_done = bool(done) or (self.her_done_on_success and success)
+
+        her_info = {}
+        if isinstance(info, dict):
+            her_info.update(info)
+        her_info['her'] = True
+        her_info['her_distance'] = distance_val
+        her_info['her_success'] = success
+
+        infos = [her_info]
+        replay_action = self._get_replay_action(action)
+        self.model.replay_buffer.add(
+            obs, next_obs, replay_action, her_reward, her_done, infos
+        )
 
     def update(self) -> Optional[Dict[str, float]]:
         """Perform one gradient step using minibatch from replay buffer.
@@ -1026,6 +1113,11 @@ class SB3DQNAgent(SB3AgentBase):
         )
         self._steps += 1
 
+    def _get_replay_action(self, action: np.ndarray) -> np.ndarray:
+        if hasattr(self, '_last_action_idx'):
+            return np.array([self._last_action_idx], dtype=np.int64)
+        return np.array([0], dtype=np.int64)
+
 
 class SB3QRDQNAgent(SB3AgentBase):
     """QR-DQN agent using SB3-Contrib with discretized actions."""
@@ -1122,6 +1214,11 @@ class SB3QRDQNAgent(SB3AgentBase):
             obs, next_obs, action_idx, reward, done, infos
         )
         self._steps += 1
+
+    def _get_replay_action(self, action: np.ndarray) -> np.ndarray:
+        if hasattr(self, '_last_action_idx'):
+            return np.array([self._last_action_idx], dtype=np.int64)
+        return np.array([0], dtype=np.int64)
 
 
 __all__ = [

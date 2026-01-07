@@ -115,6 +115,14 @@ agents:
       policy_delay: 2
       target_policy_noise: 0.2
       target_noise_clip: 0.5
+      her:
+        enabled: true
+        reward_mode: bonus
+        distance_threshold: 1.0
+        success_reward: 0.004
+        failure_reward: 0.0
+        done_on_success: false
+        probability: 1.0
     observation:
       preset: gaplock
     reward:
