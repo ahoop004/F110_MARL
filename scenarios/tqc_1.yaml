@@ -17,7 +17,7 @@ agents:
     params:
       learning_rate: 0.0001
       gamma: 0.995
-      tau: 0.01
+      tau: 0.001
       ent_coef: auto
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2
@@ -29,7 +29,7 @@ agents:
       qf_hidden_dims: null
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 1000
+      learning_starts: 256
       her:
         enabled: true
         reward_mode: replace
