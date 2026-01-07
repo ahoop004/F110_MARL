@@ -103,9 +103,9 @@ agents:
     target_id: car_1
     params:
       # SB3 TQC parameters (using proven SB3 defaults)
-      learning_rate: 0.0003
+      learning_rate: 0.0001
       gamma: 0.995
-      tau: 0.005
+      tau: 0.01
       ent_coef: auto  # Automatic entropy tuning
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2

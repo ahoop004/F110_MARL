@@ -34,6 +34,10 @@ class AdvancementCriteria:
         min_episodes: Minimum episodes before advancement allowed
         patience: Maximum episodes before forced advancement
         window_size: Number of episodes for rolling statistics
+        regress_success_rate: Success rate threshold to trigger regression (optional)
+        regress_min_episodes: Minimum episodes before regression allowed (optional)
+        regress_patience: Minimum episodes in phase before regression allowed (optional)
+        regress_window_size: Window size for regression success rate (optional)
         max_self_crash_rate: Maximum allowed self-crash rate (0.0-1.0)
         max_collision_rate: Maximum allowed collision rate (0.0-1.0)
         max_target_finish_rate: Maximum allowed target-finish rate (0.0-1.0)
@@ -43,6 +47,10 @@ class AdvancementCriteria:
     min_episodes: int = 50
     patience: int = 200
     window_size: int = 100
+    regress_success_rate: Optional[float] = None
+    regress_min_episodes: Optional[int] = None
+    regress_patience: Optional[int] = None
+    regress_window_size: Optional[int] = None
     max_self_crash_rate: Optional[float] = None
     max_collision_rate: Optional[float] = None
     max_target_finish_rate: Optional[float] = None
@@ -98,7 +106,7 @@ class CurriculumState:
         outcome_history: Recent episode outcomes (string labels)
         reward_history: Recent episode rewards
         phase_start_episode: Global episode number when phase started
-        advancement_log: History of phase advancements
+        advancement_log: History of phase advancements and regressions
     """
     current_phase_idx: int = 0
     episodes_in_phase: int = 0
@@ -197,6 +205,10 @@ class PhaseBasedCurriculum:
                 min_episodes=criteria_config.get('min_episodes', 50),
                 patience=criteria_config.get('patience', 200),
                 window_size=criteria_config.get('window_size', 100),
+                regress_success_rate=criteria_config.get('regress_success_rate'),
+                regress_min_episodes=criteria_config.get('regress_min_episodes'),
+                regress_patience=criteria_config.get('regress_patience'),
+                regress_window_size=criteria_config.get('regress_window_size'),
                 max_self_crash_rate=criteria_config.get('max_self_crash_rate'),
                 max_collision_rate=criteria_config.get('max_collision_rate'),
                 max_target_finish_rate=criteria_config.get('max_target_finish_rate'),
@@ -314,6 +326,11 @@ class PhaseBasedCurriculum:
             if advancement_info:
                 return advancement_info
 
+        # Check if we should regress
+        regression_info = self._check_regression(episode_num)
+        if regression_info:
+            return regression_info
+
         # Check for performance drops (warning only)
         self._check_performance_drop()
 
@@ -385,6 +402,55 @@ class PhaseBasedCurriculum:
 
         return None
 
+    def _check_regression(self, episode_num: int) -> Optional[Dict[str, Any]]:
+        """Check if criteria met for regression.
+
+        Returns:
+            Regression info dict if regressing, None otherwise
+        """
+        if self.state.current_phase_idx <= 0:
+            return None
+
+        phase = self.get_current_phase()
+        criteria = phase.criteria
+
+        if criteria.regress_success_rate is None:
+            return None
+
+        min_episodes = criteria.regress_min_episodes
+        if min_episodes is None:
+            min_episodes = criteria.min_episodes
+
+        if self.state.episodes_in_phase < min_episodes:
+            return None
+
+        patience = criteria.regress_patience
+        if patience is not None and self.state.episodes_in_phase < patience:
+            return None
+
+        window_size_cfg = criteria.regress_window_size
+        if window_size_cfg is None:
+            window_size_cfg = criteria.window_size
+
+        window_size = min(int(window_size_cfg), len(self.state.success_history))
+        if window_size <= 0:
+            return None
+
+        recent_successes = list(self.state.success_history)[-window_size:]
+        recent_rewards = list(self.state.reward_history)[-window_size:]
+        success_rate = np.mean(recent_successes)
+        avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
+
+        if success_rate >= criteria.regress_success_rate:
+            return None
+
+        return self._regress_phase(
+            episode_num=episode_num,
+            success_rate=success_rate,
+            avg_reward=avg_reward,
+            threshold=criteria.regress_success_rate,
+        )
+
     def _advance_phase(
         self,
         episode_num: int,
@@ -402,6 +468,7 @@ class PhaseBasedCurriculum:
         new_phase = self.get_current_phase()
 
         advancement_info = {
+            'action': 'advance',
             'old_phase': old_phase.name,
             'new_phase': new_phase.name,
             'episode': episode_num,
@@ -421,6 +488,45 @@ class PhaseBasedCurriculum:
         self._reset_phase_histories(new_phase.criteria.window_size)
 
         return advancement_info
+
+    def _regress_phase(
+        self,
+        episode_num: int,
+        success_rate: float,
+        avg_reward: float,
+        threshold: float,
+    ) -> Dict[str, Any]:
+        """Regress to previous phase.
+
+        Returns:
+            Regression info dict
+        """
+        old_phase = self.get_current_phase()
+        self.state.current_phase_idx -= 1
+        new_phase = self.get_current_phase()
+
+        regression_info = {
+            'action': 'regress',
+            'old_phase': old_phase.name,
+            'new_phase': new_phase.name,
+            'episode': episode_num,
+            'episodes_in_old_phase': self.state.episodes_in_phase,
+            'success_rate': success_rate,
+            'avg_reward': avg_reward,
+            'threshold': threshold,
+            'forced': False,
+        }
+
+        # Log regression alongside advances
+        self.state.advancement_log.append(regression_info)
+
+        # Reset phase tracking
+        self.state.episodes_in_phase = 0
+        self.state.phase_start_episode = episode_num
+        self._warned_performance_drop = False
+        self._reset_phase_histories(new_phase.criteria.window_size)
+
+        return regression_info
 
     def _reset_phase_histories(self, window_size: int) -> None:
         """Reset rolling histories for a new phase."""

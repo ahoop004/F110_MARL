@@ -90,24 +90,37 @@ def add_curriculum_to_training_loop(
             success = outcome == 'target_crash'
 
             # Update curriculum
-            advancement_info = curriculum.update(outcome, reward, episode_num)
+            transition_info = curriculum.update(outcome, reward, episode_num)
 
-            # Log advancement if occurred
-            if advancement_info:
-                msg = (
-                    f"\n{'='*60}\n"
-                    f"📈 CURRICULUM ADVANCED!\n"
-                    f"  Episode: {episode_num}\n"
-                    f"  {advancement_info['old_phase']} → {advancement_info['new_phase']}\n"
-                    f"  Success Rate: {advancement_info['success_rate']:.2%}\n"
-                    f"  Avg Reward: {advancement_info['avg_reward']:.1f}\n"
-                    f"  Episodes in Phase: {advancement_info['episodes_in_old_phase']}\n"
-                    f"  Forced: {advancement_info['forced']}\n"
-                    f"{'='*60}\n"
-                )
+            # Log curriculum transition if occurred
+            if transition_info:
+                action = transition_info.get('action', 'advance')
+                icon = "📉" if action == 'regress' else "📈"
+                label = "REGRESSED" if action == 'regress' else "ADVANCED"
+                lines = [
+                    f"\n{'='*60}",
+                    f"{icon} CURRICULUM {label}!",
+                    f"  Episode: {episode_num}",
+                    f"  {transition_info['old_phase']} → {transition_info['new_phase']}",
+                ]
+                if transition_info.get('success_rate') is not None:
+                    lines.append(f"  Success Rate: {transition_info['success_rate']:.2%}")
+                if transition_info.get('avg_reward') is not None:
+                    lines.append(f"  Avg Reward: {transition_info['avg_reward']:.1f}")
+                if transition_info.get('episodes_in_old_phase') is not None:
+                    lines.append(f"  Episodes in Phase: {transition_info['episodes_in_old_phase']}")
+                if action == 'advance' and 'forced' in transition_info:
+                    lines.append(f"  Forced: {transition_info['forced']}")
+                if action == 'regress' and transition_info.get('threshold') is not None:
+                    lines.append(f"  Regress Threshold: {transition_info['threshold']:.2%}")
+                lines.append(f"{'='*60}\n")
+                msg = "\n".join(lines)
                 logger.info(msg)
                 if training_loop.console_logger:
-                    training_loop.console_logger.print_success(msg)
+                    if action == 'regress':
+                        training_loop.console_logger.print_warning(msg)
+                    else:
+                        training_loop.console_logger.print_success(msg)
 
             curriculum_metrics = curriculum.get_metrics()
 

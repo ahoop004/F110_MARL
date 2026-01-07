@@ -9,17 +9,13 @@ parameters:
   learning_rate:
     values:
     - 0.0001
-    - 0.0002
-    - 0.0003
-    - 0.0005
-    # - 0.0007
   tau:
     values:
-    - 0.001
-    - 0.0025
-    - 0.005
+    - 0.006
+    - 0.008
+    - 0.009
     - 0.01
-    # - 0.02
+    - 0.012
   # Optional parameters (uncomment to sweep):
   # gamma:
   #   values:
