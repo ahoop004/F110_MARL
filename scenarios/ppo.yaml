@@ -10,7 +10,7 @@ experiment:
   episodes: 1500
   seed: 42
 environment:
-  max_steps: 2500
+  max_steps: 1500
 agents:
   car_0:
     role: attacker
@@ -24,6 +24,7 @@ agents:
       gae_lambda: 0.95
       clip_range: 0.2
       ent_coef: 0.02
+      activation: relu
       hidden_dims:
       - 256
       - 256

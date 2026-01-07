@@ -496,6 +496,38 @@ class StopOnEpisodeCallback(BaseCallback):
         return True
 
 
+class EpisodeProgressCallback(BaseCallback):
+    """Periodic episode progress logging."""
+
+    def __init__(self, log_every: int, console_logger: Optional[ConsoleLogger] = None):
+        super().__init__()
+        self.log_every = max(1, int(log_every))
+        self.console_logger = console_logger
+        self.episode_count = 0
+
+    def _count_episode_ends(self) -> int:
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return 0
+            done_flags = np.logical_or(terminated, truncated)
+        else:
+            done_flags = dones
+        if isinstance(done_flags, (list, tuple, np.ndarray)):
+            return int(np.sum(done_flags))
+        return int(bool(done_flags))
+
+    def _on_step(self) -> bool:
+        done_count = self._count_episode_ends()
+        if done_count > 0:
+            self.episode_count += done_count
+            if self.console_logger and self.episode_count % self.log_every == 0:
+                self.console_logger.print_info(f"Progress: episode {self.episode_count}")
+        return True
+
+
 def main() -> None:
     args = parse_args()
 
@@ -588,6 +620,16 @@ def main() -> None:
     total_timesteps = max_steps * episodes
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
+    log_every_env = os.environ.get("F110_LOG_EVERY_EPISODES")
+    if log_every_env is None:
+        log_every = 25
+    else:
+        try:
+            log_every = int(log_every_env)
+        except ValueError:
+            log_every = 25
+    if log_every > 0:
+        callbacks.append(EpisodeProgressCallback(log_every, console_logger))
 
     ftg_agents = {}
     ftg_schedules = {}

@@ -9,28 +9,18 @@ parameters:
   learning_rate:
     values:
     - 0.0001
-    - 0.0002
     - 0.0003
-    - 0.0005
-    - 0.0007
   clip_range:
     values:
-    - 0.1
     - 0.15
     - 0.2
-    - 0.25
-    - 0.3
   hidden_dims:
     values:
-  
+    - - 256
+      - 256
     - - 256
       - 256
       - 256
-      - 256
-    - - 128
-      - 128
-      - 128
-      - 128
   activation:
     values:
     - relu
@@ -40,20 +30,16 @@ parameters:
     - 1024
     - 2048
   # Optional parameters (uncomment to sweep):
-  gamma:
-    values:
-    - 0.99
-    - 0.995
-    - 0.999
-  ent_coef:
-    values:
-    - 0.0
-    - 0.01
-    - 0.02
-  # n_steps:
+  # gamma:
   #   values:
-  #   - 1024
-  #   - 2048
+  #   - 0.99
+  #   - 0.995
+  #   - 0.999
+  # ent_coef:
+  #   values:
+  #   - 0.0
+  #   - 0.01
+  #   - 0.02
 command:
 - ${env}
 - python3
