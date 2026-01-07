@@ -20,17 +20,36 @@ parameters:
     - 0.2
     - 0.25
     - 0.3
+  hidden_dims:
+    values:
+  
+    - - 256
+      - 256
+      - 256
+      - 256
+    - - 128
+      - 128
+      - 128
+      - 128
+  activation:
+    values:
+    - relu
+    - silu
+  n_steps:
+    values:
+    - 1024
+    - 2048
   # Optional parameters (uncomment to sweep):
-  # gamma:
-  #   values:
-  #   - 0.99
-  #   - 0.995
-  #   - 0.999
-  # ent_coef:
-  #   values:
-  #   - 0.0
-  #   - 0.01
-  #   - 0.02
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
+  ent_coef:
+    values:
+    - 0.0
+    - 0.01
+    - 0.02
   # n_steps:
   #   values:
   #   - 1024

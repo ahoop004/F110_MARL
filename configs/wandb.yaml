@@ -10,7 +10,7 @@ wandb:
       curriculum_phase: true
       # eval: true
       # eval_agg: true
-      sb3_callbacks: true
+      # sb3_callbacks: true
     # Comment out any metric to disable it.
     metrics:
       train/episode: true
