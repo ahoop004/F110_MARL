@@ -1,16 +1,16 @@
 wandb:
   logging:
     # Comment out any key to disable that log group.
-    # groups:
+    groups:
       define_metrics: true
       train: true
-    #   target: true
-    #   spawn: true
+      # target: true
+      # spawn: true
       curriculum: true
-    #   curriculum_phase: true
-    #   eval: true
-    #   eval_agg: true
-    #   sb3_callbacks: true
+      # curriculum_phase: true
+      # eval: true
+      # eval_agg: true
+      # sb3_callbacks: true
     # Comment out any metric to disable it.
     metrics:
       train/episode: true
