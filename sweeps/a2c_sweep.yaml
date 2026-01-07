@@ -1,4 +1,4 @@
-program: run_v2.py
+program: run_sb3.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university

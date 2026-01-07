@@ -61,6 +61,9 @@ class CurriculumCallback(BaseCallback):
         self.window_size = 100
         self.episode_outcomes: deque = deque(maxlen=self.window_size)
 
+        # Parse curriculum config once during initialization.
+        self._parse_curriculum()
+
     def _should_log(self, key: str) -> bool:
         if not self.wandb_run:
             return False
@@ -96,9 +99,6 @@ class CurriculumCallback(BaseCallback):
         if metrics_config is None:
             return metrics
         return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
-
-        # Parse curriculum config
-        self._parse_curriculum()
 
     def _parse_curriculum(self):
         """Parse curriculum configuration."""
