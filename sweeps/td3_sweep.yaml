@@ -16,20 +16,20 @@ parameters:
     - 0.009
     - 0.01
     - 0.012
-  # Optional parameters (uncomment to sweep):
-  # gamma:
-  #   values:
-  #   - 0.99
-  #   - 0.995
-  #   - 0.999
-  # batch_size:
-  #   values:
-  #   - 128
-  #   - 256
-  # policy_delay:
-  #   values:
-  #   - 2
-  #   - 3
+  Optional parameters (uncomment to sweep):
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
+  batch_size:
+    values:
+    - 128
+    - 256
+  policy_delay:
+    values:
+    - 2
+    - 3
 command:
 - ${env}
 - python3
