@@ -89,6 +89,7 @@ parameters:
     values:
     - relu
     - silu
+    - swish
     - tanh
   # HER sweeps (canonical, uncomment to sweep):
   # her.enabled:

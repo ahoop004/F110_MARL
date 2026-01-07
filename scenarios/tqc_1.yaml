@@ -3,6 +3,7 @@ includes:
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
 - ../configs/curriculum/line2_gaplock_phased.yaml
+- ../configs/evaluation/line2_gaplock_eval_narrow.yaml
 - ../configs/wandb.yaml
 experiment:
   name: tqc
@@ -41,23 +42,6 @@ agents:
     observation:
       preset: gaplock
     frame_stack: 1
-evaluation:
-  enabled: true
-  frequency: 100
-  num_episodes: 12
-  deterministic: true
-  spawn_points:
-  - spawn_pinch_left
-  - spawn_pinch_right
-  - spawn_pinch_ahead
-  spawn_speeds:
-  - 0.0
-  - 0.0
-  lock_speed_steps: 0
-  ftg_override:
-    max_speed: 1.0
-    bubble_radius: 2.0
-    steering_gain: 0.3
 wandb:
   enabled: true
   project: marl-f110
@@ -71,5 +55,5 @@ wandb:
   - tqc
   - comparison
   - gaplock
-  notes: SAC curriculum for gaplock adversarial task
+  notes: gaplock
   mode: online

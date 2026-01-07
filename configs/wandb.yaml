@@ -7,7 +7,7 @@ wandb:
       # target: true
       # spawn: true
       curriculum: true
-      # curriculum_phase: true
+      curriculum_phase: true
       # eval: true
       # eval_agg: true
       # sb3_callbacks: true
