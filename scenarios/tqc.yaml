@@ -115,6 +115,15 @@ agents:
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 1000
+      her:
+        enabled: true
+        reward_mode: replace
+        success_mode: distance
+        distance_threshold: 1.0
+        success_reward: 0.0
+        failure_reward: -1.0
+        done_on_success: true
+        probability: 1.0
     observation:
       preset: gaplock
     reward:

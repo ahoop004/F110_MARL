@@ -16,7 +16,31 @@ parameters:
     - 0.009
     - 0.01
     - 0.012
-  Optional parameters (uncomment to sweep):
+  action_noise_sigma:
+    values:
+    - 0.1
+  her.enabled:
+    values:
+    - true
+  her.reward_mode:
+    values:
+    - replace
+  her.success_mode:
+    values:
+    - distance
+  her.distance_threshold:
+    values:
+    - 1.0
+  her.success_reward:
+    values:
+    - 0.0
+  her.failure_reward:
+    values:
+    - -1.0
+  her.done_on_success:
+    values:
+    - true
+  # Optional parameters (uncomment to sweep):
   gamma:
     values:
     - 0.99

@@ -592,6 +592,8 @@ class EnhancedTrainingLoop:
         # Off-policy agents already updated every step (see above)
         trainer_stats = {}
         for agent_id, agent in self.agents.items():
+            if not is_on_policy_agent(agent):
+                continue
             update_stats = None
             try:
                 update_stats = agent.update()  # PPO/A2C compute policy gradient here

@@ -169,6 +169,8 @@ class SB3AgentBase:
             her_cfg = {}
         self.her_enabled = bool(her_cfg.get('enabled', False))
         self.her_reward_mode = str(her_cfg.get('reward_mode', 'replace')).lower()
+        success_mode = her_cfg.get('success_mode') or her_cfg.get('success_signal') or 'distance'
+        self.her_success_mode = str(success_mode).lower()
         self.her_distance_threshold = float(her_cfg.get('distance_threshold', 1.0))
         self.her_success_reward = float(her_cfg.get('success_reward', 1.0))
         self.her_failure_reward = float(her_cfg.get('failure_reward', 0.0))
@@ -260,9 +262,22 @@ class SB3AgentBase:
         """Return the action to store in the replay buffer."""
         return action
 
-    def _compute_her_reward(self, base_reward: float, distance: float) -> tuple[float, bool]:
-        """Compute HER reward and success flag from distance."""
-        success = distance <= self.her_distance_threshold
+    def _derive_her_success(self, distance: float, info: Optional[Dict]) -> bool:
+        """Determine HER success condition from config and info."""
+        if self.her_success_mode in ("target_crash", "target_collision"):
+            if not isinstance(info, dict):
+                return False
+            if info.get("target_crash", False) or info.get("success", False):
+                return True
+            target_collision = bool(info.get("target_collision", False))
+            if self.her_success_mode == "target_collision":
+                return target_collision
+            attacker_collision = bool(info.get("collision", False))
+            return target_collision and not attacker_collision
+        return distance <= self.her_distance_threshold
+
+    def _compute_her_reward(self, base_reward: float, distance: float, success: bool) -> float:
+        """Compute HER reward from success flag and distance."""
         base_reward = float(base_reward) if base_reward is not None else 0.0
 
         if self.her_reward_mode in ("replace", "sparse"):
@@ -277,7 +292,7 @@ class SB3AgentBase:
         else:
             reward = base_reward
 
-        return float(reward), success
+        return float(reward)
 
     def store_hindsight_transition(
         self,
@@ -304,7 +319,8 @@ class SB3AgentBase:
         if self.her_probability < 1.0 and np.random.random() > self.her_probability:
             return
 
-        her_reward, success = self._compute_her_reward(reward, distance_val)
+        success = self._derive_her_success(distance_val, info)
+        her_reward = self._compute_her_reward(reward, distance_val, success)
         her_done = bool(done) or (self.her_done_on_success and success)
 
         her_info = {}
@@ -539,6 +555,8 @@ class SB3TD3Agent(SB3AgentBase):
         # Target policy smoothing noise parameters
         self.target_policy_noise = params.get('target_policy_noise', 0.2)  # σ for ε ~ N(0, σ²)
         self.target_noise_clip = params.get('target_noise_clip', 0.5)  # Clip range [-c, c]
+        self.action_noise_sigma = params.get('action_noise_sigma', 0.1)
+        self.action_noise = None
 
         # Initialize base class (sets up common parameters)
         super().__init__(cfg, TD3)
@@ -561,6 +579,16 @@ class SB3TD3Agent(SB3AgentBase):
         Args:
             env: Dummy Gym environment for SB3 initialization
         """
+        action_noise = None
+        if self.action_noise_sigma and float(self.action_noise_sigma) > 0.0:
+            from stable_baselines3.common.noise import NormalActionNoise
+            n_actions = env.action_space.shape[0]
+            action_noise = NormalActionNoise(
+                mean=np.zeros(n_actions),
+                sigma=float(self.action_noise_sigma) * np.ones(n_actions),
+            )
+        self.action_noise = action_noise
+
         self.model = TD3(
             policy='MlpPolicy',  # Deterministic policy network
             env=env,
@@ -573,12 +601,20 @@ class SB3TD3Agent(SB3AgentBase):
             policy_delay=self.policy_delay,  # Actor update frequency (relative to critic)
             target_policy_noise=self.target_policy_noise,  # Target smoothing noise std
             target_noise_clip=self.target_noise_clip,  # Target noise clipping range
+            action_noise=action_noise,  # Exploration noise (unused in predict path)
             policy_kwargs=self.policy_kwargs,  # Network architecture
             device=self.device,  # 'cuda' or 'cpu'
             verbose=0,
         )
         self._setup_logger()
         self._setup_done = True
+
+    def act(self, obs: np.ndarray, deterministic: bool = False, info: Optional[Dict] = None) -> np.ndarray:
+        """Select action and apply exploration noise for TD3."""
+        action = super().act(obs, deterministic=deterministic, info=info)
+        if not deterministic and self.action_noise is not None:
+            action = np.clip(action + self.action_noise(), self.action_low, self.action_high)
+        return action
 
 
 class SB3DDPGAgent(SB3AgentBase):
