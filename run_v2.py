@@ -236,6 +236,7 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             notes=wandb_config.get('notes', None),
             mode=wandb_config.get('mode', 'online'),
             run_id=run_id,  # Pass run_id for alignment
+            logging_config=wandb_config.get('logging'),
         )
     else:
         wandb_logger = None

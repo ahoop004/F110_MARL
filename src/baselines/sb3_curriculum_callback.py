@@ -30,6 +30,7 @@ class CurriculumCallback(BaseCallback):
         ftg_schedules: Optional[Dict[str, Dict[str, Any]]] = None,
         env_wrapper: Optional[Any] = None,
         wandb_run: Optional[Any] = None,
+        wandb_logging: Optional[Dict[str, Any]] = None,
         rich_console: Optional[Any] = None,
         algo_name: Optional[str] = None,
         verbose: int = 1,
@@ -41,6 +42,7 @@ class CurriculumCallback(BaseCallback):
         self.ftg_schedules = ftg_schedules or {}
         self.env_wrapper = env_wrapper
         self.wandb_run = wandb_run
+        self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
         self.rich_console = rich_console
         self.algo_name = algo_name
 
@@ -58,6 +60,42 @@ class CurriculumCallback(BaseCallback):
         self.episode_lengths: List[int] = []
         self.window_size = 100
         self.episode_outcomes: deque = deque(maxlen=self.window_size)
+
+    def _should_log(self, key: str) -> bool:
+        if not self.wandb_run:
+            return False
+        group_config = self._get_group_config()
+        if group_config is None:
+            return True
+        if not group_config.get("sb3_callbacks", False):
+            return False
+        return bool(group_config.get(key, False))
+
+    def _get_group_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        if "groups" in self.wandb_logging:
+            groups = self.wandb_logging.get("groups")
+            return groups if isinstance(groups, dict) else {}
+        return self.wandb_logging
+
+    def _get_metrics_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        metrics = self.wandb_logging.get("metrics")
+        if metrics is None:
+            return None
+        if isinstance(metrics, dict):
+            return metrics
+        if isinstance(metrics, (list, tuple, set)):
+            return {name: True for name in metrics}
+        return None
+
+    def _filter_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        metrics_config = self._get_metrics_config()
+        if metrics_config is None:
+            return metrics
+        return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
         # Parse curriculum config
         self._parse_curriculum()
@@ -174,24 +212,36 @@ class CurriculumCallback(BaseCallback):
         }
 
         # Unified W&B logging for comparisons
-        if self.wandb_run:
+        if self._should_log("train") or self._should_log("target"):
             count = len(self.episode_successes)
             success_rate = sum(self.episode_successes) / count if count else 0.0
             reward_mean = float(np.mean(self.episode_rewards)) if self.episode_rewards else 0.0
             steps_mean = float(np.mean(self.episode_lengths)) if self.episode_lengths else 0.0
 
-            self.wandb_run.log({
-                "train/outcome": outcome_value,
-                "train/success": int(success),
-                "train/episode": int(self.episode_count),
-                "train/episode_reward": float(reward),
-                "train/episode_steps": int(length),
-                "train/success_rate": success_rate,
-                "train/reward_mean": reward_mean,
-                "train/steps_mean": steps_mean,
-                "target/success": int(bool(target_finished)),
-                "target/crash": int(bool(target_collision)),
-            }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
+            log_dict = {}
+            if self._should_log("train"):
+                log_dict.update({
+                    "train/outcome": outcome_value,
+                    "train/success": int(success),
+                    "train/episode": int(self.episode_count),
+                    "train/episode_reward": float(reward),
+                    "train/episode_steps": int(length),
+                    "train/success_rate": success_rate,
+                    "train/reward_mean": reward_mean,
+                    "train/steps_mean": steps_mean,
+                })
+            if self._should_log("target"):
+                log_dict.update({
+                    "target/success": int(bool(target_finished)),
+                    "target/crash": int(bool(target_collision)),
+                })
+            if log_dict:
+                log_dict = self._filter_metrics(log_dict)
+                if log_dict:
+                    self.wandb_run.log(
+                        log_dict,
+                        step=self.episode_count,
+                    )  # FIXED: Use episode_count instead of num_timesteps
 
         spawn_state = None
         # Update spawn curriculum if available (skip when phased curriculum is active)
@@ -209,12 +259,17 @@ class CurriculumCallback(BaseCallback):
                     )
 
             # Log minimal curriculum metrics if no phased curriculum
-            if self.wandb_run and not self.phases:
-                self.wandb_run.log({
+            if self._should_log("curriculum") and not self.phases:
+                curriculum_log = self._filter_metrics({
                     'train/episode': int(self.episode_count),
                     'curriculum/stage': spawn_state['stage'],
                     'curriculum/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
-                }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
+                })
+                if curriculum_log:
+                    self.wandb_run.log(
+                        curriculum_log,
+                        step=self.episode_count,
+                    )  # FIXED: Use episode_count instead of num_timesteps
 
         # Update phased curriculum
         if self.phases:
@@ -332,7 +387,7 @@ class CurriculumCallback(BaseCallback):
                         self._apply_phase(self.current_phase)
 
         # Log minimal phased curriculum metrics
-        if self.wandb_run and self.phases:
+        if self._should_log("curriculum_phase") and self.phases:
             phase_name = None
             if 0 <= self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")

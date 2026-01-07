@@ -732,30 +732,39 @@ class EnhancedTrainingLoop:
             if primary_info.get("target_collision") is not None:
                 target_collision = bool(primary_info.get("target_collision", False))
 
-            log_dict = {
-                "train/outcome": metrics.outcome.value,
-                "train/success": int(metrics.success),
-                "train/episode": int(episode_num),
-                "train/episode_reward": float(metrics.total_reward),
-                "train/episode_steps": int(metrics.steps),
-                "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
-                "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
-                "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
-            }
+            log_train = self.wandb_logger.should_log("train")
+            log_spawn = self.wandb_logger.should_log("spawn")
+            log_target = self.wandb_logger.should_log("target")
 
-            spawn_point = self._current_spawn_mapping.get(primary_id)
-            if spawn_point:
-                log_dict["train/spawn_point"] = spawn_point
-            if self._current_spawn_stage:
-                log_dict["train/spawn_stage"] = self._current_spawn_stage
+            log_dict = {}
 
-            if self.primary_target_id:
+            if log_train:
+                log_dict.update({
+                    "train/outcome": metrics.outcome.value,
+                    "train/success": int(metrics.success),
+                    "train/episode": int(episode_num),
+                    "train/episode_reward": float(metrics.total_reward),
+                    "train/episode_steps": int(metrics.steps),
+                    "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
+                    "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
+                    "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
+                })
+
+            if log_spawn:
+                spawn_point = self._current_spawn_mapping.get(primary_id)
+                if spawn_point:
+                    log_dict["train/spawn_point"] = spawn_point
+                if self._current_spawn_stage:
+                    log_dict["train/spawn_stage"] = self._current_spawn_stage
+
+            if log_target and self.primary_target_id:
                 log_dict.update({
                     "target/success": int(target_finished),
                     "target/crash": int(target_collision),
                 })
 
-            self.wandb_logger.log_metrics(log_dict, step=episode_num)
+            if log_dict:
+                self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Update spawn curriculum if enabled (only for first/primary agent)
         spawn_curriculum_state = None
@@ -787,7 +796,7 @@ class EnhancedTrainingLoop:
                     )
 
             # Log minimal curriculum metrics to W&B
-            if self.wandb_logger:
+            if self.wandb_logger and self.wandb_logger.should_log("curriculum"):
                 self.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
                     'curriculum/stage': curriculum_state['stage'],
@@ -1084,7 +1093,7 @@ class EnhancedTrainingLoop:
             success_rate_so_far = successes_so_far / max(1, eval_idx)
 
             # Log to WandB
-            if self.wandb_logger:
+            if self.wandb_logger and self.wandb_logger.should_log("eval"):
                 reward_value = float(ep_data['reward'])
                 if not np.isfinite(reward_value):
                     reward_value = 0.0
@@ -1156,7 +1165,7 @@ class EnhancedTrainingLoop:
             return agent_states, optimizer_states
 
         # Log aggregate results (keep step monotonic for W&B)
-        if self.wandb_logger:
+        if self.wandb_logger and self.wandb_logger.should_log("eval_agg"):
             agg_metrics = {
                 'eval/episode': int(self.total_eval_episodes),
                 'eval_agg/success_rate': eval_result.success_rate,

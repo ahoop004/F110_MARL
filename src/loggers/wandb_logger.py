@@ -49,6 +49,7 @@ class WandbLogger:
         notes: Optional[str] = None,
         mode: str = "online",
         run_id: Optional[str] = None,
+        logging_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """Initialize W&B logger.
@@ -64,6 +65,7 @@ class WandbLogger:
             notes: Notes about this run
             mode: W&B mode ("online", "offline", or "disabled")
             run_id: Custom run ID for checkpoint alignment (optional)
+            logging_config: Optional logging toggles (e.g., groups/metrics maps)
             **kwargs: Additional arguments passed to wandb.init()
 
         Example:
@@ -80,6 +82,7 @@ class WandbLogger:
         """
         self.project = project
         self.enabled = mode != "disabled"
+        self.logging_config = logging_config if isinstance(logging_config, dict) else None
 
         # Store run ID for alignment with checkpoints
         self.custom_run_id = run_id
@@ -116,20 +119,56 @@ class WandbLogger:
                 self.wandb_run_id = self.run.id
                 self.wandb_run_name = self.run.name
                 self.wandb_url = self.run.get_url()
-                try:
-                    wandb.define_metric("train/episode")
-                    wandb.define_metric("train/*", step_metric="train/episode")
-                    wandb.define_metric("target/*", step_metric="train/episode")
-                    wandb.define_metric("curriculum/*", step_metric="train/episode")
-                    wandb.define_metric("eval/episode")
-                    wandb.define_metric("eval/episode_*", step_metric="eval/episode")
-                    wandb.define_metric("eval/training_episode", step_metric="eval/episode")
-                    wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
-                    wandb.define_metric("eval_agg/*", step_metric="train/episode")
-                except Exception:
-                    pass
+                if self.should_log("define_metrics"):
+                    try:
+                        wandb.define_metric("train/episode")
+                        wandb.define_metric("train/*", step_metric="train/episode")
+                        wandb.define_metric("target/*", step_metric="train/episode")
+                        wandb.define_metric("curriculum/*", step_metric="train/episode")
+                        wandb.define_metric("eval/episode")
+                        wandb.define_metric("eval/episode_*", step_metric="eval/episode")
+                        wandb.define_metric("eval/training_episode", step_metric="eval/episode")
+                        wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
+                        wandb.define_metric("eval_agg/*", step_metric="train/episode")
+                    except Exception:
+                        pass
         else:
             self.run = None
+
+    def should_log(self, key: str) -> bool:
+        """Check if a logging group is enabled."""
+        if not self.enabled:
+            return False
+        group_config = self._get_group_config()
+        if group_config is None:
+            return True
+        return bool(group_config.get(key, False))
+
+    def _get_group_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.logging_config, dict):
+            return None
+        if "groups" in self.logging_config:
+            groups = self.logging_config.get("groups")
+            return groups if isinstance(groups, dict) else {}
+        return self.logging_config
+
+    def _get_metrics_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.logging_config, dict):
+            return None
+        metrics = self.logging_config.get("metrics")
+        if metrics is None:
+            return None
+        if isinstance(metrics, dict):
+            return metrics
+        if isinstance(metrics, (list, tuple, set)):
+            return {name: True for name in metrics}
+        return None
+
+    def _filter_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        metrics_config = self._get_metrics_config()
+        if metrics_config is None:
+            return metrics
+        return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
     def log_episode(
         self,
@@ -206,6 +245,9 @@ class WandbLogger:
             log_dict.update(extra)
 
         # Log to W&B
+        log_dict = self._filter_metrics(log_dict)
+        if not log_dict:
+            return
         wandb.log(log_dict, step=episode)
 
     def log_metrics(
@@ -225,6 +267,9 @@ class WandbLogger:
         if not self.enabled:
             return
 
+        metrics = self._filter_metrics(metrics)
+        if not metrics:
+            return
         wandb.log(metrics, step=step)
 
     def log_component_stats(

@@ -18,6 +18,7 @@ class SB3EvaluationCallback(BaseCallback):
         spawn_configs: Dict[str, Any],
         eval_every_n_episodes: int,
         wandb_run: Optional[Any] = None,
+        wandb_logging: Optional[Dict[str, Any]] = None,
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -26,8 +27,45 @@ class SB3EvaluationCallback(BaseCallback):
         self.spawn_configs = spawn_configs or {}
         self.eval_every_n_episodes = max(1, int(eval_every_n_episodes)) if eval_every_n_episodes else 0
         self.wandb_run = wandb_run
+        self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
         self.episode_count = 0
         self.total_eval_episodes = 0
+
+    def _should_log(self, key: str) -> bool:
+        if not self.wandb_run:
+            return False
+        group_config = self._get_group_config()
+        if group_config is None:
+            return True
+        if not group_config.get("sb3_callbacks", False):
+            return False
+        return bool(group_config.get(key, False))
+
+    def _get_group_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        if "groups" in self.wandb_logging:
+            groups = self.wandb_logging.get("groups")
+            return groups if isinstance(groups, dict) else {}
+        return self.wandb_logging
+
+    def _get_metrics_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        metrics = self.wandb_logging.get("metrics")
+        if metrics is None:
+            return None
+        if isinstance(metrics, dict):
+            return metrics
+        if isinstance(metrics, (list, tuple, set)):
+            return {name: True for name in metrics}
+        return None
+
+    def _filter_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        metrics_config = self._get_metrics_config()
+        if metrics_config is None:
+            return metrics
+        return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
     def _on_step(self) -> bool:
         if self.eval_every_n_episodes <= 0:
@@ -113,23 +151,33 @@ class SB3EvaluationCallback(BaseCallback):
             success_count += int(success)
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
 
-            if self.wandb_run:
+            if self._should_log("eval"):
                 reward_value = float(ep_reward)
                 if not np.isfinite(reward_value):
                     reward_value = 0.0
                 self.total_eval_episodes += 1
                 # Use training episode as step metric for consistency with run_v2
                 training_ep = training_episode if training_episode is not None else self.episode_count
-                self.wandb_run.log({
+                episode_log = self._filter_metrics({
                     "eval/episode": int(self.total_eval_episodes),
-                }, step=training_ep)  # FIXED: Use training episode instead of num_timesteps
-                self.wandb_run.log({
+                })
+                if episode_log:
+                    self.wandb_run.log(
+                        episode_log,
+                        step=training_ep,
+                    )  # FIXED: Use training episode instead of num_timesteps
+                details_log = self._filter_metrics({
                     "eval/episode_reward": reward_value,
                     "eval/episode_steps": int(steps),
                     "eval/episode_success": int(success),
                     "eval/spawn_point": spawn_point,
                     "eval/training_episode": training_ep,
-                }, step=training_ep)  # FIXED: Use training episode instead of num_timesteps
+                })
+                if details_log:
+                    self.wandb_run.log(
+                        details_log,
+                        step=training_ep,
+                    )  # FIXED: Use training episode instead of num_timesteps
 
         if not rewards:
             return
@@ -140,7 +188,7 @@ class SB3EvaluationCallback(BaseCallback):
         avg_steps = float(np.mean(lengths))
         std_steps = float(np.std(lengths))
 
-        if self.wandb_run:
+        if self._should_log("eval_agg"):
             # Use training episode as step metric for consistency with run_v2
             training_ep = training_episode if training_episode is not None else self.episode_count
             agg_metrics = {
@@ -156,10 +204,12 @@ class SB3EvaluationCallback(BaseCallback):
                 pct = (count / num_episodes) if num_episodes > 0 else 0.0
                 agg_metrics[f"eval_agg/outcome_{outcome}"] = pct
 
-            self.wandb_run.log(
-                agg_metrics,
-                step=training_ep,  # FIXED: Use training episode instead of num_timesteps
-            )
+            agg_metrics = self._filter_metrics(agg_metrics)
+            if agg_metrics:
+                self.wandb_run.log(
+                    agg_metrics,
+                    step=training_ep,  # FIXED: Use training episode instead of num_timesteps
+                )
 
         if self.verbose > 0:
             print(

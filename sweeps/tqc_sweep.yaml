@@ -14,9 +14,9 @@ parameters:
   tau:
     values:
     - 0.001
-    - 0.005
+    # - 0.005
     # - 0.009
-    - 0.01
+    # - 0.01
     # - 0.012
   # Exploration sweep params
   ent_coef:
@@ -35,8 +35,9 @@ parameters:
   #   values:
   #   - 128
   #   - 256
-  # target_entropy:
-  #   values:
+  target_entropy:
+    values:
+    - auto
   #   - -1.0
   #   - -2.0
   #   - -3.0

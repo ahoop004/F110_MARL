@@ -125,7 +125,7 @@ def add_curriculum_to_training_loop(
             curriculum_metrics = curriculum.get_metrics()
 
             # Log minimal curriculum metrics to WandB
-            if training_loop.wandb_logger:
+            if training_loop.wandb_logger and training_loop.wandb_logger.should_log("curriculum_phase"):
                 training_loop.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
                     'train/success': int(success),

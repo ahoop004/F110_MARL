@@ -1,0 +1,262 @@
+curriculum:
+  type: phased
+  start_phase: 0
+  phases:
+  - name: 1_foundation_lock800
+    description: Foundation - Lock 800 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      avg_reward: 50.0
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 800
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+  - name: 1_lock600
+    description: Lock 600 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 600
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.1
+  - name: 1_lock400
+    description: Lock 400 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 400
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.1
+    keep_previous: 0.15
+  - name: 1_lock200
+    description: Lock 200 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 200
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.12
+    keep_previous: 0.18
+  - name: 1_lock100
+    description: Lock 100 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 100
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.12
+    keep_previous: 0.2
+  - name: 1_lock50
+    description: Lock 50 steps
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 50
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.15
+    keep_previous: 0.2
+  - name: 1_lock0
+    description: No speed lock
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.44
+      - 0.44
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.15
+    keep_previous: 0.22
+  - name: 2_speed035
+    description: Reduce speed to 0.35
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.35
+      - 0.35
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.15
+    keep_previous: 0.22
+  - name: 2_speed025
+    description: Reduce speed to 0.25
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.25
+      - 0.25
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.18
+    keep_previous: 0.22
+  - name: 2_speed015
+    description: Reduce speed to 0.15
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.15
+      - 0.15
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.18
+    keep_previous: 0.25
+  - name: 2_speed005
+    description: Reduce speed to 0.05
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.05
+      - 0.05
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.2
+    keep_previous: 0.25
+  - name: 2_speed_var_low
+    description: Low speed variation (0.0-0.10)
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.0
+      - 0.1
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.2
+    keep_previous: 0.25
+  - name: 2_speed000
+    description: Speed at 0.0
+    criteria:
+      window_size: 50
+      success_rate: 0.7
+      min_episodes: 50
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_pinch_right
+      - spawn_pinch_left
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+    ftg:
+      steering_gain: 0.25
+      bubble_radius: 2.0
+    keep_foundation: 0.2
+    keep_previous: 0.25
