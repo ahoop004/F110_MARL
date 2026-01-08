@@ -6,6 +6,7 @@ agent interface and training loop.
 
 from typing import Any, Dict, Optional
 import numpy as np
+import torch as th
 import torch.nn as nn
 import gymnasium as gym
 from gymnasium import spaces
@@ -22,11 +23,15 @@ except ImportError:
 # TQC and QR-DQN are in sb3-contrib
 try:
     from sb3_contrib import TQC, QRDQN
+    from sb3_contrib.common.utils import quantile_huber_loss
+    from stable_baselines3.common.utils import polyak_update
     TQC_AVAILABLE = True
     QRDQN_AVAILABLE = True
 except ImportError:
     TQC_AVAILABLE = False
     QRDQN_AVAILABLE = False
+    quantile_huber_loss = None
+    polyak_update = None
     # Don't warn - contrib algorithms are optional
 
 # Try to import DQN (for discrete actions)
@@ -35,6 +40,8 @@ try:
     DQN_AVAILABLE = True
 except ImportError:
     DQN_AVAILABLE = False
+
+from replay import PrioritizedReplayBuffer
 
 
 class DummyEnv(gym.Env):
@@ -493,6 +500,155 @@ class SB3AgentBase:
         ent_coef_optimizer = getattr(self.model, "ent_coef_optimizer", None)
         if ent_coef_optimizer is not None and "ent_coef_optimizer" in state:
             ent_coef_optimizer.load_state_dict(state["ent_coef_optimizer"])
+
+
+def _quantile_huber_loss_per_sample(
+    current_quantiles: th.Tensor,
+    target_quantiles: th.Tensor,
+) -> th.Tensor:
+    """Compute per-sample quantile huber loss (no reduction across batch)."""
+    if current_quantiles.ndim not in (2, 3):
+        raise ValueError("current_quantiles must be 2D or 3D for quantile huber loss.")
+
+    n_quantiles = current_quantiles.shape[-1]
+    cum_prob = (th.arange(n_quantiles, device=current_quantiles.device, dtype=th.float) + 0.5) / n_quantiles
+    if current_quantiles.ndim == 2:
+        cum_prob = cum_prob.view(1, -1, 1)
+    else:
+        cum_prob = cum_prob.view(1, 1, -1, 1)
+
+    pairwise_delta = target_quantiles.unsqueeze(-2) - current_quantiles.unsqueeze(-1)
+    abs_pairwise_delta = th.abs(pairwise_delta)
+    huber_loss = th.where(abs_pairwise_delta > 1, abs_pairwise_delta - 0.5, pairwise_delta**2 * 0.5)
+    loss = th.abs(cum_prob - (pairwise_delta.detach() < 0).float()) * huber_loss
+    reduce_dims = tuple(range(1, loss.ndim))
+    return loss.mean(dim=reduce_dims)
+
+
+if TQC_AVAILABLE and quantile_huber_loss is not None and polyak_update is not None:
+    class TQCWithPER(TQC):
+        """TQC variant that supports prioritized replay buffers."""
+
+        def train(self, gradient_steps: int, batch_size: int = 64) -> None:
+            # Switch to train mode (this affects batch norm / dropout)
+            self.policy.set_training_mode(True)
+            # Update optimizers learning rate
+            optimizers = [self.actor.optimizer, self.critic.optimizer]
+            if self.ent_coef_optimizer is not None:
+                optimizers += [self.ent_coef_optimizer]
+
+            # Update learning rate according to lr schedule
+            self._update_learning_rate(optimizers)
+            actor_lr = getattr(self, "_actor_lr", None)
+            critic_lr = getattr(self, "_critic_lr", None)
+            if actor_lr is not None:
+                for param_group in self.actor.optimizer.param_groups:
+                    param_group["lr"] = actor_lr
+            if critic_lr is not None:
+                for param_group in self.critic.optimizer.param_groups:
+                    param_group["lr"] = critic_lr
+
+            ent_coef_losses, ent_coefs = [], []
+            actor_losses, critic_losses = [], []
+
+            for gradient_step in range(gradient_steps):
+                # Sample replay buffer
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                weights = getattr(replay_data, "weights", None)
+                indices = getattr(replay_data, "indices", None)
+                if weights is None:
+                    weights = th.ones((batch_size, 1), device=replay_data.observations.device)
+
+                # For n-step replay, discount factor is gamma**n_steps (when no early termination)
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                # We need to sample because `log_std` may have changed between two gradient steps
+                if self.use_sde:
+                    self.actor.reset_noise()
+
+                # Action by the current actor for the sampled state
+                actions_pi, log_prob = self.actor.action_log_prob(replay_data.observations)
+                log_prob = log_prob.reshape(-1, 1)
+
+                ent_coef_loss = None
+                if self.ent_coef_optimizer is not None and self.log_ent_coef is not None:
+                    # Important: detach the variable from the graph
+                    ent_coef = th.exp(self.log_ent_coef.detach())
+                    ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()  # type: ignore[operator]
+                    ent_coef_losses.append(ent_coef_loss.item())
+                else:
+                    ent_coef = self.ent_coef_tensor
+
+                ent_coefs.append(ent_coef.item())
+
+                # Optimize entropy coefficient, also called entropy temperature or alpha in the paper
+                if ent_coef_loss is not None and self.ent_coef_optimizer is not None:
+                    self.ent_coef_optimizer.zero_grad()
+                    ent_coef_loss.backward()
+                    self.ent_coef_optimizer.step()
+
+                with th.no_grad():
+                    # Select action according to policy
+                    next_actions, next_log_prob = self.actor.action_log_prob(replay_data.next_observations)
+                    # Compute and cut quantiles at the next state
+                    # batch x nets x quantiles
+                    next_quantiles = self.critic_target(replay_data.next_observations, next_actions)
+
+                    # Sort and drop top k quantiles to control overestimation.
+                    n_target_quantiles = (
+                        self.critic.quantiles_total - self.top_quantiles_to_drop_per_net * self.critic.n_critics
+                    )
+                    next_quantiles, _ = th.sort(next_quantiles.reshape(batch_size, -1))
+                    next_quantiles = next_quantiles[:, :n_target_quantiles]
+
+                    # td error + entropy term
+                    target_quantiles = next_quantiles - ent_coef * next_log_prob.reshape(-1, 1)
+                    target_quantiles = replay_data.rewards + (1 - replay_data.dones) * discounts * target_quantiles
+                    # Make target_quantiles broadcastable to (batch_size, n_critics, n_target_quantiles).
+                    target_quantiles.unsqueeze_(dim=1)
+
+                # Get current Quantile estimates using action from the replay buffer
+                current_quantiles = self.critic(replay_data.observations, replay_data.actions)
+
+                # Compute per-sample critic loss for PER weighting and priority updates
+                per_sample_loss = _quantile_huber_loss_per_sample(current_quantiles, target_quantiles)
+                critic_loss = (per_sample_loss * weights.squeeze(-1)).mean()
+                critic_losses.append(critic_loss.item())
+
+                # Optimize the critic
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic.optimizer.step()
+
+                # Update priorities if buffer supports it
+                if indices is not None and hasattr(self.replay_buffer, "update_priorities"):
+                    td_errors = per_sample_loss.detach().cpu().numpy()
+                    self.replay_buffer.update_priorities(indices, td_errors)
+
+                # Compute actor loss
+                qf_pi = self.critic(replay_data.observations, actions_pi).mean(dim=2).mean(dim=1, keepdim=True)
+                actor_loss = (ent_coef * log_prob - qf_pi).mean()
+                actor_losses.append(actor_loss.item())
+
+                # Optimize the actor
+                self.actor.optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor.optimizer.step()
+
+                # Update target networks
+                if gradient_step % self.target_update_interval == 0:
+                    polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                    # Copy running stats, see https://github.com/DLR-RM/stable-baselines3/issues/996
+                    polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+
+            self._n_updates += gradient_steps
+
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            self.logger.record("train/ent_coef", np.mean(ent_coefs))
+            self.logger.record("train/actor_loss", np.mean(actor_losses))
+            self.logger.record("train/critic_loss", np.mean(critic_losses))
+            if len(ent_coef_losses) > 0:
+                self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 
 
 class SB3SACAgent(SB3AgentBase):
@@ -1036,6 +1192,21 @@ class SB3TQCAgent(SB3AgentBase):
         # Default: 2 → uses 23/25 quantiles per critic
         self.top_quantiles_to_drop_per_net = params.get('top_quantiles_to_drop_per_net', 2)
 
+        # Prioritized Experience Replay (optional)
+        per_cfg = params.get('per', {}) or {}
+        self.per_enabled = bool(per_cfg.get('enabled', False))
+        self.per_alpha = float(per_cfg.get('alpha', 0.6))
+        self.per_beta_start = float(per_cfg.get('beta', per_cfg.get('beta_start', 0.4)))
+        self.per_beta_final = float(per_cfg.get('beta_final', per_cfg.get('beta_end', 1.0)))
+        self.per_beta_anneal_steps = int(per_cfg.get('beta_anneal_steps', 100_000))
+        self.per_eps = float(per_cfg.get('epsilon', per_cfg.get('eps', 1e-6)))
+        self.per_max_priority = float(per_cfg.get('max_priority', 1.0))
+        self.per_normalize_weights = bool(per_cfg.get('normalize_weights', True))
+
+        # Optional separate learning rates for actor/critic
+        self.actor_learning_rate = params.get('actor_learning_rate')
+        self.critic_learning_rate = params.get('critic_learning_rate')
+
         # ========================================
         # INITIALIZATION
         # ========================================
@@ -1061,7 +1232,27 @@ class SB3TQCAgent(SB3AgentBase):
         Args:
             env: Dummy Gym environment providing obs/action spaces
         """
-        self.model = TQC(
+        model_class = TQC
+        use_custom_model = self.per_enabled or self.actor_learning_rate is not None or self.critic_learning_rate is not None
+        if use_custom_model and "TQCWithPER" in globals():
+            model_class = TQCWithPER  # type: ignore[name-defined]
+        elif use_custom_model:
+            print("Warning: custom TQC features unavailable; using standard TQC.")
+
+        replay_buffer_class = PrioritizedReplayBuffer if self.per_enabled else None
+        replay_buffer_kwargs = None
+        if self.per_enabled:
+            replay_buffer_kwargs = {
+                "alpha": self.per_alpha,
+                "beta": self.per_beta_start,
+                "beta_final": self.per_beta_final,
+                "beta_anneal_steps": self.per_beta_anneal_steps,
+                "eps": self.per_eps,
+                "max_priority": self.per_max_priority,
+                "normalize_weights": self.per_normalize_weights,
+            }
+
+        self.model = model_class(
             policy='MlpPolicy',  # Use MLP networks for actor and critics
             env=env,
             learning_rate=self.learning_rate,  # Adam optimizer learning rate
@@ -1073,10 +1264,17 @@ class SB3TQCAgent(SB3AgentBase):
             ent_coef=self.ent_coef,  # Entropy regularization coefficient
             target_entropy=self.target_entropy,  # Target entropy for auto-tuning
             top_quantiles_to_drop_per_net=self.top_quantiles_to_drop_per_net,  # Risk-aversion
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,  # Network architecture {'net_arch': [256, 256]}
             device=self.device,  # 'cuda' or 'cpu'
             verbose=0,  # Suppress SB3 logging (we handle logging separately)
         )
+        if self.model is not None:
+            actor_lr = self.actor_learning_rate or self.learning_rate
+            critic_lr = self.critic_learning_rate or self.learning_rate
+            setattr(self.model, "_actor_lr", float(actor_lr))
+            setattr(self.model, "_critic_lr", float(critic_lr))
         self._setup_logger()
         self._setup_done = True
 

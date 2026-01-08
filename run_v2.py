@@ -803,9 +803,15 @@ def main():
             console_logger.print_info(f"CSV output dir: {output_dir}")
 
         # Initialize Rich console dashboard (only updates at end of each episode)
-        rich_console = RichConsole(
-            enabled=True,
-        )
+        try:
+            rich_console = RichConsole(
+                enabled=True,
+            )
+        except ImportError:
+            console_logger.print_warning(
+                "RichConsole unavailable; install `rich` to enable the dashboard."
+            )
+            rich_console = None
 
         # Extract algorithm names for each agent
         agent_algorithms = {}

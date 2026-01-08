@@ -16,7 +16,9 @@ agents:
     target_id: car_1
     params:
       learning_rate: 0.0005
-      gamma: 0.995
+      actor_learning_rate: 0.0005
+      critic_learning_rate: 0.0005
+      gamma: 0.999
       tau: 0.001
       ent_coef: auto
       target_entropy: auto
@@ -40,6 +42,15 @@ agents:
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 256
+      per:
+        enabled: true
+        alpha: 0.6
+        beta: 0.4
+        beta_final: 1.0
+        beta_anneal_steps: 200000
+        epsilon: 1.0e-6
+        max_priority: 1.0
+        normalize_weights: true
       her:
         enabled: true
         reward_mode: replace

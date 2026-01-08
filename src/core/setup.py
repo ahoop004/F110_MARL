@@ -83,15 +83,26 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
         import random
         np.random.seed(seed)
         random.seed(seed)
+        try:
+            import torch
+        except ImportError:
+            torch = None
+        if torch is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
     # Build environment configuration
     num_agents = env_config.get('num_agents', env_config.get('n_agents', 1))
+    env_seed = env_config.get('seed', seed)
     env_kwargs = {
         'map': env_config['map'],
         'n_agents': num_agents,
         'timestep': env_config.get('timestep', 0.01),
         'max_steps': env_config.get('max_steps', 5000),
     }
+    if env_seed is not None:
+        env_kwargs['seed'] = env_seed
 
     # Add optional environment parameters
     if 'lidar_beams' in env_config:
