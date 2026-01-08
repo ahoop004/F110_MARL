@@ -27,11 +27,11 @@ parameters:
     # - 0.02
     # - 0.05
   # Optional parameters (uncomment to sweep):
-  # gamma:
-  #   values:
-  #   - 0.99
-  #   - 0.995
-  #   - 0.999
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
   # batch_size:
   #   values:
   #   - 128

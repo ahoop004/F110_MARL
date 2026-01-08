@@ -7,7 +7,7 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: tqc
-  episodes: 1500
+  episodes: 1000
   seed: 42
 agents:
   car_0:
