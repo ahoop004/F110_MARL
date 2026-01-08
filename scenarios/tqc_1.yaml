@@ -15,15 +15,25 @@ agents:
     algorithm: sb3_tqc
     target_id: car_1
     params:
-      learning_rate: 0.0001
+      learning_rate: 0.0005
       gamma: 0.995
       tau: 0.001
       ent_coef: auto
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2
-      hidden_dims:
+      # hidden_dims:
+      # - 256
+      # - 256
+      pi_hidden_dims:
       - 256
       - 256
+      - 256
+      qf_hidden_dims:
+      - 256
+      - 256
+      - 256
+      - 256
+
       activation: relu
       pi_hidden_dims: null
       qf_hidden_dims: null

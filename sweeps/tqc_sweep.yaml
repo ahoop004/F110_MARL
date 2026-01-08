@@ -6,12 +6,12 @@ metric:
   name: train/success_rate
   goal: maximize
 parameters:
-  learning_rate:
-    values:
-    # - 0.00005
-    - 0.0001
-    - 0.00025
-    - 0.0005
+  # learning_rate:
+  #   values:
+  #   # - 0.00005
+  #   - 0.0001
+  #   - 0.00025
+  #   - 0.0005
   # tau:
   #   values:
     # - 0.001
@@ -57,22 +57,8 @@ parameters:
   #     - 128
   #     - 128
   #     - 128
-  pi_hidden_dims:
-    values:
-    # - - 128
-    #   - 128
-    #   - 128
-    - - 128
-      - 128
-      - 128
-      - 128
-    # - - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-  qf_hidden_dims:
-    values:
+  # pi_hidden_dims:
+  #   values:
     # - - 128
     #   - 128
     #   - 128
@@ -80,11 +66,25 @@ parameters:
     #   - 128
     #   - 128
     #   - 128
-    - - 128
-      - 128
-      - 128
-      - 128
-      - 128
+    # - - 128
+    #   - 128
+    #   - 128
+    #   - 128
+    #   - 128
+  # qf_hidden_dims:
+  #   values:
+    # - - 128
+    #   - 128
+    #   - 128
+    # - - 128
+    #   - 128
+    #   - 128
+    #   - 128
+    # - - 128
+    #   - 128
+    #   - 128
+    #   - 128
+    #   - 128
   activation:
     values:
     - relu
