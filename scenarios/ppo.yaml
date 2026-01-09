@@ -7,10 +7,10 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 1500
+  episodes: 3500
   seed: 42
 environment:
-  max_steps: 1500
+  max_steps: 1000
 agents:
   car_0:
     role: attacker
@@ -18,14 +18,16 @@ agents:
     target_id: car_1
     params:
       learning_rate: 0.0003
-      gamma: 0.995
+      gamma: 0.999
       n_steps: 2048
       n_epochs: 10
       gae_lambda: 0.95
       clip_range: 0.2
       ent_coef: 0.02
-      activation: relu
+      activation: silu
       hidden_dims:
+      - 256
+      - 256
       - 256
       - 256
       batch_size: 256

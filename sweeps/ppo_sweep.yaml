@@ -5,30 +5,30 @@ entity: ahoop004-old-dominion-university
 metric:
   name: train/success_rate
   goal: maximize
-parameters:
-  learning_rate:
-    values:
-    - 0.0001
-    - 0.0003
-  clip_range:
-    values:
-    - 0.15
-    - 0.2
-  hidden_dims:
-    values:
-    - - 256
-      - 256
-    - - 256
-      - 256
-      - 256
-  activation:
-    values:
-    - relu
-    - silu
-  n_steps:
-    values:
-    - 1024
-    - 2048
+# parameters:
+#   learning_rate:
+#     values:
+#     - 0.0001
+#     - 0.0003
+#   clip_range:
+#     values:
+#     - 0.15
+#     - 0.2
+#   hidden_dims:
+#     values:
+#     - - 256
+#       - 256
+#     - - 256
+#       - 256
+#       - 256
+#   activation:
+#     values:
+#     - relu
+#     - silu
+#   n_steps:
+#     values:
+#     - 1024
+#     - 2048
   # Optional parameters (uncomment to sweep):
   # gamma:
   #   values:
