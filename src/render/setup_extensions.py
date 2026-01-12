@@ -1,7 +1,7 @@
 """Helper functions for setting up visualization extensions."""
 
 from typing import Optional, Dict, Any
-from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
 
 
 def setup_default_extensions(
@@ -127,7 +127,7 @@ def setup_gaplock_extensions(env, heatmap: bool = False):
         env: F110ParallelEnv instance
         heatmap: Enable expensive heatmap (default: False)
     """
-    from rewards.presets import load_preset
+    from src.rewards.presets import load_preset
 
     # Load gaplock reward config for proper parameters
     try:

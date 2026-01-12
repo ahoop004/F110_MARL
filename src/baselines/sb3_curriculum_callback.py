@@ -59,6 +59,12 @@ class CurriculumCallback(BaseCallback):
         self.window_size = 100
         self.episode_outcomes: deque = deque(maxlen=self.window_size)
 
+        # Direct episode tracking (more reliable than ep_info_buffer)
+        self.current_episode_reward = 0.0
+        self.current_episode_length = 0
+        self.last_obs = None
+        self.processed_episodes = set()  # Track processed episode IDs to avoid duplicates
+
         # Parse curriculum config
         self._parse_curriculum()
 
@@ -96,26 +102,68 @@ class CurriculumCallback(BaseCallback):
             self.rich_console.stop()
 
     def _on_step(self) -> bool:
-        """Called after each environment step."""
-        # Check for new episode info in the logger
+        """Called after each environment step.
+
+        Uses direct tracking of rewards and dones from locals instead of
+        unreliable ep_info_buffer which can lose data.
+        """
+        # Get current step info from locals
+        if 'rewards' in self.locals:
+            step_reward = self.locals['rewards'][0] if isinstance(self.locals['rewards'], (list, np.ndarray)) else self.locals['rewards']
+            self.current_episode_reward += step_reward
+            self.current_episode_length += 1
+
+        # Check if episode ended
+        if 'dones' in self.locals:
+            done = self.locals['dones'][0] if isinstance(self.locals['dones'], (list, np.ndarray)) else self.locals['dones']
+
+            if done:
+                # Extract episode info from the environment wrapper's last info
+                info = {}
+                if 'infos' in self.locals and len(self.locals['infos']) > 0:
+                    info = self.locals['infos'][0] if isinstance(self.locals['infos'], list) else self.locals['infos']
+
+                # Process the completed episode
+                self._process_episode(
+                    reward=self.current_episode_reward,
+                    length=self.current_episode_length,
+                    success=info.get('is_success', False),
+                    target_finished=info.get('target_finished', False),
+                    target_collision=info.get('target_collision', False),
+                    outcome=info.get('outcome')
+                )
+
+                # Reset tracking for next episode
+                self.current_episode_reward = 0.0
+                self.current_episode_length = 0
+
+        # Also check ep_info_buffer as fallback (for compatibility)
+        # but with deduplication to avoid double-counting
         if len(self.model.ep_info_buffer) > 0:
-            # Get the most recent episode
             for ep_info in self.model.ep_info_buffer:
-                # Only process if we haven't seen this episode yet
                 if 'r' in ep_info and 'l' in ep_info:
-                    # Check if this is a new episode (basic deduplication)
-                    reward = ep_info['r']
-                    # Process this episode
-                    self._process_episode(
-                        reward=reward,
-                        length=ep_info['l'],
-                        success=ep_info.get('is_success', False),
-                        target_finished=ep_info.get('target_finished', False),
-                        target_collision=ep_info.get('target_collision', False),
-                        outcome=ep_info.get('outcome')
-                    )
-            # Clear the buffer to avoid reprocessing
+                    # Create unique ID for this episode to avoid reprocessing
+                    ep_id = (ep_info['r'], ep_info['l'], self.num_timesteps)
+                    if ep_id not in self.processed_episodes:
+                        self.processed_episodes.add(ep_id)
+                        # Only process if we haven't tracked it via direct method
+                        # (direct method resets current_episode_reward to 0)
+                        if self.current_episode_reward == 0.0 and self.current_episode_length == 0:
+                            self._process_episode(
+                                reward=ep_info['r'],
+                                length=ep_info['l'],
+                                success=ep_info.get('is_success', False),
+                                target_finished=ep_info.get('target_finished', False),
+                                target_collision=ep_info.get('target_collision', False),
+                                outcome=ep_info.get('outcome')
+                            )
+            # Clear after processing
             self.model.ep_info_buffer.clear()
+
+        # Clean up old episode IDs to prevent memory growth
+        if len(self.processed_episodes) > 10000:
+            self.processed_episodes.clear()
+
         return True
 
     def _on_rollout_end(self) -> None:
@@ -386,6 +434,16 @@ class CurriculumCallback(BaseCallback):
                     agent.apply_config(config)
                     if self.verbose > 1:
                         print(f"  Applied FTG schedule to {agent_id} for stage {stage_name}")
+                else:
+                    if self.verbose > 0:
+                        print(f"  Warning: Agent {agent_id} doesn't have apply_config method")
+            else:
+                # Stage not in schedule - could be intentional (not all stages need updates)
+                if self.verbose > 1:
+                    available_stages = ', '.join(by_stage.keys())
+                    print(f"  Note: Stage '{stage_name}' not in FTG schedule for {agent_id}")
+                    if available_stages:
+                        print(f"        Available stages: {available_stages}")
 
 
 __all__ = ['CurriculumCallback']

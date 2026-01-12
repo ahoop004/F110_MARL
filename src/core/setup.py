@@ -4,9 +4,9 @@ from pathlib import Path
 import yaml
 import numpy as np
 
-from env import F110ParallelEnv
-from core.config import AgentFactory, register_builtin_agents
-from rewards import RewardStrategy, build_reward_strategy
+from src.env import F110ParallelEnv
+from src.core.config import AgentFactory, register_builtin_agents
+from src.rewards import RewardStrategy, build_reward_strategy
 
 
 def load_spawn_points_from_map(map_path: str, spawn_names: List[str]) -> np.ndarray:

@@ -10,8 +10,8 @@ import copy
 import yaml
 from pathlib import Path
 
-from rewards import load_preset as load_reward_preset, merge_config as merge_reward_config
-from core.observations import load_observation_preset, merge_observation_config
+from src.rewards import load_preset as load_reward_preset, merge_config as merge_reward_config
+from src.core.observations import load_observation_preset, merge_observation_config
 
 
 class ScenarioError(Exception):

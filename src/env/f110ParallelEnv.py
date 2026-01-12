@@ -9,17 +9,17 @@ from PIL import Image
 from pettingzoo import ParallelEnv
 
 # base classes
-from physics import Simulator, Integrator
+from src.physics import Simulator, Integrator
 # Lazy import to avoid pyglet initialization on HPC without display
-# from render import EnvRenderer  # Moved to render() method
-from env.start_pose_state import StartPoseState
-from env.collision import build_terminations
-from env.state_buffer import StateBuffers
-from utils.centerline import progress_from_spacing
+# from src.render import EnvRenderer  # Moved to render() method
+from src.env.start_pose_state import StartPoseState
+from src.env.collision import build_terminations
+from src.env.state_buffer import StateBuffers
+from src.utils.centerline import progress_from_spacing
 
 # Type checking only imports (don't execute at runtime)
 if TYPE_CHECKING:
-    from render import EnvRenderer
+    from src.render import EnvRenderer
 
 
 def _default_vehicle_params() -> Dict[str, float]:
@@ -53,11 +53,34 @@ import time
 import math
 import logging
 
-# gl
-import pyglet
-pyglet.options['debug_gl'] = False
-from pyglet import gl
-from pyglet import image as pyg_img
+# gl - Lazy import for headless system compatibility
+# Pyglet will be imported only when rendering is actually needed
+_PYGLET_AVAILABLE = None
+pyglet = None
+gl = None
+pyg_img = None
+
+def _ensure_pyglet():
+    """Lazy load pyglet modules. Returns True if successful, False if not available."""
+    global _PYGLET_AVAILABLE, pyglet, gl, pyg_img
+    if _PYGLET_AVAILABLE is not None:
+        return _PYGLET_AVAILABLE
+
+    try:
+        import pyglet as _pyglet
+        pyglet = _pyglet
+        pyglet.options['debug_gl'] = False
+        from pyglet import gl as _gl
+        from pyglet import image as _pyg_img
+        gl = _gl
+        pyg_img = _pyg_img
+        _PYGLET_AVAILABLE = True
+        return True
+    except Exception as e:
+        _PYGLET_AVAILABLE = False
+        logger.warning(f"Pyglet not available (headless system?): {e}")
+        logger.warning("Rendering will be disabled. This is normal for HPC/headless systems.")
+        return False
 
 # constants
 from wrappers.observation import _sector_from_angle, _radial_gain, _SECTOR_NAMES
@@ -1484,11 +1507,16 @@ class F110ParallelEnv(ParallelEnv):
             # Nothing to do when headless; keep API contract intact.
             return None
 
+        # Check if pyglet is available before rendering
+        if not _ensure_pyglet():
+            logger.warning("Cannot render: pyglet not available (headless system)")
+            return None
+
         self._collect_render_data = True
 
         if self.renderer is None:
             # Lazy import to avoid pyglet initialization when rendering disabled
-            from render import EnvRenderer
+            from src.render import EnvRenderer
 
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,
                                         lidar_fov=4.7,

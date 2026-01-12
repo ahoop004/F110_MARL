@@ -209,6 +209,8 @@ agents:
       exploration_fraction: 0.1
       exploration_initial_eps: 1.0
       exploration_final_eps: 0.05
+      train_freq: 4  # DQN typically trains every 4 steps
+      gradient_steps: 1  # Number of gradient steps per training
     observation:
       preset: gaplock
     reward:
@@ -251,10 +253,10 @@ agents:
           bonus_coef: 0.0005
         step_reward: -0.001
         terminal:
-          target_crash: 200.0
-          self_crash: -20.0
-          timeout: -100.0
-          collision: 0.0
+          target_crash: 50.0  # Success bonus (was 200.0 - too large, causing training instability)
+          self_crash: -40.0   # Failure penalty (was -20.0 - too lenient)
+          timeout: -15.0      # Timeout penalty (was -100.0 - too severe)
+          collision: 0.0      # Handled via self_crash/target_crash
   car_1:
     role: defender
     algorithm: ftg
