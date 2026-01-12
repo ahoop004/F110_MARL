@@ -17,7 +17,7 @@ agents:
     algorithm: sb3_tqc
     target_id: car_1
     params:
-      learning_rate: 0.0005
+      # learning_rate: 0.0005
       actor_learning_rate: 0.0005
       critic_learning_rate: 0.0005
       gamma: 0.999

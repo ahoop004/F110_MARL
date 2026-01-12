@@ -36,11 +36,11 @@ parameters:
   #   - 0.99
   #   - 0.995
   #   - 0.999
-  batch_size:
-    values:
-    - 128
-    - 256
-    - 512
+  # batch_size:
+  #   values:
+  #   - 128
+  #   - 256
+  #   - 512
   # target_entropy:
   #   values:
   #   - auto
