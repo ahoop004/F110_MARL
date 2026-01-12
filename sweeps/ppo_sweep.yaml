@@ -1,43 +1,50 @@
-program: run.py
+program: run_sb3.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval_agg/success_rate
+  name: train/success_rate
   goal: maximize
-parameters:
-  learning_rate:
-    values:
-    - 0.0001
-    - 0.0003
-    - 0.0005
-  gamma:
-    values:
-    - 0.99
-    - 0.995
-    - 0.999
-  clip_range:
-    values:
-    - 0.1
-    - 0.2
-    - 0.3
-  ent_coef:
-    values:
-    - 0.0
-    - 0.01
-    - 0.02
-  n_steps:
-    values:
-    - 1024
-    - 2048
+# parameters:
+#   learning_rate:
+#     values:
+#     - 0.0001
+#     - 0.0003
+#   clip_range:
+#     values:
+#     - 0.15
+#     - 0.2
+#   hidden_dims:
+#     values:
+#     - - 256
+#       - 256
+#     - - 256
+#       - 256
+#       - 256
+#   activation:
+#     values:
+#     - relu
+#     - silu
+#   n_steps:
+#     values:
+#     - 1024
+#     - 2048
+  # Optional parameters (uncomment to sweep):
+  # gamma:
+  #   values:
+  #   - 0.99
+  #   - 0.995
+  #   - 0.999
+  # ent_coef:
+  #   values:
+  #   - 0.0
+  #   - 0.01
+  #   - 0.02
 command:
 - ${env}
 - python3
 - ${program}
-- --runner
-- sb3
-- --algo
-- ppo
 - --scenario
 - scenarios/ppo.yaml
 - --wandb
+name: PPO_sweep

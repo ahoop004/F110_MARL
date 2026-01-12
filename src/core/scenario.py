@@ -19,6 +19,67 @@ class ScenarioError(Exception):
     pass
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge two dictionaries (override wins)."""
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _load_yaml_file(path_obj: Path) -> Dict[str, Any]:
+    """Load a YAML file and ensure it returns a dict."""
+    if not path_obj.exists():
+        raise ScenarioError(f"Scenario file not found: {path_obj}")
+
+    try:
+        with open(path_obj, 'r') as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ScenarioError(f"Invalid YAML in scenario file: {e}")
+
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ScenarioError("Scenario must be a YAML dictionary")
+    return data
+
+
+def _load_with_includes(path_obj: Path, visited: Optional[set] = None) -> Dict[str, Any]:
+    """Load a scenario file with optional includes."""
+    path_obj = path_obj.resolve()
+    visited = visited or set()
+    if path_obj in visited:
+        raise ScenarioError(f"Include cycle detected at: {path_obj}")
+    visited.add(path_obj)
+
+    data = _load_yaml_file(path_obj)
+    includes = data.pop('includes', None)
+
+    merged: Dict[str, Any] = {}
+    if includes:
+        if isinstance(includes, (str, Path)):
+            includes = [includes]
+        if not isinstance(includes, list):
+            raise ScenarioError("'includes' must be a list of file paths")
+        for include_path in includes:
+            if not isinstance(include_path, (str, Path)):
+                raise ScenarioError("'includes' entries must be file paths")
+            include_obj = (path_obj.parent / include_path).resolve()
+            merged = _deep_merge(merged, _load_with_includes(include_obj, visited))
+
+    merged = _deep_merge(merged, data)
+    visited.remove(path_obj)
+    return merged
+
+
 def load_scenario(path: str) -> Dict[str, Any]:
     """Load scenario from YAML file.
 
@@ -38,19 +99,7 @@ def load_scenario(path: str) -> Dict[str, Any]:
     """
     path_obj = Path(path)
 
-    if not path_obj.exists():
-        raise ScenarioError(f"Scenario file not found: {path}")
-
-    try:
-        with open(path_obj, 'r') as f:
-            scenario = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise ScenarioError(f"Invalid YAML in scenario file: {e}")
-
-    if not isinstance(scenario, dict):
-        raise ScenarioError("Scenario must be a YAML dictionary")
-
-    return scenario
+    return _load_with_includes(path_obj)
 
 
 def expand_reward_preset(config: Dict[str, Any]) -> Dict[str, Any]:

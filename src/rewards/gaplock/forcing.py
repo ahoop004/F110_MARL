@@ -1,7 +1,31 @@
-"""Forcing rewards for gaplock task.
+"""Forcing rewards for gaplock adversarial racing task.
 
-Advanced rewards for forcing the target toward walls and obstacles.
-Includes pinch pockets, clearance reduction, and turn shaping.
+Forcing rewards provide dense shaping signals that guide the attacker toward
+geometrically optimal attack positions and reward progress in forcing the
+target toward danger (walls, obstacles).
+
+These rewards address the credit assignment problem in sparse reward settings:
+without shaping, the agent must discover optimal attack geometry through
+random exploration, which is sample-inefficient.
+
+Three Forcing Mechanisms:
+1. **Pinch Pockets**: Gaussian potential field centered at optimal attack positions
+   - Rewards being ahead and to the side of the target
+   - Creates "magnetic attraction" to pinch positions
+   - Weight: ~0.004 per step (gentle guidance)
+
+2. **Clearance Reduction**: Rewards decreasing target's wall clearance
+   - Directly rewards progress in forcing target toward walls
+   - Differential reward: positive when clearance decreases
+   - Weight: ~0.003 per step
+
+3. **Turn Shaping**: Rewards when target turns away from walls (being forced)
+   - Detects defensive maneuvers (target turning to avoid crash)
+   - Indicates successful pressure application
+   - Weight: ~0.006 per step
+
+Total shaping magnitude: ~0.015 per step vs +200 terminal reward
+Ratio: ~1.5% of success reward (provides gradient without dominating)
 """
 
 import numpy as np
@@ -9,15 +33,31 @@ from typing import Dict, Optional
 
 
 class ForcingReward:
-    """Rewards for forcing target into dangerous positions.
+    """Dense shaping rewards for forcing target into dangerous positions.
 
-    Implements three forcing mechanisms:
-    1. Pinch Pockets: Gaussian potential field rewards at optimal attack positions
-    2. Clearance Reduction: Reward when target's wall clearance decreases
-    3. Turn Shaping: Reward when target turns away from wall (being forced)
+    Implements three forcing mechanisms that provide learning gradients:
 
-    These are advanced shaping signals that teach the attacker how to
-    effectively force the target into crashing.
+    1. **Pinch Pockets (Gaussian Potential Field)**:
+       - Defines optimal attack geometry: ahead + lateral offset
+       - Creates smooth reward landscape toward ideal positions
+       - Uses Gaussian: r = weight * exp(-distance² / (2σ²))
+       - Optional potential field: r = peak - (peak - floor) * (d/σ)^power
+
+    2. **Clearance Reduction (Differential Reward)**:
+       - Tracks target's minimum LiDAR distance to walls
+       - Rewards when clearance decreases (target forced toward walls)
+       - Penalizes when clearance increases (target escapes)
+       - Active only in band [0.3m, 3.2m] for relevant distances
+
+    3. **Turn Shaping (Heading Change)**:
+       - Detects when target turns away from walls
+       - Indicates successful defensive pressure
+       - Uses heading change rate: Δθ/Δt
+
+    Design Principle: Gentle guidance, not reward hacking
+    - Shaping << Terminal rewards (1-2% magnitude)
+    - Time-scaled to be timestep-invariant
+    - Clipped to prevent exploitation
     """
 
     def __init__(self, config: dict):

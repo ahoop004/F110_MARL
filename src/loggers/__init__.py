@@ -27,9 +27,24 @@ Example usage:
     >>> csv_logger.close()
 """
 
-from .wandb_logger import WandbLogger
 from .console import ConsoleLogger
 from .csv_logger import CSVLogger
-from .rich_console import RichConsole
+try:
+    from .wandb_logger import WandbLogger
+except ImportError as exc:
+    class WandbLogger:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "WandbLogger requires the `wandb` package. Install with: pip install wandb"
+            ) from exc
+
+try:
+    from .rich_console import RichConsole
+except ImportError as exc:
+    class RichConsole:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "RichConsole requires the `rich` package. Install with: pip install rich"
+            ) from exc
 
 __all__ = ['WandbLogger', 'ConsoleLogger', 'CSVLogger', 'RichConsole']

@@ -5,13 +5,13 @@ performance measurement during and after training.
 """
 
 from typing import Dict, Any, Optional, List, Tuple, Callable
+from collections import deque
 import numpy as np
 from pettingzoo import ParallelEnv
 
 from core.protocol import Agent
 from core.obs_flatten import flatten_observation
 from metrics import determine_outcome, EpisodeOutcome
-from wrappers.normalize import ObservationNormalizer
 
 
 class EvaluationConfig:
@@ -143,10 +143,11 @@ class Evaluator:
         agents: Dict[str, Agent],
         config: EvaluationConfig,
         observation_presets: Optional[Dict[str, str]] = None,
+        frame_stacks: Optional[Dict[str, int]] = None,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
-        obs_normalizer: Optional[ObservationNormalizer] = None,
         obs_scales: Optional[Dict[str, float]] = None,
         spawn_configs: Optional[Dict[str, Any]] = None,
+        action_repeat: int = 1,
     ):
         """Initialize evaluator.
 
@@ -155,19 +156,40 @@ class Evaluator:
             agents: Dict mapping agent_id -> Agent
             config: EvaluationConfig
             observation_presets: Optional dict mapping agent_id -> preset name
+            frame_stacks: Optional dict mapping agent_id -> number of frames to stack
             target_ids: Optional dict mapping agent_id -> target_id
-            obs_normalizer: Optional observation normalizer (for consistency with training)
             obs_scales: Optional observation scales for flattening
             spawn_configs: Optional spawn configurations (if None, reads from env or uses default poses)
+            action_repeat: Number of environment steps to repeat each action
+
+        Note:
+            Observation normalization happens in flatten_observation() (obs_flatten.py)
+            which applies domain-specific bounded ranges. No additional running mean/std
+            normalization is applied during evaluation.
         """
         self.env = env
         self.agents = agents
         self.config = config
         self.observation_presets = observation_presets or {}
+        self.frame_stacks = {}
+        if frame_stacks:
+            for agent_id, stack_size in frame_stacks.items():
+                try:
+                    stack_size = int(stack_size)
+                except (TypeError, ValueError):
+                    stack_size = 1
+                if stack_size < 1:
+                    stack_size = 1
+                self.frame_stacks[agent_id] = stack_size
         self.target_ids = target_ids or {}
-        self.obs_normalizer = obs_normalizer
         self.obs_scales = obs_scales or {}
         self.spawn_configs = spawn_configs or getattr(env, 'spawn_configs', {})
+        try:
+            action_repeat = int(action_repeat)
+        except (TypeError, ValueError):
+            action_repeat = 1
+        self.action_repeat = max(1, action_repeat)
+        self._frame_buffers: Dict[str, deque] = {}
 
         # Get primary agent (first trainable agent)
         self.primary_agent_id = self._get_primary_agent_id()
@@ -184,6 +206,12 @@ class Evaluator:
     ) -> EvaluationResult:
         """Run evaluation and return results.
 
+        Evaluation is DETERMINISTIC for consistent performance measurement:
+        - Fixed spawn points (cycled sequentially for reproducibility)
+        - Deterministic policy (no exploration noise)
+        - FTG defender at full strength (configurable via ftg_override)
+        - No observation normalization updates (frozen stats from training)
+
         Args:
             verbose: Print progress during evaluation (default: False)
             on_episode_end: Optional callback invoked after each episode
@@ -192,14 +220,25 @@ class Evaluator:
         Returns:
             EvaluationResult with aggregate statistics and per-episode data
         """
-        # Apply FTG override if configured
+        # ========================================
+        # EVALUATION INITIALIZATION
+        # ========================================
+
+        # Override FTG defender parameters to full strength
+        # Example: max_speed=1.0, bubble_radius=3.0, steering_gain=0.35
+        # This ensures consistent evaluation difficulty regardless of training curriculum
         if self.config.ftg_override:
             self._apply_ftg_override()
 
         episodes = []
 
+        # ========================================
+        # EVALUATION LOOP (DETERMINISTIC)
+        # ========================================
+
         for ep_idx in range(self.config.num_episodes):
             # Sequential spawn selection (cycle through spawn points)
+            # Ensures consistent ordering for reproducible evaluation
             spawn_idx = ep_idx % len(self.config.spawn_points)
             spawn_point = self.config.spawn_points[spawn_idx]
             spawn_speed = self.config.spawn_speeds[spawn_idx] if spawn_idx < len(self.config.spawn_speeds) else 0.44
@@ -207,10 +246,11 @@ class Evaluator:
             if verbose:
                 print(f"Episode {ep_idx + 1}/{self.config.num_episodes}: {spawn_point} @ {spawn_speed:.2f} m/s")
 
-            # Run episode
+            # Run single evaluation episode (deterministic actions)
             episode_result = self._run_episode(spawn_point, spawn_speed, ep_idx)
             episodes.append(episode_result)
 
+            # Callback for logging/tracking (e.g., W&B, CSV)
             if on_episode_end:
                 on_episode_end(episode_result, ep_idx + 1, self.config.num_episodes)
 
@@ -220,7 +260,11 @@ class Evaluator:
                 steps = episode_result['steps']
                 print(f"  Result: {outcome}, Reward: {reward:.2f}, Steps: {steps}")
 
-        # Create result
+        # ========================================
+        # AGGREGATE RESULTS
+        # ========================================
+
+        # Compute aggregate statistics: success_rate, avg_reward, outcome_distribution
         result = EvaluationResult(
             episodes=episodes,
             agent_id=self.primary_agent_id,
@@ -239,12 +283,17 @@ class Evaluator:
 
         Args:
             spawn_point: Name of spawn point to use
+            spawn_speed: Initial velocity for agents
             episode_num: Episode number (for logging)
 
         Returns:
-            Dict with episode results
+            Dict with episode results (outcome, reward, steps, success)
         """
-        # Get spawn configuration
+        # ========================================
+        # EPISODE RESET
+        # ========================================
+
+        # Validate spawn point exists in configuration
         if spawn_point not in self.spawn_configs:
             raise ValueError(
                 f"Spawn point '{spawn_point}' not found in spawn_configs. "
@@ -253,13 +302,13 @@ class Evaluator:
 
         spawn_config = self.spawn_configs[spawn_point]
 
-        # Build poses array and velocities dict for reset
+        # Build poses array and velocities dict for environment reset
         poses_list = []
         velocities = {}
 
         for agent_id in sorted(self.agents.keys()):  # Sort for consistent ordering
             if agent_id in spawn_config:
-                pose = spawn_config[agent_id]
+                pose = spawn_config[agent_id]  # [x, y, theta]
                 poses_list.append(pose)
                 # Set initial velocity as scalar speed (environment expects this format)
                 velocities[agent_id] = spawn_speed
@@ -267,55 +316,74 @@ class Evaluator:
         # Convert poses to numpy array (N, 3) format expected by environment
         poses_array = np.array(poses_list, dtype=np.float32)
 
-        # Reset environment with spawn configuration
+        # Reset environment with fixed spawn configuration
         reset_options = {
             'poses': poses_array,
             'velocities': velocities,
-            'lock_speed_steps': self.config.lock_speed_steps,
+            'lock_speed_steps': self.config.lock_speed_steps,  # Usually 0 for eval
         }
 
         obs, info = self.env.reset(options=reset_options)
+        self._reset_frame_buffers()
 
-        # Episode tracking
+        # Initialize episode tracking
         episode_reward = 0.0
         episode_steps = 0
         done = {agent_id: False for agent_id in self.agents.keys()}
 
-        # Run episode
+        # ========================================
+        # EPISODE EXECUTION (DETERMINISTIC)
+        # ========================================
+
         while not all(done.values()) and episode_steps < self.config.max_steps:
-            # Select actions (deterministic for eval)
+
+            # -------------------- ACTION SELECTION (DETERMINISTIC) --------------------
+
             actions = {}
             for agent_id, agent in self.agents.items():
                 if not done[agent_id]:
-                    # Flatten observation if preset configured
+                    # Flatten observation from dict to vector
+                    # NOTE: Normalization happens inside flatten_observation() using
+                    # domain-specific bounded ranges (LiDAR → [0,1], velocities → [-1,1], etc.)
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
 
-                    # Normalize observation if normalizer provided
-                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
-                        # Don't update stats during eval
-                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=False)
-
-                    # Get action (deterministic)
+                    # Select deterministic action (no exploration noise)
+                    # For Gaussian policies: uses mean action (μ) instead of sampling from N(μ, σ)
                     try:
                         actions[agent_id] = agent.act(flat_obs, deterministic=self.config.deterministic)
                     except TypeError:
-                        # Agent doesn't support deterministic parameter
+                        # Backward compatibility: some agents don't support deterministic parameter
                         actions[agent_id] = agent.act(flat_obs)
 
-            # Step environment
-            next_obs, rewards, terminations, truncations, step_info = self.env.step(actions)
+            # -------------------- ENVIRONMENT STEP --------------------
 
-            # Track primary agent reward
-            if self.primary_agent_id:
-                episode_reward += rewards.get(self.primary_agent_id, 0.0)
+            steps_this_action = 0
+            while (
+                steps_this_action < self.action_repeat
+                and episode_steps < self.config.max_steps
+                and not all(done.values())
+            ):
+                next_obs, rewards, terminations, truncations, step_info = self.env.step(actions)
 
-            # Update observations and done flags
-            obs = next_obs
-            info = step_info
-            for agent_id in self.agents.keys():
-                done[agent_id] = terminations.get(agent_id, False) or truncations.get(agent_id, False)
+                # Track primary agent reward (usually the attacker being evaluated)
+                if self.primary_agent_id:
+                    episode_reward += rewards.get(self.primary_agent_id, 0.0)
 
-            episode_steps += 1
+                # Update state for next iteration
+                obs = next_obs
+                info = step_info
+                for agent_id in self.agents.keys():
+                    done[agent_id] = (
+                        done.get(agent_id, False)
+                        or terminations.get(agent_id, False)
+                        or truncations.get(agent_id, False)
+                    )
+
+                episode_steps += 1
+                steps_this_action += 1
+
+                if all(done.values()):
+                    break
 
         # Determine outcome
         final_info = step_info if episode_steps > 0 else info
@@ -352,29 +420,64 @@ class Evaluator:
     def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
         """Flatten observation for agent if preset is configured."""
         if agent_id not in self.observation_presets:
-            return obs
-
-        preset = self.observation_presets[agent_id]
-        target_id = self.target_ids.get(agent_id, None)
-
-        # If target_id specified and we have all observations, add target state
-        if target_id and all_obs and target_id in all_obs:
-            # Create combined observation dict with central_state
-            combined_obs = dict(obs)
-            combined_obs['central_state'] = all_obs[target_id]
-            return flatten_observation(
-                combined_obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
-            )
+            flat_obs = obs
         else:
-            return flatten_observation(
-                obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
+            preset = self.observation_presets[agent_id]
+            target_id = self.target_ids.get(agent_id, None)
+
+            # If target_id specified and we have all observations, add target state
+            if target_id and all_obs and target_id in all_obs:
+                # Create combined observation dict with central_state
+                combined_obs = dict(obs)
+                combined_obs['central_state'] = all_obs[target_id]
+                flat_obs = flatten_observation(
+                    combined_obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+            else:
+                flat_obs = flatten_observation(
+                    obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+
+        return self._stack_obs(agent_id, flat_obs)
+
+    def _stack_obs(self, agent_id: str, obs: Any) -> Any:
+        stack_size = int(self.frame_stacks.get(agent_id, 1))
+        if stack_size <= 1:
+            return obs
+        if isinstance(obs, dict):
+            raise ValueError(
+                f"Frame stacking requires flattened observations for {agent_id}"
             )
+        if not isinstance(obs, np.ndarray):
+            try:
+                obs = np.asarray(obs, dtype=np.float32)
+            except Exception as exc:
+                raise ValueError(
+                    f"Frame stacking requires array observations for {agent_id}"
+                ) from exc
+        buffer = self._frame_buffers.get(agent_id)
+        if buffer is None:
+            buffer = deque(maxlen=stack_size)
+            self._frame_buffers[agent_id] = buffer
+        if len(buffer) == 0:
+            for _ in range(stack_size):
+                buffer.append(obs)
+        else:
+            buffer.append(obs)
+        return np.concatenate(list(buffer), axis=0)
+
+    def _reset_frame_buffers(self) -> None:
+        self._frame_buffers = {
+            agent_id: deque(maxlen=stack_size)
+            for agent_id, stack_size in self.frame_stacks.items()
+            if stack_size > 1
+        }
 
     def _apply_ftg_override(self) -> None:
         """Apply FTG parameter overrides for full-strength evaluation."""

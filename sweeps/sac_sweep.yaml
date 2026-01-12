@@ -1,43 +1,46 @@
-program: run.py
+program: run_v2.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval_agg/success_rate
+  name: train/success_rate
   goal: maximize
 parameters:
   learning_rate:
     values:
     - 0.0001
+    - 0.0002
     - 0.0003
     - 0.0005
-  gamma:
-    values:
-    - 0.99
-    - 0.995
-    - 0.999
+    - 0.0007
   tau:
     values:
+    - 0.001
+    - 0.0025
     - 0.005
     - 0.01
-  batch_size:
-    values:
-    - 128
-    - 256
-  hidden_dims:
-    values:
-    - - 256
-      - 256
-    - - 512
-      - 512
+    - 0.02
+  # Optional parameters (uncomment to sweep):
+  # gamma:
+  #   values:
+  #   - 0.99
+  #   - 0.995
+  #   - 0.999
+  # batch_size:
+  #   values:
+  #   - 128
+  #   - 256
+  # hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #   - - 512
+  #     - 512
 command:
 - ${env}
 - python3
 - ${program}
-- --runner
-- sb3
-- --algo
-- sac
 - --scenario
 - scenarios/sac.yaml
 - --wandb
+name: SAC_sweep

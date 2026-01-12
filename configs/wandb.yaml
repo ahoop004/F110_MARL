@@ -1,0 +1,50 @@
+wandb:
+  logging:
+    # Comment out any key to disable that log group.
+    groups:
+      define_metrics: true
+      train: true
+      # target: true
+      # spawn: true
+      curriculum: true
+      curriculum_phase: true
+      # eval: true
+      # eval_agg: true
+      sb3_callbacks: true
+    # Comment out any metric to disable it.
+    metrics:
+      train/episode: true
+      train/outcome: true
+      train/success: true
+      train/episode_reward: true
+      train/episode_steps: true
+      train/success_rate: true
+      train/reward_mean: true
+      # train/steps_mean: true
+      # train/spawn_point: true
+      # train/spawn_stage: true
+      # target/success: true
+      # target/crash: true
+      # curriculum/stage: true
+      # curriculum/stage_success_rate: true
+      curriculum/phase_idx: true
+      # curriculum/phase_name: true
+      # curriculum/phase_success_rate: true
+      # eval/episode: true
+      # eval/episode_reward: true
+      # eval/episode_steps: true
+      # eval/episode_success: true
+      # eval/spawn_point: true
+      # eval/training_episode: true
+      # eval_agg/success_rate: true
+      # eval_agg/avg_reward: true
+      # eval_agg/avg_episode_length: true
+      # eval_agg/std_reward: true
+      # eval_agg/std_episode_length: true
+      # eval_agg/num_episodes: true
+      # eval_agg/outcome_target_crash: true
+      # eval_agg/outcome_self_crash: true
+      # eval_agg/outcome_collision: true
+      # eval_agg/outcome_timeout: true
+      # eval_agg/outcome_idle_stop: true
+      # eval_agg/outcome_target_finish: true

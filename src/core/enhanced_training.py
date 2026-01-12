@@ -9,6 +9,7 @@ Extends the basic TrainingLoop with:
 """
 
 from typing import Dict, Any, Optional, Tuple
+from collections import deque
 import time
 import logging
 import numpy as np
@@ -23,7 +24,6 @@ from core.evaluator import Evaluator, EvaluationConfig
 from metrics import MetricsTracker, determine_outcome, EpisodeOutcome
 from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 from rewards.base import RewardStrategy
-from wrappers.normalize import ObservationNormalizer
 
 # Set up logger for error handling
 logger = logging.getLogger(__name__)
@@ -53,6 +53,8 @@ class EnhancedTrainingLoop:
         agents: Dict[str, Agent],
         agent_rewards: Optional[Dict[str, RewardStrategy]] = None,
         observation_presets: Optional[Dict[str, str]] = None,
+        frame_stacks: Optional[Dict[str, int]] = None,
+        action_repeat: int = 1,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
@@ -69,8 +71,6 @@ class EnhancedTrainingLoop:
         max_steps_per_episode: int = 5000,
         rolling_window: int = 100,
         save_every_n_episodes: Optional[int] = None,
-        normalize_observations: bool = True,
-        obs_clip: float = 10.0,
     ):
         """Initialize enhanced training loop.
 
@@ -80,7 +80,9 @@ class EnhancedTrainingLoop:
             agent_rewards: Optional dict mapping agent_id -> RewardStrategy
                 If provided, these custom rewards override env rewards
             observation_presets: Optional dict mapping agent_id -> preset name
-                Used to flatten Dict observations. If None, observations are passed as-is.
+                Used to flatten Dict observations. Flattening includes normalization.
+            frame_stacks: Optional dict mapping agent_id -> number of frames to stack
+            action_repeat: Number of environment steps to repeat each action
             target_ids: Optional dict mapping agent_id -> target_id
                 For adversarial tasks where agent observes target state
             agent_algorithms: Optional dict mapping agent_id -> algorithm name (e.g., 'ppo', 'sac')
@@ -98,13 +100,35 @@ class EnhancedTrainingLoop:
             max_steps_per_episode: Max steps per episode
             rolling_window: Window size for rolling statistics
             save_every_n_episodes: Save checkpoint every N episodes (None = disabled)
-            normalize_observations: Whether to normalize observations with running mean/std
-            obs_clip: Clip normalized observations to [-clip, clip]
+
+        Note on Observation Normalization:
+            Observations are normalized within flatten_observation() based on the preset.
+            For gaplock preset:
+            - LiDAR: normalized to [0, 1] using max_range
+            - Velocities: clipped to [-1, 1] using speed_scale
+            - Positions: clipped to [-1, 1] using position_scale
+            - Angles: sin/cos encoding (inherently bounded)
+            No additional running mean/std normalization is applied.
         """
         self.env = env
         self.agents = agents
         self.agent_rewards = agent_rewards or {}
         self.observation_presets = observation_presets or {}
+        self.frame_stacks = {}
+        if frame_stacks:
+            for agent_id, stack_size in frame_stacks.items():
+                try:
+                    stack_size = int(stack_size)
+                except (TypeError, ValueError):
+                    stack_size = 1
+                if stack_size < 1:
+                    stack_size = 1
+                self.frame_stacks[agent_id] = stack_size
+        try:
+            action_repeat = int(action_repeat)
+        except (TypeError, ValueError):
+            action_repeat = 1
+        self.action_repeat = max(1, action_repeat)
         self.target_ids = target_ids or {}
         self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
@@ -122,6 +146,7 @@ class EnhancedTrainingLoop:
         self.rolling_window = rolling_window
         self.save_every_n_episodes = save_every_n_episodes
         self.obs_scales = self._resolve_obs_scales()
+        self._frame_buffers: Dict[str, deque] = {}
 
         # Create evaluator if evaluation is enabled
         self.evaluator: Optional[Evaluator] = None
@@ -133,23 +158,12 @@ class EnhancedTrainingLoop:
                 agents=agents,
                 config=evaluation_config,
                 observation_presets=observation_presets,
+                frame_stacks=self.frame_stacks,
                 target_ids=target_ids,
-                obs_normalizer=None,  # Don't use normalization for eval
                 obs_scales=self.obs_scales,
                 spawn_configs=spawn_configs,
+                action_repeat=self.action_repeat,
             )
-
-        # Observation normalization
-        self.normalize_observations = normalize_observations
-        self.obs_clip = obs_clip
-        self.obs_normalizer: Optional[ObservationNormalizer] = None
-        if self.normalize_observations:
-            # Get observation shape from first agent
-            first_agent_id = list(agents.keys())[0]
-            obs_space = env.observation_spaces[first_agent_id]
-            obs_shape = getattr(obs_space, "shape", None)
-            if obs_shape is not None:
-                self.obs_normalizer = ObservationNormalizer(obs_shape, clip=obs_clip)
 
         # Initialize metrics tracker for each agent
         self.metrics_trackers = {
@@ -176,8 +190,15 @@ class EnhancedTrainingLoop:
         # Evaluation tracking (separate counter for continuous eval plots)
         self.total_eval_episodes: int = 0
         self.last_eval_training_episode: int = -1
+        self.best_eval_per_phase: Dict[int, float] = {}
 
-    def _flatten_obs(self, agent_id: str, obs: Any, all_obs: Optional[Dict[str, Any]] = None) -> Any:
+    def _flatten_obs(
+        self,
+        agent_id: str,
+        obs: Any,
+        all_obs: Optional[Dict[str, Any]] = None,
+        update_stack: bool = True,
+    ) -> Any:
         """Flatten observation for agent if preset is configured.
 
         Args:
@@ -189,29 +210,71 @@ class EnhancedTrainingLoop:
             Flattened observation if preset configured, otherwise original obs
         """
         if agent_id not in self.observation_presets:
-            return obs
-
-        preset = self.observation_presets[agent_id]
-        target_id = self.target_ids.get(agent_id, None)
-
-        # If target_id specified and we have all observations, add target state to obs
-        if target_id and all_obs and target_id in all_obs:
-            # Create combined observation dict with central_state
-            combined_obs = dict(obs)  # Copy agent's own observation
-            combined_obs['central_state'] = all_obs[target_id]  # Add target as central_state
-            return flatten_observation(
-                combined_obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
-            )
+            flat_obs = obs
         else:
-            return flatten_observation(
-                obs,
-                preset=preset,
-                target_id=target_id,
-                scales=self.obs_scales,
+            preset = self.observation_presets[agent_id]
+            target_id = self.target_ids.get(agent_id, None)
+
+            # If target_id specified and we have all observations, add target state to obs
+            if target_id and all_obs and target_id in all_obs:
+                # Create combined observation dict with central_state
+                combined_obs = dict(obs)  # Copy agent's own observation
+                combined_obs['central_state'] = all_obs[target_id]  # Add target as central_state
+                flat_obs = flatten_observation(
+                    combined_obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+            else:
+                flat_obs = flatten_observation(
+                    obs,
+                    preset=preset,
+                    target_id=target_id,
+                    scales=self.obs_scales,
+                )
+
+        return self._stack_obs(agent_id, flat_obs, update=update_stack)
+
+    def _stack_obs(self, agent_id: str, obs: Any, update: bool = True) -> Any:
+        stack_size = int(self.frame_stacks.get(agent_id, 1))
+        if stack_size <= 1:
+            return obs
+        if isinstance(obs, dict):
+            raise ValueError(
+                f"Frame stacking requires flattened observations for {agent_id}"
             )
+        if not isinstance(obs, np.ndarray):
+            try:
+                obs = np.asarray(obs, dtype=np.float32)
+            except Exception as exc:
+                raise ValueError(
+                    f"Frame stacking requires array observations for {agent_id}"
+                ) from exc
+        buffer = self._frame_buffers.get(agent_id)
+        if buffer is None:
+            buffer = deque(maxlen=stack_size)
+            self._frame_buffers[agent_id] = buffer
+        if len(buffer) == 0:
+            frames = [obs] * stack_size
+            if update:
+                buffer.extend(frames)
+            return np.concatenate(frames, axis=0)
+        if update:
+            buffer.append(obs)
+            frames = list(buffer)
+        else:
+            frames = list(buffer) + [obs]
+            if len(frames) > stack_size:
+                frames = frames[-stack_size:]
+        return np.concatenate(frames, axis=0)
+
+    def _reset_frame_buffers(self) -> None:
+        self._frame_buffers = {
+            agent_id: deque(maxlen=stack_size)
+            for agent_id, stack_size in self.frame_stacks.items()
+            if stack_size > 1
+        }
 
     def _resolve_obs_scales(self) -> Dict[str, float]:
         """Resolve fixed observation scales from the environment."""
@@ -257,20 +320,6 @@ class EnhancedTrainingLoop:
 
         return scales
 
-    def _ensure_obs_normalizer(self, obs: np.ndarray) -> None:
-        """Initialize or refresh observation normalizer based on actual obs shape."""
-        if not self.normalize_observations:
-            return
-        if self.obs_normalizer is None:
-            self.obs_normalizer = ObservationNormalizer(obs.shape, clip=self.obs_clip)
-            return
-        if getattr(self.obs_normalizer, "obs_shape", None) != obs.shape:
-            logger.warning(
-                "Observation shape changed from %s to %s; resetting normalizer.",
-                self.obs_normalizer.obs_shape,
-                obs.shape,
-            )
-            self.obs_normalizer = ObservationNormalizer(obs.shape, clip=self.obs_clip)
 
     def run(self, episodes: int, start_episode: int = 0) -> Dict[str, Any]:
         """Run training for specified number of episodes.
@@ -282,26 +331,32 @@ class EnhancedTrainingLoop:
         Returns:
             Training statistics dict
         """
-        # Track training time
+        # ========================================
+        # TRAINING INITIALIZATION
+        # ========================================
+
+        # Track training time for performance metrics
         self.training_start_time = time.time()
 
-        # Apply initial FTG schedule (if configured)
+        # Apply initial FTG (Follow-the-Gap) defender schedule if spawn curriculum enabled
+        # This configures defender difficulty parameters based on curriculum stage
         if self.spawn_curriculum and self.ftg_schedules:
             self._apply_ftg_schedule(
                 stage_name=self.spawn_curriculum.current_stage.name,
                 stage_index=self.spawn_curriculum.current_stage_idx,
             )
 
-        # Update metadata if checkpoint manager enabled
+        # Update checkpoint manager metadata to track run status
         if self.checkpoint_manager:
             self.checkpoint_manager.run_metadata.mark_running()
             self.checkpoint_manager.run_metadata.total_episodes = episodes
             self.checkpoint_manager.save_metadata()
 
-        # Start Rich console dashboard
+        # Initialize console visualization (Rich live dashboard)
         if self.rich_console:
             self.rich_console.start()
 
+        # Create progress bar for episode tracking
         if self.console_logger:
             progress = self.console_logger.create_progress(
                 total=episodes,
@@ -310,18 +365,26 @@ class EnhancedTrainingLoop:
         else:
             progress = None
 
-        # Run training with progress tracking
+        # ========================================
+        # MAIN TRAINING LOOP
+        # ========================================
+
+        # Run episodes with optional progress tracking
         if progress:
             with progress:
                 task = progress.add_task("[cyan]Episodes", total=episodes)
                 for episode in range(start_episode, episodes):
-                    self._run_episode(episode)
+                    self._run_episode(episode)  # Execute single episode (see below)
                     progress.update(task, advance=1)
         else:
             for episode in range(start_episode, episodes):
                 self._run_episode(episode)
 
-        # Mark training complete
+        # ========================================
+        # TRAINING FINALIZATION
+        # ========================================
+
+        # Update final training metadata
         if self.checkpoint_manager:
             training_time = time.time() - self.training_start_time
             self.checkpoint_manager.run_metadata.update_progress(
@@ -331,15 +394,15 @@ class EnhancedTrainingLoop:
             self.checkpoint_manager.run_metadata.mark_completed()
             self.checkpoint_manager.save_metadata()
 
-        # Stop Rich console dashboard
+        # Stop console visualization
         if self.rich_console:
             self.rich_console.stop()
 
-        # Print final summary
+        # Print final training summary (success rates, rewards, etc.)
         if self.console_logger:
             self._print_final_summary()
 
-        # Save CSV summary
+        # Save aggregated CSV summary statistics
         if self.csv_logger:
             final_stats = self._get_training_stats()
             self.csv_logger.save_summary(final_stats)
@@ -350,28 +413,40 @@ class EnhancedTrainingLoop:
     def _run_episode(self, episode_num: int):
         """Run a single episode with integrated metrics and logging.
 
+        Episode Structure:
+        1. Environment Reset (with curriculum sampling if enabled)
+        2. Episode Loop: Action Selection → Env Step → Reward Computation → Agent Update
+        3. Episode Finalization: Metrics, Logging, Checkpointing
+
         Args:
             episode_num: Current episode number
         """
-        # Sample spawn configuration if curriculum enabled
+        # ========================================
+        # PHASE 1: ENVIRONMENT RESET
+        # ========================================
+
+        # Sample spawn configuration from curriculum (if enabled)
+        # Curriculum controls: spawn positions, initial velocities, speed lock duration
         if self.spawn_curriculum:
             spawn_info = self.spawn_curriculum.sample_spawn(episode=episode_num)
-            # Reset with spawn configuration
+            # Reset environment with curriculum-specified configuration
             obs, info = self.env.reset(options={
-                'poses': spawn_info['poses'],
-                'velocities': spawn_info['velocities'],
-                'lock_speed_steps': spawn_info['lock_speed_steps']
+                'poses': spawn_info['poses'],              # Agent starting positions [x, y, theta]
+                'velocities': spawn_info['velocities'],    # Agent initial velocities
+                'lock_speed_steps': spawn_info['lock_speed_steps']  # Steps to freeze defender speed
             })
-            # Store spawn info for logging
+            # Store spawn metadata for logging/analysis
             self._current_spawn_stage = spawn_info['stage']
             self._current_spawn_mapping = dict(spawn_info.get('spawn_points', {}))
         else:
-            # Standard reset
+            # Standard reset without curriculum (random spawns)
             obs, info = self.env.reset()
             self._current_spawn_stage = None
             self._current_spawn_mapping = {}
 
-        # Capture spawn points from env info (random spawn mode)
+        self._reset_frame_buffers()
+
+        # Capture spawn points from env info (for logging in random spawn mode)
         if isinstance(info, dict):
             for agent_id, agent_info in info.items():
                 if not isinstance(agent_info, dict):
@@ -380,82 +455,133 @@ class EnhancedTrainingLoop:
                 if spawn_point and agent_id not in self._current_spawn_mapping:
                     self._current_spawn_mapping[agent_id] = spawn_point
 
+        # Reset reward strategies (clears internal state for new episode)
         for agent_id, reward_strategy in self.agent_rewards.items():
             reward_strategy.reset()
 
-        # Episode tracking
-        episode_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
-        episode_reward_components = {agent_id: {} for agent_id in self.agents.keys()}
-        episode_steps = 0
-        done = {agent_id: False for agent_id in self.agents.keys()}
+        # ========================================
+        # PHASE 2: EPISODE INITIALIZATION
+        # ========================================
+
+        # Initialize episode-level tracking variables
+        episode_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}  # Cumulative reward per agent
+        episode_reward_components = {agent_id: {} for agent_id in self.agents.keys()}  # Component breakdown
+        episode_steps = 0  # Step counter
+        done = {agent_id: False for agent_id in self.agents.keys()}  # Termination flags
+
+        # Success replay buffer: stores transitions from successful episodes
+        # Used for off-policy agents that support HER (Hindsight Experience Replay)
         success_transitions = {
             agent_id: []
             for agent_id, agent in self.agents.items()
             if callable(getattr(agent, "store_success_transition", None))
         }
 
-        # Run episode
+        # ========================================
+        # PHASE 3: EPISODE EXECUTION LOOP
+        # ========================================
+
+        # Run until all agents done OR max steps reached
         while not all(done.values()) and episode_steps < self.max_steps_per_episode:
-            # Select actions and cache processed observations
+
+            # -------------------- ACTION SELECTION --------------------
+
             actions = {}
-            flat_obs_cache = {}  # Cache to avoid duplicate processing
+            flat_obs_cache = {}  # Cache processed obs to avoid duplicate flattening
+
             for agent_id, agent in self.agents.items():
                 if not done[agent_id]:
-                    # Flatten observation if preset configured
+                    # Step 1: Flatten and normalize observation from dict to vector
+                    # Converts {scans: [...], pose: [...], velocity: [...]} → np.ndarray
+                    # Normalization is performed within flatten_observation() based on preset
+                    # For gaplock: LiDAR→[0,1], velocities→[-1,1], positions→[-1,1], angles→sin/cos
                     flat_obs = self._flatten_obs(agent_id, obs[agent_id], all_obs=obs)
 
-                    # Normalize observation if enabled (only for numpy arrays, not dicts)
-                    if isinstance(flat_obs, np.ndarray):
-                        self._ensure_obs_normalizer(flat_obs)
-                    if self.obs_normalizer and isinstance(flat_obs, np.ndarray):
-                        flat_obs = self.obs_normalizer.normalize(flat_obs, agent_id, update_stats=True)
-
-                    # Cache for reuse in storage phase
+                    # Cache processed observation for later reuse in storage
                     flat_obs_cache[agent_id] = flat_obs
 
-                    # Pass info to agent for curriculum-based velocity control (if supported)
+                    # Step 2: Select action from agent's policy
+                    # Pass info dict for agents that use curriculum-based velocity control
                     agent_info = info.get(agent_id, {}) if info else {}
                     try:
                         actions[agent_id] = agent.act(flat_obs, deterministic=False, info=agent_info)
                     except TypeError:
-                        # Agent doesn't support info parameter (backward compatibility)
+                        # Backward compatibility: some agents don't accept info parameter
                         actions[agent_id] = agent.act(flat_obs, deterministic=False)
 
-            # Step environment with error handling
-            try:
-                next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
-            except Exception as e:
-                logger.error(f"Environment step failed at episode {episode_num}, step {episode_steps}: {e}")
-                logger.error(f"Actions: {actions}")
-                # Mark all agents as terminated to end episode gracefully
-                terminations = {agent_id: True for agent_id in self.agents.keys()}
-                truncations = {agent_id: False for agent_id in self.agents.keys()}
-                next_obs = obs  # Use current obs as next_obs
-                env_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
-                step_info = {}
+            # -------------------- ENVIRONMENT STEP --------------------
 
-            # Compute custom rewards if provided
-            rewards = {}
-            reward_components_this_step = {}  # Track components for this step
-            for agent_id in self.agents.keys():
-                if agent_id in self.agent_rewards:
-                    # Use custom reward
-                    reward_info = self._build_reward_info(
-                        agent_id, obs, next_obs, step_info, episode_steps,
-                        terminations=terminations, truncations=truncations
+            rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
+            reward_components_this_step: Dict[str, Dict[str, float]] = {}
+            terminations = {agent_id: False for agent_id in self.agents.keys()}
+            truncations = {agent_id: False for agent_id in self.agents.keys()}
+            step_info: Dict[str, Any] = {}
+            next_obs = obs
+            steps_this_action = 0
+            done_snapshot = dict(done)
+
+            while (
+                steps_this_action < self.action_repeat
+                and episode_steps < self.max_steps_per_episode
+                and not all(done.values())
+            ):
+                prev_obs = obs
+                # Execute physics simulation step with all agents' actions
+                try:
+                    next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
+                except Exception as e:
+                    # Graceful degradation: log error and mark episode as terminated
+                    logger.error(f"Environment step failed at episode {episode_num}, step {episode_steps}: {e}")
+                    logger.error(f"Actions: {actions}")
+                    terminations = {agent_id: True for agent_id in self.agents.keys()}
+                    truncations = {agent_id: False for agent_id in self.agents.keys()}
+                    next_obs = prev_obs  # Reuse current observation
+                    env_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
+                    step_info = {}
+
+                # -------------------- REWARD COMPUTATION --------------------
+
+                # Compute custom rewards (if configured) or use environment rewards
+                for agent_id in self.agents.keys():
+                    if agent_id in self.agent_rewards:
+                        # Custom reward computation (e.g., gaplock_full reward strategy)
+                        # Builds reward from multiple components: terminal, distance, pressure, etc.
+                        reward_info = self._build_reward_info(
+                            agent_id, prev_obs, next_obs, step_info, episode_steps,
+                            terminations=terminations, truncations=truncations
+                        )
+                        total_reward, components = self.agent_rewards[agent_id].compute(reward_info)
+                        rewards[agent_id] += float(total_reward)
+                        if components:
+                            comp_totals = reward_components_this_step.setdefault(agent_id, {})
+                            for comp_name, comp_value in components.items():
+                                comp_totals[comp_name] = comp_totals.get(comp_name, 0.0) + float(comp_value)
+                    else:
+                        # Fall back to environment's native reward signal
+                        rewards[agent_id] += float(env_rewards.get(agent_id, 0.0))
+
+                # Update state for next iteration
+                obs = next_obs
+                info = step_info  # Carry forward info for curriculum velocity control
+                for agent_id in self.agents.keys():
+                    done_snapshot[agent_id] = (
+                        done_snapshot.get(agent_id, False)
+                        or terminations.get(agent_id, False)
+                        or truncations.get(agent_id, False)
                     )
-                    total_reward, components = self.agent_rewards[agent_id].compute(reward_info)
-                    rewards[agent_id] = total_reward
-                    reward_components_this_step[agent_id] = components
 
-                    # Accumulate components
-                    for comp_name, comp_value in components.items():
-                        if comp_name not in episode_reward_components[agent_id]:
-                            episode_reward_components[agent_id][comp_name] = 0.0
-                        episode_reward_components[agent_id][comp_name] += comp_value
-                else:
-                    # Use environment reward
-                    rewards[agent_id] = env_rewards.get(agent_id, 0.0)
+                episode_steps += 1
+                steps_this_action += 1
+
+                if all(done_snapshot.values()):
+                    break
+
+            # Accumulate component values for episode-level analysis
+            for agent_id, components in reward_components_this_step.items():
+                for comp_name, comp_value in components.items():
+                    if comp_name not in episode_reward_components[agent_id]:
+                        episode_reward_components[agent_id][comp_name] = 0.0
+                    episode_reward_components[agent_id][comp_name] += comp_value
 
             # Render if enabled
             if hasattr(self.env, 'render_mode') and self.env.render_mode is not None:
@@ -482,36 +608,44 @@ class EnhancedTrainingLoop:
 
                 self.env.render()
 
-            # Update agents
+            # -------------------- AGENT UPDATES & STORAGE --------------------
+
             for agent_id, agent in self.agents.items():
                 if not done[agent_id]:
+                    # Accumulate episode reward
                     episode_rewards[agent_id] += rewards[agent_id]
 
                     # Reuse cached observation (already flattened and normalized)
                     flat_obs = flat_obs_cache[agent_id]
 
-                    # Process next observation (only needs to be done once)
-                    flat_next_obs = self._flatten_obs(agent_id, next_obs[agent_id], all_obs=next_obs)
-                    if isinstance(flat_next_obs, np.ndarray):
-                        self._ensure_obs_normalizer(flat_next_obs)
-                    if self.obs_normalizer and isinstance(flat_next_obs, np.ndarray):
-                        flat_next_obs = self.obs_normalizer.normalize(flat_next_obs, agent_id, update_stats=False)
+                    # Process next observation for storage (flatten + normalize)
+                    # Normalization is performed within flatten_observation()
+                    flat_next_obs = self._flatten_obs(
+                        agent_id,
+                        next_obs[agent_id],
+                        all_obs=next_obs,
+                        update_stack=False,
+                    )
 
-                    # Different storage methods for on-policy vs off-policy
+                    # Extract termination flags
                     terminated = terminations.get(agent_id, False)
                     truncated = truncations.get(agent_id, False)
-                    done_flag = terminated or truncated
+                    done_flag = done_snapshot.get(agent_id, False)
+
+                    # ======== ON-POLICY vs OFF-POLICY STORAGE ========
 
                     if is_on_policy_agent(agent):
-                        # On-policy agents (PPO): store(obs, action, reward, done, terminated)
+                        # ON-POLICY (PPO, A2C): Store rollout experience
+                        # Uses internal buffer, updates at episode end
                         agent.store(flat_obs, actions[agent_id], rewards[agent_id], done_flag, terminated)
                     else:
-                        # Off-policy agents: store_transition(obs, action, reward, next_obs, done)
+                        # OFF-POLICY (SAC, TD3, TQC, DQN): Store in replay buffer
+                        # Requires next_obs for TD learning: Q(s,a) = r + γ*Q(s',a')
                         agent.store_transition(flat_obs, actions[agent_id], rewards[agent_id], flat_next_obs, done_flag)
 
-                        # Hindsight Experience Replay (HER) for off-policy agents
+                        # Hindsight Experience Replay (HER) - optional advanced technique
+                        # Relabels transitions with alternate goals for better sample efficiency
                         if hasattr(agent, 'store_hindsight_transition') and callable(agent.store_hindsight_transition):
-                            # Calculate distance to target for HER
                             target_id = self.target_ids.get(agent_id, None)
                             if target_id and target_id in next_obs:
                                 distance = self._calculate_distance_to_target(
@@ -523,16 +657,18 @@ class EnhancedTrainingLoop:
                                     info=step_info.get(agent_id, {})
                                 )
 
-                        # Update off-policy agents every step (they internally check if buffer is ready)
+                        # OFF-POLICY UPDATE: Perform gradient step every timestep
+                        # Agent internally checks if buffer has enough samples (learning_starts)
                         try:
                             step_update_stats = agent.update()
-
-                            # Log per-step training metrics to wandb
-                            # Per-step update stats are intentionally not logged to keep W&B clean.
+                            # Note: Per-step stats intentionally not logged to reduce W&B overhead
                         except Exception as e:
                             logger.error(f"Agent {agent_id} update failed at episode {episode_num}, step {episode_steps}: {e}")
-                            # Continue training - this update will be skipped but training continues
+                            # Continue training despite failed update
 
+                    # ======== SUCCESS REPLAY BUFFER ========
+                    # Store transitions from potentially successful episodes
+                    # Used for success-biased replay (experimental feature)
                     if (
                         agent_id in success_transitions
                         and isinstance(flat_obs, np.ndarray)
@@ -546,37 +682,37 @@ class EnhancedTrainingLoop:
                             bool(done_flag),
                         ))
 
-            # Update observations and done flags
-            obs = next_obs
-            info = step_info  # Update info for next iteration (for curriculum velocity control)
-            for agent_id in self.agents.keys():
-                done[agent_id] = terminations.get(agent_id, False) or truncations.get(agent_id, False)
+            # -------------------- STEP BOOKKEEPING --------------------
+            done = done_snapshot
 
-            episode_steps += 1
+        # ========================================
+        # PHASE 4: EPISODE FINALIZATION
+        # ========================================
 
-        # Update agents and collect trainer stats
-        # Note: On-policy agents will call finish_path() internally in their update() method
+        # -------------------- FINAL AGENT UPDATES --------------------
+
+        # ON-POLICY UPDATE: Perform policy gradient update using full episode rollout
+        # Off-policy agents already updated every step (see above)
         trainer_stats = {}
         for agent_id, agent in self.agents.items():
+            if not is_on_policy_agent(agent):
+                continue
             update_stats = None
             try:
-                update_stats = agent.update()
+                update_stats = agent.update()  # PPO/A2C compute policy gradient here
                 if update_stats:
-                    # Namespace stats by agent_id
                     trainer_stats[agent_id] = update_stats
                 else:
-                    # Debug: Log when update returns None for on-policy agents
+                    # Debug: On-policy agents should return stats (policy_loss, value_loss, etc.)
                     if is_on_policy_agent(agent):
                         logger.debug(f"On-policy agent {agent_id} update() returned None at episode {episode_num}")
             except Exception as e:
                 logger.error(f"Agent {agent_id} update failed after episode {episode_num}: {e}")
-                # Continue with next agent
                 continue
 
-            # Log trainer stats to W&B
-            # Per-episode update stats are intentionally not logged to keep W&B clean.
+        # -------------------- OUTCOME DETERMINATION --------------------
 
-        # Determine episode outcome for each agent
+        # Determine final episode outcome: target_crash (success), self_crash, timeout, etc.
         final_info = step_info if episode_steps > 0 else info
 
         episode_metrics: Dict[str, Any] = {}
@@ -584,8 +720,10 @@ class EnhancedTrainingLoop:
         outcomes_by_agent: Dict[str, EpisodeOutcome] = {}
 
         for agent_id in self.agents.keys():
-            # Determine outcome using agent-specific info
+            # Extract agent-specific info from final step
             agent_info = final_info.get(agent_id, {}) if isinstance(final_info, dict) else {}
+
+            # For adversarial tasks: check if target agent finished
             target_id = self.target_ids.get(agent_id)
             if target_id and isinstance(final_info, dict):
                 target_info = final_info.get(target_id, {})
@@ -595,13 +733,17 @@ class EnhancedTrainingLoop:
                         target_info.get("finish_line", False)
                         or target_info.get("target_finished", False)
                     )
+
+            # Determine outcome based on collision flags, finish line, timeout
             agent_truncated = truncations.get(agent_id, False)
             outcome = self._determine_agent_outcome(
                 agent_id, agent_info, agent_truncated
             )
             outcomes_by_agent[agent_id] = outcome
 
-            # Create episode metrics
+            # -------------------- METRICS TRACKING --------------------
+
+            # Record episode metrics (outcome, reward, steps, components)
             metrics = self.metrics_trackers[agent_id].add_episode(
                 episode=episode_num,
                 outcome=outcome,
@@ -611,13 +753,16 @@ class EnhancedTrainingLoop:
             )
             episode_metrics[agent_id] = metrics
 
-            # Get rolling stats
+            # Compute rolling statistics (success rate, avg reward) over recent episodes
             rolling_stats = self.metrics_trackers[agent_id].get_rolling_stats(
                 window=self.rolling_window
             )
             rolling_stats_by_agent[agent_id] = rolling_stats
 
-            # Populate success replay buffer for off-policy agents
+            # -------------------- SUCCESS REPLAY BUFFER --------------------
+
+            # If episode was successful, store all transitions in success buffer
+            # Allows success-biased sampling for improved learning (experimental)
             if outcome.is_success() and agent_id in success_transitions:
                 transitions = success_transitions.get(agent_id, [])
                 if transitions:
@@ -690,34 +835,43 @@ class EnhancedTrainingLoop:
             if primary_info.get("target_collision") is not None:
                 target_collision = bool(primary_info.get("target_collision", False))
 
-            log_dict = {
-                "train/outcome": metrics.outcome.value,
-                "train/success": int(metrics.success),
-                "train/episode": int(episode_num),
-                "train/episode_reward": float(metrics.total_reward),
-                "train/episode_steps": int(metrics.steps),
-                "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
-                "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
-                "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
-            }
+            log_train = self.wandb_logger.should_log("train")
+            log_spawn = self.wandb_logger.should_log("spawn")
+            log_target = self.wandb_logger.should_log("target")
 
-            spawn_point = self._current_spawn_mapping.get(primary_id)
-            if spawn_point:
-                log_dict["train/spawn_point"] = spawn_point
-            if self._current_spawn_stage:
-                log_dict["train/spawn_stage"] = self._current_spawn_stage
+            log_dict = {}
 
-            if self.primary_target_id:
+            if log_train:
+                log_dict.update({
+                    "train/outcome": metrics.outcome.value,
+                    "train/success": int(metrics.success),
+                    "train/episode": int(episode_num),
+                    "train/episode_reward": float(metrics.total_reward),
+                    "train/episode_steps": int(metrics.steps),
+                    "train/success_rate": float(rolling_stats.get("success_rate", 0.0)),
+                    "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
+                    "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
+                })
+
+            if log_spawn:
+                spawn_point = self._current_spawn_mapping.get(primary_id)
+                if spawn_point:
+                    log_dict["train/spawn_point"] = spawn_point
+                if self._current_spawn_stage:
+                    log_dict["train/spawn_stage"] = self._current_spawn_stage
+
+            if log_target and self.primary_target_id:
                 log_dict.update({
                     "target/success": int(target_finished),
                     "target/crash": int(target_collision),
                 })
 
-            self.wandb_logger.log_metrics(log_dict, step=episode_num)
+            if log_dict:
+                self.wandb_logger.log_metrics(log_dict, step=episode_num)
 
         # Update spawn curriculum if enabled (only for first/primary agent)
         spawn_curriculum_state = None
-        if self.spawn_curriculum:
+        if self.spawn_curriculum and not getattr(self, "phased_curriculum", None):
             # Determine success for curriculum (use first agent's outcome)
             primary_agent_id = self.primary_agent_id or list(self.agents.keys())[0]
             primary_outcome = determine_outcome(
@@ -744,8 +898,8 @@ class EnhancedTrainingLoop:
                         stage_index=curriculum_state['stage_index'],
                     )
 
-            # Log minimal curriculum metrics to W&B (skip if phased curriculum is active)
-            if self.wandb_logger and not getattr(self, "phased_curriculum", None):
+            # Log minimal curriculum metrics to W&B
+            if self.wandb_logger and self.wandb_logger.should_log("curriculum"):
                 self.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
                     'curriculum/stage': curriculum_state['stage'],
@@ -830,9 +984,12 @@ class EnhancedTrainingLoop:
         if isinstance(info, dict):
             info_for_agent = info.get(agent_id, info)
 
+        # Use a single frame (post-step when available) for reward computation.
+        obs_source = next_obs if isinstance(next_obs, dict) else obs
+
         reward_info = {
-            'obs': obs.get(agent_id, {}),
-            'next_obs': next_obs.get(agent_id, {}),
+            'obs': obs_source.get(agent_id, {}) if isinstance(obs_source, dict) else {},
+            'next_obs': next_obs.get(agent_id, {}) if isinstance(next_obs, dict) else {},
             'info': info_for_agent,
             'step': step,
             'done': done,  # Actual done flag from environment
@@ -841,8 +998,8 @@ class EnhancedTrainingLoop:
         }
 
         # Add target obs if available (for adversarial tasks)
-        if target_id and target_id in next_obs:
-            reward_info['target_obs'] = next_obs[target_id]
+        if target_id and isinstance(obs_source, dict) and target_id in obs_source:
+            reward_info['target_obs'] = obs_source[target_id]
 
         return reward_info
 
@@ -1039,7 +1196,7 @@ class EnhancedTrainingLoop:
             success_rate_so_far = successes_so_far / max(1, eval_idx)
 
             # Log to WandB
-            if self.wandb_logger:
+            if self.wandb_logger and self.wandb_logger.should_log("eval"):
                 reward_value = float(ep_data['reward'])
                 if not np.isfinite(reward_value):
                     reward_value = 0.0
@@ -1083,8 +1240,35 @@ class EnhancedTrainingLoop:
             on_episode_end=_handle_eval_episode,
         )
 
+        phase_info = self._get_phase_info()
+        eval_training_state = {'eval_result': eval_result.to_dict()}
+        if phase_info:
+            eval_training_state.update(phase_info)
+
+        agent_states: Optional[Dict[str, Any]] = None
+        optimizer_states: Optional[Dict[str, Any]] = None
+
+        def _collect_agent_states() -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+            nonlocal agent_states, optimizer_states
+            if agent_states is None:
+                agent_states = {}
+                optimizer_states = {}
+
+                for agent_id, agent in self.agents.items():
+                    if hasattr(agent, 'get_state'):
+                        agent_states[agent_id] = agent.get_state()
+                    if hasattr(agent, 'get_optimizer_state'):
+                        opt_state = agent.get_optimizer_state()
+                        if opt_state is not None:
+                            optimizer_states[agent_id] = opt_state
+
+                if not optimizer_states:
+                    optimizer_states = None
+
+            return agent_states, optimizer_states
+
         # Log aggregate results (keep step monotonic for W&B)
-        if self.wandb_logger:
+        if self.wandb_logger and self.wandb_logger.should_log("eval_agg"):
             agg_metrics = {
                 'eval/episode': int(self.total_eval_episodes),
                 'eval_agg/success_rate': eval_result.success_rate,
@@ -1139,14 +1323,7 @@ class EnhancedTrainingLoop:
 
             if is_new_best_eval:
                 # Save checkpoint for best eval model
-                agent_states = {}
-                optimizer_states = {}
-
-                for agent_id, agent in self.agents.items():
-                    if hasattr(agent, 'get_state'):
-                        agent_states[agent_id] = agent.get_state()
-                    if hasattr(agent, 'get_optimizer_state'):
-                        optimizer_states[agent_id] = agent.get_optimizer_state()
+                agent_states, optimizer_states = _collect_agent_states()
 
                 # Save with eval_best type
                 try:
@@ -1154,7 +1331,7 @@ class EnhancedTrainingLoop:
                         episode=episode_num,
                         agent_states=agent_states,
                         optimizer_states=optimizer_states if optimizer_states else None,
-                        training_state={'eval_result': eval_result.to_dict()},
+                        training_state=eval_training_state,
                         checkpoint_type="best_eval",
                         metric_value=eval_result.success_rate,
                     )
@@ -1173,6 +1350,33 @@ class EnhancedTrainingLoop:
                         )
                 except Exception as e:
                     logger.error(f"Failed to save best eval checkpoint at episode {episode_num}: {e}")
+
+        # Save best eval per phase (phased curriculum only)
+        if self.checkpoint_manager and phase_info.get("phase_index") is not None:
+            phase_index = phase_info["phase_index"]
+            best_value = self.best_eval_per_phase.get(phase_index)
+            if best_value is None or eval_result.success_rate > best_value:
+                agent_states, optimizer_states = _collect_agent_states()
+                try:
+                    checkpoint_path = self.checkpoint_manager.save_checkpoint(
+                        episode=episode_num,
+                        agent_states=agent_states,
+                        optimizer_states=optimizer_states if optimizer_states else None,
+                        training_state=eval_training_state,
+                        checkpoint_type=f"best_eval_phase_{phase_index}",
+                        metric_value=eval_result.success_rate,
+                    )
+                    self.best_eval_per_phase[phase_index] = eval_result.success_rate
+                    if self.console_logger:
+                        phase_name = phase_info.get("phase_name", phase_index)
+                        self.console_logger.print_info(
+                            f"New phase-best eval model ({phase_name}): "
+                            f"{eval_result.success_rate:.2%} @ episode {episode_num}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to save phase-best eval checkpoint at episode {episode_num}: {e}"
+                    )
 
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.
@@ -1229,8 +1433,17 @@ class EnhancedTrainingLoop:
                 'last_eval_training_episode': self.last_eval_training_episode,
             }
 
+            phase_info = self._get_phase_info()
+            if phase_info:
+                training_state.update(phase_info)
+
             if self.spawn_curriculum:
                 training_state['curriculum_stage'] = self.spawn_curriculum.current_stage
+            if getattr(self, "phased_curriculum", None):
+                from curriculum.curriculum_env import create_curriculum_checkpoint_data
+                training_state['phased_curriculum'] = create_curriculum_checkpoint_data(
+                    self.phased_curriculum
+                )
 
             # Save checkpoint with error handling
             checkpoint_type = "best" if is_new_best else "periodic"
@@ -1295,6 +1508,22 @@ class EnhancedTrainingLoop:
             if hasattr(agent, 'get_state'):
                 return agent_id
         return next(iter(self.agents), None)
+
+    def _get_phase_info(self) -> Dict[str, Any]:
+        """Get phased curriculum info for checkpoint tagging."""
+        if not self._phase_curriculum_state:
+            return {}
+
+        phase_info: Dict[str, Any] = {}
+        phase_index = self._phase_curriculum_state.get("phase_index")
+        phase_name = self._phase_curriculum_state.get("phase_name")
+
+        if phase_index is not None:
+            phase_info["phase_index"] = int(phase_index)
+        if phase_name is not None:
+            phase_info["phase_name"] = str(phase_name)
+
+        return phase_info
 
     def load_checkpoint(self, checkpoint_path: str) -> Dict[str, Any]:
         """Load checkpoint and restore agent states.

@@ -1,160 +1,34 @@
+includes:
+- ../configs/env/line2_gaplock.yaml
+- ../configs/reward/gaplock_attacker.yaml
+- ../configs/agents/ftg_defender.yaml
+- ../configs/curriculum/line2_gaplock_phased.yaml
+- ../configs/evaluation/line2_gaplock_eval_standard.yaml
+- ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 2500
+  episodes: 3500
   seed: 42
-  normalize_observations: false
 environment:
-  map: maps/line2/line2.yaml
-  num_agents: 2
-  max_steps: 2500
-  lidar_beams: 108
-  spawn_points:
-  - spawn_2
-  - spawn_1
-  timestep: 0.01
-  render: false
-  spawn_curriculum:
-    enabled: true
-    window: 200
-    activation_samples: 50
-    min_episode: 50
-    enable_patience: 5
-    disable_patience: 3
-    cooldown: 20
-    lock_speed_steps: 550
-    lock_speed_schedule:
-      by_stage:
-        optimal_fixed: 550
-        optimal_varied_speed: 350
-        full_random: 200
-    stages:
-    - name: optimal_fixed
-      spawn_points:
-      - spawn_pinch_right
-      - spawn_pinch_left
-      # - spawn_pinch_ahead
-      speed_range:
-      - 0.44
-      - 0.44
-      enable_rate: 0.7
-    - name: optimal_varied_speed
-      spawn_points:
-      - spawn_pinch_right
-      - spawn_pinch_left
-      - spawn_pinch_ahead
-      - spawn_approach_0.0C
-      - spawn_approach_0.3L
-      - spawn_approach_0.3R
-      speed_range:
-      - 0.3
-      - 1.0
-      enable_rate: 0.65
-      disable_rate: 0.5
-    - name: full_random
-      spawn_points: all
-      speed_range:
-      - 0.3
-      - 1.0
-      disable_rate: 0.45
-    spawn_configs:
-      spawn_pinch_right:
-        car_0:
-        - -45.569
-        - -1.0
-        - 0.2
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-      spawn_pinch_left:
-        car_0:
-        - -45.569
-        - -0.4
-        - -0.2
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-      spawn_pinch_ahead:
-        car_0:
-        - -45.569
-        - -0.7
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-      spawn_approach_0.0C:
-        car_0:
-        - -45.569
-        - -0.7
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-      spawn_approach_0.3L:
-        car_0:
-        - -45.569
-        - -0.4
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-      spawn_approach_0.3R:
-        car_0:
-        - -45.569
-        - -1.0
-        - 0.0
-        car_1:
-        - -46.769
-        - -0.7
-        - 0.0
-  visualization:
-    reward_ring:
-      enabled: false
-      preferred_radius: 1.5
-    heatmap:
-      enabled: false
-      extent_m: 6.0
-      cell_size_m: 0.25
-      alpha: 0.22
-      update_frequency: 5
-  vehicle_params:
-    mu: 1.0489
-    C_Sf: 4.718
-    C_Sr: 5.4562
-    lf: 0.15875
-    lr: 0.17145
-    h: 0.074
-    length: 0.32
-    width: 0.225
-    m: 3.74
-    I: 0.04712
-    s_min: -0.46
-    s_max: 0.46
-    sv_min: -3.2
-    sv_max: 3.2
-    v_switch: 0.8
-    a_max: 2.0
-    v_min: -1.0
-    v_max: 1.0
+  max_steps: 1000
+  action_repeat: 2
 agents:
   car_0:
     role: attacker
     algorithm: sb3_ppo
     target_id: car_1
     params:
-      # SB3 PPO parameters (using proven SB3 defaults)
       learning_rate: 0.0003
-      gamma: 0.995
-      n_steps: 2048  # Steps per update
-      n_epochs: 10  # Epochs per update
-      gae_lambda: 0.95  # Advantage estimation
-      clip_range: 0.2  # PPO clip parameter
-      ent_coef: 0.02  # Entropy coefficient
+      gamma: 0.999
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.02
+      activation: silu
       hidden_dims:
+      - 256
+      - 256
       - 256
       - 256
       batch_size: 256
@@ -718,10 +592,14 @@ wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
   tags:
   - improved
   - curriculum_v2
   - ppo
   - comparison
   - gaplock
-  notes: "PPO curriculum for gaplock adversarial task (Note: PPO won't train properly with run_v2.py - use run_sb3_curriculum.py instead)"
+  notes: "PPO curriculum for gaplock adversarial task (use run_sb3.py)"
+  mode: online

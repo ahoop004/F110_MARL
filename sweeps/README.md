@@ -44,6 +44,14 @@ This directory contains WandB sweep configurations for hyperparameter tuning.
 - **sac_sweep_quick.yaml** - Smaller SAC sweep for testing
 - **ppo_sweep_quick.yaml** - Smaller PPO sweep for testing
 
+### Architecture Sweeps (TD3/TQC)
+- **td3_mlp_sweep.yaml** - TD3 deep MLP width/depth sweep
+- **td3_actor_critic_sweep.yaml** - TD3 actor/critic split sweep
+- **td3_activation_sweep.yaml** - TD3 activation sweep
+- **tqc_mlp_sweep.yaml** - TQC deep MLP width/depth sweep
+- **tqc_actor_critic_sweep.yaml** - TQC actor/critic split sweep
+- **tqc_activation_sweep.yaml** - TQC activation sweep
+
 ## Usage
 
 ### 1. Initialize a sweep
@@ -98,18 +106,18 @@ gamma:
 
 ## Expected Results
 
-Sweeps will optimize for `eval/success_rate` (evaluated periodically during training).
+Sweeps will optimize for `train/success_rate` (rolling window during training).
 
 Key metrics to monitor:
-- `eval/success_rate` - Success rate on evaluation episodes
-- `eval/mean_reward` - Average reward on evaluation episodes
 - `train/success_rate` - Training success rate (rolling window)
-- `curriculum/phase` - Current curriculum phase
-- `curriculum/success_rate` - Curriculum success rate
+- `train/reward_mean` - Rolling average reward
+- `eval_agg/success_rate` - Success rate on evaluation episodes (if enabled)
+- `eval_agg/avg_reward` - Average reward on evaluation episodes
+- `curriculum/stage` - Current curriculum stage
 
 ## Notes
 
-- Each run trains for the full episode count specified in the scenario (typically 2500 episodes)
+- Each run trains for the full episode count specified in the scenario (typically 1500 episodes)
 - The curriculum will adapt automatically based on performance
 - Best hyperparameters may vary by curriculum phase
 - Consider running sweeps at different curriculum phases for phase-specific tuning

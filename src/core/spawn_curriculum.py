@@ -505,16 +505,26 @@ class SpawnCurriculumManager:
         spawn_name = np.random.choice(spawn_names)
         spawn_data = self.available_spawn_points[spawn_name]
 
-        # Extract poses and agent order
+        # Extract poses in a deterministic agent order (car_0, car_1, ...).
+        def _agent_sort_key(agent_id: str) -> tuple:
+            if isinstance(agent_id, str) and agent_id.startswith("car_"):
+                try:
+                    return (0, int(agent_id.split("_", 1)[1]), agent_id)
+                except (ValueError, IndexError):
+                    return (0, 0, agent_id)
+            return (1, 0, agent_id)
+
+        agent_ids = [
+            agent_id for agent_id in spawn_data.keys()
+            if agent_id != 'metadata'
+        ]
+        agent_ids = sorted(agent_ids, key=_agent_sort_key)
+
         poses = []
         spawn_mapping = {}
-        agent_ids = []
-        for agent_id, pose in spawn_data.items():
-            if agent_id == 'metadata':
-                continue
-            poses.append(pose)
+        for agent_id in agent_ids:
+            poses.append(spawn_data[agent_id])
             spawn_mapping[agent_id] = spawn_name
-            agent_ids.append(agent_id)
 
         poses_array = np.array(poses, dtype=np.float32)
 

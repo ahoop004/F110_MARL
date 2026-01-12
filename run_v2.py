@@ -37,11 +37,18 @@ Example scenario file:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-from src.core.scenario import load_and_expand_scenario, ScenarioError
-from src.loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
+# Allow running from repo root without installing the package.
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
+if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from core.scenario import load_and_expand_scenario, ScenarioError
+from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
 
 
 def parse_args():
@@ -188,6 +195,22 @@ def resolve_cli_overrides(scenario: dict, args) -> dict:
     return scenario
 
 
+def parse_action_repeat(env_config: dict) -> int:
+    """Parse action repeat (step skip) from environment config."""
+    value = None
+    for key in ("action_repeat", "step_repeat", "step_skip", "frame_skip"):
+        if key in env_config:
+            value = env_config.get(key)
+            break
+    if value is None:
+        return 1
+    try:
+        repeat = int(value)
+    except (TypeError, ValueError):
+        repeat = 1
+    return max(1, repeat)
+
+
 def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
     """Initialize W&B and console loggers.
 
@@ -213,13 +236,15 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             break
     default_group = scenario.get('experiment', {}).get('name')
 
+    sweep_mode = bool(os.environ.get("WANDB_SWEEP_ID"))
+
     if wandb_enabled:
         console_logger.print_info("Initializing Weights & Biases...")
 
         wandb_logger = WandbLogger(
             project=wandb_config.get('project', 'f110-marl'),
             name=wandb_config.get('name', scenario['experiment']['name']),
-            config=scenario,
+            config=None if sweep_mode else scenario,
             tags=wandb_config.get('tags', []),
             group=wandb_config.get('group', default_group),
             job_type=wandb_config.get('job_type', default_algo),
@@ -227,6 +252,7 @@ def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
             notes=wandb_config.get('notes', None),
             mode=wandb_config.get('mode', 'online'),
             run_id=run_id,  # Pass run_id for alignment
+            logging_config=wandb_config.get('logging'),
         )
     else:
         wandb_logger = None
@@ -279,10 +305,10 @@ def main():
     scenario = resolve_cli_overrides(scenario, args)
 
     # Resolve run ID early (for W&B and checkpoint alignment)
-    from src.core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
-    from src.core.run_metadata import RunMetadata
-    from src.core.checkpoint_manager import CheckpointManager
-    from src.core.best_model_tracker import BestModelTracker
+    from core.run_id import resolve_run_id, set_run_id_env, get_checkpoint_dir
+    from core.run_metadata import RunMetadata
+    from core.checkpoint_manager import CheckpointManager
+    from core.best_model_tracker import BestModelTracker
 
     # Get algorithm name for run ID
     algorithm = 'unknown'
@@ -308,6 +334,80 @@ def main():
     # Initialize loggers with run ID
     wandb_logger, console_logger = initialize_loggers(scenario, args, run_id=run_id)
 
+    # Apply WandB sweep parameters if in sweep mode
+    if wandb_logger is not None:
+        try:
+            import wandb
+            sweep_mode = bool(os.environ.get("WANDB_SWEEP_ID") or getattr(wandb.run, "sweep_id", None))
+            if sweep_mode and wandb.config and len(dict(wandb.config)) > 0:
+                console_logger.print_info("Detected WandB sweep mode - applying sweep parameters...")
+
+                def set_nested_value(d: dict, path: str, value):
+                    """Set nested dictionary value using dot notation."""
+                    keys = path.split('.')
+                    for key in keys[:-1]:
+                        if key not in d:
+                            d[key] = {}
+                        d = d[key]
+                    d[keys[-1]] = value
+
+                # Find the SB3 agent (first non-FTG agent)
+                sb3_agent_id = None
+                for agent_id, agent_cfg in scenario['agents'].items():
+                    algo = agent_cfg.get('algorithm', '').lower()
+                    if algo not in ['ftg', 'pp', 'pure_pursuit']:
+                        sb3_agent_id = agent_id
+                        break
+
+                if sb3_agent_id:
+                    sweep_params_applied = {}
+                    wandb_params = {k: wandb.config[k] for k in wandb.config}
+                    agent_params = scenario.get('agents', {}).get(sb3_agent_id, {}).get('params', {})
+                    allowed_param_keys = set(agent_params.keys())
+                    skipped_keys = []
+
+                    for key, value in wandb_params.items():
+                        # Skip WandB internal keys and flattened scenario keys
+                        if (
+                            key.startswith('_')
+                            or '/' in key
+                            or key in [
+                            'method', 'metric', 'program', 'algorithm', 'scenario'
+                            ]
+                        ):
+                            continue
+
+                        # Handle special keys
+                        if key == 'episodes':
+                            scenario.setdefault('experiment', {})['episodes'] = value
+                            sweep_params_applied[key] = value
+                            continue
+                        if key == 'seed':
+                            scenario.setdefault('experiment', {})['seed'] = value
+                            sweep_params_applied[key] = value
+                            continue
+                        if key not in allowed_param_keys and '.' not in key:
+                            skipped_keys.append(key)
+                            continue
+                        # Apply to agent params
+                        override_path = key if '.' in key else f"agents.{sb3_agent_id}.params.{key}"
+                        set_nested_value(scenario, override_path, value)
+                        sweep_params_applied[key] = value
+
+                    if sweep_params_applied:
+                        console_logger.print_success(
+                            f"Applied {len(sweep_params_applied)} sweep parameter(s) to {sb3_agent_id}"
+                        )
+                        for key, value in sweep_params_applied.items():
+                            console_logger.print_info(f"  {key} = {value}")
+                        if skipped_keys:
+                            skipped_str = ", ".join(sorted(skipped_keys))
+                            console_logger.print_warning(
+                                f"Skipped {len(skipped_keys)} sweep key(s) not in agent params: {skipped_str}"
+                            )
+        except Exception as e:
+            console_logger.print_warning(f"Failed to apply sweep parameters: {e}")
+
     # Print scenario summary
     print_scenario_summary(scenario, console_logger)
 
@@ -316,10 +416,10 @@ def main():
 
     # Import training components
     try:
-        from src.core.enhanced_training import EnhancedTrainingLoop
-        from src.core.setup import create_training_setup
+        from core.enhanced_training import EnhancedTrainingLoop
+        from core.setup import create_training_setup
         # Rendering extensions imported lazily when needed (to avoid pyglet on HPC)
-        # from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+        # from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
     except ImportError as e:
         console_logger.print_error(f"Failed to import training components: {e}")
         import traceback
@@ -357,11 +457,11 @@ def main():
         # Extract reward parameters from attacker agent config
         reward_params = {}
         if attacker_id and 'reward' in scenario['agents'][attacker_id]:
-            from src.rewards.presets import load_preset, merge_config
+            from rewards.presets import load_preset, merge_config
 
             reward_config = scenario['agents'][attacker_id]['reward']
 
-            # Load preset if specified
+            full_config = None
             if 'preset' in reward_config:
                 preset_name = reward_config['preset']
                 try:
@@ -372,19 +472,24 @@ def main():
                         full_config = merge_config(base_config, overrides)
                     else:
                         full_config = base_config
-
-                    # Extract distance reward parameters
-                    if 'distance' in full_config:
-                        dist = full_config['distance']
-                        reward_params = {
-                            'near_distance': dist.get('near_distance', 1.0),
-                            'far_distance': dist.get('far_distance', 2.5),
-                            'reward_near': dist.get('reward_near', 0.12),
-                            'penalty_far': dist.get('penalty_far', 0.08),
-                        }
-                        console_logger.print_info(f"Extracted reward params: near={reward_params['near_distance']:.2f}m, far={reward_params['far_distance']:.2f}m")
                 except Exception as e:
                     console_logger.print_warning(f"Could not load reward preset: {e}")
+            else:
+                # Scenario may already be expanded; use config as-is.
+                full_config = reward_config
+
+            # Extract distance reward parameters
+            if isinstance(full_config, dict) and 'distance' in full_config:
+                dist = full_config['distance']
+                reward_params = {
+                    'near_distance': dist.get('near_distance', 1.0),
+                    'far_distance': dist.get('far_distance', 2.5),
+                    'reward_near': dist.get('reward_near', 0.12),
+                    'penalty_far': dist.get('penalty_far', 0.08),
+                }
+                console_logger.print_info(
+                    f"Extracted reward params: near={reward_params['near_distance']:.2f}m, far={reward_params['far_distance']:.2f}m"
+                )
 
         # Get visualization config from environment
         viz_config = scenario['environment'].get('visualization', {})
@@ -399,7 +504,7 @@ def main():
             extensions_added[0] = True
 
             # Lazy import rendering extensions (only when rendering is enabled)
-            from src.render import TelemetryHUD, RewardRingExtension, RewardHeatmap
+            from render import TelemetryHUD, RewardRingExtension, RewardHeatmap
 
             # Add telemetry HUD
             telemetry = TelemetryHUD(renderer)
@@ -462,6 +567,7 @@ def main():
         observation_presets = {}
         target_ids = {}
         ftg_schedules = {}
+        frame_stacks = {}
 
         # First pass: collect observation presets and explicit target_ids
         for agent_id, agent_config in scenario['agents'].items():
@@ -480,6 +586,22 @@ def main():
             # Get target_id if specified (for adversarial tasks)
             if 'target_id' in agent_config:
                 target_ids[agent_id] = agent_config['target_id']
+
+            frame_stack = agent_config.get('frame_stack')
+            if frame_stack is not None:
+                try:
+                    frame_stack_value = int(frame_stack)
+                except (TypeError, ValueError):
+                    console_logger.print_warning(
+                        f"Invalid frame_stack for {agent_id}; defaulting to 1"
+                    )
+                    frame_stack_value = 1
+                if frame_stack_value < 1:
+                    console_logger.print_warning(
+                        f"frame_stack must be >= 1 for {agent_id}; defaulting to 1"
+                    )
+                    frame_stack_value = 1
+                frame_stacks[agent_id] = frame_stack_value
 
             # Collect FTG schedules (optional)
             if agent_config.get('algorithm', '').lower() == 'ftg':
@@ -503,15 +625,20 @@ def main():
             if attacker_id and defender_id and attacker_id not in target_ids:
                 target_ids[attacker_id] = defender_id
 
+        phased_curriculum_enabled = scenario.get('curriculum', {}).get('type') == 'phased'
+
         # Create spawn curriculum if enabled
         spawn_curriculum = None
-        spawn_config = scenario['environment'].get('spawn_curriculum', {})
+        env_config = scenario['environment']
+        action_repeat = parse_action_repeat(env_config)
+        spawn_configs = env_config.get('spawn_configs', {})
+        spawn_config = env_config.get('spawn_curriculum', {})
+        if not spawn_configs:
+            spawn_configs = spawn_config.get('spawn_configs', {})
         if spawn_config.get('enabled', False):
-            from src.core.spawn_curriculum import SpawnCurriculumManager
+            from core.spawn_curriculum import SpawnCurriculumManager
 
             # Get spawn point configurations from environment
-            spawn_configs = spawn_config.get('spawn_configs', {})
-
             if spawn_configs:
                 console_logger.print_info("Creating spawn curriculum...")
                 try:
@@ -524,11 +651,45 @@ def main():
                         f"Spawn curriculum: {len(spawn_curriculum.stages)} stages, "
                         f"starting at '{spawn_curriculum.current_stage.name}'"
                     )
+                    if phased_curriculum_enabled:
+                        console_logger.print_info(
+                            "Phased curriculum active: spawn curriculum progression disabled"
+                        )
                 except Exception as e:
                     console_logger.print_warning(f"Failed to create spawn curriculum: {e}")
                     spawn_curriculum = None
             else:
                 console_logger.print_warning("Spawn curriculum enabled but no spawn_configs provided")
+        elif phased_curriculum_enabled and spawn_configs:
+            from core.spawn_curriculum import SpawnCurriculumManager
+
+            console_logger.print_info("Creating spawn sampler for phased curriculum...")
+            try:
+                spawn_curriculum = SpawnCurriculumManager(
+                    config={
+                        'window': 1,
+                        'activation_samples': 1,
+                        'min_episode': 0,
+                        'enable_patience': 1,
+                        'disable_patience': 1,
+                        'cooldown': 0,
+                        'lock_speed_steps': 0,
+                        'stages': [
+                            {
+                                'name': 'phase_sampler',
+                                'spawn_points': 'all',
+                                'speed_range': [0.0, 0.0],
+                                'enable_rate': 1.0,
+                            }
+                        ],
+                    },
+                    available_spawn_points=spawn_configs
+                )
+                env.spawn_configs = spawn_configs
+                console_logger.print_success("Spawn sampler ready for phased curriculum")
+            except Exception as e:
+                console_logger.print_warning(f"Failed to create spawn sampler: {e}")
+                spawn_curriculum = None
 
         # Initialize checkpoint system
         checkpoint_manager = None
@@ -595,7 +756,7 @@ def main():
         best_eval_model_tracker = None
         eval_cfg = scenario.get('evaluation', {})
         if eval_cfg.get('enabled', False):
-            from src.core.evaluator import EvaluationConfig
+            from core.evaluator import EvaluationConfig
 
             console_logger.print_info("Configuring evaluation...")
 
@@ -646,7 +807,7 @@ def main():
         # Initialize CSV logger (uses same output directory as checkpoints)
         csv_logger = None
         if not args.no_checkpoints:
-            from src.core.run_id import get_output_dir
+            from core.run_id import get_output_dir
             output_dir = get_output_dir(
                 run_id=run_id,
                 scenario_name=scenario['experiment']['name']
@@ -659,9 +820,15 @@ def main():
             console_logger.print_info(f"CSV output dir: {output_dir}")
 
         # Initialize Rich console dashboard (only updates at end of each episode)
-        rich_console = RichConsole(
-            enabled=True,
-        )
+        try:
+            rich_console = RichConsole(
+                enabled=True,
+            )
+        except ImportError:
+            console_logger.print_warning(
+                "RichConsole unavailable; install `rich` to enable the dashboard."
+            )
+            rich_console = None
 
         # Extract algorithm names for each agent
         agent_algorithms = {}
@@ -675,6 +842,8 @@ def main():
             agents=agents,
             agent_rewards=reward_strategies,
             observation_presets=observation_presets,
+            frame_stacks=frame_stacks,
+            action_repeat=action_repeat,
             target_ids=target_ids,
             agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,
@@ -690,18 +859,14 @@ def main():
             eval_every_n_episodes=eval_every_n_episodes,
             max_steps_per_episode=scenario['environment'].get('max_steps', 5000),
             save_every_n_episodes=args.save_every if not args.no_checkpoints else None,
-            normalize_observations=bool(
-                scenario.get('experiment', {}).get('normalize_observations', True)
-            ),
-            obs_clip=float(scenario.get('experiment', {}).get('obs_clip', 10.0)),
         )
 
         # Setup phased curriculum if configured
         phased_curriculum = None
-        if 'curriculum' in scenario and scenario['curriculum'].get('type') == 'phased':
+        if phased_curriculum_enabled:
             console_logger.print_info("Setting up phased curriculum...")
             try:
-                from src.curriculum.training_integration import setup_curriculum_from_scenario
+                from curriculum.training_integration import setup_curriculum_from_scenario
                 phased_curriculum = setup_curriculum_from_scenario(scenario, training_loop)
                 if phased_curriculum:
                     console_logger.print_success(
@@ -722,10 +887,23 @@ def main():
                     training_state = training_loop.load_checkpoint(resume_info['checkpoint_path'])
                     console_logger.print_success(f"Checkpoint loaded! Resuming from episode {start_episode}")
 
-                    # Restore curriculum stage if available
-                    if spawn_curriculum and 'curriculum_stage' in training_state:
+                    # Restore curriculum stage if available (spawn curriculum only)
+                    if spawn_curriculum and not phased_curriculum and 'curriculum_stage' in training_state:
                         saved_stage = training_state['curriculum_stage']
                         console_logger.print_info(f"Restored curriculum stage: {saved_stage}")
+                    if phased_curriculum and 'phased_curriculum' in training_state:
+                        from curriculum.curriculum_env import restore_curriculum_from_checkpoint
+                        restore_curriculum_from_checkpoint(
+                            phased_curriculum,
+                            training_state['phased_curriculum']
+                        )
+                        if hasattr(training_loop, "rich_console") and training_loop.rich_console:
+                            metrics = phased_curriculum.get_metrics()
+                            training_loop._phase_curriculum_state = {
+                                "phase_index": metrics.get("curriculum/phase_idx"),
+                                "phase_name": metrics.get("curriculum/phase_name"),
+                                "phase_success_rate": metrics.get("curriculum/success_rate"),
+                            }
 
                 except Exception as e:
                     console_logger.print_error(f"Failed to load checkpoint: {e}")

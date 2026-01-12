@@ -40,15 +40,34 @@ def add_curriculum_to_training_loop(
     # Store original _run_episode method
     original_run_episode = training_loop._run_episode
 
+    def _select_curriculum_agent_id() -> str:
+        """Pick the attacker/primary agent to drive curriculum updates."""
+        if scenario:
+            for agent_id, agent_config in scenario.get('agents', {}).items():
+                if str(agent_config.get('role', '')).lower() == 'attacker':
+                    return agent_id
+        primary_id = getattr(training_loop, "primary_agent_id", None)
+        if primary_id:
+            return primary_id
+        return list(training_loop.agents.keys())[0]
+
+    curriculum_agent_id = _select_curriculum_agent_id()
+
     def _run_episode_with_curriculum(episode_num: int):
         """Wrapped episode runner that applies curriculum config."""
         # Get current phase configuration (with mixture sampling)
         phase_config = curriculum.get_current_config(sample_mixture=True)
 
         # Apply curriculum to environment
-        from .curriculum_env import apply_curriculum_to_env, apply_curriculum_to_agent
+        from .curriculum_env import (
+            apply_curriculum_to_env,
+            apply_curriculum_to_agent,
+            apply_curriculum_to_spawn_curriculum,
+        )
 
         apply_curriculum_to_env(training_loop.env, phase_config)
+        if getattr(training_loop, "spawn_curriculum", None):
+            apply_curriculum_to_spawn_curriculum(training_loop.spawn_curriculum, phase_config)
 
         # Apply curriculum to agents (e.g., FTG)
         for agent_id, agent in training_loop.agents.items():
@@ -58,41 +77,61 @@ def add_curriculum_to_training_loop(
         original_run_episode(episode_num)
 
         # After episode, update curriculum
-        # Extract outcome from first agent's metrics
-        first_agent_id = list(training_loop.agents.keys())[0]
-        tracker = training_loop.metrics_trackers[first_agent_id]
+        # Extract outcome from attacker/primary agent's metrics
+        tracker = training_loop.metrics_trackers.get(curriculum_agent_id)
+        if tracker is None:
+            fallback_id = list(training_loop.agents.keys())[0]
+            tracker = training_loop.metrics_trackers.get(fallback_id)
 
-        if tracker.episodes:
+        if tracker and tracker.episodes:
             latest = tracker.get_latest(1)[0]
             outcome = latest.outcome.value if hasattr(latest.outcome, 'value') else str(latest.outcome)
             reward = latest.total_reward
+            success = outcome == 'target_crash'
 
             # Update curriculum
-            advancement_info = curriculum.update(outcome, reward, episode_num)
+            transition_info = curriculum.update(outcome, reward, episode_num)
 
-            # Log advancement if occurred
-            if advancement_info:
-                msg = (
-                    f"\n{'='*60}\n"
-                    f"📈 CURRICULUM ADVANCED!\n"
-                    f"  Episode: {episode_num}\n"
-                    f"  {advancement_info['old_phase']} → {advancement_info['new_phase']}\n"
-                    f"  Success Rate: {advancement_info['success_rate']:.2%}\n"
-                    f"  Avg Reward: {advancement_info['avg_reward']:.1f}\n"
-                    f"  Episodes in Phase: {advancement_info['episodes_in_old_phase']}\n"
-                    f"  Forced: {advancement_info['forced']}\n"
-                    f"{'='*60}\n"
-                )
+            # Log curriculum transition if occurred
+            if transition_info:
+                action = transition_info.get('action', 'advance')
+                icon = "📉" if action == 'regress' else "📈"
+                label = "REGRESSED" if action == 'regress' else "ADVANCED"
+                lines = [
+                    f"\n{'='*60}",
+                    f"{icon} CURRICULUM {label}!",
+                    f"  Episode: {episode_num}",
+                    f"  {transition_info['old_phase']} → {transition_info['new_phase']}",
+                ]
+                if transition_info.get('success_rate') is not None:
+                    lines.append(f"  Success Rate: {transition_info['success_rate']:.2%}")
+                if transition_info.get('avg_reward') is not None:
+                    lines.append(f"  Avg Reward: {transition_info['avg_reward']:.1f}")
+                if transition_info.get('episodes_in_old_phase') is not None:
+                    lines.append(f"  Episodes in Phase: {transition_info['episodes_in_old_phase']}")
+                if action == 'advance' and 'forced' in transition_info:
+                    lines.append(f"  Forced: {transition_info['forced']}")
+                if action == 'regress' and transition_info.get('threshold') is not None:
+                    lines.append(f"  Regress Threshold: {transition_info['threshold']:.2%}")
+                lines.append(f"{'='*60}\n")
+                msg = "\n".join(lines)
                 logger.info(msg)
                 if training_loop.console_logger:
-                    training_loop.console_logger.print_success(msg)
+                    if action == 'regress':
+                        training_loop.console_logger.print_warning(msg)
+                    else:
+                        training_loop.console_logger.print_success(msg)
 
             curriculum_metrics = curriculum.get_metrics()
 
             # Log minimal curriculum metrics to WandB
-            if training_loop.wandb_logger:
+            if training_loop.wandb_logger and training_loop.wandb_logger.should_log("curriculum_phase"):
                 training_loop.wandb_logger.log_metrics({
                     'train/episode': int(episode_num),
+                    'train/success': int(success),
+                    'curriculum/phase_idx': curriculum_metrics.get('curriculum/phase_idx'),
+                    'curriculum/phase_name': curriculum_metrics.get('curriculum/phase_name'),
+                    'curriculum/phase_success_rate': curriculum_metrics.get('curriculum/success_rate') or 0.0,
                     'curriculum/stage': curriculum_metrics.get('curriculum/phase_name'),
                     'curriculum/stage_success_rate': curriculum_metrics.get('curriculum/success_rate') or 0.0,
                 }, step=episode_num)

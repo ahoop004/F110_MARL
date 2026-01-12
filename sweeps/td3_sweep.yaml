@@ -1,42 +1,114 @@
-program: run.py
+program: run_v2.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval_agg/success_rate
+  name: train/success_rate
   goal: maximize
 parameters:
   learning_rate:
     values:
     - 0.0001
-    - 0.0003
-    - 0.0005
-  gamma:
-    values:
-    - 0.99
-    - 0.995
-    - 0.999
   tau:
     values:
-    - 0.005
+    - 0.006
+    - 0.008
+    - 0.009
     - 0.01
-    - 0.02
-  batch_size:
+    - 0.012
+  # Exploration sweep params
+  action_noise_sigma:
     values:
-    - 128
-    - 256
-  policy_delay:
+    - 0.05
+    - 0.1
+    - 0.2
+  target_policy_noise:
     values:
-    - 2
-    - 3
+    - 0.1
+    - 0.2
+    - 0.3
+  target_noise_clip:
+    values:
+    - 0.2
+    - 0.5
+    - 0.8
+  # Optional parameters (uncomment to sweep):
+  # gamma:
+  #   values:
+  #   - 0.99
+  #   - 0.995
+  #   - 0.999
+  # batch_size:
+  #   values:
+  #   - 128
+  #   - 256
+  # policy_delay:
+  #   values:
+  #   - 2
+  #   - 3
+  # Architecture sweeps (uncomment to sweep):
+  # hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  # pi_hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  # qf_hidden_dims:
+  #   values:
+  #   - - 256
+  #     - 256
+  #     - 256
+  #   - - 256
+  #     - 256
+  #     - 256
+  #     - 256
+  # activation:
+  #   values:
+  #   - relu
+  #   - silu
+  #   - tanh
+  # HER sweeps (canonical, uncomment to sweep):
+  # her.enabled:
+  #   values:
+  #   - true
+  # her.reward_mode:
+  #   values:
+  #   - replace
+  # her.success_mode:
+  #   values:
+  #   - distance
+  # her.distance_threshold:
+  #   values:
+  #   - 1.0
+  # her.success_reward:
+  #   values:
+  #   - 0.0
+  # her.failure_reward:
+  #   values:
+  #   - -1.0
+  # her.done_on_success:
+  #   values:
+  #   - true
 command:
 - ${env}
 - python3
 - ${program}
-- --runner
-- sb3
-- --algo
-- td3
 - --scenario
-- scenarios/td3.yaml
+- scenarios/td3_1.yaml
 - --wandb
+name: TD3_sweep

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, List
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from src.metrics.outcomes import EpisodeOutcome
+from metrics.outcomes import EpisodeOutcome
 
 class CurriculumCallback(BaseCallback):
     """Callback to handle curriculum learning progression for SB3.
@@ -30,6 +30,7 @@ class CurriculumCallback(BaseCallback):
         ftg_schedules: Optional[Dict[str, Dict[str, Any]]] = None,
         env_wrapper: Optional[Any] = None,
         wandb_run: Optional[Any] = None,
+        wandb_logging: Optional[Dict[str, Any]] = None,
         rich_console: Optional[Any] = None,
         algo_name: Optional[str] = None,
         verbose: int = 1,
@@ -41,6 +42,7 @@ class CurriculumCallback(BaseCallback):
         self.ftg_schedules = ftg_schedules or {}
         self.env_wrapper = env_wrapper
         self.wandb_run = wandb_run
+        self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
         self.rich_console = rich_console
         self.algo_name = algo_name
 
@@ -58,6 +60,7 @@ class CurriculumCallback(BaseCallback):
         self.episode_lengths: List[int] = []
         self.window_size = 100
         self.episode_outcomes: deque = deque(maxlen=self.window_size)
+        self._reset_phase_histories(self.window_size)
 
         # Direct episode tracking (more reliable than ep_info_buffer)
         self.current_episode_reward = 0.0
@@ -65,8 +68,44 @@ class CurriculumCallback(BaseCallback):
         self.last_obs = None
         self.processed_episodes = set()  # Track processed episode IDs to avoid duplicates
 
-        # Parse curriculum config
+        # Parse curriculum config once during initialization
         self._parse_curriculum()
+
+    def _should_log(self, key: str) -> bool:
+        if not self.wandb_run:
+            return False
+        group_config = self._get_group_config()
+        if group_config is None:
+            return True
+        if not group_config.get("sb3_callbacks", False):
+            return False
+        return bool(group_config.get(key, False))
+
+    def _get_group_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        if "groups" in self.wandb_logging:
+            groups = self.wandb_logging.get("groups")
+            return groups if isinstance(groups, dict) else {}
+        return self.wandb_logging
+
+    def _get_metrics_config(self) -> Optional[Dict[str, Any]]:
+        if not isinstance(self.wandb_logging, dict):
+            return None
+        metrics = self.wandb_logging.get("metrics")
+        if metrics is None:
+            return None
+        if isinstance(metrics, dict):
+            return metrics
+        if isinstance(metrics, (list, tuple, set)):
+            return {name: True for name in metrics}
+        return None
+
+    def _filter_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        metrics_config = self._get_metrics_config()
+        if metrics_config is None:
+            return metrics
+        return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
     def _parse_curriculum(self):
         """Parse curriculum configuration."""
@@ -214,28 +253,40 @@ class CurriculumCallback(BaseCallback):
         }
 
         # Unified W&B logging for comparisons
-        if self.wandb_run:
+        if self._should_log("train") or self._should_log("target"):
             count = len(self.episode_successes)
             success_rate = sum(self.episode_successes) / count if count else 0.0
             reward_mean = float(np.mean(self.episode_rewards)) if self.episode_rewards else 0.0
             steps_mean = float(np.mean(self.episode_lengths)) if self.episode_lengths else 0.0
 
-            self.wandb_run.log({
-                "train/outcome": outcome_value,
-                "train/success": int(success),
-                "train/episode": int(self.episode_count),
-                "train/episode_reward": float(reward),
-                "train/episode_steps": int(length),
-                "train/success_rate": success_rate,
-                "train/reward_mean": reward_mean,
-                "train/steps_mean": steps_mean,
-                "target/success": int(bool(target_finished)),
-                "target/crash": int(bool(target_collision)),
-            }, step=self.num_timesteps)
+            log_dict = {}
+            if self._should_log("train"):
+                log_dict.update({
+                    "train/outcome": outcome_value,
+                    "train/success": int(success),
+                    "train/episode": int(self.episode_count),
+                    "train/episode_reward": float(reward),
+                    "train/episode_steps": int(length),
+                    "train/success_rate": success_rate,
+                    "train/reward_mean": reward_mean,
+                    "train/steps_mean": steps_mean,
+                })
+            if self._should_log("target"):
+                log_dict.update({
+                    "target/success": int(bool(target_finished)),
+                    "target/crash": int(bool(target_collision)),
+                })
+            if log_dict:
+                log_dict = self._filter_metrics(log_dict)
+                if log_dict:
+                    self.wandb_run.log(
+                        log_dict,
+                        step=self.episode_count,
+                    )  # FIXED: Use episode_count instead of num_timesteps
 
         spawn_state = None
-        # Update spawn curriculum if available
-        if self.spawn_curriculum:
+        # Update spawn curriculum if available (skip when phased curriculum is active)
+        if self.spawn_curriculum and not self.phases:
             spawn_state = self.spawn_curriculum.observe(self.episode_count, success)
             if spawn_state['changed'] and self.verbose > 0:
                 print(f"\nSpawn curriculum: {spawn_state['stage']} "
@@ -249,12 +300,17 @@ class CurriculumCallback(BaseCallback):
                     )
 
             # Log minimal curriculum metrics if no phased curriculum
-            if self.wandb_run and not self.phases:
-                self.wandb_run.log({
+            if self._should_log("curriculum") and not self.phases:
+                curriculum_log = self._filter_metrics({
                     'train/episode': int(self.episode_count),
                     'curriculum/stage': spawn_state['stage'],
                     'curriculum/stage_success_rate': spawn_state['stage_success_rate'] or 0.0,
-                }, step=self.num_timesteps)
+                })
+                if curriculum_log:
+                    self.wandb_run.log(
+                        curriculum_log,
+                        step=self.episode_count,
+                    )  # FIXED: Use episode_count instead of num_timesteps
 
         # Update phased curriculum
         if self.phases:
@@ -285,11 +341,14 @@ class CurriculumCallback(BaseCallback):
                 })
             if self.phases and self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")
-                phase_success = (
-                    self.phase_successes / self.phase_episodes
-                    if self.phase_episodes > 0
-                    else 0.0
-                )
+                if self.phase_success_history:
+                    phase_success = sum(self.phase_success_history) / len(self.phase_success_history)
+                else:
+                    phase_success = (
+                        self.phase_successes / self.phase_episodes
+                        if self.phase_episodes > 0
+                        else 0.0
+                    )
                 curriculum_state.update({
                     "phase_index": self.current_phase,
                     "phase_name": phase_name,
@@ -315,17 +374,34 @@ class CurriculumCallback(BaseCallback):
         self.phase_episodes += 1
         self.phase_successes += int(success)
         self.phase_total_reward += reward
+        if self.phase_success_history is not None:
+            self.phase_success_history.append(bool(success))
+        if self.phase_reward_history is not None:
+            self.phase_reward_history.append(float(reward))
 
         # Check if criteria met
         criteria = phase.get('criteria', {})
         min_episodes = criteria.get('min_episodes', 50)
 
         if self.phase_episodes >= min_episodes:
-            # Calculate metrics over window
-            recent_successes = sum(self.episode_successes[-self.window_size:])
-            recent_episodes = len(self.episode_successes)
-            success_rate = recent_successes / recent_episodes if recent_episodes > 0 else 0.0
-            avg_reward = np.mean(self.episode_rewards[-self.window_size:]) if self.episode_rewards else 0.0
+            # Calculate metrics over phase-local window (respects criteria.window_size)
+            window_size = int(criteria.get('window_size', self.window_size))
+            if self.phase_success_history is None or self.phase_reward_history is None:
+                self._reset_phase_histories(window_size)
+            elif self.phase_success_history.maxlen != window_size:
+                self._reset_phase_histories(window_size)
+
+            recent_episodes = len(self.phase_success_history)
+            success_rate = (
+                sum(self.phase_success_history) / recent_episodes
+                if recent_episodes > 0
+                else 0.0
+            )
+            avg_reward = (
+                float(np.mean(self.phase_reward_history))
+                if self.phase_reward_history
+                else 0.0
+            )
 
             target_success_rate = criteria.get('success_rate', 0.5)
             target_reward = criteria.get('avg_reward', float('-inf'))
@@ -343,6 +419,7 @@ class CurriculumCallback(BaseCallback):
                     self.phase_episodes = 0
                     self.phase_successes = 0
                     self.phase_total_reward = 0.0
+                    self._reset_phase_histories(criteria.get('window_size', self.window_size))
 
                     if self.verbose > 0:
                         next_phase = self.phases[self.current_phase]
@@ -369,23 +446,33 @@ class CurriculumCallback(BaseCallback):
                         self.phase_successes = 0
                         self.phase_total_reward = 0.0
                         self.patience_counter = 0
+                        self._reset_phase_histories(criteria.get('window_size', self.window_size))
                         self._apply_phase(self.current_phase)
 
         # Log minimal phased curriculum metrics
-        if self.wandb_run and self.phases:
-            recent_successes = sum(self.episode_successes[-self.window_size:])
-            recent_episodes = len(self.episode_successes)
-            success_rate = recent_successes / recent_episodes if recent_episodes > 0 else 0.0
-
+        if self._should_log("curriculum_phase") and self.phases:
             phase_name = None
             if 0 <= self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")
 
+            phase_success_rate = (
+                sum(self.phase_success_history) / len(self.phase_success_history)
+                if self.phase_success_history
+                else (
+                    self.phase_successes / self.phase_episodes
+                    if self.phase_episodes > 0
+                    else 0.0
+                )
+            )
+
             self.wandb_run.log({
                 'train/episode': int(self.episode_count),
+                'curriculum/phase_idx': int(self.current_phase),
+                'curriculum/phase_name': phase_name,
+                'curriculum/phase_success_rate': phase_success_rate,
                 'curriculum/stage': phase_name,
-                'curriculum/stage_success_rate': success_rate,
-            }, step=self.num_timesteps)
+                'curriculum/stage_success_rate': phase_success_rate,
+            }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
     def _apply_phase(self, phase_idx: int):
         """Apply configuration for a curriculum phase."""
@@ -393,6 +480,9 @@ class CurriculumCallback(BaseCallback):
             return
 
         phase = self.phases[phase_idx]
+        criteria = phase.get('criteria', {})
+        window_size = int(criteria.get('window_size', self.window_size))
+        self._reset_phase_histories(window_size)
 
         # Update spawn configuration if available
         if self.env_wrapper and hasattr(self.env_wrapper, 'env'):
@@ -409,6 +499,9 @@ class CurriculumCallback(BaseCallback):
             lock_speed_steps = phase.get('lock_speed_steps', 0)
             if hasattr(env, 'set_speed_lock'):
                 env.set_speed_lock(lock_speed_steps)
+        if self.spawn_curriculum:
+            from curriculum.curriculum_env import apply_curriculum_to_spawn_curriculum
+            apply_curriculum_to_spawn_curriculum(self.spawn_curriculum, phase)
 
         # Update FTG parameters
         ftg_config = phase.get('ftg', {})
@@ -418,6 +511,12 @@ class CurriculumCallback(BaseCallback):
                     agent.apply_config(ftg_config)
                     if self.verbose > 1:
                         print(f"  Updated FTG agent {agent_id}: {ftg_config}")
+
+    def _reset_phase_histories(self, window_size: int) -> None:
+        """Reset per-phase rolling histories."""
+        history_len = max(1, int(window_size))
+        self.phase_success_history = deque(maxlen=history_len)
+        self.phase_reward_history = deque(maxlen=history_len)
 
     def _apply_ftg_schedule(self, stage_name: str, stage_index: int):
         """Apply FTG schedule for spawn curriculum stage."""

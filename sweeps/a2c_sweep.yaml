@@ -1,42 +1,41 @@
-program: run.py
+program: run_sb3.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval_agg/success_rate
+  name: train/success_rate
   goal: maximize
 parameters:
   learning_rate:
     values:
+    - 0.0001
+    - 0.0002
     - 0.0003
+    - 0.0005
     - 0.0007
-    - 0.001
   gamma:
     values:
+    - 0.97
+    - 0.985
     - 0.99
     - 0.995
     - 0.999
-  n_steps:
-    values:
-    - 5
-    - 8
-    - 16
-  ent_coef:
-    values:
-    - 0.0
-    - 0.01
-  vf_coef:
-    values:
-    - 0.25
-    - 0.5
+  # Optional parameters (uncomment to sweep):
+  # n_steps:
+  #   values:
+  #   - 5
+  #   - 10
+  #   - 20
+  # ent_coef:
+  #   values:
+  #   - 0.0
+  #   - 0.01
+  #   - 0.02
 command:
 - ${env}
 - python3
 - ${program}
-- --runner
-- sb3
-- --algo
-- a2c
 - --scenario
 - scenarios/a2c.yaml
 - --wandb
+name: A2C_sweep

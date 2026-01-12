@@ -7,6 +7,7 @@ import numpy as np
 from src.env import F110ParallelEnv
 from src.core.config import AgentFactory, register_builtin_agents
 from src.rewards import RewardStrategy, build_reward_strategy
+from src.utils.map_loader import MapLoader
 
 
 def load_spawn_points_from_map(map_path: str, spawn_names: List[str]) -> np.ndarray:
@@ -83,15 +84,26 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
         import random
         np.random.seed(seed)
         random.seed(seed)
+        try:
+            import torch
+        except ImportError:
+            torch = None
+        if torch is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
     # Build environment configuration
     num_agents = env_config.get('num_agents', env_config.get('n_agents', 1))
+    env_seed = env_config.get('seed', seed)
     env_kwargs = {
         'map': env_config['map'],
         'n_agents': num_agents,
         'timestep': env_config.get('timestep', 0.01),
         'max_steps': env_config.get('max_steps', 5000),
     }
+    if env_seed is not None:
+        env_kwargs['seed'] = env_seed
 
     # Add optional environment parameters
     if 'lidar_beams' in env_config:
@@ -103,6 +115,41 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
     if 'vehicle_params' in env_config:
         env_kwargs['vehicle_params'] = env_config['vehicle_params']
 
+    map_data = None
+    centerline_requested = bool(
+        env_config.get('centerline_autoload')
+        or env_config.get('centerline_csv')
+        or env_config.get('centerline_render')
+        or env_config.get('centerline_features')
+    )
+    if centerline_requested:
+        map_loader_cfg = dict(env_config)
+        map_loader_cfg['centerline_autoload'] = bool(
+            env_config.get('centerline_autoload', False)
+            or env_config.get('centerline_csv')
+            or env_config.get('centerline_render')
+            or env_config.get('centerline_features')
+        )
+        map_value = map_loader_cfg.get('map')
+        if isinstance(map_value, str):
+            map_path = Path(map_value)
+            if map_path.parent != Path(".") and not map_loader_cfg.get('map_dir'):
+                map_file = map_path if map_path.suffix else map_path.with_suffix(".yaml")
+                map_loader_cfg['map_dir'] = str(map_file.parent)
+                if not map_loader_cfg.get('map_yaml'):
+                    map_loader_cfg['map_yaml'] = map_file.name
+                map_loader_cfg['map'] = map_file.name
+        try:
+            map_loader = MapLoader(base_dir=Path.cwd())
+            map_data = map_loader.load(map_loader_cfg)
+        except Exception as exc:
+            print(f"Warning: failed to load centerline data: {exc}")
+            map_data = None
+
+    if map_data is not None:
+        env_kwargs['map_data'] = map_data
+        env_kwargs['map'] = map_data.yaml_path.name
+
     # Load spawn points from map YAML if specified
     if 'spawn_points' in env_config:
         spawn_names = env_config['spawn_points']
@@ -112,6 +159,12 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
 
     # Create environment
     env = F110ParallelEnv(**env_kwargs)
+    if map_data is not None and map_data.centerline is not None:
+        env.set_centerline(map_data.centerline, path=map_data.centerline_path)
+        env.register_centerline_usage(
+            require_render=bool(env_config.get('centerline_render')),
+            require_features=bool(env_config.get('centerline_features')),
+        )
 
     # Create agents
     agents = {}
@@ -198,10 +251,24 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
 
         action_dim = get_space_dim(action_space)
 
+        frame_stack = agent_config.get('frame_stack', 1)
+        if frame_stack is None:
+            frame_stack = 1
+        try:
+            frame_stack = int(frame_stack)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"frame_stack must be an integer >= 1 (agent {agent_id})") from exc
+        if frame_stack < 1:
+            raise ValueError(f"frame_stack must be >= 1 (agent {agent_id})")
+
+        if frame_stack > 1:
+            obs_dim *= frame_stack
+
         # Add dimension parameters (support both naming conventions)
         agent_kwargs['obs_dim'] = obs_dim
         agent_kwargs['action_dim'] = action_dim
         agent_kwargs['act_dim'] = action_dim  # Alias for PPO
+        agent_kwargs['frame_stack'] = frame_stack
 
         # Extract action bounds for continuous action spaces (SAC, TD3, etc.)
         if isinstance(action_space, spaces.Box):
