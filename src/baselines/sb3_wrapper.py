@@ -5,6 +5,7 @@ for training with SB3 algorithms (SAC, TD3, PPO).
 """
 
 from typing import Any, Dict, Optional, Tuple
+from collections import deque
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -56,6 +57,8 @@ class SB3SingleAgentWrapper(gym.Env):
         reward_strategy: Optional[RewardStrategy] = None,
         action_set: Optional[np.ndarray] = None,
         spawn_curriculum: Optional[Any] = None,
+        frame_stack: int = 1,
+        action_repeat: int = 1,
     ):
         super().__init__()
 
@@ -67,6 +70,17 @@ class SB3SingleAgentWrapper(gym.Env):
         self.spawn_curriculum = spawn_curriculum
         self._episode_count = 0
         self._last_spawn_info: Optional[Dict[str, Any]] = None
+        try:
+            frame_stack = int(frame_stack)
+        except (TypeError, ValueError):
+            frame_stack = 1
+        self.frame_stack = max(1, frame_stack)
+        try:
+            action_repeat = int(action_repeat)
+        except (TypeError, ValueError):
+            action_repeat = 1
+        self.action_repeat = max(1, action_repeat)
+        self._frame_buffer: Optional[deque] = None
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -102,6 +116,37 @@ class SB3SingleAgentWrapper(gym.Env):
         # Track episode state for reward computation
         self.current_obs_dict = None
         self.episode_steps = 0
+
+        if self.frame_stack > 1:
+            self._reset_frame_buffer()
+
+    def _reset_frame_buffer(self) -> None:
+        if self.frame_stack > 1:
+            self._frame_buffer = deque(maxlen=self.frame_stack)
+        else:
+            self._frame_buffer = None
+
+    def _stack_obs(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
+        if self.frame_stack <= 1:
+            return obs
+        if self._frame_buffer is None:
+            self._reset_frame_buffer()
+        buffer = self._frame_buffer
+        if buffer is None:
+            return obs
+        if len(buffer) == 0:
+            frames = [obs] * self.frame_stack
+            if update:
+                buffer.extend(frames)
+            return np.concatenate(frames, axis=0)
+        if update:
+            buffer.append(obs)
+            frames = list(buffer)
+        else:
+            frames = list(buffer) + [obs]
+            if len(frames) > self.frame_stack:
+                frames = frames[-self.frame_stack:]
+        return np.concatenate(frames, axis=0)
 
     def _resolve_obs_scales(self) -> Dict[str, float]:
         """Resolve fixed observation scales from the environment."""
@@ -216,9 +261,11 @@ class SB3SingleAgentWrapper(gym.Env):
         # Store current observations for reward computation
         self.current_obs_dict = obs_dict
         self.episode_steps = 0
+        self._reset_frame_buffer()
 
         # Extract observation for controlled agent
         obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
+        obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
         if self._last_spawn_info:
             spawn_mapping = self._last_spawn_info.get('spawn_points', {})
@@ -266,20 +313,55 @@ class SB3SingleAgentWrapper(gym.Env):
                 if obs is not None and hasattr(agent, 'act'):
                     actions[agent_id] = agent.act(obs)
 
-        # Store previous observations
         prev_obs_dict = self.current_obs_dict
+        total_reward = 0.0
+        reward_components: Dict[str, float] = {}
+        terminated = False
+        truncated = False
+        obs_dict = None
+        info_dict: Dict[str, Any] = {}
 
-        # Step environment with all actions
-        obs_dict, reward_dict, done_dict, truncated_dict, info_dict = self.env.step(actions)
+        for _ in range(self.action_repeat):
+            # Step environment with all actions
+            obs_dict, reward_dict, done_dict, truncated_dict, info_dict = self.env.step(actions)
 
-        # Store current observations for next step
-        self.current_obs_dict = obs_dict
-        self.episode_steps += 1
+            step_terminated = bool(done_dict[self.agent_id])
+            step_truncated = bool(truncated_dict[self.agent_id])
+
+            # Compute reward using custom strategy if provided
+            if self.reward_strategy and prev_obs_dict:
+                reward_info = self._build_reward_info(
+                    prev_obs=prev_obs_dict,
+                    next_obs=obs_dict,
+                    info=info_dict,
+                    terminated=step_terminated,
+                    truncated=step_truncated,
+                )
+                step_reward, components = self.reward_strategy.compute(reward_info)
+                if components:
+                    for name, value in components.items():
+                        reward_components[name] = reward_components.get(name, 0.0) + float(value)
+                step_reward_value = float(step_reward)
+            else:
+                # Use environment's default reward
+                step_reward_value = float(reward_dict[self.agent_id])
+
+            total_reward += step_reward_value
+            self.current_obs_dict = obs_dict
+            self.episode_steps += 1
+            prev_obs_dict = obs_dict
+            terminated = step_terminated
+            truncated = step_truncated
+
+            if terminated or truncated:
+                break
+
+        if obs_dict is None:
+            raise RuntimeError("Environment returned no observations during step.")
 
         # Extract results for controlled agent
         obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
-        terminated = bool(done_dict[self.agent_id])
-        truncated = bool(truncated_dict[self.agent_id])
+        obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
         target_finished = False
         if self.target_id and isinstance(info_dict, dict):
@@ -297,25 +379,10 @@ class SB3SingleAgentWrapper(gym.Env):
             info["outcome"] = outcome.value
             info['is_success'] = outcome.is_success()
 
-        # Compute reward using custom strategy if provided
-        if self.reward_strategy and prev_obs_dict:
-            reward_info = self._build_reward_info(
-                prev_obs=prev_obs_dict,
-                next_obs=obs_dict,
-                info=info_dict,
-                terminated=terminated,
-                truncated=truncated,
-            )
-            reward, components = self.reward_strategy.compute(reward_info)
-            reward = float(reward)
-            # Optionally store components in info for logging
-            if components:
-                info['reward_components'] = components
-        else:
-            # Use environment's default reward
-            reward = float(reward_dict[self.agent_id])
+        if reward_components:
+            info['reward_components'] = reward_components
 
-        return obs, reward, terminated, truncated, info
+        return obs, total_reward, terminated, truncated, info
 
     def _build_reward_info(
         self,

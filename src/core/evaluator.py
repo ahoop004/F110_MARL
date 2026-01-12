@@ -147,6 +147,7 @@ class Evaluator:
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         obs_scales: Optional[Dict[str, float]] = None,
         spawn_configs: Optional[Dict[str, Any]] = None,
+        action_repeat: int = 1,
     ):
         """Initialize evaluator.
 
@@ -159,6 +160,7 @@ class Evaluator:
             target_ids: Optional dict mapping agent_id -> target_id
             obs_scales: Optional observation scales for flattening
             spawn_configs: Optional spawn configurations (if None, reads from env or uses default poses)
+            action_repeat: Number of environment steps to repeat each action
 
         Note:
             Observation normalization happens in flatten_observation() (obs_flatten.py)
@@ -182,6 +184,11 @@ class Evaluator:
         self.target_ids = target_ids or {}
         self.obs_scales = obs_scales or {}
         self.spawn_configs = spawn_configs or getattr(env, 'spawn_configs', {})
+        try:
+            action_repeat = int(action_repeat)
+        except (TypeError, ValueError):
+            action_repeat = 1
+        self.action_repeat = max(1, action_repeat)
         self._frame_buffers: Dict[str, deque] = {}
 
         # Get primary agent (first trainable agent)
@@ -350,19 +357,33 @@ class Evaluator:
 
             # -------------------- ENVIRONMENT STEP --------------------
 
-            next_obs, rewards, terminations, truncations, step_info = self.env.step(actions)
+            steps_this_action = 0
+            while (
+                steps_this_action < self.action_repeat
+                and episode_steps < self.config.max_steps
+                and not all(done.values())
+            ):
+                next_obs, rewards, terminations, truncations, step_info = self.env.step(actions)
 
-            # Track primary agent reward (usually the attacker being evaluated)
-            if self.primary_agent_id:
-                episode_reward += rewards.get(self.primary_agent_id, 0.0)
+                # Track primary agent reward (usually the attacker being evaluated)
+                if self.primary_agent_id:
+                    episode_reward += rewards.get(self.primary_agent_id, 0.0)
 
-            # Update state for next iteration
-            obs = next_obs
-            info = step_info
-            for agent_id in self.agents.keys():
-                done[agent_id] = terminations.get(agent_id, False) or truncations.get(agent_id, False)
+                # Update state for next iteration
+                obs = next_obs
+                info = step_info
+                for agent_id in self.agents.keys():
+                    done[agent_id] = (
+                        done.get(agent_id, False)
+                        or terminations.get(agent_id, False)
+                        or truncations.get(agent_id, False)
+                    )
 
-            episode_steps += 1
+                episode_steps += 1
+                steps_this_action += 1
+
+                if all(done.values()):
+                    break
 
         # Determine outcome
         final_info = step_info if episode_steps > 0 else info

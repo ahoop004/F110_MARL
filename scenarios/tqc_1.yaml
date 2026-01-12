@@ -7,8 +7,10 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: tqc
-  episodes: 1000
+  episodes: 3500
   seed: 42
+environment:
+  action_repeat: 2
 agents:
   car_0:
     role: attacker
@@ -62,7 +64,7 @@ agents:
         probability: 1.0
     observation:
       preset: gaplock
-    frame_stack: 1
+    frame_stack: 4
 wandb:
   enabled: true
   project: marl-f110

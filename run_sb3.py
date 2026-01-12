@@ -2,6 +2,7 @@
 """On-policy SB3 training runner (PPO/A2C) using the v2 scenario format."""
 
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -279,6 +280,22 @@ def get_space_dim(space) -> int:
     if isinstance(space, spaces.MultiDiscrete):
         return len(space.nvec)
     return 1
+
+
+def parse_action_repeat(env_config: Dict[str, Any]) -> int:
+    """Parse action repeat (step skip) from environment config."""
+    value = None
+    for key in ("action_repeat", "step_repeat", "step_skip", "frame_skip"):
+        if key in env_config:
+            value = env_config.get(key)
+            break
+    if value is None:
+        return 1
+    try:
+        repeat = int(value)
+    except (TypeError, ValueError):
+        repeat = 1
+    return max(1, repeat)
 
 
 def compute_obs_dim(
@@ -566,9 +583,11 @@ def main() -> None:
     train_params = train_agent_cfg.get("params", {})
 
     frame_stack = int(train_agent_cfg.get("frame_stack", 1) or 1)
-    if frame_stack > 1:
-        console_logger.print_warning("frame_stack > 1 not supported in run_sb3; using 1")
+    if frame_stack < 1:
         frame_stack = 1
+
+    env_config = scenario.get("environment", {})
+    action_repeat = parse_action_repeat(env_config)
 
     target_id = train_agent_cfg.get("target_id")
     observation_preset = infer_observation_preset(train_agent_cfg)
@@ -598,6 +617,8 @@ def main() -> None:
         target_id=target_id,
         reward_strategy=reward_strategy,
         spawn_curriculum=spawn_curriculum,
+        frame_stack=frame_stack,
+        action_repeat=action_repeat,
     )
 
     other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}
@@ -616,8 +637,11 @@ def main() -> None:
     if episodes <= 0:
         raise ValueError("Scenario must define a positive experiment.episodes for on-policy runs.")
 
-    max_steps = int(scenario.get("environment", {}).get("max_steps", 2500))
-    total_timesteps = max_steps * episodes
+    max_steps = int(env_config.get("max_steps", 2500))
+    decision_steps = max_steps
+    if action_repeat > 1:
+        decision_steps = int(math.ceil(max_steps / action_repeat))
+    total_timesteps = decision_steps * episodes
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
     log_every_env = os.environ.get("F110_LOG_EVERY_EPISODES")
@@ -681,6 +705,8 @@ def main() -> None:
             observation_preset=observation_preset,
             target_id=target_id,
             reward_strategy=reward_strategy,
+            frame_stack=frame_stack,
+            action_repeat=action_repeat,
         )
         eval_env.set_other_agents(eval_other_agents)
 

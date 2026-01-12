@@ -195,6 +195,22 @@ def resolve_cli_overrides(scenario: dict, args) -> dict:
     return scenario
 
 
+def parse_action_repeat(env_config: dict) -> int:
+    """Parse action repeat (step skip) from environment config."""
+    value = None
+    for key in ("action_repeat", "step_repeat", "step_skip", "frame_skip"):
+        if key in env_config:
+            value = env_config.get(key)
+            break
+    if value is None:
+        return 1
+    try:
+        repeat = int(value)
+    except (TypeError, ValueError):
+        repeat = 1
+    return max(1, repeat)
+
+
 def initialize_loggers(scenario: dict, args, run_id: str = None) -> tuple:
     """Initialize W&B and console loggers.
 
@@ -614,6 +630,7 @@ def main():
         # Create spawn curriculum if enabled
         spawn_curriculum = None
         env_config = scenario['environment']
+        action_repeat = parse_action_repeat(env_config)
         spawn_configs = env_config.get('spawn_configs', {})
         spawn_config = env_config.get('spawn_curriculum', {})
         if not spawn_configs:
@@ -826,6 +843,7 @@ def main():
             agent_rewards=reward_strategies,
             observation_presets=observation_presets,
             frame_stacks=frame_stacks,
+            action_repeat=action_repeat,
             target_ids=target_ids,
             agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,

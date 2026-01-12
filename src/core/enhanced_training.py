@@ -54,6 +54,7 @@ class EnhancedTrainingLoop:
         agent_rewards: Optional[Dict[str, RewardStrategy]] = None,
         observation_presets: Optional[Dict[str, str]] = None,
         frame_stacks: Optional[Dict[str, int]] = None,
+        action_repeat: int = 1,
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
@@ -81,6 +82,7 @@ class EnhancedTrainingLoop:
             observation_presets: Optional dict mapping agent_id -> preset name
                 Used to flatten Dict observations. Flattening includes normalization.
             frame_stacks: Optional dict mapping agent_id -> number of frames to stack
+            action_repeat: Number of environment steps to repeat each action
             target_ids: Optional dict mapping agent_id -> target_id
                 For adversarial tasks where agent observes target state
             agent_algorithms: Optional dict mapping agent_id -> algorithm name (e.g., 'ppo', 'sac')
@@ -122,6 +124,11 @@ class EnhancedTrainingLoop:
                 if stack_size < 1:
                     stack_size = 1
                 self.frame_stacks[agent_id] = stack_size
+        try:
+            action_repeat = int(action_repeat)
+        except (TypeError, ValueError):
+            action_repeat = 1
+        self.action_repeat = max(1, action_repeat)
         self.target_ids = target_ids or {}
         self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
@@ -155,6 +162,7 @@ class EnhancedTrainingLoop:
                 target_ids=target_ids,
                 obs_scales=self.obs_scales,
                 spawn_configs=spawn_configs,
+                action_repeat=self.action_repeat,
             )
 
         # Initialize metrics tracker for each agent
@@ -503,45 +511,77 @@ class EnhancedTrainingLoop:
 
             # -------------------- ENVIRONMENT STEP --------------------
 
-            # Execute physics simulation step with all agents' actions
-            try:
-                next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
-            except Exception as e:
-                # Graceful degradation: log error and mark episode as terminated
-                logger.error(f"Environment step failed at episode {episode_num}, step {episode_steps}: {e}")
-                logger.error(f"Actions: {actions}")
-                terminations = {agent_id: True for agent_id in self.agents.keys()}
-                truncations = {agent_id: False for agent_id in self.agents.keys()}
-                next_obs = obs  # Reuse current observation
-                env_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
-                step_info = {}
+            rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
+            reward_components_this_step: Dict[str, Dict[str, float]] = {}
+            terminations = {agent_id: False for agent_id in self.agents.keys()}
+            truncations = {agent_id: False for agent_id in self.agents.keys()}
+            step_info: Dict[str, Any] = {}
+            next_obs = obs
+            steps_this_action = 0
+            done_snapshot = dict(done)
 
-            # -------------------- REWARD COMPUTATION --------------------
+            while (
+                steps_this_action < self.action_repeat
+                and episode_steps < self.max_steps_per_episode
+                and not all(done.values())
+            ):
+                prev_obs = obs
+                # Execute physics simulation step with all agents' actions
+                try:
+                    next_obs, env_rewards, terminations, truncations, step_info = self.env.step(actions)
+                except Exception as e:
+                    # Graceful degradation: log error and mark episode as terminated
+                    logger.error(f"Environment step failed at episode {episode_num}, step {episode_steps}: {e}")
+                    logger.error(f"Actions: {actions}")
+                    terminations = {agent_id: True for agent_id in self.agents.keys()}
+                    truncations = {agent_id: False for agent_id in self.agents.keys()}
+                    next_obs = prev_obs  # Reuse current observation
+                    env_rewards = {agent_id: 0.0 for agent_id in self.agents.keys()}
+                    step_info = {}
 
-            # Compute custom rewards (if configured) or use environment rewards
-            rewards = {}
-            reward_components_this_step = {}  # Per-step component breakdown for logging
+                # -------------------- REWARD COMPUTATION --------------------
 
-            for agent_id in self.agents.keys():
-                if agent_id in self.agent_rewards:
-                    # Custom reward computation (e.g., gaplock_full reward strategy)
-                    # Builds reward from multiple components: terminal, distance, pressure, etc.
-                    reward_info = self._build_reward_info(
-                        agent_id, obs, next_obs, step_info, episode_steps,
-                        terminations=terminations, truncations=truncations
+                # Compute custom rewards (if configured) or use environment rewards
+                for agent_id in self.agents.keys():
+                    if agent_id in self.agent_rewards:
+                        # Custom reward computation (e.g., gaplock_full reward strategy)
+                        # Builds reward from multiple components: terminal, distance, pressure, etc.
+                        reward_info = self._build_reward_info(
+                            agent_id, prev_obs, next_obs, step_info, episode_steps,
+                            terminations=terminations, truncations=truncations
+                        )
+                        total_reward, components = self.agent_rewards[agent_id].compute(reward_info)
+                        rewards[agent_id] += float(total_reward)
+                        if components:
+                            comp_totals = reward_components_this_step.setdefault(agent_id, {})
+                            for comp_name, comp_value in components.items():
+                                comp_totals[comp_name] = comp_totals.get(comp_name, 0.0) + float(comp_value)
+                    else:
+                        # Fall back to environment's native reward signal
+                        rewards[agent_id] += float(env_rewards.get(agent_id, 0.0))
+
+                # Update state for next iteration
+                obs = next_obs
+                info = step_info  # Carry forward info for curriculum velocity control
+                for agent_id in self.agents.keys():
+                    done_snapshot[agent_id] = (
+                        done_snapshot.get(agent_id, False)
+                        or terminations.get(agent_id, False)
+                        or truncations.get(agent_id, False)
                     )
-                    total_reward, components = self.agent_rewards[agent_id].compute(reward_info)
-                    rewards[agent_id] = total_reward
-                    reward_components_this_step[agent_id] = components
 
-                    # Accumulate component values for episode-level analysis
-                    for comp_name, comp_value in components.items():
-                        if comp_name not in episode_reward_components[agent_id]:
-                            episode_reward_components[agent_id][comp_name] = 0.0
-                        episode_reward_components[agent_id][comp_name] += comp_value
-                else:
-                    # Fall back to environment's native reward signal
-                    rewards[agent_id] = env_rewards.get(agent_id, 0.0)
+                episode_steps += 1
+                steps_this_action += 1
+
+                if all(done_snapshot.values()):
+                    break
+
+            # Accumulate component values for episode-level analysis
+            for agent_id, components in reward_components_this_step.items():
+                for comp_name, comp_value in components.items():
+                    if comp_name not in episode_reward_components[agent_id]:
+                        episode_reward_components[agent_id][comp_name] = 0.0
+                    episode_reward_components[agent_id][comp_name] += comp_value
 
             # Render if enabled
             if hasattr(self.env, 'render_mode') and self.env.render_mode is not None:
@@ -590,7 +630,7 @@ class EnhancedTrainingLoop:
                     # Extract termination flags
                     terminated = terminations.get(agent_id, False)
                     truncated = truncations.get(agent_id, False)
-                    done_flag = terminated or truncated
+                    done_flag = done_snapshot.get(agent_id, False)
 
                     # ======== ON-POLICY vs OFF-POLICY STORAGE ========
 
@@ -643,14 +683,7 @@ class EnhancedTrainingLoop:
                         ))
 
             # -------------------- STEP BOOKKEEPING --------------------
-
-            # Update state for next iteration
-            obs = next_obs
-            info = step_info  # Carry forward info for curriculum velocity control
-            for agent_id in self.agents.keys():
-                done[agent_id] = terminations.get(agent_id, False) or truncations.get(agent_id, False)
-
-            episode_steps += 1
+            done = done_snapshot
 
         # ========================================
         # PHASE 4: EPISODE FINALIZATION

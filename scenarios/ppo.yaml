@@ -11,6 +11,7 @@ experiment:
   seed: 42
 environment:
   max_steps: 1000
+  action_repeat: 2
 agents:
   car_0:
     role: attacker
@@ -33,7 +34,7 @@ agents:
       batch_size: 256
     observation:
       preset: gaplock
-    frame_stack: 1
+    frame_stack: 4
 wandb:
   enabled: true
   project: marl-f110
