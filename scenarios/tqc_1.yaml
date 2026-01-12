@@ -14,7 +14,7 @@ environment:
 agents:
   car_0:
     role: attacker
-    algorithm: tqc
+    algorithm: sb3_tqc
     target_id: car_1
     params:
       # learning_rate: 0.0005
