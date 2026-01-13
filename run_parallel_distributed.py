@@ -33,8 +33,9 @@ import os
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
-from typing import List, Optional
+from typing import IO, List, Optional
 
 # Add src to path
 ROOT_DIR = Path(__file__).resolve().parent
@@ -58,6 +59,7 @@ def launch_training_process(
     gpu_id: Optional[int] = None,
     wandb: bool = True,
     extra_args: Optional[List[str]] = None,
+    log_file: Optional[IO[str]] = None,
 ):
     """Launch a single training process.
 
@@ -114,8 +116,8 @@ def launch_training_process(
     proc = subprocess.Popen(
         cmd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=log_file,
         text=True,
         bufsize=1,
     )
@@ -123,7 +125,22 @@ def launch_training_process(
     return proc
 
 
-def monitor_processes(processes: List[subprocess.Popen], run_ids: List[str]):
+def _tail_file(path: Path, max_lines: int = 40) -> List[str]:
+    lines: deque[str] = deque(maxlen=max_lines)
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                lines.append(line.rstrip())
+    except FileNotFoundError:
+        return []
+    return list(lines)
+
+
+def monitor_processes(
+    processes: List[subprocess.Popen],
+    run_ids: List[str],
+    log_paths: List[Path],
+):
     """Monitor training processes and report status.
 
     Args:
@@ -148,10 +165,13 @@ def monitor_processes(processes: List[subprocess.Popen], run_ids: List[str]):
                     print(f"✓ {run_ids[i]} completed successfully")
                 else:
                     print(f"✗ {run_ids[i]} failed with code {retcode}")
-                    # Print stderr
-                    stderr = proc.stderr.read()
-                    if stderr:
-                        print(f"  Error: {stderr[:500]}")
+                    log_path = log_paths[i] if i < len(log_paths) else None
+                    if log_path:
+                        tail_lines = _tail_file(log_path, max_lines=40)
+                        if tail_lines:
+                            print(f"  Log tail: {log_path}")
+                            for line in tail_lines:
+                                print(f"    {line}")
 
         if active:
             print(f"\r📊 Active runs: {len(active)}/{len(processes)}", end='', flush=True)
@@ -309,10 +329,16 @@ def main():
     # Launch training processes
     print(f"\n🚀 Launching {n_runs} training processes...")
     processes = []
+    log_paths: List[Path] = []
+    log_files: List[IO[str]] = []
+    log_dir = ROOT_DIR / "outputs" / "parallel_runs"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(n_runs):
         gpu_id = args.gpus[i % len(args.gpus)] if args.gpus else None
         seed = args.base_seed + i  # Different seed for each run
+        log_path = log_dir / f"{run_ids[i]}.log"
+        log_file = log_path.open("w", encoding="utf-8")
 
         proc = launch_training_process(
             scenario=scenarios[i],
@@ -327,20 +353,26 @@ def main():
             gpu_id=gpu_id,
             wandb=args.wandb,
             extra_args=args.extra_args,
+            log_file=log_file,
         )
 
         processes.append(proc)
+        log_paths.append(log_path)
+        log_files.append(log_file)
         time.sleep(2)  # Stagger launches
 
     # Monitor processes
     try:
-        monitor_processes(processes, run_ids)
+        monitor_processes(processes, run_ids, log_paths)
     except KeyboardInterrupt:
         print("\n⚠ Interrupt received, terminating processes...")
         for proc in processes:
             proc.terminate()
         for proc in processes:
             proc.wait(timeout=10)
+    finally:
+        for log_file in log_files:
+            log_file.close()
 
     # Cleanup
     if registry:
