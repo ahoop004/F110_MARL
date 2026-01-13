@@ -6,6 +6,12 @@ metric:
   name: train/success_rate
   goal: maximize
 parameters:
+  seed:
+    values:
+    - 42
+    - 23452
+    - 8675309
+    - 32456
   # actor_learning_rate:
   #   values:
   #   - 0.0001
