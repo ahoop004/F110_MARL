@@ -7,7 +7,7 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: tqc
-  episodes: 3500
+  episodes: 10000
   seed: 42
 environment:
   action_repeat: 2

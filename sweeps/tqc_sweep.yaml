@@ -90,12 +90,12 @@ parameters:
     #   - 128
     #   - 128
     #   - 128
-  # activation:
-  #   values:
-  #   - relu
-  #   - silu
-  #   - swish
-  #   - tanh
+  activation:
+    values:
+    - relu
+    - silu
+    - swish
+    - tanh
   # HER sweeps (canonical, uncomment to sweep):
   # her.enabled:
   #   values:
