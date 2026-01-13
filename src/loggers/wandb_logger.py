@@ -93,10 +93,6 @@ class WandbLogger:
         self.wandb_url: Optional[str] = None
 
         if self.enabled:
-            # Set run ID in environment for W&B to pick up
-            if run_id:
-                os.environ['WANDB_RUN_NAME'] = run_id
-
             # Flatten nested config for W&B
             flat_config = self._flatten_config(config) if config else {}
 
