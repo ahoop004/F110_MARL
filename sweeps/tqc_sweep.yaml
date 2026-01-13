@@ -6,16 +6,16 @@ metric:
   name: train/success_rate
   goal: maximize
 parameters:
-  actor_learning_rate:
-    values:
-    - 0.0001
-    - 0.0003
-    - 0.0005
-  critic_learning_rate:
-    values:
-    - 0.0001
-    - 0.0003
-    - 0.0005
+  # actor_learning_rate:
+  #   values:
+  #   - 0.0001
+  #   - 0.0003
+  #   - 0.0005
+  # critic_learning_rate:
+  #   values:
+  #   - 0.0001
+  #   - 0.0003
+  #   - 0.0005
   # tau:
   #   values:
     # - 0.001
