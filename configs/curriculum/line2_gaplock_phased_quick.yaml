@@ -5,7 +5,7 @@ curriculum:
   - name: 1_foundation_lock800
     description: Foundation - Lock 800 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       avg_reward: 50.0
       min_episodes: 10
@@ -24,7 +24,7 @@ curriculum:
   - name: 1_lock600
     description: Lock 600 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -43,7 +43,7 @@ curriculum:
   - name: 1_lock400
     description: Lock 400 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -63,7 +63,7 @@ curriculum:
   - name: 1_lock200
     description: Lock 200 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -83,7 +83,7 @@ curriculum:
   - name: 1_lock100
     description: Lock 100 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -103,7 +103,7 @@ curriculum:
   - name: 1_lock50
     description: Lock 50 steps
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -123,7 +123,7 @@ curriculum:
   - name: 1_lock0
     description: No speed lock
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -143,7 +143,7 @@ curriculum:
   - name: 2_speed035
     description: Reduce speed to 0.35
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -163,7 +163,7 @@ curriculum:
   - name: 2_speed025
     description: Reduce speed to 0.25
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -183,7 +183,7 @@ curriculum:
   - name: 2_speed015
     description: Reduce speed to 0.15
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -203,7 +203,7 @@ curriculum:
   - name: 2_speed005
     description: Reduce speed to 0.05
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -223,7 +223,7 @@ curriculum:
   - name: 2_speed_var_low
     description: Low speed variation (0.0-0.10)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -243,7 +243,7 @@ curriculum:
   - name: 2_speed000
     description: Speed at 0.0
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -263,7 +263,7 @@ curriculum:
   - name: 3_add_pinch_ahead
     description: Add spawn_pinch_ahead (3 spawns)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -284,7 +284,7 @@ curriculum:
   - name: 3_add_approach_center
     description: Add spawn_approach_0.0C (4 spawns)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -306,7 +306,7 @@ curriculum:
   - name: 3_add_approach_left
     description: Add spawn_approach_0.3L (5 spawns)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -329,7 +329,7 @@ curriculum:
   - name: 3_add_approach_right
     description: Add spawn_approach_0.3R (6 spawns)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -353,7 +353,7 @@ curriculum:
   - name: 3_all_spawns
     description: All spawn points
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -371,7 +371,7 @@ curriculum:
   - name: 4_ftg_very_light
     description: Very light FTG (gain=0.30)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -389,7 +389,7 @@ curriculum:
   - name: 4_ftg_light
     description: Light FTG (gain=0.35)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
@@ -407,7 +407,7 @@ curriculum:
   - name: 4_ftg_moderate_low
     description: Moderate-low FTG (gain=0.40)
     criteria:
-      window_size: 10
+      window_size: 100
       success_rate: 0.7
       min_episodes: 10
       patience: 1000000
