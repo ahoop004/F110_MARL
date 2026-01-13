@@ -352,7 +352,13 @@ class F110ParallelEnv(ParallelEnv):
         self.metadata = {"render_modes": ["human", "rgb_array"], "name": "F110ParallelEnv"}
         self.renderer: Optional["EnvRenderer"] = None
         headless_env = str(os.environ.get("PYGLET_HEADLESS", "")).lower()
-        self._headless = pyglet.options.get("headless", False) or headless_env in {"1", "true", "yes", "on"}
+        if headless_env in {"1", "true", "yes", "on"}:
+            self._headless = True
+        else:
+            if pyglet is None and not _ensure_pyglet():
+                self._headless = True
+            else:
+                self._headless = bool(pyglet.options.get("headless", False)) if pyglet is not None else True
         mode = (self.render_mode or "").lower()
         self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
 
