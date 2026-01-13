@@ -28,15 +28,8 @@ command:
 - ${env}
 - python3
 - ${program}
-- --scenario
-- ${scenario}
 - --wandb
-- --learning_rate
-- ${learning_rate}
-- --gamma
-- ${gamma}
-- --episodes
-- ${episodes}
+- ${args}
 
 name: Algorithm_Comparison_Quick
 description: |

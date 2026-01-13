@@ -31,13 +31,8 @@ command:
 - ${env}
 - python3
 - ${program}
-- --scenario
-- ${scenario}
 - --wandb
-- --learning_rate
-- ${learning_rate}
-- --gamma
-- ${gamma}
+- ${args}
 
 name: Algorithm_Comparison_Baseline
 description: |

@@ -45,17 +45,8 @@ command:
 - ${env}
 - python3
 - ${program}
-- --scenario
-- ${scenario}
 - --wandb
-- --learning_rate
-- ${learning_rate}
-- --gamma
-- ${gamma}
-- --tau
-- ${tau}
-- --batch_size
-- ${batch_size}
+- ${args}
 
 name: Algorithm_Comparison_Tuning
 description: |

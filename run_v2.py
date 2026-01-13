@@ -151,7 +151,8 @@ def parse_args():
         help='Custom run ID for checkpoint/logging alignment',
     )
 
-    return parser.parse_args()
+    args, _unknown = parser.parse_known_args()
+    return args
 
 
 def resolve_cli_overrides(scenario: dict, args) -> dict:
