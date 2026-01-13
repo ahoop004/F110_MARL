@@ -15,15 +15,15 @@ import logging
 import numpy as np
 from pettingzoo import ParallelEnv
 
-from core.protocol import Agent, is_on_policy_agent
-from core.obs_flatten import flatten_observation
-from core.spawn_curriculum import SpawnCurriculumManager
-from core.checkpoint_manager import CheckpointManager
-from core.best_model_tracker import BestModelTracker
-from core.evaluator import Evaluator, EvaluationConfig
-from metrics import MetricsTracker, determine_outcome, EpisodeOutcome
-from loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
-from rewards.base import RewardStrategy
+from src.core.protocol import Agent, is_on_policy_agent
+from src.core.obs_flatten import flatten_observation
+from src.core.spawn_curriculum import SpawnCurriculumManager
+from src.core.checkpoint_manager import CheckpointManager
+from src.core.best_model_tracker import BestModelTracker
+from src.core.evaluator import Evaluator, EvaluationConfig
+from src.metrics import MetricsTracker, determine_outcome, EpisodeOutcome
+from src.loggers import WandbLogger, ConsoleLogger, CSVLogger, RichConsole
+from src.rewards.base import RewardStrategy
 
 # Set up logger for error handling
 logger = logging.getLogger(__name__)

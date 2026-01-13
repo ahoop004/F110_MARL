@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Callable
 import numpy as np
 from pettingzoo import ParallelEnv
 
-from core.protocol import Agent, is_on_policy_agent, is_off_policy_agent
+from src.core.protocol import Agent, is_on_policy_agent, is_off_policy_agent
 
 
 class TrainingLoop:

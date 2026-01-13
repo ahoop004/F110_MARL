@@ -10,7 +10,7 @@ from typing import Dict, Any, List
 # Add project root to path
 sys.path.insert(0, '.')
 
-from core.protocol import Agent, OnPolicyAgent, OffPolicyAgent
+from src.core.protocol import Agent, OnPolicyAgent, OffPolicyAgent
 
 
 class ProtocolTester:

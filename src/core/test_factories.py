@@ -6,7 +6,7 @@ from typing import Dict, Any
 # Add project root to path
 sys.path.insert(0, '.')
 
-from core.config import AgentFactory, EnvironmentFactory, WrapperFactory, create_training_setup
+from src.core.config import AgentFactory, EnvironmentFactory, WrapperFactory, create_training_setup
 
 
 class FactoryTester:

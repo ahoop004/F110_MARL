@@ -9,9 +9,9 @@ from collections import deque
 import numpy as np
 from pettingzoo import ParallelEnv
 
-from core.protocol import Agent
-from core.obs_flatten import flatten_observation
-from metrics import determine_outcome, EpisodeOutcome
+from src.core.protocol import Agent
+from src.core.obs_flatten import flatten_observation
+from src.metrics import determine_outcome, EpisodeOutcome
 
 
 class EvaluationConfig:

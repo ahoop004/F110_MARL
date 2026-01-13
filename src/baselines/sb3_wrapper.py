@@ -10,9 +10,9 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from core.obs_flatten import flatten_observation
-from rewards.base import RewardStrategy
-from metrics.outcomes import determine_outcome
+from src.core.obs_flatten import flatten_observation
+from src.rewards.base import RewardStrategy
+from src.metrics.outcomes import determine_outcome
 
 
 class SB3SingleAgentWrapper(gym.Env):
