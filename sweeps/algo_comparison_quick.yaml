@@ -1,0 +1,52 @@
+program: run_v2.py
+method: grid
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: train/success_rate
+  goal: maximize
+parameters:
+  # Quick algorithm comparison for testing
+  scenario:
+    values:
+    - scenarios/sac.yaml
+    - scenarios/td3.yaml
+    - scenarios/ppo.yaml
+
+  # Fixed baseline hyperparameters
+  learning_rate:
+    value: 0.0003
+
+  gamma:
+    value: 0.995
+
+  # Override episodes to run shorter experiments
+  episodes:
+    value: 500
+
+command:
+- ${env}
+- python3
+- ${program}
+- --scenario
+- ${scenario}
+- --wandb
+- --learning_rate
+- ${learning_rate}
+- --gamma
+- ${gamma}
+- --episodes
+- ${episodes}
+
+name: Algorithm_Comparison_Quick
+description: |
+  Quick algorithm comparison with only 500 episodes per run.
+
+  Tests SAC, TD3, and PPO with baseline hyperparameters.
+
+  Useful for:
+  - Rapid prototyping
+  - Testing sweep configuration
+  - Getting initial insights into algorithm performance
+
+  For full comparison, use algo_comparison_sweep.yaml instead.

@@ -4,7 +4,26 @@ This directory contains WandB sweep configurations for hyperparameter tuning.
 
 ## Available Sweeps
 
-### Full Grid Searches
+### Algorithm Comparison Sweeps 🆕
+
+**Start here to identify the best algorithm for your task!**
+
+- **algo_comparison_sweep.yaml** - Compare all major algorithms with baseline hyperparameters (6 runs)
+  - Algorithms: SAC, TD3, DDPG, TQC, PPO, A2C
+  - Fixed hyperparameters for fair comparison
+  - **Use this first** to identify which algorithm works best
+
+- **algo_comparison_tuning_sweep.yaml** - Compare algorithms + tune hyperparameters (Bayesian optimization)
+  - Algorithms: SAC, TD3, PPO, A2C
+  - Tunes learning_rate, gamma, tau, batch_size simultaneously
+  - More thorough but more expensive than baseline comparison
+
+- **algo_comparison_quick.yaml** - Quick algorithm test (3 runs, 500 episodes each)
+  - Algorithms: SAC, TD3, PPO
+  - For rapid prototyping and testing
+  - Runs in ~1-2 hours per algorithm
+
+### Algorithm-Specific Full Grid Searches
 - **sac_sweep.yaml** - SAC hyperparameter sweep (72 runs)
   - learning_rate: [0.0001, 0.0003, 0.0005]
   - gamma: [0.99, 0.995, 0.999]
@@ -51,6 +70,30 @@ This directory contains WandB sweep configurations for hyperparameter tuning.
 - **tqc_mlp_sweep.yaml** - TQC deep MLP width/depth sweep
 - **tqc_actor_critic_sweep.yaml** - TQC actor/critic split sweep
 - **tqc_activation_sweep.yaml** - TQC activation sweep
+
+## Recommended Workflow
+
+### Phase 1: Algorithm Selection
+1. **Run algo_comparison_sweep.yaml** to identify best algorithm(s)
+   ```bash
+   wandb sweep sweeps/algo_comparison_sweep.yaml
+   wandb agent <sweep-id>
+   ```
+2. Compare results on WandB dashboard
+3. Select top 2-3 performing algorithms
+
+### Phase 2: Algorithm-Specific Tuning
+4. **Run algorithm-specific sweeps** for your top performers
+   ```bash
+   # If SAC performed best:
+   wandb sweep sweeps/sac_sweep.yaml
+   wandb agent <sweep-id>
+   ```
+5. Identify best hyperparameters for each algorithm
+
+### Phase 3: Fine-tuning (Optional)
+6. Create custom sweeps around best hyperparameters
+7. Use Bayesian optimization for final refinement
 
 ## Usage
 

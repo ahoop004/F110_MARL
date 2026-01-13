@@ -1,0 +1,74 @@
+program: run_v2.py
+method: bayes  # Use Bayesian optimization for efficiency
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: train/success_rate
+  goal: maximize
+parameters:
+  # Algorithm comparison with hyperparameter tuning
+  scenario:
+    values:
+    - scenarios/sac.yaml       # Off-policy continuous (entropy-based)
+    - scenarios/td3.yaml       # Off-policy continuous (deterministic)
+    - scenarios/ppo.yaml       # On-policy continuous (policy gradient)
+    - scenarios/a2c.yaml       # On-policy continuous (advantage actor-critic)
+
+  # Learning rate sweep (common to all algorithms)
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.00005
+    max: 0.001
+
+  # Gamma - discount factor
+  gamma:
+    values:
+    - 0.99
+    - 0.995
+    - 0.999
+
+  # Tau - soft update coefficient (for off-policy algorithms)
+  # On-policy algorithms will ignore this parameter
+  tau:
+    distribution: log_uniform_values
+    min: 0.001
+    max: 0.02
+
+  # Batch size
+  batch_size:
+    values:
+    - 128
+    - 256
+    - 512
+
+command:
+- ${env}
+- python3
+- ${program}
+- --scenario
+- ${scenario}
+- --wandb
+- --learning_rate
+- ${learning_rate}
+- --gamma
+- ${gamma}
+- --tau
+- ${tau}
+- --batch_size
+- ${batch_size}
+
+name: Algorithm_Comparison_Tuning
+description: |
+  Compare major RL algorithms while simultaneously tuning common hyperparameters.
+
+  Uses Bayesian optimization to efficiently explore the hyperparameter space
+  across different algorithms to find the best algorithm + hyperparameter combination.
+
+  Hyperparameters tuned:
+  - Learning rate: log-uniform [5e-5, 1e-3]
+  - Gamma: {0.99, 0.995, 0.999}
+  - Tau: log-uniform [0.001, 0.02] (off-policy only)
+  - Batch size: {128, 256, 512}
+
+  Note: This sweep is more expensive than the baseline comparison but provides
+  better insights into which algorithm + hyperparameters work best.

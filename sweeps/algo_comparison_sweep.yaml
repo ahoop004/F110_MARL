@@ -1,0 +1,55 @@
+program: run_v2.py
+method: grid
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: train/success_rate
+  goal: maximize
+parameters:
+  # Algorithm comparison - all with baseline hyperparameters
+  scenario:
+    values:
+    - scenarios/sac.yaml       # Off-policy continuous (entropy-based)
+    - scenarios/td3.yaml       # Off-policy continuous (deterministic)
+    - scenarios/ddpg.yaml      # Off-policy continuous (simpler baseline)
+    - scenarios/tqc.yaml       # Off-policy continuous (distributional)
+    - scenarios/ppo.yaml       # On-policy continuous (policy gradient)
+    - scenarios/a2c.yaml       # On-policy continuous (advantage actor-critic)
+    # Discrete algorithms require different action space - comment out if needed:
+    # - scenarios/dqn.yaml     # Off-policy discrete
+    # - scenarios/qrdqn.yaml   # Off-policy discrete (distributional)
+
+  # Baseline learning rate (same for all algorithms for fair comparison)
+  learning_rate:
+    value: 0.0003
+
+  # Gamma - discount factor (same for all)
+  gamma:
+    value: 0.995
+
+command:
+- ${env}
+- python3
+- ${program}
+- --scenario
+- ${scenario}
+- --wandb
+- --learning_rate
+- ${learning_rate}
+- --gamma
+- ${gamma}
+
+name: Algorithm_Comparison_Baseline
+description: |
+  Compare all major RL algorithms with baseline hyperparameters to identify
+  which algorithm performs best on the F110 gaplock task.
+
+  All algorithms use:
+  - Learning rate: 0.0003
+  - Gamma: 0.995
+  - Same network architecture (256x256)
+  - Same reward configuration
+  - Same curriculum
+
+  This provides a fair comparison to identify the most promising algorithm
+  for this specific task before doing algorithm-specific hyperparameter tuning.
