@@ -94,11 +94,13 @@ def launch_training_process(
         env['DISTRIBUTED_REGISTRY_AUTHKEY'] = registry_authkey
 
     # Build command
+    env["PYTHONUNBUFFERED"] = "1"
     cmd = [
         'python3',
+        '-u',
         'run_v2.py',
         '--scenario', scenario,
-        '--run_id', run_id,
+        '--run-id', run_id,
         '--seed', str(seed),
     ]
 
@@ -358,6 +360,7 @@ def main():
 
         processes.append(proc)
         log_paths.append(log_path)
+        print(f"   Log: {log_path}")
         log_files.append(log_file)
         time.sleep(2)  # Stagger launches
 
