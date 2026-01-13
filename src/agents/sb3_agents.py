@@ -5,6 +5,7 @@ agent interface and training loop.
 """
 
 from typing import Any, Dict, Optional
+import os
 import numpy as np
 import torch as th
 import torch.nn as nn
@@ -41,7 +42,7 @@ try:
 except ImportError:
     DQN_AVAILABLE = False
 
-from replay import PrioritizedReplayBuffer
+from replay import PrioritizedReplayBuffer, DistributedPrioritizedReplayBuffer
 
 
 class DummyEnv(gym.Env):
@@ -284,6 +285,18 @@ class SB3AgentBase:
             "max_priority": self.per_max_priority,
             "normalize_weights": self.per_normalize_weights,
         }
+        registry_host = os.getenv("DISTRIBUTED_REGISTRY_HOST")
+        registry_port = os.getenv("DISTRIBUTED_REGISTRY_PORT")
+        buffer_id = os.getenv("DISTRIBUTED_BUFFER_ID")
+        if registry_host and registry_port and buffer_id:
+            sample_strategy = os.getenv("DISTRIBUTED_STRATEGY", "self_heavy")
+            cross_sample_ratio = float(os.getenv("DISTRIBUTED_CROSS_SAMPLE_RATIO", "0.2"))
+            replay_buffer_kwargs.update({
+                "buffer_id": buffer_id,
+                "sample_strategy": sample_strategy,
+                "cross_sample_ratio": cross_sample_ratio,
+            })
+            return DistributedPrioritizedReplayBuffer, replay_buffer_kwargs
         return PrioritizedReplayBuffer, replay_buffer_kwargs
 
     def _setup_logger(self):

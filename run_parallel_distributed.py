@@ -42,13 +42,15 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from replay.distributed_buffer import create_distributed_registry
+from replay.distributed_buffer import start_registry_server
 
 
 def launch_training_process(
     scenario: str,
     run_id: str,
-    registry_address: str,
+    registry_host: Optional[str],
+    registry_port: Optional[int],
+    registry_authkey: Optional[str],
     buffer_id: str,
     cross_sample_ratio: float,
     strategy: str,
@@ -62,7 +64,9 @@ def launch_training_process(
     Args:
         scenario: Path to scenario YAML
         run_id: Unique run identifier
-        registry_address: Address of shared registry (for now, just a marker)
+        registry_host: Host for registry server
+        registry_port: Port for registry server
+        registry_authkey: Auth key (hex-encoded) for registry server
         buffer_id: Buffer ID for this run
         cross_sample_ratio: Fraction of samples from distributed pool
         strategy: Sampling strategy
@@ -82,6 +86,10 @@ def launch_training_process(
     env['DISTRIBUTED_CROSS_SAMPLE_RATIO'] = str(cross_sample_ratio)
     env['DISTRIBUTED_STRATEGY'] = strategy
     env['RUN_ID'] = run_id
+    if registry_host and registry_port and registry_authkey:
+        env['DISTRIBUTED_REGISTRY_HOST'] = registry_host
+        env['DISTRIBUTED_REGISTRY_PORT'] = str(registry_port)
+        env['DISTRIBUTED_REGISTRY_AUTHKEY'] = registry_authkey
 
     # Build command
     cmd = [
@@ -269,14 +277,19 @@ def main():
     print("="*80)
 
     # Create distributed registry
+    registry_host = None
+    registry_port = None
+    registry_authkey = None
     if args.strategy != 'local_only':
         print("\n🔧 Starting distributed buffer registry...")
-        registry = create_distributed_registry(max_buffer_size=args.buffer_size)
-        registry_address = "local"  # For now, using multiprocessing Manager
+        registry, address, authkey = start_registry_server(
+            max_buffer_size=args.buffer_size,
+        )
+        registry_host, registry_port = address
+        registry_authkey = authkey.hex()
     else:
         print("\n⚠ Distributed sharing disabled (local_only mode)")
         registry = None
-        registry_address = None
 
     # Register buffers for each run
     buffer_ids = []
@@ -304,7 +317,9 @@ def main():
         proc = launch_training_process(
             scenario=scenarios[i],
             run_id=run_ids[i],
-            registry_address=registry_address,
+            registry_host=registry_host,
+            registry_port=registry_port,
+            registry_authkey=registry_authkey,
             buffer_id=buffer_ids[i],
             cross_sample_ratio=args.cross_sample_ratio,
             strategy=args.strategy,
