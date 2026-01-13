@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import torch as th
 import torch.nn as nn
+import torch.nn.functional as F
 import gymnasium as gym
 from gymnasium import spaces
 
@@ -15,6 +16,7 @@ try:
     from stable_baselines3 import SAC, TD3, PPO, DDPG, A2C
     from stable_baselines3.common.buffers import ReplayBuffer
     from stable_baselines3.common.logger import configure
+    from stable_baselines3.common.utils import polyak_update
     SB3_AVAILABLE = True
 except ImportError:
     SB3_AVAILABLE = False
@@ -24,14 +26,12 @@ except ImportError:
 try:
     from sb3_contrib import TQC, QRDQN
     from sb3_contrib.common.utils import quantile_huber_loss
-    from stable_baselines3.common.utils import polyak_update
     TQC_AVAILABLE = True
     QRDQN_AVAILABLE = True
 except ImportError:
     TQC_AVAILABLE = False
     QRDQN_AVAILABLE = False
     quantile_huber_loss = None
-    polyak_update = None
     # Don't warn - contrib algorithms are optional
 
 # Try to import DQN (for discrete actions)
@@ -96,6 +96,39 @@ class DummyDiscreteEnv(gym.Env):
         truncated = False
         info = {}
         return obs, reward, terminated, truncated, info
+
+
+def _parse_per_config(params: Dict[str, Any]) -> Dict[str, Any]:
+    per_cfg = params.get('per', {}) or {}
+    return {
+        'enabled': bool(per_cfg.get('enabled', False)),
+        'alpha': float(per_cfg.get('alpha', 0.6)),
+        'beta_start': float(per_cfg.get('beta', per_cfg.get('beta_start', 0.4))),
+        'beta_final': float(per_cfg.get('beta_final', per_cfg.get('beta_end', 1.0))),
+        'beta_anneal_steps': int(per_cfg.get('beta_anneal_steps', 100_000)),
+        'eps': float(per_cfg.get('epsilon', per_cfg.get('eps', 1e-6))),
+        'max_priority': float(per_cfg.get('max_priority', 1.0)),
+        'normalize_weights': bool(per_cfg.get('normalize_weights', True)),
+    }
+
+
+def _resolve_per_weights(replay_data: Any, batch_size: int) -> tuple[th.Tensor, Optional[np.ndarray]]:
+    weights = getattr(replay_data, "weights", None)
+    indices = getattr(replay_data, "indices", None)
+    if weights is None:
+        device = replay_data.observations.device
+        weights = th.ones((batch_size, 1), device=device)
+    return weights, indices
+
+
+def _update_priorities(replay_buffer: Any, indices: Optional[np.ndarray], priorities: th.Tensor) -> None:
+    if indices is None:
+        return
+    update_fn = getattr(replay_buffer, "update_priorities", None)
+    if not callable(update_fn):
+        return
+    priorities_np = priorities.detach().cpu().numpy().reshape(-1)
+    update_fn(indices, priorities_np)
 
 
 class SB3AgentBase:
@@ -169,7 +202,8 @@ class SB3AgentBase:
         hidden_dims = params.get('hidden_dims', [256, 256])
         pi_dims = params.get('pi_hidden_dims')
         qf_dims = params.get('qf_hidden_dims')
-        supports_split = self.model_class.__name__ in {"SAC", "TD3", "TQC", "DDPG"}
+        model_name = self.model_class.__name__.replace("WithPER", "")
+        supports_split = model_name in {"SAC", "TD3", "TQC", "DDPG"}
         if supports_split and (pi_dims is not None or qf_dims is not None):
             if pi_dims is None:
                 pi_dims = hidden_dims
@@ -221,11 +255,36 @@ class SB3AgentBase:
         else:
             self.her_distance_clip = None
 
+        # Prioritized Experience Replay (optional, off-policy only)
+        per_cfg = _parse_per_config(params)
+        self.per_enabled = bool(per_cfg['enabled'])
+        self.per_alpha = float(per_cfg['alpha'])
+        self.per_beta_start = float(per_cfg['beta_start'])
+        self.per_beta_final = float(per_cfg['beta_final'])
+        self.per_beta_anneal_steps = int(per_cfg['beta_anneal_steps'])
+        self.per_eps = float(per_cfg['eps'])
+        self.per_max_priority = float(per_cfg['max_priority'])
+        self.per_normalize_weights = bool(per_cfg['normalize_weights'])
+
         # Model creation deferred to subclass (after algorithm-specific params set)
 
     def _create_model(self, env):
         """Create SB3 model (called on first act())."""
         raise NotImplementedError
+
+    def _get_per_replay_buffer(self) -> tuple[Optional[type], Optional[Dict[str, Any]]]:
+        if not self.per_enabled:
+            return None, None
+        replay_buffer_kwargs = {
+            "alpha": self.per_alpha,
+            "beta": self.per_beta_start,
+            "beta_final": self.per_beta_final,
+            "beta_anneal_steps": self.per_beta_anneal_steps,
+            "eps": self.per_eps,
+            "max_priority": self.per_max_priority,
+            "normalize_weights": self.per_normalize_weights,
+        }
+        return PrioritizedReplayBuffer, replay_buffer_kwargs
 
     def _setup_logger(self):
         """Set up a basic logger for the model."""
@@ -525,6 +584,352 @@ def _quantile_huber_loss_per_sample(
     return loss.mean(dim=reduce_dims)
 
 
+if SB3_AVAILABLE and polyak_update is not None:
+    class SACWithPER(SAC):
+        """SAC variant that applies PER weights and priority updates."""
+
+        def train(self, gradient_steps: int, batch_size: int = 64) -> None:
+            self.policy.set_training_mode(True)
+            optimizers = [self.actor.optimizer, self.critic.optimizer]
+            if self.ent_coef_optimizer is not None:
+                optimizers += [self.ent_coef_optimizer]
+
+            self._update_learning_rate(optimizers)
+
+            ent_coef_losses, ent_coefs = [], []
+            actor_losses, critic_losses = [], []
+
+            for gradient_step in range(gradient_steps):
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                weights, indices = _resolve_per_weights(replay_data, batch_size)
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                if self.use_sde:
+                    self.actor.reset_noise()
+
+                actions_pi, log_prob = self.actor.action_log_prob(replay_data.observations)
+                log_prob = log_prob.reshape(-1, 1)
+
+                ent_coef_loss = None
+                if self.ent_coef_optimizer is not None and self.log_ent_coef is not None:
+                    ent_coef = th.exp(self.log_ent_coef.detach())
+                    ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()
+                    ent_coef_losses.append(ent_coef_loss.item())
+                else:
+                    ent_coef = self.ent_coef_tensor
+
+                ent_coefs.append(ent_coef.item())
+
+                if ent_coef_loss is not None and self.ent_coef_optimizer is not None:
+                    self.ent_coef_optimizer.zero_grad()
+                    ent_coef_loss.backward()
+                    self.ent_coef_optimizer.step()
+
+                with th.no_grad():
+                    next_actions, next_log_prob = self.actor.action_log_prob(replay_data.next_observations)
+                    next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
+                    next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                    next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+                    target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+
+                current_q_values = self.critic(replay_data.observations, replay_data.actions)
+
+                td_errors = []
+                per_losses = []
+                for current_q in current_q_values:
+                    td_error = target_q_values - current_q
+                    td_errors.append(td_error)
+                    per_loss = F.mse_loss(current_q, target_q_values, reduction="none")
+                    per_losses.append(per_loss)
+
+                critic_loss = 0.5 * sum((per_loss * weights).mean() for per_loss in per_losses)
+                critic_losses.append(critic_loss.item())
+
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic.optimizer.step()
+
+                q_values_pi = th.cat(self.critic(replay_data.observations, actions_pi), dim=1)
+                min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
+                actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+                actor_losses.append(actor_loss.item())
+
+                self.actor.optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor.optimizer.step()
+
+                if gradient_step % self.target_update_interval == 0:
+                    polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                    polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+
+                if td_errors:
+                    td_stack = th.stack([th.abs(td) for td in td_errors], dim=1)
+                    td_priority = td_stack.mean(dim=1)
+                    _update_priorities(self.replay_buffer, indices, td_priority)
+
+            self._n_updates += gradient_steps
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            self.logger.record("train/ent_coef", np.mean(ent_coefs))
+            self.logger.record("train/actor_loss", np.mean(actor_losses))
+            self.logger.record("train/critic_loss", np.mean(critic_losses))
+            if len(ent_coef_losses) > 0:
+                self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
+
+
+    class TD3WithPER(TD3):
+        """TD3 variant that applies PER weights and priority updates."""
+
+        def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+            self.policy.set_training_mode(True)
+            self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
+
+            actor_losses, critic_losses = [], []
+            for _ in range(gradient_steps):
+                self._n_updates += 1
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                weights, indices = _resolve_per_weights(replay_data, batch_size)
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                with th.no_grad():
+                    noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
+                    noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
+                    next_actions = (self.actor_target(replay_data.next_observations) + noise).clamp(-1, 1)
+
+                    next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
+                    next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                    target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+
+                current_q_values = self.critic(replay_data.observations, replay_data.actions)
+
+                td_errors = []
+                per_losses = []
+                for current_q in current_q_values:
+                    td_error = target_q_values - current_q
+                    td_errors.append(td_error)
+                    per_loss = F.mse_loss(current_q, target_q_values, reduction="none")
+                    per_losses.append(per_loss)
+
+                critic_loss = sum((per_loss * weights).mean() for per_loss in per_losses)
+                critic_losses.append(critic_loss.item())
+
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic.optimizer.step()
+
+                if self._n_updates % self.policy_delay == 0:
+                    actor_loss = -self.critic.q1_forward(
+                        replay_data.observations,
+                        self.actor(replay_data.observations)
+                    ).mean()
+                    actor_losses.append(actor_loss.item())
+
+                    self.actor.optimizer.zero_grad()
+                    actor_loss.backward()
+                    self.actor.optimizer.step()
+
+                    polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                    polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
+                    polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
+                    polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
+
+                if td_errors:
+                    td_stack = th.stack([th.abs(td) for td in td_errors], dim=1)
+                    td_priority = td_stack.mean(dim=1)
+                    _update_priorities(self.replay_buffer, indices, td_priority)
+
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            if len(actor_losses) > 0:
+                self.logger.record("train/actor_loss", np.mean(actor_losses))
+            self.logger.record("train/critic_loss", np.mean(critic_losses))
+
+
+    class DDPGWithPER(DDPG):
+        """DDPG variant that applies PER weights and priority updates."""
+
+        def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+            self.policy.set_training_mode(True)
+            self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
+
+            actor_losses, critic_losses = [], []
+            for _ in range(gradient_steps):
+                self._n_updates += 1
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                weights, indices = _resolve_per_weights(replay_data, batch_size)
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                with th.no_grad():
+                    noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
+                    noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
+                    next_actions = (self.actor_target(replay_data.next_observations) + noise).clamp(-1, 1)
+
+                    next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
+                    next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                    target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+
+                current_q_values = self.critic(replay_data.observations, replay_data.actions)
+
+                td_errors = []
+                per_losses = []
+                for current_q in current_q_values:
+                    td_error = target_q_values - current_q
+                    td_errors.append(td_error)
+                    per_loss = F.mse_loss(current_q, target_q_values, reduction="none")
+                    per_losses.append(per_loss)
+
+                critic_loss = sum((per_loss * weights).mean() for per_loss in per_losses)
+                critic_losses.append(critic_loss.item())
+
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic.optimizer.step()
+
+                if self._n_updates % self.policy_delay == 0:
+                    actor_loss = -self.critic.q1_forward(
+                        replay_data.observations,
+                        self.actor(replay_data.observations)
+                    ).mean()
+                    actor_losses.append(actor_loss.item())
+
+                    self.actor.optimizer.zero_grad()
+                    actor_loss.backward()
+                    self.actor.optimizer.step()
+
+                    polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                    polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
+                    polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
+                    polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
+
+                if td_errors:
+                    td_stack = th.stack([th.abs(td) for td in td_errors], dim=1)
+                    td_priority = td_stack.mean(dim=1)
+                    _update_priorities(self.replay_buffer, indices, td_priority)
+
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            if len(actor_losses) > 0:
+                self.logger.record("train/actor_loss", np.mean(actor_losses))
+            self.logger.record("train/critic_loss", np.mean(critic_losses))
+
+
+    if DQN_AVAILABLE:
+        class DQNWithPER(DQN):
+            """DQN variant that applies PER weights and priority updates."""
+
+            def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+                self.policy.set_training_mode(True)
+                self._update_learning_rate(self.policy.optimizer)
+
+                losses = []
+                for _ in range(gradient_steps):
+                    replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                    weights, indices = _resolve_per_weights(replay_data, batch_size)
+                    discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                    with th.no_grad():
+                        next_q_values = self.q_net_target(replay_data.next_observations)
+                        next_q_values, _ = next_q_values.max(dim=1)
+                        next_q_values = next_q_values.reshape(-1, 1)
+                        target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+
+                    current_q_values = self.q_net(replay_data.observations)
+                    current_q_values = th.gather(current_q_values, dim=1, index=replay_data.actions.long())
+
+                    per_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction="none")
+                    loss = (per_loss * weights).mean()
+                    losses.append(loss.item())
+
+                    td_errors = th.abs(target_q_values - current_q_values)
+                    _update_priorities(self.replay_buffer, indices, td_errors)
+
+                    self.policy.optimizer.zero_grad()
+                    loss.backward()
+                    th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                    self.policy.optimizer.step()
+
+                self._n_updates += gradient_steps
+                self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+                self.logger.record("train/loss", np.mean(losses))
+
+
+    if QRDQN_AVAILABLE:
+        class QRDQNWithPER(QRDQN):
+            """QR-DQN variant that applies PER weights and priority updates."""
+
+            def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+                if not hasattr(self, "quantile_net") or not hasattr(self, "quantile_net_target"):
+                    return super().train(gradient_steps, batch_size=batch_size)
+
+                self.policy.set_training_mode(True)
+                self._update_learning_rate(self.policy.optimizer)
+
+                losses = []
+                for _ in range(gradient_steps):
+                    replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+                    weights, indices = _resolve_per_weights(replay_data, batch_size)
+                    discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                    quantiles = self.quantile_net(replay_data.observations)
+                    next_quantiles = self.quantile_net_target(replay_data.next_observations)
+
+                    n_quantiles = getattr(self, "n_quantiles", None)
+                    if n_quantiles is None:
+                        if quantiles.ndim == 3:
+                            n_quantiles = quantiles.shape[1]
+                        else:
+                            n_quantiles = quantiles.shape[-1]
+
+                    if quantiles.ndim == 3:
+                        if quantiles.shape[1] == n_quantiles:
+                            action_idx = replay_data.actions.long().unsqueeze(1).expand(-1, n_quantiles, -1)
+                            current_quantiles = quantiles.gather(2, action_idx).squeeze(2)
+                        elif quantiles.shape[2] == n_quantiles:
+                            action_idx = replay_data.actions.long().unsqueeze(-1).expand(-1, -1, n_quantiles)
+                            current_quantiles = quantiles.gather(1, action_idx).squeeze(1)
+                        else:
+                            current_quantiles = quantiles.mean(dim=-1)
+                    elif quantiles.ndim == 2:
+                        current_quantiles = quantiles
+                    else:
+                        return super().train(gradient_steps, batch_size=batch_size)
+
+                    if next_quantiles.ndim == 3:
+                        if next_quantiles.shape[1] == n_quantiles:
+                            next_q_values = next_quantiles.mean(dim=1)
+                            next_actions = next_q_values.max(dim=1)[1]
+                            next_quantiles = next_quantiles.gather(
+                                2, next_actions.view(-1, 1, 1).expand(-1, n_quantiles, 1)
+                            ).squeeze(2)
+                        elif next_quantiles.shape[2] == n_quantiles:
+                            next_q_values = next_quantiles.mean(dim=2)
+                            next_actions = next_q_values.max(dim=1)[1]
+                            next_quantiles = next_quantiles.gather(
+                                1, next_actions.view(-1, 1, 1).expand(-1, 1, n_quantiles)
+                            ).squeeze(1)
+                    elif next_quantiles.ndim == 2:
+                        next_quantiles = next_quantiles
+
+                    target_quantiles = replay_data.rewards + (1 - replay_data.dones) * discounts * next_quantiles
+
+                    current_quantiles = current_quantiles.unsqueeze(1)
+                    target_quantiles = target_quantiles.unsqueeze(1)
+                    per_sample_loss = _quantile_huber_loss_per_sample(current_quantiles, target_quantiles)
+                    loss = (per_sample_loss * weights.squeeze(-1)).mean()
+                    losses.append(loss.item())
+
+                    td_errors = th.abs(target_quantiles - current_quantiles).mean(dim=(1, 2))
+                    _update_priorities(self.replay_buffer, indices, td_errors)
+
+                    self.policy.optimizer.zero_grad()
+                    loss.backward()
+                    max_grad_norm = getattr(self, "max_grad_norm", None)
+                    if max_grad_norm is not None:
+                        th.nn.utils.clip_grad_norm_(self.policy.parameters(), max_grad_norm)
+                    self.policy.optimizer.step()
+
+                self._n_updates += gradient_steps
+                self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+                self.logger.record("train/loss", np.mean(losses))
+
+
 if TQC_AVAILABLE and quantile_huber_loss is not None and polyak_update is not None:
     class TQCWithPER(TQC):
         """TQC variant that supports prioritized replay buffers."""
@@ -659,9 +1064,11 @@ class SB3SACAgent(SB3AgentBase):
         params = cfg.get('params', {})
         self.ent_coef = params.get('ent_coef', 'auto')
         self.target_entropy = params.get('target_entropy', 'auto')
+        per_enabled = _parse_per_config(params)['enabled']
 
         # Now initialize base class
-        super().__init__(cfg, SAC)
+        model_class = SACWithPER if per_enabled else SAC
+        super().__init__(cfg, model_class)
 
         # Create model after all attributes are set
         dummy_env = DummyEnv(self.obs_dim, self.action_low, self.action_high)
@@ -669,7 +1076,8 @@ class SB3SACAgent(SB3AgentBase):
 
     def _create_model(self, env):
         """Create SAC model."""
-        self.model = SAC(
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
+        self.model = self.model_class(
             policy='MlpPolicy',
             env=env,
             learning_rate=self.learning_rate,
@@ -680,6 +1088,8 @@ class SB3SACAgent(SB3AgentBase):
             learning_starts=self.learning_starts,
             ent_coef=self.ent_coef,
             target_entropy=self.target_entropy,
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,
             device=self.device,
             verbose=0,
@@ -741,9 +1151,11 @@ class SB3TD3Agent(SB3AgentBase):
         self.target_noise_clip = params.get('target_noise_clip', 0.5)  # Clip range [-c, c]
         self.action_noise_sigma = params.get('action_noise_sigma', 0.1)
         self.action_noise = None
+        per_enabled = _parse_per_config(params)['enabled']
 
         # Initialize base class (sets up common parameters)
-        super().__init__(cfg, TD3)
+        model_class = TD3WithPER if per_enabled else TD3
+        super().__init__(cfg, model_class)
 
         # Create TD3 model with dummy environment
         dummy_env = DummyEnv(self.obs_dim, self.action_low, self.action_high)
@@ -773,7 +1185,8 @@ class SB3TD3Agent(SB3AgentBase):
             )
         self.action_noise = action_noise
 
-        self.model = TD3(
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
+        self.model = self.model_class(
             policy='MlpPolicy',  # Deterministic policy network
             env=env,
             learning_rate=self.learning_rate,  # Adam LR for both actor and critics
@@ -786,6 +1199,8 @@ class SB3TD3Agent(SB3AgentBase):
             target_policy_noise=self.target_policy_noise,  # Target smoothing noise std
             target_noise_clip=self.target_noise_clip,  # Target noise clipping range
             action_noise=action_noise,  # Exploration noise (unused in predict path)
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,  # Network architecture
             device=self.device,  # 'cuda' or 'cpu'
             verbose=0,
@@ -808,9 +1223,11 @@ class SB3DDPGAgent(SB3AgentBase):
         # Set DDPG-specific params BEFORE calling super().__init__
         params = cfg.get('params', {})
         self.action_noise_sigma = params.get('action_noise_sigma', 0.1)
+        per_enabled = _parse_per_config(params)['enabled']
 
         # Now initialize base class
-        super().__init__(cfg, DDPG)
+        model_class = DDPGWithPER if per_enabled else DDPG
+        super().__init__(cfg, model_class)
 
         # Create model after all attributes are set
         dummy_env = DummyEnv(self.obs_dim, self.action_low, self.action_high)
@@ -827,7 +1244,8 @@ class SB3DDPGAgent(SB3AgentBase):
             sigma=self.action_noise_sigma * np.ones(n_actions)
         )
 
-        self.model = DDPG(
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
+        self.model = self.model_class(
             policy='MlpPolicy',
             env=env,
             learning_rate=self.learning_rate,
@@ -837,6 +1255,8 @@ class SB3DDPGAgent(SB3AgentBase):
             gamma=self.gamma,
             learning_starts=self.learning_starts,
             action_noise=action_noise,
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,
             device=self.device,
             verbose=0,
@@ -1192,17 +1612,6 @@ class SB3TQCAgent(SB3AgentBase):
         # Default: 2 → uses 23/25 quantiles per critic
         self.top_quantiles_to_drop_per_net = params.get('top_quantiles_to_drop_per_net', 2)
 
-        # Prioritized Experience Replay (optional)
-        per_cfg = params.get('per', {}) or {}
-        self.per_enabled = bool(per_cfg.get('enabled', False))
-        self.per_alpha = float(per_cfg.get('alpha', 0.6))
-        self.per_beta_start = float(per_cfg.get('beta', per_cfg.get('beta_start', 0.4)))
-        self.per_beta_final = float(per_cfg.get('beta_final', per_cfg.get('beta_end', 1.0)))
-        self.per_beta_anneal_steps = int(per_cfg.get('beta_anneal_steps', 100_000))
-        self.per_eps = float(per_cfg.get('epsilon', per_cfg.get('eps', 1e-6)))
-        self.per_max_priority = float(per_cfg.get('max_priority', 1.0))
-        self.per_normalize_weights = bool(per_cfg.get('normalize_weights', True))
-
         # Optional separate learning rates for actor/critic
         self.actor_learning_rate = params.get('actor_learning_rate')
         self.critic_learning_rate = params.get('critic_learning_rate')
@@ -1239,20 +1648,10 @@ class SB3TQCAgent(SB3AgentBase):
         elif use_custom_model:
             print("Warning: custom TQC features unavailable; using standard TQC.")
 
-        replay_buffer_class = PrioritizedReplayBuffer if self.per_enabled else None
-        replay_buffer_kwargs = None
-        if self.per_enabled:
-            replay_buffer_kwargs = {
-                "alpha": self.per_alpha,
-                "beta": self.per_beta_start,
-                "beta_final": self.per_beta_final,
-                "beta_anneal_steps": self.per_beta_anneal_steps,
-                "eps": self.per_eps,
-                "max_priority": self.per_max_priority,
-                "normalize_weights": self.per_normalize_weights,
-            }
+        self.model_class = model_class
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
 
-        self.model = model_class(
+        self.model = self.model_class(
             policy='MlpPolicy',  # Use MLP networks for actor and critics
             env=env,
             learning_rate=self.learning_rate,  # Adam optimizer learning rate
@@ -1303,9 +1702,11 @@ class SB3DQNAgent(SB3AgentBase):
         self.exploration_fraction = params.get('exploration_fraction', 0.1)
         self.exploration_final_eps = params.get('exploration_final_eps', 0.05)
         self.exploration_initial_eps = params.get('exploration_initial_eps', 1.0)
+        per_enabled = _parse_per_config(params)['enabled']
 
         # Now initialize base class
-        super().__init__(cfg, DQN)
+        model_class = DQNWithPER if per_enabled and DQN_AVAILABLE else DQN
+        super().__init__(cfg, model_class)
 
         # Create model after all attributes are set
         dummy_env = DummyDiscreteEnv(self.obs_dim, self.n_discrete_actions)
@@ -1313,7 +1714,8 @@ class SB3DQNAgent(SB3AgentBase):
 
     def _create_model(self, env):
         """Create DQN model."""
-        self.model = DQN(
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
+        self.model = self.model_class(
             policy='MlpPolicy',
             env=env,
             learning_rate=self.learning_rate,
@@ -1325,6 +1727,8 @@ class SB3DQNAgent(SB3AgentBase):
             exploration_fraction=self.exploration_fraction,
             exploration_final_eps=self.exploration_final_eps,
             exploration_initial_eps=self.exploration_initial_eps,
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,
             device=self.device,
             verbose=0,
@@ -1405,9 +1809,11 @@ class SB3QRDQNAgent(SB3AgentBase):
         self.exploration_fraction = params.get('exploration_fraction', 0.1)
         self.exploration_final_eps = params.get('exploration_final_eps', 0.05)
         self.exploration_initial_eps = params.get('exploration_initial_eps', 1.0)
+        per_enabled = _parse_per_config(params)['enabled']
 
         # Now initialize base class
-        super().__init__(cfg, QRDQN)
+        model_class = QRDQNWithPER if per_enabled and QRDQN_AVAILABLE else QRDQN
+        super().__init__(cfg, model_class)
 
         # Create model after all attributes are set
         dummy_env = DummyDiscreteEnv(self.obs_dim, self.n_discrete_actions)
@@ -1415,7 +1821,8 @@ class SB3QRDQNAgent(SB3AgentBase):
 
     def _create_model(self, env):
         """Create QR-DQN model."""
-        self.model = QRDQN(
+        replay_buffer_class, replay_buffer_kwargs = self._get_per_replay_buffer()
+        self.model = self.model_class(
             policy='MlpPolicy',
             env=env,
             learning_rate=self.learning_rate,
@@ -1427,6 +1834,8 @@ class SB3QRDQNAgent(SB3AgentBase):
             exploration_fraction=self.exploration_fraction,
             exploration_final_eps=self.exploration_final_eps,
             exploration_initial_eps=self.exploration_initial_eps,
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
             policy_kwargs=self.policy_kwargs,
             device=self.device,
             verbose=0,
