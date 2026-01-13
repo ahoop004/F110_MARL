@@ -55,6 +55,8 @@ python run_parallel_distributed.py \
 - `--strategy self_heavy`: Sample 80% from own buffer, 20% from others
 - `--wandb`: Enable WandB logging for all runs
 
+**Important**: Each run automatically gets a **different random seed** (base_seed + run_index) to ensure exploration diversity. All runs share the same hyperparameters but explore differently, which is crucial for effective experience sharing.
+
 ### Option 2: Manual Integration
 
 For more control, integrate into your training script:
@@ -195,6 +197,19 @@ python run_parallel_distributed.py \
     --n_parallel 4 \
     --gpus 0 1 0 1  # Runs 1,3 on GPU 0, runs 2,4 on GPU 1
 ```
+
+### Seed Control
+
+By default, runs get seeds 42, 43, 44, 45... for exploration diversity. You can change the base seed:
+
+```bash
+python run_parallel_distributed.py \
+    --scenario scenarios/sac.yaml \
+    --n_parallel 4 \
+    --base_seed 100  # Runs get seeds 100, 101, 102, 103
+```
+
+**Why different seeds matter**: If all runs used the same seed, they would explore identically and collect the same experiences, making the shared buffer useless! Different seeds ensure each run explores differently while maintaining the same hyperparameters.
 
 ### Monitor Buffer Statistics
 

@@ -52,6 +52,7 @@ def launch_training_process(
     buffer_id: str,
     cross_sample_ratio: float,
     strategy: str,
+    seed: int,
     gpu_id: Optional[int] = None,
     wandb: bool = True,
     extra_args: Optional[List[str]] = None,
@@ -65,6 +66,7 @@ def launch_training_process(
         buffer_id: Buffer ID for this run
         cross_sample_ratio: Fraction of samples from distributed pool
         strategy: Sampling strategy
+        seed: Random seed for this run (for exploration diversity)
         gpu_id: GPU to use (None = CPU)
         wandb: Enable WandB logging
         extra_args: Additional arguments to pass to training script
@@ -87,6 +89,7 @@ def launch_training_process(
         'run_v2.py',
         '--scenario', scenario,
         '--run_id', run_id,
+        '--seed', str(seed),
     ]
 
     if wandb:
@@ -96,7 +99,7 @@ def launch_training_process(
         cmd.extend(extra_args)
 
     print(f"🚀 Launching {run_id} with buffer {buffer_id}")
-    print(f"   Strategy: {strategy}, Cross-sample ratio: {cross_sample_ratio}")
+    print(f"   Strategy: {strategy}, Cross-sample ratio: {cross_sample_ratio}, Seed: {seed}")
     print(f"   Command: {' '.join(cmd)}")
 
     # Launch process
@@ -204,6 +207,14 @@ def parse_args():
         help='GPU IDs to use (round-robin assignment)',
     )
 
+    # Seed configuration
+    parser.add_argument(
+        '--base_seed',
+        type=int,
+        default=42,
+        help='Base random seed (each run gets base_seed + run_index, default: 42)',
+    )
+
     # Logging
     parser.add_argument(
         '--wandb',
@@ -253,6 +264,7 @@ def main():
     print(f"Cross-sample ratio: {args.cross_sample_ratio}")
     print(f"Strategy: {args.strategy}")
     print(f"Buffer size: {args.buffer_size}")
+    print(f"Base seed: {args.base_seed} (runs get seeds {args.base_seed} to {args.base_seed + n_runs - 1})")
     print(f"GPUs: {args.gpus if args.gpus else 'CPU only'}")
     print("="*80)
 
@@ -287,6 +299,7 @@ def main():
 
     for i in range(n_runs):
         gpu_id = args.gpus[i % len(args.gpus)] if args.gpus else None
+        seed = args.base_seed + i  # Different seed for each run
 
         proc = launch_training_process(
             scenario=scenarios[i],
@@ -295,6 +308,7 @@ def main():
             buffer_id=buffer_ids[i],
             cross_sample_ratio=args.cross_sample_ratio,
             strategy=args.strategy,
+            seed=seed,
             gpu_id=gpu_id,
             wandb=args.wandb,
             extra_args=args.extra_args,
