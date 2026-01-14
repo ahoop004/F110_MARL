@@ -539,6 +539,7 @@ class CurriculumCallback(BaseCallback):
             phase_name = None
             if 0 <= self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")
+            reqs = self._get_eval_requirements(self.current_phase)
 
             phase_success_rate = (
                 sum(self.phase_success_history) / len(self.phase_success_history)
@@ -557,6 +558,9 @@ class CurriculumCallback(BaseCallback):
                 'curriculum/phase_success_rate': phase_success_rate,
                 'curriculum/stage': phase_name,
                 'curriculum/stage_success_rate': phase_success_rate,
+                'curriculum/eval_success_streak': self._get_eval_streak(self.current_phase),
+                'curriculum/criteria_eval_success_rate': reqs["threshold"],
+                'curriculum/criteria_eval_required_runs': reqs["required"],
             }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
     def _apply_phase(self, phase_idx: int):

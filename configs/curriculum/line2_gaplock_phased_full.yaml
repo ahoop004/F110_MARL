@@ -7,6 +7,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       avg_reward: 50.0
       min_episodes: 100
       patience: 1000000
@@ -26,6 +28,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -45,6 +49,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -65,6 +71,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -85,6 +93,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -105,6 +115,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -125,6 +137,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -145,6 +159,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -165,6 +181,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -185,6 +203,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -205,6 +225,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -225,6 +247,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -245,6 +269,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -265,6 +291,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -286,6 +314,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -308,6 +338,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -331,6 +363,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -355,6 +389,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -373,6 +409,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -391,6 +429,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:
@@ -409,6 +449,8 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
+      eval_success_rate: 1.0
+      eval_required_runs: 4
       min_episodes: 100
       patience: 1000000
     spawn:

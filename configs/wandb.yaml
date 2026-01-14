@@ -30,6 +30,9 @@ wandb:
       curriculum/phase_idx: true
       # curriculum/phase_name: true
       # curriculum/phase_success_rate: true
+      curriculum/eval_success_streak: true
+      curriculum/criteria_eval_success_rate: true
+      curriculum/criteria_eval_required_runs: true
       # eval/episode: true
       # eval/episode_reward: true
       # eval/episode_steps: true
