@@ -720,7 +720,7 @@ def main() -> None:
                     eval_every_n_episodes=eval_every,
                     wandb_run=wandb_logger.run if wandb_logger else None,
                     wandb_logging=scenario.get("wandb", {}).get("logging"),
-                    verbose=0,
+                    verbose=1,
                 )
             )
 
