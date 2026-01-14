@@ -7,10 +7,10 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 3500
+  episodes: 10000
   seed: 42
 environment:
-  max_steps: 1000
+  max_steps: 1200
   action_repeat: 2
 agents:
   car_0:
@@ -18,7 +18,7 @@ agents:
     algorithm: sb3_ppo
     target_id: car_1
     params:
-      learning_rate: 0.0003
+      learning_rate: 0.0005
       gamma: 0.999
       n_steps: 2048
       n_epochs: 10
