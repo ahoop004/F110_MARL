@@ -327,9 +327,9 @@ class SB3EvaluationCallback(BaseCallback):
                     spawn_table_data = []
                     for spawn, stats in spawn_stats.items():
                         avg_reward = float(np.mean(stats["rewards"]))
-                        success_rate = float(np.mean(stats["successes"]))
+                        spawn_success_rate = float(np.mean(stats["successes"]))
                         num_eps = len(stats["rewards"])
-                        spawn_table_data.append([spawn, success_rate, avg_reward, num_eps])
+                        spawn_table_data.append([spawn, spawn_success_rate, avg_reward, num_eps])
                     spawn_table = wandb.Table(
                         data=spawn_table_data,
                         columns=["spawn_point", "success_rate", "avg_reward", "num_episodes"]
@@ -345,6 +345,16 @@ class SB3EvaluationCallback(BaseCallback):
                 f"[Eval] success_rate={success_rate:.2%}, "
                 f"avg_reward={avg_reward:.2f}, avg_steps={avg_steps:.1f}"
             )
+            if spawn_stats:
+                per_spawn = []
+                for spawn in sorted(spawn_stats.keys()):
+                    stats = spawn_stats[spawn]
+                    if not stats.get("successes"):
+                        continue
+                    spawn_rate = float(np.mean(stats["successes"]))
+                    per_spawn.append(f"{spawn}={spawn_rate:.2%}")
+                if per_spawn:
+                    print(f"[Eval] per-spawn success_rate: {', '.join(per_spawn)}")
 
     def _build_reset_options(
         self,

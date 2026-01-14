@@ -20,10 +20,10 @@ parameters:
     #   - 64
     # - - 128
     #   - 128
-    - - 256
-      - 256
-    - - 512
-      - 512
+    # - - 256
+    #   - 256
+    # - - 512
+    #   - 512
     # - - 128
     #   - 128
     #   - 128
@@ -40,10 +40,11 @@ parameters:
     #   - 128
     #   - 128
 
-#   activation:
-#     values:
-#     - relu
-#     - silu
+  activation:
+    values:
+    - relu
+    - silu
+    - tanh
 #   n_steps:
 #     values:
 #     - 1024

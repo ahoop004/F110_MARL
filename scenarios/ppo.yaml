@@ -27,8 +27,8 @@ agents:
       ent_coef: 0.0
       activation: tanh
       hidden_dims:
-      - 64
-      - 64
+      - 512
+      - 512
       batch_size: 64
     observation:
       preset: gaplock
