@@ -6,14 +6,20 @@ metric:
   name: eval_agg/success_rate
   goal: maximize
 parameters:
- hidden_dims:
+  activation:
     values:
-    - - 64
-      - 64
-    - - 128
-      - 128
-    - - 256
-      - 256 
+    - relu
+    - silu
+    # - swish
+    - tanh
+#  hidden_dims:
+#     values:
+#     - - 64
+#       - 64
+#     - - 128
+#       - 128
+#     - - 256
+#       - 256 
     # - - 128
     #   - 128
     # - - 256

@@ -47,16 +47,16 @@ parameters:
   #   - 2
   #   - 3
   # Architecture sweeps (uncomment to sweep):
-  hidden_dims:
-    values:
+  # hidden_dims:
+  #   values:
     # - - 64
     #   - 64
     # - - 128
     #   - 128
-    - - 256
-      - 256
-    - - 512
-      - 512
+    # - - 256
+    #   - 256
+    # - - 512
+    #   - 512
   #   - - 256
   #     - 256
   #     - 256
@@ -85,11 +85,11 @@ parameters:
   #     - 256
   #     - 256
   #     - 256
-  # activation:
-  #   values:
-  #   - relu
-  #   - silu
-  #   - tanh
+  activation:
+    values:
+    - relu
+    - silu
+    - tanh
   # HER sweeps (canonical, uncomment to sweep):
   # her.enabled:
   #   values:
