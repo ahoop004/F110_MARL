@@ -175,6 +175,7 @@ def setup_curriculum_from_scenario(
     from .phased_curriculum import PhaseBasedCurriculum
 
     curriculum = PhaseBasedCurriculum.from_config(curriculum_config)
+    curriculum.eval_gate_enabled = bool(getattr(training_loop, "evaluator", None))
 
     # Integrate with training loop
     add_curriculum_to_training_loop(training_loop, curriculum, scenario)

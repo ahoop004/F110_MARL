@@ -17,44 +17,19 @@ agents:
     algorithm: sb3_tqc
     target_id: car_1
     params:
-      # learning_rate: 0.0005
-      actor_learning_rate: 0.0005
-      critic_learning_rate: 0.0005
-      gamma: 0.999
-      tau: 0.001
+      learning_rate: 0.0003
+      gamma: 0.99
+      tau: 0.005
       ent_coef: auto
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2
-      # hidden_dims:
-      # - 256
-      # - 256
-      pi_hidden_dims:
-      - 128
-      - 128
-      - 128
-      - 128
-      # - 256
-      # - 256
-      # - 256
-      # - 256
-      qf_hidden_dims:
-      - 128
-      - 128
-      - 128
-      - 128
-      - 128
-      # - 256
-      # - 256
-      # - 256
-      # - 256
-      # - 256
-
-      activation: tanh
-      # pi_hidden_dims: null
-      # qf_hidden_dims: null
+      hidden_dims:
+      - 64
+      - 64
+      activation: relu
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 256
+      learning_starts: 100
       per:
         enabled: true
         alpha: 0.6

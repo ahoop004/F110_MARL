@@ -18,20 +18,18 @@ agents:
     algorithm: sb3_ppo
     target_id: car_1
     params:
-      learning_rate: 0.0005
-      gamma: 0.999
+      learning_rate: 0.0003
+      gamma: 0.99
       n_steps: 2048
       n_epochs: 10
       gae_lambda: 0.95
       clip_range: 0.2
-      ent_coef: 0.02
-      activation: silu
+      ent_coef: 0.0
+      activation: tanh
       hidden_dims:
-      - 256
-      - 256
-      - 256
-      - 256
-      batch_size: 256
+      - 64
+      - 64
+      batch_size: 64
     observation:
       preset: gaplock
 wandb:

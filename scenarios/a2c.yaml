@@ -11,22 +11,22 @@ experiment:
   seed: 42
 environment:
   action_repeat: 2
-  max_steps: 1000
+  max_steps: 1200
 agents:
   car_0:
     role: attacker
     algorithm: sb3_a2c
     target_id: car_1
     params:
-      learning_rate: 0.0003
+      learning_rate: 0.0004
       gamma: 0.995
       n_steps: 5
       gae_lambda: 1.0
       ent_coef: 0.0
       vf_coef: 0.5
       hidden_dims:
-      - 256
-      - 256
+      - 64
+      - 64
     observation:
       preset: gaplock
 wandb:

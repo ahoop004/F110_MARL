@@ -41,6 +41,8 @@ class AdvancementCriteria:
         max_self_crash_rate: Maximum allowed self-crash rate (0.0-1.0)
         max_collision_rate: Maximum allowed collision rate (0.0-1.0)
         max_target_finish_rate: Maximum allowed target-finish rate (0.0-1.0)
+        eval_success_rate: Required eval success rate for advancement (0.0-1.0)
+        eval_required_runs: Required consecutive eval runs meeting eval_success_rate
     """
     success_rate: float = 0.70
     avg_reward: Optional[float] = None
@@ -54,6 +56,8 @@ class AdvancementCriteria:
     max_self_crash_rate: Optional[float] = None
     max_collision_rate: Optional[float] = None
     max_target_finish_rate: Optional[float] = None
+    eval_success_rate: float = 1.0
+    eval_required_runs: int = 4
 
 
 @dataclass
@@ -107,6 +111,7 @@ class CurriculumState:
         reward_history: Recent episode rewards
         phase_start_episode: Global episode number when phase started
         advancement_log: History of phase advancements and regressions
+        eval_success_streak: Consecutive eval runs meeting eval criteria
     """
     current_phase_idx: int = 0
     episodes_in_phase: int = 0
@@ -115,6 +120,7 @@ class CurriculumState:
     reward_history: deque = field(default_factory=lambda: deque(maxlen=100))
     phase_start_episode: int = 0
     advancement_log: List[Dict[str, Any]] = field(default_factory=list)
+    eval_success_streak: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize state for checkpointing."""
@@ -126,6 +132,7 @@ class CurriculumState:
             'reward_history': list(self.reward_history),
             'phase_start_episode': self.phase_start_episode,
             'advancement_log': self.advancement_log,
+            'eval_success_streak': self.eval_success_streak,
         }
 
     @classmethod
@@ -140,6 +147,7 @@ class CurriculumState:
             episodes_in_phase=data['episodes_in_phase'],
             phase_start_episode=data['phase_start_episode'],
             advancement_log=data.get('advancement_log', []),
+            eval_success_streak=data.get('eval_success_streak', 0),
         )
         state.success_history = deque(success_history, maxlen=history_len)
         state.outcome_history = deque(outcome_history, maxlen=history_len)
@@ -183,6 +191,7 @@ class PhaseBasedCurriculum:
 
         self.phases = phases
         self.state = CurriculumState(current_phase_idx=start_phase)
+        self.eval_gate_enabled = True
         self._warned_performance_drop = False
         self._reset_phase_histories(self.get_current_phase().criteria.window_size)
 
@@ -212,6 +221,8 @@ class PhaseBasedCurriculum:
                 max_self_crash_rate=criteria_config.get('max_self_crash_rate'),
                 max_collision_rate=criteria_config.get('max_collision_rate'),
                 max_target_finish_rate=criteria_config.get('max_target_finish_rate'),
+                eval_success_rate=criteria_config.get('eval_success_rate', 1.0),
+                eval_required_runs=criteria_config.get('eval_required_runs', 4),
             )
 
             phase = Phase(
@@ -290,6 +301,93 @@ class PhaseBasedCurriculum:
 
         return mixed_config
 
+    def record_eval_result(self, success_rate: float) -> int:
+        """Record evaluation success rate for eval gating.
+
+        Returns:
+            Updated eval success streak.
+        """
+        if not self.eval_gate_enabled:
+            return 0
+        criteria = self.get_current_phase().criteria
+        if success_rate >= criteria.eval_success_rate:
+            self.state.eval_success_streak += 1
+        else:
+            self.state.eval_success_streak = 0
+        return self.state.eval_success_streak
+
+    def _eval_gate_satisfied(self) -> bool:
+        if not self.eval_gate_enabled:
+            return True
+        criteria = self.get_current_phase().criteria
+        required = max(0, int(criteria.eval_required_runs))
+        if required == 0:
+            return True
+        return self.state.eval_success_streak >= required
+
+    def _compute_advancement_status(self) -> Optional[Dict[str, Any]]:
+        """Compute training criteria stats for advancement."""
+        phase = self.get_current_phase()
+        criteria = phase.criteria
+
+        if self.state.episodes_in_phase < criteria.min_episodes:
+            return None
+
+        window_size = min(criteria.window_size, len(self.state.success_history))
+        if window_size == 0:
+            return None
+
+        recent_successes = list(self.state.success_history)[-window_size:]
+        recent_rewards = list(self.state.reward_history)[-window_size:]
+
+        success_rate = float(np.mean(recent_successes))
+        avg_reward = float(np.mean(recent_rewards))
+
+        criteria_met = success_rate >= criteria.success_rate
+        if criteria.avg_reward is not None:
+            criteria_met = criteria_met and avg_reward >= criteria.avg_reward
+
+        caps_met = True
+        recent_outcomes = list(self.state.outcome_history)[-window_size:]
+        if recent_outcomes:
+            total_outcomes = len(recent_outcomes)
+            outcome_counts = {
+                'self_crash': recent_outcomes.count('self_crash'),
+                'collision': recent_outcomes.count('collision'),
+                'target_finish': recent_outcomes.count('target_finish'),
+            }
+            if criteria.max_self_crash_rate is not None:
+                caps_met = caps_met and (
+                    outcome_counts['self_crash'] / total_outcomes <= criteria.max_self_crash_rate
+                )
+            if criteria.max_collision_rate is not None:
+                caps_met = caps_met and (
+                    outcome_counts['collision'] / total_outcomes <= criteria.max_collision_rate
+                )
+            if criteria.max_target_finish_rate is not None:
+                caps_met = caps_met and (
+                    outcome_counts['target_finish'] / total_outcomes <= criteria.max_target_finish_rate
+                )
+
+        forced = self.state.episodes_in_phase >= criteria.patience
+
+        return {
+            "success_rate": success_rate,
+            "avg_reward": avg_reward,
+            "criteria_met": criteria_met,
+            "caps_met": caps_met,
+            "forced": forced,
+        }
+
+    def is_eval_ready(self) -> bool:
+        """Return True when training criteria met and eval gate not satisfied."""
+        status = self._compute_advancement_status()
+        if not status:
+            return False
+        if not status["criteria_met"] or not status["caps_met"]:
+            return False
+        return not self._eval_gate_satisfied()
+
     def is_complete(self) -> bool:
         """Check if all phases completed."""
         return self.state.current_phase_idx >= len(self.phases) - 1
@@ -342,63 +440,22 @@ class PhaseBasedCurriculum:
         Returns:
             Advancement info dict if advancing, None otherwise
         """
-        phase = self.get_current_phase()
-        criteria = phase.criteria
-
-        # Must have minimum episodes
-        if self.state.episodes_in_phase < criteria.min_episodes:
+        status = self._compute_advancement_status()
+        if not status:
             return None
 
-        # Calculate metrics over window
-        window_size = min(criteria.window_size, len(self.state.success_history))
-        if window_size == 0:
+        if not status["criteria_met"] or not status["caps_met"]:
             return None
 
-        recent_successes = list(self.state.success_history)[-window_size:]
-        recent_rewards = list(self.state.reward_history)[-window_size:]
+        if not self._eval_gate_satisfied():
+            return None
 
-        success_rate = np.mean(recent_successes)
-        avg_reward = np.mean(recent_rewards)
-
-        # Check advancement criteria
-        forced = self.state.episodes_in_phase >= criteria.patience
-
-        criteria_met = success_rate >= criteria.success_rate
-        if criteria.avg_reward is not None:
-            criteria_met = criteria_met and avg_reward >= criteria.avg_reward
-
-        # Apply explicit outcome caps when configured
-        caps_met = True
-        recent_outcomes = list(self.state.outcome_history)[-window_size:]
-        if recent_outcomes:
-            total_outcomes = len(recent_outcomes)
-            outcome_counts = {
-                'self_crash': recent_outcomes.count('self_crash'),
-                'collision': recent_outcomes.count('collision'),
-                'target_finish': recent_outcomes.count('target_finish'),
-            }
-            if criteria.max_self_crash_rate is not None:
-                caps_met = caps_met and (
-                    outcome_counts['self_crash'] / total_outcomes <= criteria.max_self_crash_rate
-                )
-            if criteria.max_collision_rate is not None:
-                caps_met = caps_met and (
-                    outcome_counts['collision'] / total_outcomes <= criteria.max_collision_rate
-                )
-            if criteria.max_target_finish_rate is not None:
-                caps_met = caps_met and (
-                    outcome_counts['target_finish'] / total_outcomes <= criteria.max_target_finish_rate
-                )
-
-        should_advance = (forced or criteria_met) and caps_met
-
-        if should_advance:
-            return self._advance_phase(
-                episode_num=episode_num,
-                success_rate=success_rate,
-                avg_reward=avg_reward,
-                forced=forced,
-            )
+        return self._advance_phase(
+            episode_num=episode_num,
+            success_rate=status["success_rate"],
+            avg_reward=status["avg_reward"],
+            forced=status["forced"],
+        )
 
         return None
 
@@ -484,6 +541,7 @@ class PhaseBasedCurriculum:
         # Reset phase tracking
         self.state.episodes_in_phase = 0
         self.state.phase_start_episode = episode_num
+        self.state.eval_success_streak = 0
         self._warned_performance_drop = False
         self._reset_phase_histories(new_phase.criteria.window_size)
 
@@ -523,6 +581,7 @@ class PhaseBasedCurriculum:
         # Reset phase tracking
         self.state.episodes_in_phase = 0
         self.state.phase_start_episode = episode_num
+        self.state.eval_success_streak = 0
         self._warned_performance_drop = False
         self._reset_phase_histories(new_phase.criteria.window_size)
 
@@ -578,6 +637,9 @@ class PhaseBasedCurriculum:
             'curriculum/episodes_in_phase': self.state.episodes_in_phase,
             'curriculum/total_phases': len(self.phases),
             'curriculum/progress': self.state.current_phase_idx / max(1, len(self.phases) - 1),
+            'curriculum/eval_success_streak': self.state.eval_success_streak,
+            'curriculum/criteria_eval_success_rate': phase.criteria.eval_success_rate,
+            'curriculum/criteria_eval_required_runs': phase.criteria.eval_required_runs,
         }
 
         # Add rolling metrics if we have data

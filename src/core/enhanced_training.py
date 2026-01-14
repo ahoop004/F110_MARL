@@ -1163,9 +1163,21 @@ class EnhancedTrainingLoop:
         """
         if not self.evaluator:
             return
+        if getattr(self, "phased_curriculum", None) and getattr(self.phased_curriculum, "eval_gate_enabled", False):
+            is_eval_ready = getattr(self.phased_curriculum, "is_eval_ready", None)
+            if callable(is_eval_ready) and not is_eval_ready():
+                return
 
         # Track which training episode triggered this eval
         self.last_eval_training_episode = episode_num
+
+        original_eval_config = None
+        if getattr(self, "phased_curriculum", None):
+            phase_config = self.phased_curriculum.get_current_phase().to_dict()
+            phase_eval_config = self._build_phase_eval_config(phase_config)
+            if phase_eval_config is not None:
+                original_eval_config = self.evaluator.config
+                self.evaluator.config = phase_eval_config
 
         if self.console_logger:
             self.console_logger.print_info(
@@ -1239,6 +1251,17 @@ class EnhancedTrainingLoop:
             verbose=False,
             on_episode_end=_handle_eval_episode,
         )
+        if getattr(self, "phased_curriculum", None):
+            record_eval = getattr(self.phased_curriculum, "record_eval_result", None)
+            if callable(record_eval):
+                streak = record_eval(eval_result.success_rate)
+                if self.console_logger:
+                    phase = self.phased_curriculum.get_current_phase()
+                    required = phase.criteria.eval_required_runs
+                    self.console_logger.print_info(
+                        f"Eval gate ({phase.name}): success_rate={eval_result.success_rate:.2%}, "
+                        f"streak={streak}/{required}"
+                    )
 
         phase_info = self._get_phase_info()
         eval_training_state = {'eval_result': eval_result.to_dict()}
@@ -1377,6 +1400,56 @@ class EnhancedTrainingLoop:
                     logger.error(
                         f"Failed to save phase-best eval checkpoint at episode {episode_num}: {e}"
                     )
+
+        if original_eval_config is not None:
+            self.evaluator.config = original_eval_config
+
+    def _build_phase_eval_config(self, phase_config: Dict[str, Any]) -> Optional[EvaluationConfig]:
+        """Build evaluation config using exact parameters for the current phase."""
+        if not self.evaluation_config:
+            return None
+
+        spawn_cfg = phase_config.get("spawn", {}) if isinstance(phase_config, dict) else {}
+        spawn_points = spawn_cfg.get("points") or self.evaluation_config.spawn_points
+
+        if spawn_points == "all" or spawn_points == ["all"]:
+            spawn_points = list(getattr(self.evaluator, "spawn_configs", {}).keys())
+
+        if isinstance(spawn_points, (list, tuple)):
+            spawn_points = [p for p in spawn_points if p in getattr(self.evaluator, "spawn_configs", {})]
+        if not spawn_points:
+            spawn_points = list(self.evaluation_config.spawn_points)
+
+        speed_range = spawn_cfg.get("speed_range")
+        if isinstance(speed_range, (list, tuple)) and len(speed_range) == 2 and spawn_points:
+            try:
+                min_speed = float(speed_range[0])
+                max_speed = float(speed_range[1])
+            except (TypeError, ValueError):
+                min_speed = None
+                max_speed = None
+            if min_speed is not None and max_speed is not None:
+                if min_speed == max_speed or len(spawn_points) == 1:
+                    spawn_speeds = [min_speed] * len(spawn_points)
+                else:
+                    spawn_speeds = list(np.linspace(min_speed, max_speed, len(spawn_points)))
+            else:
+                spawn_speeds = list(self.evaluation_config.spawn_speeds)
+        else:
+            spawn_speeds = list(self.evaluation_config.spawn_speeds)
+
+        lock_speed_steps = phase_config.get("lock_speed_steps", self.evaluation_config.lock_speed_steps)
+        ftg_override = phase_config.get("ftg", {}) if isinstance(phase_config, dict) else {}
+
+        return EvaluationConfig(
+            num_episodes=self.evaluation_config.num_episodes,
+            deterministic=self.evaluation_config.deterministic,
+            spawn_points=list(spawn_points),
+            spawn_speeds=list(spawn_speeds),
+            lock_speed_steps=int(lock_speed_steps),
+            ftg_override=ftg_override,
+            max_steps=self.evaluation_config.max_steps,
+        )
 
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.

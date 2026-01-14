@@ -25,8 +25,8 @@ agents:
       ent_coef: auto  # Automatic entropy tuning
       target_entropy: auto
       hidden_dims:
-      - 256
-      - 256
+      - 64
+      - 64
       activation: relu
       buffer_size: 1000000
       batch_size: 256

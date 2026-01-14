@@ -667,22 +667,23 @@ def main() -> None:
             if isinstance(schedule, dict):
                 ftg_schedules[agent_id] = schedule
 
-    curriculum_config = scenario.get("curriculum")
-    if curriculum_config or spawn_curriculum:
-        callbacks.append(
-            CurriculumCallback(
-                curriculum_config=curriculum_config,
-                spawn_curriculum=spawn_curriculum,
-                ftg_agents=ftg_agents,
-                ftg_schedules=ftg_schedules,
-                env_wrapper=sb3_env,
-                wandb_run=wandb_logger.run if wandb_logger else None,
-                wandb_logging=scenario.get("wandb", {}).get("logging"),
-                algo_name=algorithm,
-            )
-        )
-
     eval_cfg = scenario.get("evaluation", {})
+    curriculum_config = scenario.get("curriculum")
+    curriculum_callback = None
+    if curriculum_config or spawn_curriculum:
+        curriculum_callback = CurriculumCallback(
+            curriculum_config=curriculum_config,
+            spawn_curriculum=spawn_curriculum,
+            ftg_agents=ftg_agents,
+            ftg_schedules=ftg_schedules,
+            env_wrapper=sb3_env,
+            wandb_run=wandb_logger.run if wandb_logger else None,
+            wandb_logging=scenario.get("wandb", {}).get("logging"),
+            algo_name=algorithm,
+            eval_gate_enabled=bool(eval_cfg.get("enabled", False) and eval_cfg.get("frequency", 0)),
+        )
+        callbacks.append(curriculum_callback)
+
     if eval_cfg.get("enabled", False):
         eval_config = EvaluationConfig(
             num_episodes=eval_cfg.get("num_episodes", 10),
@@ -720,6 +721,7 @@ def main() -> None:
                     eval_every_n_episodes=eval_every,
                     wandb_run=wandb_logger.run if wandb_logger else None,
                     wandb_logging=scenario.get("wandb", {}).get("logging"),
+                    curriculum_callback=curriculum_callback,
                     verbose=1,
                 )
             )

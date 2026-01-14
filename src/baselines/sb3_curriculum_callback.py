@@ -33,6 +33,7 @@ class CurriculumCallback(BaseCallback):
         wandb_logging: Optional[Dict[str, Any]] = None,
         rich_console: Optional[Any] = None,
         algo_name: Optional[str] = None,
+        eval_gate_enabled: bool = True,
         verbose: int = 1,
     ):
         super().__init__(verbose)
@@ -45,6 +46,13 @@ class CurriculumCallback(BaseCallback):
         self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
         self.rich_console = rich_console
         self.algo_name = algo_name
+        self.eval_gate_enabled = bool(eval_gate_enabled)
+
+        # Eval gate configuration (hard gate: 4 consecutive 100% eval runs)
+        self.eval_required_streak = 4
+        self.eval_success_threshold = 1.0
+        self._phase_eval_streaks: Dict[int, int] = {}
+        self._phase_training_criteria_met = False
 
         # Phased curriculum state
         self.current_phase = 0
@@ -125,9 +133,65 @@ class CurriculumCallback(BaseCallback):
             print(f"  Phases: {len(self.phases)}")
             print(f"  Starting phase: {self.current_phase} - {self.phases[self.current_phase]['name']}")
 
+    def _get_eval_streak(self, phase_idx: int) -> int:
+        return int(self._phase_eval_streaks.get(int(phase_idx), 0))
+
+    def _set_eval_streak(self, phase_idx: int, streak: int) -> None:
+        self._phase_eval_streaks[int(phase_idx)] = int(streak)
+
+    def _get_eval_requirements(self, phase_idx: int) -> Dict[str, float]:
+        criteria = {}
+        if self.phases and 0 <= phase_idx < len(self.phases):
+            criteria = self.phases[phase_idx].get("criteria", {}) or {}
+        required = int(criteria.get("eval_required_runs", self.eval_required_streak))
+        threshold = float(criteria.get("eval_success_rate", self.eval_success_threshold))
+        return {"required": required, "threshold": threshold}
+
+    def get_current_phase_config(self) -> Optional[Dict[str, Any]]:
+        if not self.phases or self.current_phase >= len(self.phases):
+            return None
+        return self.phases[self.current_phase]
+
+    def get_current_phase_index(self) -> Optional[int]:
+        if not self.phases:
+            return None
+        return int(self.current_phase)
+
+    def should_run_eval(self) -> bool:
+        if not self.eval_gate_enabled or not self.phases:
+            return False
+        if not self._phase_training_criteria_met:
+            return False
+        required = self._get_eval_requirements(self.current_phase)["required"]
+        return self._get_eval_streak(self.current_phase) < required
+
+    def record_eval_result(self, success_rate: float, phase_index: Optional[int] = None) -> None:
+        if not self.eval_gate_enabled or not self.phases:
+            return
+        phase_idx = self.current_phase if phase_index is None else int(phase_index)
+        if phase_idx != self.current_phase:
+            # Ignore stale eval results from earlier phases.
+            return
+
+        reqs = self._get_eval_requirements(phase_idx)
+        if success_rate >= reqs["threshold"]:
+            new_streak = self._get_eval_streak(phase_idx) + 1
+        else:
+            new_streak = 0
+        self._set_eval_streak(phase_idx, new_streak)
+
+        if self.verbose > 0:
+            print(
+                f"[Eval gate] Phase {phase_idx}: "
+                f"success_rate={success_rate:.2%}, "
+                f"streak={new_streak}/{reqs['required']}"
+            )
+
     def _init_callback(self) -> None:
         """Initialize callback at start of training."""
         if self.phases and self.current_phase < len(self.phases):
+            self._set_eval_streak(self.current_phase, 0)
+            self._phase_training_criteria_met = False
             self._apply_phase(self.current_phase)
 
     def _on_training_start(self) -> None:
@@ -382,6 +446,7 @@ class CurriculumCallback(BaseCallback):
         # Check if criteria met
         criteria = phase.get('criteria', {})
         min_episodes = criteria.get('min_episodes', 50)
+        self._phase_training_criteria_met = False
 
         if self.phase_episodes >= min_episodes:
             # Calculate metrics over phase-local window (respects criteria.window_size)
@@ -410,8 +475,14 @@ class CurriculumCallback(BaseCallback):
                 success_rate >= target_success_rate and
                 avg_reward >= target_reward
             )
+            self._phase_training_criteria_met = bool(criteria_met)
+            reqs = self._get_eval_requirements(self.current_phase)
+            eval_gate_satisfied = (
+                not self.eval_gate_enabled
+                or self._get_eval_streak(self.current_phase) >= reqs["required"]
+            )
 
-            if criteria_met:
+            if criteria_met and eval_gate_satisfied:
                 self.patience_counter = 0
                 # Advance to next phase
                 if self.current_phase + 1 < len(self.phases):
@@ -420,6 +491,8 @@ class CurriculumCallback(BaseCallback):
                     self.phase_successes = 0
                     self.phase_total_reward = 0.0
                     self._reset_phase_histories(criteria.get('window_size', self.window_size))
+                    self._set_eval_streak(self.current_phase, 0)
+                    self._phase_training_criteria_met = False
 
                     if self.verbose > 0:
                         next_phase = self.phases[self.current_phase]
@@ -430,24 +503,36 @@ class CurriculumCallback(BaseCallback):
                         print(f"{'='*60}\n")
 
                     self._apply_phase(self.current_phase)
-            else:
+            elif criteria_met and not eval_gate_satisfied:
+                # Hold phase while eval gate is not satisfied.
+                self.patience_counter = 0
+            elif not criteria_met:
                 # Increment patience counter
                 patience = criteria.get('patience', 500)
                 self.patience_counter += 1
 
                 if self.patience_counter >= patience:
-                    # Force advance despite not meeting criteria
-                    if self.verbose > 0:
-                        print(f"\nPatience limit reached ({patience}), forcing phase advance")
+                    if self.eval_gate_enabled:
+                        if self.verbose > 0:
+                            print(
+                                f"\nPatience limit reached ({patience}) "
+                                "but eval gate is enabled; holding phase."
+                            )
+                    else:
+                        # Force advance despite not meeting criteria
+                        if self.verbose > 0:
+                            print(f"\nPatience limit reached ({patience}), forcing phase advance")
 
-                    if self.current_phase + 1 < len(self.phases):
-                        self.current_phase += 1
-                        self.phase_episodes = 0
-                        self.phase_successes = 0
-                        self.phase_total_reward = 0.0
-                        self.patience_counter = 0
-                        self._reset_phase_histories(criteria.get('window_size', self.window_size))
-                        self._apply_phase(self.current_phase)
+                        if self.current_phase + 1 < len(self.phases):
+                            self.current_phase += 1
+                            self.phase_episodes = 0
+                            self.phase_successes = 0
+                            self.phase_total_reward = 0.0
+                            self.patience_counter = 0
+                            self._reset_phase_histories(criteria.get('window_size', self.window_size))
+                            self._set_eval_streak(self.current_phase, 0)
+                            self._phase_training_criteria_met = False
+                            self._apply_phase(self.current_phase)
 
         # Log minimal phased curriculum metrics
         if self._should_log("curriculum_phase") and self.phases:

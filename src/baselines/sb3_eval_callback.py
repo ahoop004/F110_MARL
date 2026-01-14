@@ -25,6 +25,7 @@ class SB3EvaluationCallback(BaseCallback):
         eval_every_n_episodes: int,
         wandb_run: Optional[Any] = None,
         wandb_logging: Optional[Dict[str, Any]] = None,
+        curriculum_callback: Optional[Any] = None,
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -34,6 +35,7 @@ class SB3EvaluationCallback(BaseCallback):
         self.eval_every_n_episodes = max(1, int(eval_every_n_episodes)) if eval_every_n_episodes else 0
         self.wandb_run = wandb_run
         self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
+        self.curriculum_callback = curriculum_callback
         self.episode_count = 0
         self.total_eval_episodes = 0
 
@@ -73,6 +75,73 @@ class SB3EvaluationCallback(BaseCallback):
             return metrics
         return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
+    def _should_run_phase_eval(self) -> bool:
+        if not self.curriculum_callback:
+            return True
+        should_run = getattr(self.curriculum_callback, "should_run_eval", None)
+        if callable(should_run):
+            return bool(should_run())
+        return True
+
+    def _build_speed_schedule(self, speed_range: List[float], count: int) -> List[float]:
+        if count <= 0:
+            return []
+        try:
+            min_speed = float(speed_range[0])
+            max_speed = float(speed_range[1])
+        except (TypeError, ValueError, IndexError):
+            return []
+        if count == 1 or min_speed == max_speed:
+            return [min_speed] * max(1, count)
+        return list(np.linspace(min_speed, max_speed, count))
+
+    def _resolve_phase_eval_settings(self) -> Dict[str, Any]:
+        phase_config = None
+        phase_index = None
+        if self.curriculum_callback:
+            get_phase = getattr(self.curriculum_callback, "get_current_phase_config", None)
+            get_index = getattr(self.curriculum_callback, "get_current_phase_index", None)
+            if callable(get_phase):
+                phase_config = get_phase()
+            if callable(get_index):
+                phase_index = get_index()
+
+        spawn_points = list(self.config.spawn_points or [])
+        spawn_speeds = list(self.config.spawn_speeds or [])
+        lock_speed_steps = int(getattr(self.config, "lock_speed_steps", 0))
+
+        if phase_config:
+            spawn_cfg = phase_config.get("spawn", {}) if isinstance(phase_config, dict) else {}
+            phase_points = spawn_cfg.get("points")
+            if phase_points:
+                if phase_points == "all" or phase_points == ["all"]:
+                    phase_points = list(self.spawn_configs.keys())
+                if isinstance(phase_points, (list, tuple)):
+                    filtered = [p for p in phase_points if p in self.spawn_configs]
+                    if filtered:
+                        spawn_points = filtered
+            speed_range = spawn_cfg.get("speed_range")
+            if isinstance(speed_range, (list, tuple)) and len(speed_range) == 2 and spawn_points:
+                spawn_speeds = self._build_speed_schedule(speed_range, len(spawn_points))
+            lock_speed_steps = int(phase_config.get("lock_speed_steps", lock_speed_steps))
+
+            # Apply phase FTG settings to eval agents (if any).
+            if hasattr(self.eval_env, "other_agents") and self.eval_env.other_agents:
+                try:
+                    from curriculum.curriculum_env import apply_curriculum_to_agent
+                except Exception:
+                    apply_curriculum_to_agent = None
+                if apply_curriculum_to_agent:
+                    for agent_id, agent in self.eval_env.other_agents.items():
+                        apply_curriculum_to_agent(agent, agent_id, phase_config)
+
+        return {
+            "phase_index": phase_index,
+            "spawn_points": spawn_points,
+            "spawn_speeds": spawn_speeds,
+            "lock_speed_steps": lock_speed_steps,
+        }
+
     def _on_step(self) -> bool:
         if self.eval_every_n_episodes <= 0:
             return True
@@ -81,7 +150,8 @@ class SB3EvaluationCallback(BaseCallback):
             for _ in range(done_count):
                 self.episode_count += 1
                 if self.episode_count % self.eval_every_n_episodes == 0:
-                    self._run_eval(training_episode=self.episode_count)
+                    if self._should_run_phase_eval():
+                        self._run_eval(training_episode=self.episode_count)
         return True
 
     def _count_episode_ends(self) -> int:
@@ -104,6 +174,9 @@ class SB3EvaluationCallback(BaseCallback):
                 print("Eval skipped: spawn_configs missing")
             return
 
+        phase_settings = self._resolve_phase_eval_settings()
+        phase_index = phase_settings.get("phase_index")
+
         rewards: List[float] = []
         lengths: List[int] = []
         success_count = 0
@@ -111,8 +184,9 @@ class SB3EvaluationCallback(BaseCallback):
         spawn_stats: Dict[str, Dict[str, List]] = {}  # Track per-spawn performance
 
         num_episodes = int(self.config.num_episodes)
-        spawn_points = list(self.config.spawn_points or [])
-        spawn_speeds = list(self.config.spawn_speeds or [])
+        spawn_points = list(phase_settings.get("spawn_points") or [])
+        spawn_speeds = list(phase_settings.get("spawn_speeds") or [])
+        lock_speed_steps = int(phase_settings.get("lock_speed_steps", 0))
 
         if not spawn_points:
             if self.verbose > 0:
@@ -121,14 +195,13 @@ class SB3EvaluationCallback(BaseCallback):
 
         for ep_idx in range(num_episodes):
             spawn_point = spawn_points[ep_idx % len(spawn_points)]
-            spawn_speed = (
-                spawn_speeds[ep_idx % len(spawn_speeds)]
-                if spawn_speeds
-                else 0.44
-            )
+            if spawn_speeds:
+                spawn_speed = spawn_speeds[ep_idx % len(spawn_speeds)]
+            else:
+                spawn_speed = 0.44
 
             obs, _ = self.eval_env.reset(
-                options=self._build_reset_options(spawn_point, spawn_speed)
+                options=self._build_reset_options(spawn_point, spawn_speed, lock_speed_steps)
             )
             done = False
             steps = 0
@@ -201,6 +274,11 @@ class SB3EvaluationCallback(BaseCallback):
         avg_steps = float(np.mean(lengths))
         std_steps = float(np.std(lengths))
 
+        if self.curriculum_callback:
+            record_eval = getattr(self.curriculum_callback, "record_eval_result", None)
+            if callable(record_eval):
+                record_eval(success_rate, phase_index=phase_index)
+
         if self._should_log("eval_agg"):
             # Use training episode as step metric for consistency with run_v2
             training_ep = training_episode if training_episode is not None else self.episode_count
@@ -264,7 +342,12 @@ class SB3EvaluationCallback(BaseCallback):
                 f"avg_reward={avg_reward:.2f}, avg_steps={avg_steps:.1f}"
             )
 
-    def _build_reset_options(self, spawn_point: str, spawn_speed: float) -> Dict[str, Any]:
+    def _build_reset_options(
+        self,
+        spawn_point: str,
+        spawn_speed: float,
+        lock_speed_steps: int
+    ) -> Dict[str, Any]:
         if spawn_point not in self.spawn_configs:
             raise ValueError(
                 f"Spawn point '{spawn_point}' not found in spawn_configs. "
@@ -292,7 +375,7 @@ class SB3EvaluationCallback(BaseCallback):
         return {
             "poses": np.array(poses, dtype=np.float32),
             "velocities": velocities,
-            "lock_speed_steps": int(self.config.lock_speed_steps),
+            "lock_speed_steps": int(lock_speed_steps),
         }
 
 
