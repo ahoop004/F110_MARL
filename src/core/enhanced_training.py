@@ -1163,7 +1163,10 @@ class EnhancedTrainingLoop:
         """
         if not self.evaluator:
             return
-        if getattr(self, "phased_curriculum", None) and getattr(self.phased_curriculum, "eval_gate_enabled", False):
+        if (
+            getattr(self, "phased_curriculum", None)
+            and getattr(self.phased_curriculum, "eval_gate_schedule_enabled", False)
+        ):
             is_eval_ready = getattr(self.phased_curriculum, "is_eval_ready", None)
             if callable(is_eval_ready) and not is_eval_ready():
                 return

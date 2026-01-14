@@ -34,6 +34,7 @@ class CurriculumCallback(BaseCallback):
         rich_console: Optional[Any] = None,
         algo_name: Optional[str] = None,
         eval_gate_enabled: bool = True,
+        eval_gate_schedule_enabled: bool = True,
         verbose: int = 1,
     ):
         super().__init__(verbose)
@@ -47,6 +48,7 @@ class CurriculumCallback(BaseCallback):
         self.rich_console = rich_console
         self.algo_name = algo_name
         self.eval_gate_enabled = bool(eval_gate_enabled)
+        self.eval_gate_schedule_enabled = bool(eval_gate_schedule_enabled)
 
         # Eval gate configuration (hard gate: 4 consecutive 100% eval runs)
         self.eval_required_streak = 4
@@ -158,8 +160,10 @@ class CurriculumCallback(BaseCallback):
         return int(self.current_phase)
 
     def should_run_eval(self) -> bool:
-        if not self.eval_gate_enabled or not self.phases:
-            return False
+        if not self.phases:
+            return True
+        if not self.eval_gate_schedule_enabled:
+            return True
         if not self._phase_training_criteria_met:
             return False
         required = self._get_eval_requirements(self.current_phase)["required"]

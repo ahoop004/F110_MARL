@@ -671,6 +671,8 @@ def main() -> None:
     curriculum_config = scenario.get("curriculum")
     curriculum_callback = None
     if curriculum_config or spawn_curriculum:
+        eval_gate_schedule_enabled = bool(eval_cfg.get("gate_eval_schedule", True))
+        eval_gate_advancement_enabled = bool(eval_cfg.get("gate_phase_advancement", True))
         curriculum_callback = CurriculumCallback(
             curriculum_config=curriculum_config,
             spawn_curriculum=spawn_curriculum,
@@ -680,7 +682,16 @@ def main() -> None:
             wandb_run=wandb_logger.run if wandb_logger else None,
             wandb_logging=scenario.get("wandb", {}).get("logging"),
             algo_name=algorithm,
-            eval_gate_enabled=bool(eval_cfg.get("enabled", False) and eval_cfg.get("frequency", 0)),
+            eval_gate_enabled=bool(
+                eval_cfg.get("enabled", False)
+                and eval_cfg.get("frequency", 0)
+                and eval_gate_advancement_enabled
+            ),
+            eval_gate_schedule_enabled=bool(
+                eval_cfg.get("enabled", False)
+                and eval_cfg.get("frequency", 0)
+                and eval_gate_schedule_enabled
+            ),
         )
         callbacks.append(curriculum_callback)
 

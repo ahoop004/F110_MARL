@@ -192,6 +192,7 @@ class PhaseBasedCurriculum:
         self.phases = phases
         self.state = CurriculumState(current_phase_idx=start_phase)
         self.eval_gate_enabled = True
+        self.eval_gate_schedule_enabled = True
         self._warned_performance_drop = False
         self._reset_phase_histories(self.get_current_phase().criteria.window_size)
 

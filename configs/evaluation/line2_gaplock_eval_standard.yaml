@@ -1,6 +1,8 @@
 evaluation:
   enabled: true
   frequency: 100
+  gate_eval_schedule: true
+  gate_phase_advancement: true
   num_episodes: 12
   deterministic: true
   spawn_points:
