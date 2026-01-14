@@ -8,7 +8,7 @@ Extends the basic TrainingLoop with:
 - Checkpoint management and best model tracking
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from collections import deque
 import time
 import logging
@@ -1202,6 +1202,7 @@ class EnhancedTrainingLoop:
 
         # Run evaluation and stream per-episode logging
         successes_so_far = 0
+        eval_successes: List[bool] = []
 
         def _handle_eval_episode(ep_data: Dict[str, Any], eval_idx: int, total_eval: int) -> None:
             nonlocal successes_so_far
@@ -1211,6 +1212,7 @@ class EnhancedTrainingLoop:
             if ep_data['success']:
                 successes_so_far += 1
             success_rate_so_far = successes_so_far / max(1, eval_idx)
+            eval_successes.append(bool(ep_data['success']))
 
             # Log to WandB
             if self.wandb_logger and self.wandb_logger.should_log("eval"):
@@ -1224,6 +1226,7 @@ class EnhancedTrainingLoop:
                     'eval/episode_reward': reward_value,
                     'eval/episode_steps': int(ep_data['steps']),
                     'eval/episode_success': int(ep_data['success']),
+                    'eval/episode_success_rate': float(success_rate_so_far),
                     'eval/spawn_point': ep_data['spawn_point'],
                     'eval/training_episode': episode_num,
                 }, step=episode_num)
@@ -1259,13 +1262,17 @@ class EnhancedTrainingLoop:
         if getattr(self, "phased_curriculum", None):
             record_eval = getattr(self.phased_curriculum, "record_eval_result", None)
             if callable(record_eval):
-                streak = record_eval(eval_result.success_rate)
+                stats = record_eval(
+                    successes=eval_successes,
+                    success_rate=eval_result.success_rate,
+                    num_episodes=eval_result.num_episodes,
+                )
                 if self.console_logger:
                     phase = self.phased_curriculum.get_current_phase()
-                    required = phase.criteria.eval_required_runs
                     self.console_logger.print_info(
-                        f"Eval gate ({phase.name}): success_rate={eval_result.success_rate:.2%}, "
-                        f"streak={streak}/{required}"
+                        f"Eval gate ({phase.name}): run_success_rate={eval_result.success_rate:.2%}, "
+                        f"window_success_rate={stats['success_rate']:.2%} "
+                        f"({stats['count']}/{stats['window_size']})"
                     )
 
         phase_info = self._get_phase_info()

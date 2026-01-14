@@ -42,7 +42,7 @@ class AdvancementCriteria:
         max_collision_rate: Maximum allowed collision rate (0.0-1.0)
         max_target_finish_rate: Maximum allowed target-finish rate (0.0-1.0)
         eval_success_rate: Required eval success rate for advancement (0.0-1.0)
-        eval_required_runs: Required consecutive eval runs meeting eval_success_rate
+        eval_required_runs: Rolling eval-episode window size for eval_success_rate
     """
     success_rate: float = 0.70
     avg_reward: Optional[float] = None
@@ -111,7 +111,8 @@ class CurriculumState:
         reward_history: Recent episode rewards
         phase_start_episode: Global episode number when phase started
         advancement_log: History of phase advancements and regressions
-        eval_success_streak: Consecutive eval runs meeting eval criteria
+        eval_success_history: Recent eval episode outcomes (True/False)
+        eval_success_streak: Successes in current eval window (legacy metric)
     """
     current_phase_idx: int = 0
     episodes_in_phase: int = 0
@@ -120,6 +121,7 @@ class CurriculumState:
     reward_history: deque = field(default_factory=lambda: deque(maxlen=100))
     phase_start_episode: int = 0
     advancement_log: List[Dict[str, Any]] = field(default_factory=list)
+    eval_success_history: deque = field(default_factory=lambda: deque(maxlen=0))
     eval_success_streak: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -132,6 +134,7 @@ class CurriculumState:
             'reward_history': list(self.reward_history),
             'phase_start_episode': self.phase_start_episode,
             'advancement_log': self.advancement_log,
+            'eval_success_history': list(self.eval_success_history),
             'eval_success_streak': self.eval_success_streak,
         }
 
@@ -142,6 +145,8 @@ class CurriculumState:
         outcome_history = data.get('outcome_history', [])
         reward_history = data.get('reward_history', [])
         history_len = max(100, len(success_history), len(outcome_history), len(reward_history), 1)
+        eval_success_history = data.get('eval_success_history', [])
+        eval_history_len = max(1, len(eval_success_history), 1)
         state = cls(
             current_phase_idx=data['current_phase_idx'],
             episodes_in_phase=data['episodes_in_phase'],
@@ -152,6 +157,7 @@ class CurriculumState:
         state.success_history = deque(success_history, maxlen=history_len)
         state.outcome_history = deque(outcome_history, maxlen=history_len)
         state.reward_history = deque(reward_history, maxlen=history_len)
+        state.eval_success_history = deque(eval_success_history, maxlen=eval_history_len)
         return state
 
 
@@ -195,6 +201,7 @@ class PhaseBasedCurriculum:
         self.eval_gate_schedule_enabled = True
         self._warned_performance_drop = False
         self._reset_phase_histories(self.get_current_phase().criteria.window_size)
+        self._reset_eval_history(self.get_current_phase().criteria.eval_required_runs)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'PhaseBasedCurriculum':
@@ -302,29 +309,73 @@ class PhaseBasedCurriculum:
 
         return mixed_config
 
-    def record_eval_result(self, success_rate: float) -> int:
-        """Record evaluation success rate for eval gating.
+    def record_eval_result(
+        self,
+        successes: Optional[List[bool]] = None,
+        success_rate: Optional[float] = None,
+        num_episodes: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Record eval episode results for eval gating.
 
         Returns:
-            Updated eval success streak.
+            Eval window stats dict.
         """
-        if not self.eval_gate_enabled:
-            return 0
         criteria = self.get_current_phase().criteria
-        if success_rate >= criteria.eval_success_rate:
-            self.state.eval_success_streak += 1
-        else:
-            self.state.eval_success_streak = 0
-        return self.state.eval_success_streak
+        window_size = self._get_eval_window_size(criteria)
+        history = self._ensure_eval_history(window_size)
+
+        if successes is not None:
+            history.extend(bool(value) for value in successes)
+        elif success_rate is not None and num_episodes is not None:
+            success_count = int(round(success_rate * num_episodes))
+            failures = max(0, num_episodes - success_count)
+            history.extend([True] * success_count + [False] * failures)
+        elif success_rate is not None:
+            history.append(bool(success_rate >= criteria.eval_success_rate))
+
+        stats = self._get_eval_window_stats()
+        self.state.eval_success_streak = stats["success_count"]
+        return stats
+
+    def _get_eval_window_size(self, criteria: Optional[AdvancementCriteria] = None) -> int:
+        if criteria is None:
+            criteria = self.get_current_phase().criteria
+        return max(0, int(criteria.eval_required_runs))
+
+    def _ensure_eval_history(self, window_size: int) -> deque:
+        maxlen = max(1, int(window_size))
+        history = getattr(self.state, "eval_success_history", None)
+        if history is None or not isinstance(history, deque) or history.maxlen != maxlen:
+            history = deque(list(history) if history else [], maxlen=maxlen)
+            self.state.eval_success_history = history
+        return history
+
+    def _get_eval_window_stats(self) -> Dict[str, Any]:
+        criteria = self.get_current_phase().criteria
+        window_size = self._get_eval_window_size(criteria)
+        history = self._ensure_eval_history(window_size)
+        count = len(history)
+        success_count = int(sum(history))
+        success_rate = (success_count / count) if count else 0.0
+        satisfied = (
+            not self.eval_gate_enabled
+            or window_size == 0
+            or (count >= window_size and success_rate >= criteria.eval_success_rate)
+        )
+        return {
+            "window_size": window_size,
+            "count": count,
+            "success_count": success_count,
+            "success_rate": success_rate,
+            "threshold": criteria.eval_success_rate,
+            "satisfied": satisfied,
+        }
 
     def _eval_gate_satisfied(self) -> bool:
         if not self.eval_gate_enabled:
             return True
-        criteria = self.get_current_phase().criteria
-        required = max(0, int(criteria.eval_required_runs))
-        if required == 0:
-            return True
-        return self.state.eval_success_streak >= required
+        stats = self._get_eval_window_stats()
+        return bool(stats["satisfied"])
 
     def _compute_advancement_status(self) -> Optional[Dict[str, Any]]:
         """Compute training criteria stats for advancement."""
@@ -542,6 +593,7 @@ class PhaseBasedCurriculum:
         # Reset phase tracking
         self.state.episodes_in_phase = 0
         self.state.phase_start_episode = episode_num
+        self._reset_eval_history(new_phase.criteria.eval_required_runs)
         self.state.eval_success_streak = 0
         self._warned_performance_drop = False
         self._reset_phase_histories(new_phase.criteria.window_size)
@@ -582,6 +634,7 @@ class PhaseBasedCurriculum:
         # Reset phase tracking
         self.state.episodes_in_phase = 0
         self.state.phase_start_episode = episode_num
+        self._reset_eval_history(new_phase.criteria.eval_required_runs)
         self.state.eval_success_streak = 0
         self._warned_performance_drop = False
         self._reset_phase_histories(new_phase.criteria.window_size)
@@ -594,6 +647,10 @@ class PhaseBasedCurriculum:
         self.state.success_history = deque(maxlen=history_len)
         self.state.outcome_history = deque(maxlen=history_len)
         self.state.reward_history = deque(maxlen=history_len)
+
+    def _reset_eval_history(self, window_size: int) -> None:
+        history_len = max(1, int(window_size))
+        self.state.eval_success_history = deque(maxlen=history_len)
 
     def _check_performance_drop(self):
         """Check for significant performance drop (warning only)."""
@@ -623,6 +680,7 @@ class PhaseBasedCurriculum:
     def set_state(self, state: CurriculumState):
         """Set curriculum state (for checkpointing)."""
         self.state = state
+        self._ensure_eval_history(self._get_eval_window_size())
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get current curriculum metrics for logging.
@@ -631,6 +689,7 @@ class PhaseBasedCurriculum:
             Dict with curriculum metrics
         """
         phase = self.get_current_phase()
+        eval_stats = self._get_eval_window_stats()
 
         metrics = {
             'curriculum/phase_idx': self.state.current_phase_idx,
@@ -638,9 +697,12 @@ class PhaseBasedCurriculum:
             'curriculum/episodes_in_phase': self.state.episodes_in_phase,
             'curriculum/total_phases': len(self.phases),
             'curriculum/progress': self.state.current_phase_idx / max(1, len(self.phases) - 1),
-            'curriculum/eval_success_streak': self.state.eval_success_streak,
+            'curriculum/eval_success_streak': eval_stats["success_count"],
+            'curriculum/eval_window_success_rate': eval_stats["success_rate"],
+            'curriculum/eval_window_count': eval_stats["count"],
+            'curriculum/eval_window_size': eval_stats["window_size"],
             'curriculum/criteria_eval_success_rate': phase.criteria.eval_success_rate,
-            'curriculum/criteria_eval_required_runs': phase.criteria.eval_required_runs,
+            'curriculum/criteria_eval_required_runs': eval_stats["window_size"],
         }
 
         # Add rolling metrics if we have data

@@ -181,6 +181,7 @@ class SB3EvaluationCallback(BaseCallback):
         rewards: List[float] = []
         lengths: List[int] = []
         success_count = 0
+        eval_successes: List[bool] = []
         outcome_counts: Dict[str, int] = {}
         spawn_stats: Dict[str, Dict[str, List]] = {}  # Track per-spawn performance
 
@@ -232,7 +233,9 @@ class SB3EvaluationCallback(BaseCallback):
             rewards.append(ep_reward)
             lengths.append(steps)
             success_count += int(success)
+            eval_successes.append(bool(success))
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
+            success_rate_so_far = success_count / (ep_idx + 1)
 
             # Track per-spawn stats for table visualization
             if spawn_point not in spawn_stats:
@@ -259,6 +262,7 @@ class SB3EvaluationCallback(BaseCallback):
                     "eval/episode_reward": reward_value,
                     "eval/episode_steps": int(steps),
                     "eval/episode_success": int(success),
+                    "eval/episode_success_rate": float(success_rate_so_far),
                     "eval/spawn_point": spawn_point,
                     "eval/training_episode": training_ep,
                 })
@@ -280,7 +284,7 @@ class SB3EvaluationCallback(BaseCallback):
         if self.curriculum_callback:
             record_eval = getattr(self.curriculum_callback, "record_eval_result", None)
             if callable(record_eval):
-                record_eval(success_rate, phase_index=phase_index)
+                record_eval(successes=eval_successes, phase_index=phase_index)
 
         if self._should_log("eval_agg"):
             # Use training episode as step metric for consistency with run_v2

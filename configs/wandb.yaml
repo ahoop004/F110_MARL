@@ -31,12 +31,16 @@ wandb:
       # curriculum/phase_name: true
       # curriculum/phase_success_rate: true
       curriculum/eval_success_streak: true
+      curriculum/eval_window_success_rate: true
+      curriculum/eval_window_count: true
+      curriculum/eval_window_size: true
       curriculum/criteria_eval_success_rate: true
       curriculum/criteria_eval_required_runs: true
-      # eval/episode: true
+      eval/episode: true
       # eval/episode_reward: true
       # eval/episode_steps: true
       eval/episode_success: true
+      eval/episode_success_rate: true
       eval/run: true
       # eval/spawn_point: true
       # eval/training_episode: true

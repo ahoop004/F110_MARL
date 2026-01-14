@@ -50,10 +50,10 @@ class CurriculumCallback(BaseCallback):
         self.eval_gate_enabled = bool(eval_gate_enabled)
         self.eval_gate_schedule_enabled = bool(eval_gate_schedule_enabled)
 
-        # Eval gate configuration (hard gate: 4 consecutive 100% eval runs)
+        # Eval gate configuration (rolling eval-episode window)
         self.eval_required_streak = 4
         self.eval_success_threshold = 1.0
-        self._phase_eval_streaks: Dict[int, int] = {}
+        self._phase_eval_histories: Dict[int, deque] = {}
         self._phase_training_criteria_met = False
 
         # Phased curriculum state
@@ -135,12 +135,6 @@ class CurriculumCallback(BaseCallback):
             print(f"  Phases: {len(self.phases)}")
             print(f"  Starting phase: {self.current_phase} - {self.phases[self.current_phase]['name']}")
 
-    def _get_eval_streak(self, phase_idx: int) -> int:
-        return int(self._phase_eval_streaks.get(int(phase_idx), 0))
-
-    def _set_eval_streak(self, phase_idx: int, streak: int) -> None:
-        self._phase_eval_streaks[int(phase_idx)] = int(streak)
-
     def _get_eval_requirements(self, phase_idx: int) -> Dict[str, float]:
         criteria = {}
         if self.phases and 0 <= phase_idx < len(self.phases):
@@ -148,6 +142,47 @@ class CurriculumCallback(BaseCallback):
         required = int(criteria.get("eval_required_runs", self.eval_required_streak))
         threshold = float(criteria.get("eval_success_rate", self.eval_success_threshold))
         return {"required": required, "threshold": threshold}
+
+    def _get_eval_history(self, phase_idx: int) -> deque:
+        reqs = self._get_eval_requirements(phase_idx)
+        window_size = max(1, int(reqs["required"]))
+        history = self._phase_eval_histories.get(int(phase_idx))
+        if history is None or history.maxlen != window_size:
+            history = deque(list(history) if history else [], maxlen=window_size)
+            self._phase_eval_histories[int(phase_idx)] = history
+        return history
+
+    def _reset_eval_history(self, phase_idx: int) -> None:
+        reqs = self._get_eval_requirements(phase_idx)
+        window_size = max(1, int(reqs["required"]))
+        self._phase_eval_histories[int(phase_idx)] = deque(maxlen=window_size)
+
+    def _get_eval_window_stats(self, phase_idx: int) -> Dict[str, Any]:
+        reqs = self._get_eval_requirements(phase_idx)
+        window_size = max(0, int(reqs["required"]))
+        history = self._get_eval_history(phase_idx)
+        count = len(history)
+        success_count = int(sum(history))
+        success_rate = (success_count / count) if count else 0.0
+        satisfied = (
+            not self.eval_gate_enabled
+            or window_size == 0
+            or (count >= window_size and success_rate >= reqs["threshold"])
+        )
+        return {
+            "window_size": window_size,
+            "count": count,
+            "success_count": success_count,
+            "success_rate": success_rate,
+            "threshold": reqs["threshold"],
+            "satisfied": satisfied,
+        }
+
+    def _eval_gate_satisfied(self, phase_idx: int) -> bool:
+        if not self.eval_gate_enabled:
+            return True
+        stats = self._get_eval_window_stats(phase_idx)
+        return bool(stats["satisfied"])
 
     def get_current_phase_config(self) -> Optional[Dict[str, Any]]:
         if not self.phases or self.current_phase >= len(self.phases):
@@ -166,35 +201,40 @@ class CurriculumCallback(BaseCallback):
             return True
         if not self._phase_training_criteria_met:
             return False
-        required = self._get_eval_requirements(self.current_phase)["required"]
-        return self._get_eval_streak(self.current_phase) < required
+        return not self._eval_gate_satisfied(self.current_phase)
 
-    def record_eval_result(self, success_rate: float, phase_index: Optional[int] = None) -> None:
+    def record_eval_result(
+        self,
+        successes: Optional[List[bool]] = None,
+        phase_index: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not self.eval_gate_enabled or not self.phases:
-            return
+            return None
         phase_idx = self.current_phase if phase_index is None else int(phase_index)
         if phase_idx != self.current_phase:
             # Ignore stale eval results from earlier phases.
-            return
+            return None
+        if not successes:
+            return None
 
-        reqs = self._get_eval_requirements(phase_idx)
-        if success_rate >= reqs["threshold"]:
-            new_streak = self._get_eval_streak(phase_idx) + 1
-        else:
-            new_streak = 0
-        self._set_eval_streak(phase_idx, new_streak)
+        history = self._get_eval_history(phase_idx)
+        history.extend(bool(value) for value in successes)
+        stats = self._get_eval_window_stats(phase_idx)
 
         if self.verbose > 0:
+            run_success_rate = sum(successes) / len(successes)
             print(
                 f"[Eval gate] Phase {phase_idx}: "
-                f"success_rate={success_rate:.2%}, "
-                f"streak={new_streak}/{reqs['required']}"
+                f"run_success_rate={run_success_rate:.2%}, "
+                f"window_success_rate={stats['success_rate']:.2%} "
+                f"({stats['count']}/{stats['window_size']})"
             )
+        return stats
 
     def _init_callback(self) -> None:
         """Initialize callback at start of training."""
         if self.phases and self.current_phase < len(self.phases):
-            self._set_eval_streak(self.current_phase, 0)
+            self._reset_eval_history(self.current_phase)
             self._phase_training_criteria_met = False
             self._apply_phase(self.current_phase)
 
@@ -480,10 +520,9 @@ class CurriculumCallback(BaseCallback):
                 avg_reward >= target_reward
             )
             self._phase_training_criteria_met = bool(criteria_met)
-            reqs = self._get_eval_requirements(self.current_phase)
             eval_gate_satisfied = (
                 not self.eval_gate_enabled
-                or self._get_eval_streak(self.current_phase) >= reqs["required"]
+                or self._eval_gate_satisfied(self.current_phase)
             )
 
             if criteria_met and eval_gate_satisfied:
@@ -495,7 +534,7 @@ class CurriculumCallback(BaseCallback):
                     self.phase_successes = 0
                     self.phase_total_reward = 0.0
                     self._reset_phase_histories(criteria.get('window_size', self.window_size))
-                    self._set_eval_streak(self.current_phase, 0)
+                    self._reset_eval_history(self.current_phase)
                     self._phase_training_criteria_met = False
 
                     if self.verbose > 0:
@@ -534,7 +573,7 @@ class CurriculumCallback(BaseCallback):
                             self.phase_total_reward = 0.0
                             self.patience_counter = 0
                             self._reset_phase_histories(criteria.get('window_size', self.window_size))
-                            self._set_eval_streak(self.current_phase, 0)
+                            self._reset_eval_history(self.current_phase)
                             self._phase_training_criteria_met = False
                             self._apply_phase(self.current_phase)
 
@@ -543,7 +582,7 @@ class CurriculumCallback(BaseCallback):
             phase_name = None
             if 0 <= self.current_phase < len(self.phases):
                 phase_name = self.phases[self.current_phase].get("name")
-            reqs = self._get_eval_requirements(self.current_phase)
+            eval_stats = self._get_eval_window_stats(self.current_phase)
 
             phase_success_rate = (
                 sum(self.phase_success_history) / len(self.phase_success_history)
@@ -562,9 +601,12 @@ class CurriculumCallback(BaseCallback):
                 'curriculum/phase_success_rate': phase_success_rate,
                 'curriculum/stage': phase_name,
                 'curriculum/stage_success_rate': phase_success_rate,
-                'curriculum/eval_success_streak': self._get_eval_streak(self.current_phase),
-                'curriculum/criteria_eval_success_rate': reqs["threshold"],
-                'curriculum/criteria_eval_required_runs': reqs["required"],
+                'curriculum/eval_success_streak': eval_stats["success_count"],
+                'curriculum/eval_window_success_rate': eval_stats["success_rate"],
+                'curriculum/eval_window_count': eval_stats["count"],
+                'curriculum/eval_window_size': eval_stats["window_size"],
+                'curriculum/criteria_eval_success_rate': eval_stats["threshold"],
+                'curriculum/criteria_eval_required_runs': eval_stats["window_size"],
             }, step=self.episode_count)  # FIXED: Use episode_count instead of num_timesteps
 
     def _apply_phase(self, phase_idx: int):
