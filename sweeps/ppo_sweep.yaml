@@ -5,7 +5,7 @@ entity: ahoop004-old-dominion-university
 metric:
   name: train/success_rate
   goal: maximize
-# parameters:
+parameters:
 #   learning_rate:
 #     values:
 #     - 0.0001
@@ -35,7 +35,7 @@ metric:
       - 128
       - 128
       - 128
-      
+
 #   activation:
 #     values:
 #     - relu
