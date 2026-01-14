@@ -79,6 +79,24 @@ agents:
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 1000
+      per:
+        enabled: true
+        alpha: 0.6
+        beta: 0.4
+        beta_final: 1.0
+        beta_anneal_steps: 200000
+        epsilon: 1.0e-6
+        max_priority: 1.0
+        normalize_weights: true
+      her:
+        enabled: true
+        reward_mode: replace
+        success_mode: distance
+        distance_threshold: 1.0
+        success_reward: 0.0
+        failure_reward: -1.0
+        done_on_success: true
+        probability: 1.0
       exploration_fraction: 0.1
       exploration_initial_eps: 1.0
       exploration_final_eps: 0.05

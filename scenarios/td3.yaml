@@ -29,6 +29,15 @@ agents:
       buffer_size: 1000000
       batch_size: 256
       learning_starts: 1000
+      per:
+        enabled: true
+        alpha: 0.6
+        beta: 0.4
+        beta_final: 1.0
+        beta_anneal_steps: 200000
+        epsilon: 1.0e-6
+        max_priority: 1.0
+        normalize_weights: true
       policy_delay: 2
       target_policy_noise: 0.2
       target_noise_clip: 0.5
