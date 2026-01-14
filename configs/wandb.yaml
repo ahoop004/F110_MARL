@@ -8,7 +8,7 @@ wandb:
       # spawn: true
       curriculum: true
       curriculum_phase: true
-      # eval: true
+      eval: true
       # eval_agg: true
       sb3_callbacks: true
     # Comment out any metric to disable it.
@@ -33,10 +33,10 @@ wandb:
       # eval/episode: true
       # eval/episode_reward: true
       # eval/episode_steps: true
-      # eval/episode_success: true
+      eval/episode_success: true
       # eval/spawn_point: true
       # eval/training_episode: true
-      # eval_agg/success_rate: true
+      eval_agg/success_rate: true
       # eval_agg/avg_reward: true
       # eval_agg/avg_episode_length: true
       # eval_agg/std_reward: true
