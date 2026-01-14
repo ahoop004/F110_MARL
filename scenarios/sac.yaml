@@ -20,16 +20,35 @@ agents:
     params:
       # SB3 SAC parameters (using proven SB3 defaults)
       learning_rate: 0.0003
-      gamma: 0.995
+      gamma: 0.99
       tau: 0.005
       ent_coef: auto  # Automatic entropy tuning
       target_entropy: auto
       hidden_dims:
-      - 128
-      - 128
+      - 256
+      - 256
+      activation: relu
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 256
+      learning_starts: 100
+      per:
+        enabled: true
+        alpha: 0.6
+        beta: 0.4
+        beta_final: 1.0
+        beta_anneal_steps: 200000
+        epsilon: 1.0e-6
+        max_priority: 1.0
+        normalize_weights: true
+      her:
+        enabled: true
+        reward_mode: replace
+        success_mode: distance
+        distance_threshold: 1.0
+        success_reward: 0.0
+        failure_reward: -1.0
+        done_on_success: true
+        probability: 1.0
       train_freq: 1  # Train every step (off-policy continuous)
       gradient_steps: 1  # Number of gradient steps per environment step
     observation:
