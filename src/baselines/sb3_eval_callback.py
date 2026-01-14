@@ -38,6 +38,7 @@ class SB3EvaluationCallback(BaseCallback):
         self.curriculum_callback = curriculum_callback
         self.episode_count = 0
         self.total_eval_episodes = 0
+        self.eval_run_count = 0
 
     def _should_log(self, key: str) -> bool:
         if not self.wandb_run:
@@ -193,6 +194,8 @@ class SB3EvaluationCallback(BaseCallback):
                 print("Eval skipped: no spawn_points configured")
             return
 
+        self.eval_run_count += 1
+
         for ep_idx in range(num_episodes):
             spawn_point = spawn_points[ep_idx % len(spawn_points)]
             if spawn_speeds:
@@ -284,6 +287,7 @@ class SB3EvaluationCallback(BaseCallback):
             training_ep = training_episode if training_episode is not None else self.episode_count
             agg_metrics = {
                 "eval/episode": int(self.total_eval_episodes),
+                "eval/run": int(self.eval_run_count),
                 "eval_agg/success_rate": success_rate,  # Match run_v2 namespace
                 "eval_agg/avg_reward": avg_reward,
                 "eval_agg/std_reward": std_reward,

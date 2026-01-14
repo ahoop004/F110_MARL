@@ -189,6 +189,7 @@ class EnhancedTrainingLoop:
 
         # Evaluation tracking (separate counter for continuous eval plots)
         self.total_eval_episodes: int = 0
+        self.total_eval_runs: int = 0
         self.last_eval_training_episode: int = -1
         self.best_eval_per_phase: Dict[int, float] = {}
 
@@ -1173,6 +1174,7 @@ class EnhancedTrainingLoop:
 
         # Track which training episode triggered this eval
         self.last_eval_training_episode = episode_num
+        self.total_eval_runs += 1
 
         original_eval_config = None
         if getattr(self, "phased_curriculum", None):
@@ -1297,6 +1299,7 @@ class EnhancedTrainingLoop:
         if self.wandb_logger and self.wandb_logger.should_log("eval_agg"):
             agg_metrics = {
                 'eval/episode': int(self.total_eval_episodes),
+                'eval/run': int(self.total_eval_runs),
                 'eval_agg/success_rate': eval_result.success_rate,
                 'eval_agg/avg_reward': eval_result.avg_reward,
                 'eval_agg/avg_episode_length': eval_result.avg_episode_length,

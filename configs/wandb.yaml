@@ -37,6 +37,7 @@ wandb:
       # eval/episode_reward: true
       # eval/episode_steps: true
       eval/episode_success: true
+      eval/run: true
       # eval/spawn_point: true
       # eval/training_episode: true
       eval_agg/success_rate: true
