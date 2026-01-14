@@ -7,11 +7,11 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: sac
-  episodes: 1500
+  episodes: 10000
   seed: 42
 environment:
   action_repeat: 2
-  max_steps: 2500
+  max_steps: 1200
 agents:
   car_0:
     role: attacker
@@ -25,11 +25,11 @@ agents:
       ent_coef: auto  # Automatic entropy tuning
       target_entropy: auto
       hidden_dims:
-      - 256
-      - 256
+      - 128
+      - 128
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 1000
+      learning_starts: 256
       train_freq: 1  # Train every step (off-policy continuous)
       gradient_steps: 1  # Number of gradient steps per environment step
     observation:
