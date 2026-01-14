@@ -8,7 +8,7 @@ curriculum:
       window_size: 100
       success_rate: 0.7
       avg_reward: 50.0
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -26,7 +26,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -45,7 +45,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -65,7 +65,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -85,7 +85,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -105,7 +105,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -125,7 +125,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -145,7 +145,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -165,7 +165,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -185,7 +185,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -205,7 +205,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -225,7 +225,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -245,7 +245,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -265,7 +265,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -286,7 +286,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -308,7 +308,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -331,7 +331,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points:
@@ -355,7 +355,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points: all
@@ -373,7 +373,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points: all
@@ -391,7 +391,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points: all
@@ -409,7 +409,7 @@ curriculum:
     criteria:
       window_size: 100
       success_rate: 0.7
-      min_episodes: 10
+      min_episodes: 100
       patience: 1000000
     spawn:
       points: all

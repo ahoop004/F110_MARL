@@ -3,7 +3,7 @@ includes:
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
 - ../configs/curriculum/line2_gaplock_phased.yaml
-- ../configs/evaluation/line2_gaplock_eval_narrow.yaml
+- ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
 - ../configs/wandb.yaml
 experiment:
   name: tqc
