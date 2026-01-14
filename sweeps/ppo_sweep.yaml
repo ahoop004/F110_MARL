@@ -14,8 +14,8 @@ parameters:
 #     values:
 #     - 0.15
 #     - 0.2
-  hidden_dims:
-    values:
+  # hidden_dims:
+  #   values:
     # - - 64
     #   - 64
     # - - 128
