@@ -49,12 +49,14 @@ parameters:
   # Architecture sweeps (uncomment to sweep):
   hidden_dims:
     values:
-    - - 64
-      - 64
-    - - 128
-      - 128
+    # - - 64
+    #   - 64
+    # - - 128
+    #   - 128
     - - 256
       - 256
+    - - 512
+      - 512
   #   - - 256
   #     - 256
   #     - 256
