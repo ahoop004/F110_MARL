@@ -2,13 +2,15 @@ includes:
 - ../configs/env/line2_gaplock.yaml
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased.yaml
+- ../configs/curriculum/line2_gaplock_phased_full.yaml
 - ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
 - ../configs/wandb.yaml
 experiment:
   name: td3
   episodes: 2000
   seed: 42
+environment:
+  action_repeat: 2
 agents:
   car_0:
     role: attacker

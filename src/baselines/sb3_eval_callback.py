@@ -7,6 +7,12 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from metrics.outcomes import determine_outcome, EpisodeOutcome
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 
 class SB3EvaluationCallback(BaseCallback):
     """Periodic evaluation callback for SB3 with unified W&B metrics."""
@@ -102,6 +108,7 @@ class SB3EvaluationCallback(BaseCallback):
         lengths: List[int] = []
         success_count = 0
         outcome_counts: Dict[str, int] = {}
+        spawn_stats: Dict[str, Dict[str, List]] = {}  # Track per-spawn performance
 
         num_episodes = int(self.config.num_episodes)
         spawn_points = list(self.config.spawn_points or [])
@@ -150,6 +157,12 @@ class SB3EvaluationCallback(BaseCallback):
             lengths.append(steps)
             success_count += int(success)
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
+
+            # Track per-spawn stats for table visualization
+            if spawn_point not in spawn_stats:
+                spawn_stats[spawn_point] = {"rewards": [], "successes": []}
+            spawn_stats[spawn_point]["rewards"].append(ep_reward)
+            spawn_stats[spawn_point]["successes"].append(int(success))
 
             if self._should_log("eval"):
                 reward_value = float(ep_reward)
@@ -210,6 +223,40 @@ class SB3EvaluationCallback(BaseCallback):
                     agg_metrics,
                     step=training_ep,  # FIXED: Use training episode instead of num_timesteps
                 )
+
+            # Add rich visualizations if wandb is available
+            if WANDB_AVAILABLE and self.wandb_run:
+                viz_metrics = {}
+
+                # 1. Outcome distribution bar chart
+                if outcome_counts and num_episodes > 0:
+                    outcome_data = [[outcome, count / num_episodes] for outcome, count in outcome_counts.items()]
+                    outcome_table = wandb.Table(data=outcome_data, columns=["outcome", "percentage"])
+                    viz_metrics["eval_viz/outcome_distribution"] = wandb.plot.bar(
+                        outcome_table, "outcome", "percentage", title="Outcome Distribution"
+                    )
+
+                # 2. Reward distribution histogram
+                if rewards:
+                    viz_metrics["eval_viz/reward_distribution"] = wandb.Histogram(rewards)
+
+                # 3. Spawn point performance table
+                if spawn_stats:
+                    spawn_table_data = []
+                    for spawn, stats in spawn_stats.items():
+                        avg_reward = float(np.mean(stats["rewards"]))
+                        success_rate = float(np.mean(stats["successes"]))
+                        num_eps = len(stats["rewards"])
+                        spawn_table_data.append([spawn, success_rate, avg_reward, num_eps])
+                    spawn_table = wandb.Table(
+                        data=spawn_table_data,
+                        columns=["spawn_point", "success_rate", "avg_reward", "num_episodes"]
+                    )
+                    viz_metrics["eval_viz/spawn_performance"] = spawn_table
+
+                # Log visualizations
+                if viz_metrics:
+                    self.wandb_run.log(viz_metrics, step=training_ep)
 
         if self.verbose > 0:
             print(

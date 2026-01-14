@@ -48,3 +48,7 @@ wandb:
       # eval_agg/outcome_timeout: true
       # eval_agg/outcome_idle_stop: true
       # eval_agg/outcome_target_finish: true
+      # Rich visualizations (logged automatically when eval_agg is enabled):
+      #   eval_viz/outcome_distribution: Bar chart of outcome percentages
+      #   eval_viz/reward_distribution: Histogram of episode rewards
+      #   eval_viz/spawn_performance: Table of success rates by spawn point

@@ -2,40 +2,80 @@ includes:
 - ../configs/env/line2_gaplock.yaml
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased_quick.yaml
+- ../configs/curriculum/line2_gaplock_phased_full.yaml
 - ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
 - ../configs/wandb.yaml
 experiment:
   name: tqc
-  episodes: 1500
+  episodes: 10000
   seed: 42
 environment:
-  max_steps: 2500
+  action_repeat: 2
 agents:
   car_0:
     role: attacker
     algorithm: sb3_tqc
     target_id: car_1
     params:
-      learning_rate: 0.0003
-      gamma: 0.995
-      tau: 0.005
+      # learning_rate: 0.0005
+      actor_learning_rate: 0.0005
+      critic_learning_rate: 0.0005
+      gamma: 0.999
+      tau: 0.001
       ent_coef: auto
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2
-      hidden_dims:
-      - 256
-      - 256
-      activation: relu
-      pi_hidden_dims: null
-      qf_hidden_dims: null
+      # hidden_dims:
+      # - 256
+      # - 256
+      pi_hidden_dims:
+      - 128
+      - 128
+      - 128
+      - 128
+      # - 256
+      # - 256
+      # - 256
+      # - 256
+      qf_hidden_dims:
+      - 128
+      - 128
+      - 128
+      - 128
+      - 128
+      # - 256
+      # - 256
+      # - 256
+      # - 256
+      # - 256
+
+      activation: tanh
+      # pi_hidden_dims: null
+      # qf_hidden_dims: null
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 1000
-      train_freq: 1  # Train every step (off-policy continuous)
-      gradient_steps: 1  # Number of gradient steps per environment step
+      learning_starts: 256
+      per:
+        enabled: true
+        alpha: 0.6
+        beta: 0.4
+        beta_final: 1.0
+        beta_anneal_steps: 200000
+        epsilon: 1.0e-6
+        max_priority: 1.0
+        normalize_weights: true
+      her:
+        enabled: true
+        reward_mode: replace
+        success_mode: distance
+        distance_threshold: 1.0
+        success_reward: 0.0
+        failure_reward: -1.0
+        done_on_success: true
+        probability: 1.0
     observation:
       preset: gaplock
+    frame_stack: 4
 wandb:
   enabled: true
   project: marl-f110
@@ -49,5 +89,5 @@ wandb:
   - tqc
   - comparison
   - gaplock
-  notes: SAC curriculum for gaplock adversarial task
+  notes: gaplock
   mode: online
