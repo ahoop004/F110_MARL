@@ -6,12 +6,18 @@ metric:
   name: eval_agg/success_rate
   goal: maximize
 parameters:
-  activation:
+  seed:
     values:
-    - relu
-    - silu
+    - 42
+    - 23452
+    - 8675309
+    - 32456
+  # activation:
+  #   values:
+  #   - relu
+  #   - silu
     # - swish
-    - tanh
+    # - tanh
 #  hidden_dims:
 #     values:
 #     - - 64
