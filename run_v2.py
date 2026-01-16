@@ -777,6 +777,7 @@ def main():
                 lock_speed_steps=eval_cfg.get('lock_speed_steps', 0),
                 ftg_override=eval_cfg.get('ftg_override', {}),
                 max_steps=scenario['environment'].get('max_steps', 2500),
+                rolling_window=eval_cfg.get('rolling_window'),
             )
             eval_every_n_episodes = eval_cfg.get('frequency', 100)
 

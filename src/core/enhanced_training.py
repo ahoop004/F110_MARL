@@ -144,6 +144,15 @@ class EnhancedTrainingLoop:
         self.eval_every_n_episodes = eval_every_n_episodes
         self.max_steps_per_episode = max_steps_per_episode
         self.rolling_window = rolling_window
+        eval_window = getattr(evaluation_config, "rolling_window", None)
+        if eval_window is None:
+            eval_window = self.rolling_window
+        try:
+            eval_window = int(eval_window)
+        except (TypeError, ValueError):
+            eval_window = self.rolling_window
+        self.eval_rolling_window = max(1, int(eval_window))
+        self.eval_success_history: deque = deque(maxlen=self.eval_rolling_window)
         self.save_every_n_episodes = save_every_n_episodes
         self.obs_scales = self._resolve_obs_scales()
         self._frame_buffers: Dict[str, deque] = {}
@@ -1215,6 +1224,8 @@ class EnhancedTrainingLoop:
             if ep_data['success']:
                 successes_so_far += 1
             success_rate_so_far = successes_so_far / max(1, eval_idx)
+            self.eval_success_history.append(bool(ep_data['success']))
+            eval_rolling_success_rate = sum(self.eval_success_history) / len(self.eval_success_history)
             eval_successes.append(bool(ep_data['success']))
 
             # Log to WandB
@@ -1230,6 +1241,7 @@ class EnhancedTrainingLoop:
                     'eval/episode_steps': int(ep_data['steps']),
                     'eval/episode_success': int(ep_data['success']),
                     'eval/episode_success_rate': float(success_rate_so_far),
+                    'eval/rolling_success_rate': float(eval_rolling_success_rate),
                     'eval/spawn_point': ep_data['spawn_point'],
                     'eval/training_episode': episode_num,
                 }, step=episode_num)

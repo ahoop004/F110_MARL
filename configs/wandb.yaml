@@ -41,6 +41,7 @@ wandb:
       # eval/episode_steps: true
       eval/episode_success: true
       eval/episode_success_rate: true
+      eval/rolling_success_rate: true
       eval/run: true
       # eval/spawn_point: true
       # eval/training_episode: true

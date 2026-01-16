@@ -26,6 +26,7 @@ class EvaluationConfig:
         lock_speed_steps: int = 0,
         ftg_override: Optional[Dict[str, Any]] = None,
         max_steps: int = 2500,
+        rolling_window: Optional[int] = None,
     ):
         """Initialize evaluation configuration.
 
@@ -40,6 +41,7 @@ class EvaluationConfig:
             ftg_override: Override FTG parameters for full strength evaluation
                 Example: {'max_speed': 1.0, 'bubble_radius': 3.0, 'steering_gain': 0.35}
             max_steps: Maximum steps per episode (default: 2500)
+            rolling_window: Rolling window size for eval metrics (default: None -> use training default)
         """
         self.num_episodes = num_episodes
         self.deterministic = deterministic
@@ -48,6 +50,7 @@ class EvaluationConfig:
         self.lock_speed_steps = lock_speed_steps
         self.ftg_override = ftg_override or {}
         self.max_steps = max_steps
+        self.rolling_window = rolling_window
 
 
 class EvaluationResult:

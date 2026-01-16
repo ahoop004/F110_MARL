@@ -130,6 +130,7 @@ class WandbLogger:
                         wandb.define_metric("curriculum/*", step_metric="train/episode")
                         wandb.define_metric("eval/episode")
                         wandb.define_metric("eval/episode_*", step_metric="eval/episode")
+                        wandb.define_metric("eval/rolling_*", step_metric="eval/episode")
                         wandb.define_metric("eval/training_episode", step_metric="eval/episode")
                         wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
                         wandb.define_metric("eval/run")

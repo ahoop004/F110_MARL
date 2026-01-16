@@ -704,6 +704,7 @@ def main() -> None:
             lock_speed_steps=eval_cfg.get("lock_speed_steps", 0),
             ftg_override=eval_cfg.get("ftg_override", {}),
             max_steps=max_steps,
+            rolling_window=eval_cfg.get("rolling_window"),
         )
         eval_env_raw, eval_agents, _ = create_training_setup(scenario)
         eval_other_agents = {aid: agent for aid, agent in eval_agents.items() if aid != train_agent_id}

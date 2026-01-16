@@ -1,6 +1,7 @@
 """SB3 evaluation callback with W&B logging."""
 
 from typing import Any, Dict, Optional, List
+from collections import deque
 
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
@@ -39,6 +40,15 @@ class SB3EvaluationCallback(BaseCallback):
         self.episode_count = 0
         self.total_eval_episodes = 0
         self.eval_run_count = 0
+        eval_window = getattr(self.config, "rolling_window", None)
+        if eval_window is None:
+            eval_window = 100
+        try:
+            eval_window = int(eval_window)
+        except (TypeError, ValueError):
+            eval_window = 100
+        self.eval_rolling_window = max(1, int(eval_window))
+        self.eval_success_history: deque = deque(maxlen=self.eval_rolling_window)
 
     def _should_log(self, key: str) -> bool:
         if not self.wandb_run:
@@ -258,6 +268,8 @@ class SB3EvaluationCallback(BaseCallback):
             eval_successes.append(bool(success))
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
             success_rate_so_far = success_count / (ep_idx + 1)
+            self.eval_success_history.append(bool(success))
+            eval_rolling_success_rate = sum(self.eval_success_history) / len(self.eval_success_history)
 
             # Track per-spawn stats for table visualization
             if spawn_point not in spawn_stats:
@@ -285,6 +297,7 @@ class SB3EvaluationCallback(BaseCallback):
                     "eval/episode_steps": int(steps),
                     "eval/episode_success": int(success),
                     "eval/episode_success_rate": float(success_rate_so_far),
+                    "eval/rolling_success_rate": float(eval_rolling_success_rate),
                     "eval/spawn_point": spawn_point,
                     "eval/training_episode": training_ep,
                 })
