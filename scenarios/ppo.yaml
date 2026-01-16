@@ -7,7 +7,7 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 10000
+  episodes: 1000
   seed: 42
 environment:
   max_steps: 1200
@@ -27,8 +27,8 @@ agents:
       ent_coef: 0.0
       activation: relu
       hidden_dims:
-      - 512
-      - 512
+      - 256
+      - 256
       batch_size: 64
     observation:
       preset: gaplock
