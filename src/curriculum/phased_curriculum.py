@@ -71,6 +71,8 @@ class Phase:
         spawn_config: Spawn point configuration
         ftg_config: FTG defender configuration
         lock_speed_steps: Steps to lock defender speed
+        eval_overrides: Optional per-phase eval overrides (num_episodes, frequency,
+            match_training_spawn_point)
         mixture_weights: Optional weights for sampling from multiple difficulty levels
         keep_foundation: Fraction of episodes to use foundation-level difficulty (0.0-1.0)
         keep_previous: Fraction of episodes to use previous phase difficulty (0.0-1.0)
@@ -81,6 +83,7 @@ class Phase:
     spawn_config: Dict[str, Any]
     ftg_config: Dict[str, Any]
     lock_speed_steps: Optional[int] = None
+    eval_overrides: Optional[Dict[str, Any]] = None
     mixture_weights: Optional[Dict[str, float]] = None
     keep_foundation: float = 0.0
     keep_previous: float = 0.0
@@ -93,6 +96,7 @@ class Phase:
             'spawn': self.spawn_config,
             'ftg': self.ftg_config,
             'lock_speed_steps': self.lock_speed_steps,
+            'eval_overrides': self.eval_overrides,
             'mixture_weights': self.mixture_weights,
             'keep_foundation': self.keep_foundation,
             'keep_previous': self.keep_previous,
@@ -240,6 +244,7 @@ class PhaseBasedCurriculum:
                 spawn_config=phase_config.get('spawn', {}),
                 ftg_config=phase_config.get('ftg', {}),
                 lock_speed_steps=phase_config.get('lock_speed_steps'),
+                eval_overrides=phase_config.get('eval_overrides'),
                 mixture_weights=phase_config.get('mixture_weights'),
                 keep_foundation=phase_config.get('keep_foundation', 0.0),
                 keep_previous=phase_config.get('keep_previous', 0.0),

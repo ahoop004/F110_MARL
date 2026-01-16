@@ -99,6 +99,7 @@ class SB3EvaluationCallback(BaseCallback):
     def _resolve_phase_eval_settings(self) -> Dict[str, Any]:
         phase_config = None
         phase_index = None
+        eval_overrides: Dict[str, Any] = {}
         if self.curriculum_callback:
             get_phase = getattr(self.curriculum_callback, "get_current_phase_config", None)
             get_index = getattr(self.curriculum_callback, "get_current_phase_index", None)
@@ -112,6 +113,11 @@ class SB3EvaluationCallback(BaseCallback):
         lock_speed_steps = int(getattr(self.config, "lock_speed_steps", 0))
 
         if phase_config:
+            eval_overrides = (
+                phase_config.get("eval_overrides", {})
+                if isinstance(phase_config, dict)
+                else {}
+            )
             spawn_cfg = phase_config.get("spawn", {}) if isinstance(phase_config, dict) else {}
             phase_points = spawn_cfg.get("points")
             if phase_points:
@@ -136,21 +142,37 @@ class SB3EvaluationCallback(BaseCallback):
                     for agent_id, agent in self.eval_env.other_agents.items():
                         apply_curriculum_to_agent(agent, agent_id, phase_config)
 
+        match_training_spawn = bool(eval_overrides.get("match_training_spawn_point", False))
+        if match_training_spawn:
+            training_spawn = self._get_training_spawn_point()
+            if training_spawn and training_spawn in self.spawn_configs:
+                spawn_points = [training_spawn]
+                if spawn_speeds:
+                    spawn_speeds = [spawn_speeds[0]]
+
+        num_episodes = eval_overrides.get("num_episodes", self.config.num_episodes)
+        try:
+            num_episodes = int(num_episodes)
+        except (TypeError, ValueError):
+            num_episodes = int(self.config.num_episodes)
+
         return {
             "phase_index": phase_index,
             "spawn_points": spawn_points,
             "spawn_speeds": spawn_speeds,
             "lock_speed_steps": lock_speed_steps,
+            "num_episodes": num_episodes,
         }
 
     def _on_step(self) -> bool:
-        if self.eval_every_n_episodes <= 0:
+        eval_frequency = self._get_eval_frequency()
+        if not eval_frequency or eval_frequency <= 0:
             return True
         done_count = self._count_episode_ends()
         if done_count > 0:
             for _ in range(done_count):
                 self.episode_count += 1
-                if self.episode_count % self.eval_every_n_episodes == 0:
+                if self.episode_count % eval_frequency == 0:
                     if self._should_run_phase_eval():
                         self._run_eval(training_episode=self.episode_count)
         return True
@@ -185,7 +207,7 @@ class SB3EvaluationCallback(BaseCallback):
         outcome_counts: Dict[str, int] = {}
         spawn_stats: Dict[str, Dict[str, List]] = {}  # Track per-spawn performance
 
-        num_episodes = int(self.config.num_episodes)
+        num_episodes = int(phase_settings.get("num_episodes", self.config.num_episodes))
         spawn_points = list(phase_settings.get("spawn_points") or [])
         spawn_speeds = list(phase_settings.get("spawn_speeds") or [])
         lock_speed_steps = int(phase_settings.get("lock_speed_steps", 0))
@@ -395,6 +417,45 @@ class SB3EvaluationCallback(BaseCallback):
             "velocities": velocities,
             "lock_speed_steps": int(lock_speed_steps),
         }
+
+    def _get_eval_frequency(self) -> Optional[int]:
+        frequency = self.eval_every_n_episodes
+        phase_config = None
+        if self.curriculum_callback:
+            get_phase = getattr(self.curriculum_callback, "get_current_phase_config", None)
+            if callable(get_phase):
+                phase_config = get_phase()
+        if isinstance(phase_config, dict):
+            eval_overrides = phase_config.get("eval_overrides", {}) or {}
+            override = eval_overrides.get("frequency")
+            if override is not None:
+                try:
+                    override = int(override)
+                except (TypeError, ValueError):
+                    override = None
+                if override is not None:
+                    frequency = override if override > 0 else None
+        return frequency
+
+    def _get_training_spawn_point(self) -> Optional[str]:
+        env = getattr(self, "training_env", None)
+        if env is None:
+            return None
+        if hasattr(env, "envs") and env.envs:
+            env = env.envs[0]
+        while hasattr(env, "env"):
+            env = env.env
+        spawn_info = getattr(env, "_last_spawn_info", None)
+        if isinstance(spawn_info, dict):
+            spawn_mapping = spawn_info.get("spawn_points", {})
+            if isinstance(spawn_mapping, dict) and spawn_mapping:
+                agent_id = getattr(env, "agent_id", None)
+                if agent_id and agent_id in spawn_mapping:
+                    return spawn_mapping[agent_id]
+                for spawn_point in spawn_mapping.values():
+                    if spawn_point:
+                        return spawn_point
+        return None
 
 
 __all__ = ["SB3EvaluationCallback"]

@@ -937,8 +937,9 @@ class EnhancedTrainingLoop:
                 )
 
         # Handle periodic evaluation
-        if self.evaluator and self.eval_every_n_episodes:
-            if (episode_num + 1) % self.eval_every_n_episodes == 0:
+        if self.evaluator:
+            eval_frequency = self._get_eval_frequency()
+            if eval_frequency and (episode_num + 1) % eval_frequency == 0:
                 self._run_periodic_evaluation(episode_num)
 
         # Handle checkpointing
@@ -1183,17 +1184,19 @@ class EnhancedTrainingLoop:
             if phase_eval_config is not None:
                 original_eval_config = self.evaluator.config
                 self.evaluator.config = phase_eval_config
+        active_eval_config = self.evaluator.config if self.evaluator else self.evaluation_config
+        num_eval_episodes = int(getattr(active_eval_config, "num_episodes", 0) or 0)
 
         if self.console_logger:
             self.console_logger.print_info(
                 f"Running evaluation at training episode {episode_num + 1} "
-                f"(eval episodes {self.total_eval_episodes + 1}-{self.total_eval_episodes + self.evaluation_config.num_episodes})..."
+                f"(eval episodes {self.total_eval_episodes + 1}-{self.total_eval_episodes + num_eval_episodes})..."
             )
 
         # Enter eval mode in Rich dashboard
         if self.rich_console:
             self.rich_console.enter_eval_mode(
-                num_eval_episodes=self.evaluation_config.num_episodes,
+                num_eval_episodes=num_eval_episodes,
                 training_episode=episode_num
             )
 
@@ -1347,7 +1350,7 @@ class EnhancedTrainingLoop:
                 f"Eval complete: Success rate={eval_result.success_rate:.2%}, "
                 f"Avg reward={eval_result.avg_reward:.2f}, "
                 f"Avg steps={eval_result.avg_episode_length:.1f} "
-                f"(eval episodes {self.total_eval_episodes - self.evaluation_config.num_episodes + 1}-{self.total_eval_episodes})"
+                f"(eval episodes {self.total_eval_episodes - num_eval_episodes + 1}-{self.total_eval_episodes})"
             )
 
         # Check if this is a new best eval model
@@ -1453,9 +1456,23 @@ class EnhancedTrainingLoop:
 
         lock_speed_steps = phase_config.get("lock_speed_steps", self.evaluation_config.lock_speed_steps)
         ftg_override = phase_config.get("ftg", {}) if isinstance(phase_config, dict) else {}
+        eval_overrides = phase_config.get("eval_overrides", {}) if isinstance(phase_config, dict) else {}
+        num_episodes = eval_overrides.get("num_episodes", self.evaluation_config.num_episodes)
+        try:
+            num_episodes = int(num_episodes)
+        except (TypeError, ValueError):
+            num_episodes = int(self.evaluation_config.num_episodes)
+        match_training_spawn = bool(eval_overrides.get("match_training_spawn_point", False))
+        if match_training_spawn:
+            training_spawn = self._get_training_spawn_point()
+            spawn_configs = getattr(self.evaluator, "spawn_configs", {}) if self.evaluator else {}
+            if training_spawn and training_spawn in spawn_configs:
+                spawn_points = [training_spawn]
+                if spawn_speeds:
+                    spawn_speeds = [spawn_speeds[0]]
 
         return EvaluationConfig(
-            num_episodes=self.evaluation_config.num_episodes,
+            num_episodes=num_episodes,
             deterministic=self.evaluation_config.deterministic,
             spawn_points=list(spawn_points),
             spawn_speeds=list(spawn_speeds),
@@ -1463,6 +1480,32 @@ class EnhancedTrainingLoop:
             ftg_override=ftg_override,
             max_steps=self.evaluation_config.max_steps,
         )
+
+    def _get_eval_frequency(self) -> Optional[int]:
+        """Resolve eval frequency, allowing per-phase overrides."""
+        frequency = self.eval_every_n_episodes
+        if getattr(self, "phased_curriculum", None):
+            phase = self.phased_curriculum.get_current_phase()
+            eval_overrides = getattr(phase, "eval_overrides", None) or {}
+            override = eval_overrides.get("frequency")
+            if override is not None:
+                try:
+                    override = int(override)
+                except (TypeError, ValueError):
+                    override = None
+                if override is not None:
+                    frequency = override if override > 0 else None
+        return frequency
+
+    def _get_training_spawn_point(self) -> Optional[str]:
+        mapping = self._current_spawn_mapping or {}
+        primary_id = self.primary_agent_id
+        if primary_id and primary_id in mapping:
+            return mapping[primary_id]
+        for spawn_point in mapping.values():
+            if spawn_point:
+                return spawn_point
+        return None
 
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.

@@ -23,6 +23,10 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+    eval_overrides:
+      frequency: 2
+      num_episodes: 1
+      match_training_spawn_point: true
   - name: 1_lock600
     description: Lock 600 steps
     criteria:
