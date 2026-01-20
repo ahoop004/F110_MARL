@@ -10,6 +10,7 @@
 - [x] Update `scenarios/ppo.yaml` to include the new gaplock multi env config and remove curriculum includes.
 - [x] Create/adjust eval config for gaplock multi-track (if needed) and keep `car_1` FTG active.
 - [x] Keep single-map `configs/env/line2_gaplock.yaml` as legacy (no curriculum).
+- [ ] Temporarily keep `scenarios/ppo.yaml` on line2 until gaplock refactor is stable.
 
 ## 2) Observation alignment
 - [x] Ensure gaplock uses `flatten_observation()` with `preset: gaplock` and target `central_state` injection.
