@@ -161,6 +161,9 @@ def expand_observation_preset(config: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError as e:
         raise ScenarioError(f"Observation preset error: {e}")
 
+    preset = copy.deepcopy(preset)
+    preset["_preset"] = preset_name
+
     # Apply overrides if present
     if 'overrides' in config:
         return merge_observation_config(preset, config['overrides'])

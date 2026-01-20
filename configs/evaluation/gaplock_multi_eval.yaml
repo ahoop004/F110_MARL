@@ -1,0 +1,10 @@
+evaluation:
+  enabled: true
+  frequency: 100
+  gate_eval_schedule: false
+  gate_phase_advancement: true
+  num_episodes: 12
+  deterministic: true
+  spawn_points: []
+  spawn_speeds: []
+  lock_speed_steps: 0

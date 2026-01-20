@@ -264,6 +264,12 @@ def infer_observation_preset(agent_config: Dict[str, Any]) -> Optional[str]:
     if isinstance(obs_config, dict):
         if "preset" in obs_config:
             return obs_config["preset"]
+        if "_preset" in obs_config:
+            return obs_config["_preset"]
+        if obs_config.get("speed", {}).get("enabled") or obs_config.get("prev_action", {}).get("enabled"):
+            return "centerline"
+        if obs_config.get("target_state", {}).get("enabled"):
+            return "gaplock"
         if len(obs_config) > 0:
             return "gaplock"
     return None
@@ -605,6 +611,7 @@ def main() -> None:
 
     train_agent_cfg = scenario["agents"][train_agent_id]
     train_params = train_agent_cfg.get("params", {})
+    action_constraints = train_agent_cfg.get("action_constraints", {})
 
     frame_stack = int(train_agent_cfg.get("frame_stack", 1) or 1)
     if frame_stack < 1:
@@ -643,6 +650,7 @@ def main() -> None:
         spawn_curriculum=spawn_curriculum,
         frame_stack=frame_stack,
         action_repeat=action_repeat,
+        action_constraints=action_constraints,
     )
 
     other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}

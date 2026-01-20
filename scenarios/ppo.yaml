@@ -1,9 +1,9 @@
 includes:
-- ../configs/env/line2_gaplock.yaml
+- ../configs/env/gaplock_multi.yaml
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased.yaml
-- ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
+- ../configs/agents/action_constraints.yaml
+- ../configs/evaluation/gaplock_multi_eval.yaml
 - ../configs/wandb.yaml
 experiment:
   name: ppo

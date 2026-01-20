@@ -1,0 +1,5 @@
+agents:
+  car_0:
+    reward:
+      type: gaplock_centerline_pressure
+      preset: gaplock_centerline_pressure

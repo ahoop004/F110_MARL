@@ -47,7 +47,12 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
 
     # Relative pose (for adversarial tasks)
     if config.get('relative_pose', {}).get('enabled', False):
-        dim += 4  # dx, dy, relative_theta, distance
+        rel_dim = config.get('relative_pose', {}).get('dim', 4)
+        try:
+            rel_dim = int(rel_dim)
+        except (TypeError, ValueError):
+            rel_dim = 4
+        dim += max(rel_dim, 0)
 
     # Centerline extras (single-agent)
     if config.get('speed', {}).get('enabled', False):
@@ -65,31 +70,32 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
 
 # Preset observation configurations
 
-# Gaplock observation configuration (738 dims).
-# Matches v1 configuration exactly:
-# - LiDAR: 720 beams, 12.0m max range, normalized
-# - Ego state: pose (4) + velocity (3) = 7 dims
-# - Target state: pose (4) + velocity (3) = 7 dims
-# - Relative pose: 4 dims
-# - Total: 720 + 7 + 7 + 4 = 738 dims
+# Gaplock observation configuration (119 dims with 108-beam LiDAR).
+# Flattening uses:
+# - LiDAR: 108 beams, 12.0m max range, normalized
+# - Ego velocity: 3 dims (vx, vy, omega)
+# - Target velocity: 3 dims (vx, vy, omega)
+# - Relative pose: 5 dims (rel_x, rel_y, sin(Δθ), cos(Δθ), distance)
+# - Total: beams + 11
 GAPLOCK_OBS: Dict[str, Any] = {
     'lidar': {
         'enabled': True,
-        'beams': 720,
+        'beams': 108,
         'max_range': 12.0,
         'normalize': True,
     },
     'ego_state': {
-        'pose': True,       # x, y, theta, heading (4 dims)
+        'pose': False,
         'velocity': True,   # vx, vy, angular_vel (3 dims)
     },
     'target_state': {
         'enabled': True,
-        'pose': True,       # x, y, theta, heading (4 dims)
+        'pose': False,
         'velocity': True,   # vx, vy, angular_vel (3 dims)
     },
     'relative_pose': {
-        'enabled': True,    # dx, dy, dtheta, distance (4 dims)
+        'enabled': True,
+        'dim': 5,
     },
     'normalization': {
         'enabled': True,

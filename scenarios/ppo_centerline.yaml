@@ -2,6 +2,7 @@ includes:
 - ../configs/env/centerline_multi.yaml
 - ../configs/reward/centerline_racing.yaml
 - ../configs/agents/ftg_defender.yaml
+- ../configs/agents/action_constraints.yaml
 - ../configs/evaluation/centerline_multi_eval.yaml
 - ../configs/wandb.yaml
 experiment:

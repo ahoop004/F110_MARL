@@ -7,8 +7,9 @@ environment:
     shuffle: true
   map_cycle: per_episode
   map_pick: random
-  lidar_range: 10.0
-  lidar_beams: 720
+  num_agents: 2
+  lidar_range: 12.0
+  lidar_beams: 108
   centerline_autoload: true
   centerline_features: true
   centerline_render: false

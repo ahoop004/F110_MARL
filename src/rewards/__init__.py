@@ -21,6 +21,7 @@ from rewards.presets import (
     merge_config,
 )
 from rewards.centerline import CenterlineReward
+from rewards.gaplock_centerline_pressure import GaplockCenterlinePressureReward
 from rewards.builder import build_reward_strategy
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     'merge_config',
     'build_reward_strategy',
     'CenterlineReward',
+    'GaplockCenterlinePressureReward',
 ]

@@ -9,6 +9,7 @@ from rewards.base import RewardStrategy
 from rewards.presets import load_preset, merge_config
 from rewards.gaplock import GaplockReward
 from rewards.centerline import CenterlineReward
+from rewards.gaplock_centerline_pressure import GaplockCenterlinePressureReward
 
 
 def build_reward_strategy(
@@ -68,11 +69,13 @@ def build_reward_strategy(
     # Create reward strategy based on type
     if reward_type == 'gaplock':
         return GaplockReward(reward_config)
+    if reward_type == 'gaplock_centerline_pressure':
+        return GaplockCenterlinePressureReward(reward_config)
     if reward_type == 'centerline':
         return CenterlineReward(reward_config)
     raise ValueError(
         f"Unknown reward type: {reward_type}. "
-        f"Available types: gaplock, centerline"
+        f"Available types: gaplock, gaplock_centerline_pressure, centerline"
     )
 
 

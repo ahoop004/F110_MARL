@@ -59,6 +59,7 @@ class SB3SingleAgentWrapper(gym.Env):
         spawn_curriculum: Optional[Any] = None,
         frame_stack: int = 1,
         action_repeat: int = 1,
+        action_constraints: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -96,6 +97,18 @@ class SB3SingleAgentWrapper(gym.Env):
         self.action_set = action_set
         self._action_low = np.asarray(action_low, dtype=np.float32)
         self._action_high = np.asarray(action_high, dtype=np.float32)
+        self._action_constraints = action_constraints or {}
+        try:
+            self._max_v = self._action_constraints.get("max_v")
+            if self._max_v is not None:
+                self._max_v = float(self._max_v)
+        except (TypeError, ValueError):
+            self._max_v = None
+        self._prevent_reverse = bool(self._action_constraints.get("prevent_reverse", False))
+        try:
+            self._speed_index = int(self._action_constraints.get("speed_index", 1))
+        except (TypeError, ValueError):
+            self._speed_index = 1
         self._prev_action_norm = np.zeros(2, dtype=np.float32)
         if action_set is not None:
             # Discrete action space for DQN/QR-DQN
@@ -309,9 +322,17 @@ class SB3SingleAgentWrapper(gym.Env):
         else:
             action_norm = np.asarray(action, dtype=np.float32)
             self._prev_action_norm = np.clip(action_norm, -1.0, 1.0)
+            if self._prevent_reverse and 0 <= self._speed_index < self._prev_action_norm.shape[0]:
+                if self._prev_action_norm[self._speed_index] < 0.0:
+                    self._prev_action_norm = self._prev_action_norm.copy()
+                    self._prev_action_norm[self._speed_index] = 0.0
             continuous_action = self._action_low + (self._prev_action_norm + 1.0) * 0.5 * (
                 self._action_high - self._action_low
             )
+            if self._max_v is not None and 0 <= self._speed_index < continuous_action.shape[0]:
+                if continuous_action[self._speed_index] > self._max_v:
+                    continuous_action = continuous_action.copy()
+                    continuous_action[self._speed_index] = self._max_v
 
         # Build action dict for all agents
         actions = {self.agent_id: continuous_action}
@@ -448,6 +469,7 @@ class SB3SingleAgentWrapper(gym.Env):
             'timestep': timestep,
             'action': self._prev_action_norm,
             'centerline': getattr(self.env, 'centerline_points', None),
+            'walls': getattr(self.env, 'walls', None),
         }
 
         # Add target obs if target_id is specified (for adversarial tasks)

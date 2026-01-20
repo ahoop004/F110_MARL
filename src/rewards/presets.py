@@ -145,6 +145,24 @@ CENTERLINE_RACING: Dict[str, Any] = {
 PRESETS['centerline_racing'] = CENTERLINE_RACING
 
 
+# Gaplock centerline pressure preset
+GAPLOCK_CENTERLINE_PRESSURE: Dict[str, Any] = {
+    'gaplock_centerline_pressure': {
+        'centerline_weight': 1.0,
+        'centerline_scale': 1.0,
+        'wall_weight': 1.0,
+        'wall_distance_scale': 1.0,
+        'success_reward': 200.0,
+        'self_crash_penalty': -100.0,
+        'collision_penalty': -100.0,
+        'timeout_penalty': -50.0,
+        'target_finish_penalty': -50.0,
+    },
+}
+
+PRESETS['gaplock_centerline_pressure'] = GAPLOCK_CENTERLINE_PRESSURE
+
+
 def load_preset(name: str) -> Dict[str, Any]:
     """Load a reward preset by name.
 
@@ -190,6 +208,7 @@ def merge_config(base: dict, overrides: dict) -> dict:
 __all__ = [
     'GAPLOCK_FULL',
     'GAPLOCK_SIMPLE',
+    'GAPLOCK_CENTERLINE_PRESSURE',
     'CENTERLINE_RACING',
     'PRESETS',
     'load_preset',

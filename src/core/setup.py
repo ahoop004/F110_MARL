@@ -181,11 +181,11 @@ def _apply_map_split(
     mode: str,
 ) -> Dict[str, Any]:
     map_bundles_raw = env_config.get("map_bundles")
-    if (
-        map_bundles_raw is None
-        or map_bundles_raw is True
+    if map_bundles_raw is None:
+        map_bundles = _coerce_bundle_list(map_bundles_raw)
+    elif (
+        map_bundles_raw is True
         or (isinstance(map_bundles_raw, str) and map_bundles_raw.strip().lower() in {"auto", "all"})
-        or (isinstance(map_bundles_raw, (list, tuple)) and not map_bundles_raw)
     ):
         map_bundles = _discover_map_bundles(env_config)
         env_config = dict(env_config)
@@ -389,7 +389,12 @@ def create_training_setup(
 
     if map_data is not None:
         env_kwargs['map_data'] = map_data
-        env_kwargs['map'] = map_data.yaml_path.name
+        map_dir_value = env_kwargs.get("map_dir")
+        if map_dir_value:
+            env_kwargs['map'] = _relative_yaml_name(Path(map_dir_value), map_data.yaml_path)
+            env_kwargs['map_yaml'] = env_kwargs['map']
+        else:
+            env_kwargs['map'] = str(map_data.yaml_path)
 
     # Load spawn points from map YAML if specified
     if 'spawn_points' in env_config:

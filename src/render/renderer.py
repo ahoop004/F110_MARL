@@ -137,6 +137,7 @@ else:
             self.lidar_fov = lidar_fov
             self.max_range = max_range
             self.render_scale = 50.0  # meters -> pixels
+            self._map_cache = {}
 
             # Extension system
             self._extensions = []
@@ -190,21 +191,54 @@ else:
             origin = meta['origin']
             ox, oy = origin[0], origin[1]
 
+            occ_thresh = float(meta.get('occupied_thresh', 0.65))
+            free_thresh = float(meta.get('free_thresh', 0.196))
+            if occ_thresh <= free_thresh:
+                occ_thresh = free_thresh + np.finfo(np.float32).eps
+            negate = int(meta.get('negate', 0))
+
+            cache_key = (
+                img_path,
+                res,
+                ox,
+                oy,
+                occ_thresh,
+                free_thresh,
+                negate,
+                self.render_scale,
+            )
+            cached = self._map_cache.get(cache_key)
+            if cached is not None:
+                pts, positions, colors = cached
+                N = pts.shape[0]
+                reuse = self.map_vlist is not None
+                if not reuse:
+                    self.map_vlist = self.shader.vertex_list(
+                        N, pyglet.gl.GL_POINTS, batch=self.batch, group=self.shader_group,
+                        position=('f', positions),
+                        color=('f', colors)
+                    )
+                else:
+                    if N != self._map_vertex_count:
+                        self.map_vlist.resize(N)
+                    self.map_vlist.position[:] = positions
+                    self.map_vlist.color[:] = colors
+                self._map_vertex_count = N
+                self.map_points = pts
+                if centerline_points is not None:
+                    self.update_centerline(centerline_points, connect=centerline_connect)
+                return
+
             # Load and process image
             with Image.open(img_path) as pil_img:
                 pil_img = pil_img.convert('L').transpose(Image.FLIP_TOP_BOTTOM)
                 img_gray = np.asarray(pil_img, dtype=np.float32)
 
             img_norm = img_gray / 255.0
-            if int(meta.get('negate', 0)):
+            if negate:
                 occ_prob = img_norm
             else:
                 occ_prob = 1.0 - img_norm  # Dark pixels = obstacles
-
-            occ_thresh = float(meta.get('occupied_thresh', 0.65))
-            free_thresh = float(meta.get('free_thresh', 0.196))
-            if occ_thresh <= free_thresh:
-                occ_thresh = free_thresh + np.finfo(np.float32).eps
 
             H, W = occ_prob.shape[0], occ_prob.shape[1]
 
@@ -254,6 +288,7 @@ else:
 
             self._map_vertex_count = N
             self.map_points = pts
+            self._map_cache[cache_key] = (pts, positions, colors)
 
             # Centerline rendering (stub for now - can be implemented as extension)
             if centerline_points is not None:
