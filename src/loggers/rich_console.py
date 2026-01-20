@@ -96,6 +96,12 @@ class RichConsole:
         self.eval_success_rate = 0.0
         self.eval_spawn_point = ""
 
+        # Alternating eval mode tracking (inline, no mode switch)
+        self.eval_rolling_success_rate = 0.0
+        self.eval_total_episodes = 0
+        self.last_eval_outcome = "UNKNOWN"
+        self.last_eval_spawn_point = ""
+
         # Store training state for restore after eval
         self._training_state_backup = None
 
@@ -281,6 +287,27 @@ class RichConsole:
             "  Steps Mean",
             f"{self.train_steps_mean:.1f}"
         )
+
+        # Eval rolling stats (alternating mode)
+        if self.eval_total_episodes > 0:
+            table.add_row("", "")  # Spacer
+            table.add_row("[bold]Eval (Rolling)", "")
+            table.add_row(
+                "  Success Rate",
+                self._format_percentage(self.eval_rolling_success_rate, good_threshold=0.5)
+            )
+            table.add_row(
+                "  Episodes",
+                f"{self.eval_total_episodes}"
+            )
+            table.add_row(
+                "  Last Outcome",
+                self._format_outcome(self.last_eval_outcome)
+            )
+            table.add_row(
+                "  Last Spawn",
+                self.last_eval_spawn_point or "N/A"
+            )
 
         # Target metrics
         table.add_row("", "")  # Spacer
@@ -562,6 +589,39 @@ class RichConsole:
         self.eval_mode = False
 
         # Update display to show training again
+        self.live.update(self._generate_layout())
+
+    def update_eval_inline(
+        self,
+        eval_episode: int,
+        outcome: str,
+        reward: float,
+        steps: int,
+        spawn_point: str,
+        rolling_success_rate: float,
+    ):
+        """Update eval metrics inline without entering eval mode.
+
+        Used for alternating train/eval mode where we run single eval episodes
+        after each training episode.
+
+        Args:
+            eval_episode: Current eval episode number
+            outcome: Episode outcome
+            reward: Episode reward
+            steps: Episode steps
+            spawn_point: Spawn point name
+            rolling_success_rate: Rolling success rate from eval metrics tracker
+        """
+        if not self.enabled or self.live is None:
+            return
+
+        self.eval_total_episodes = eval_episode
+        self.last_eval_outcome = outcome
+        self.last_eval_spawn_point = spawn_point
+        self.eval_rolling_success_rate = rolling_success_rate
+
+        # Update display (no need to switch modes, just refresh)
         self.live.update(self._generate_layout())
 
 

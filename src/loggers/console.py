@@ -133,6 +133,42 @@ class ConsoleLogger:
 
         self.console.print(msg)
 
+    def log_eval_inline(
+        self,
+        eval_episode: int,
+        outcome: str,
+        success: bool,
+        reward: float,
+        steps: int,
+        rolling_success_rate: float,
+        spawn_point: str,
+    ):
+        """Log eval episode inline (for alternating train/eval mode).
+
+        Args:
+            eval_episode: Eval episode number
+            outcome: Episode outcome type
+            success: Whether episode was successful
+            reward: Total episode reward
+            steps: Number of steps
+            rolling_success_rate: Rolling success rate from eval metrics tracker
+            spawn_point: Spawn point used for this episode
+        """
+        if not self.verbose:
+            return
+
+        # Color code outcome
+        outcome_color = "green" if success else "red"
+
+        msg = f"[dim cyan]Eval {eval_episode:4d}[/dim cyan] | "
+        msg += f"[{outcome_color}]{outcome:15s}[/{outcome_color}] | "
+        msg += f"Reward: {reward:7.1f} | "
+        msg += f"Steps: {steps:4d} | "
+        msg += f"Success: {rolling_success_rate:5.1%} | "
+        msg += f"[dim]{spawn_point}[/dim]"
+
+        self.console.print(msg)
+
     def print_summary(self, stats: Dict[str, Any]):
         """Print training summary as formatted table.
 

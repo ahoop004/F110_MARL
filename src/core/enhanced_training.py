@@ -202,6 +202,11 @@ class EnhancedTrainingLoop:
         self.last_eval_training_episode: int = -1
         self.best_eval_per_phase: Dict[int, float] = {}
 
+        # Eval metrics tracker for alternating mode (frequency == 1)
+        # Uses same MetricsTracker as training for rolling window success rate
+        self.eval_metrics_tracker = MetricsTracker()
+        self._eval_spawn_index: int = 0
+
     def _flatten_obs(
         self,
         agent_id: str,
@@ -948,8 +953,13 @@ class EnhancedTrainingLoop:
         # Handle periodic evaluation
         if self.evaluator:
             eval_frequency = self._get_eval_frequency()
-            if eval_frequency and (episode_num + 1) % eval_frequency == 0:
-                self._run_periodic_evaluation(episode_num)
+            if eval_frequency:
+                if eval_frequency == 1:
+                    # Alternating mode: run single eval episode after each training episode
+                    self._run_alternating_eval_episode(episode_num)
+                elif (episode_num + 1) % eval_frequency == 0:
+                    # Batch mode: run batch of eval episodes every N training episodes
+                    self._run_periodic_evaluation(episode_num)
 
         # Handle checkpointing
         if self.checkpoint_manager:
@@ -1518,6 +1528,105 @@ class EnhancedTrainingLoop:
             if spawn_point:
                 return spawn_point
         return None
+
+    def _run_alternating_eval_episode(self, training_episode_num: int) -> None:
+        """Run a single eval episode after a training episode (alternating mode).
+
+        This method is called when eval_every_n_episodes == 1 (alternating mode).
+        It runs a single deterministic eval episode and tracks it in eval_metrics_tracker
+        for proper rolling window success rate calculation.
+
+        Args:
+            training_episode_num: The training episode number that just completed
+        """
+        if not self.evaluator or not self.evaluation_config:
+            return
+
+        # Cycle through spawn points sequentially
+        spawn_points = self.evaluation_config.spawn_points
+        spawn_speeds = self.evaluation_config.spawn_speeds
+        if not spawn_points:
+            return
+
+        spawn_idx = self._eval_spawn_index % len(spawn_points)
+        spawn_point = spawn_points[spawn_idx]
+        spawn_speed = spawn_speeds[spawn_idx] if spawn_idx < len(spawn_speeds) else 0.44
+        self._eval_spawn_index += 1
+
+        # Run single deterministic eval episode using evaluator's internal method
+        episode_result = self.evaluator._run_episode(spawn_point, spawn_speed, self.total_eval_episodes)
+
+        # Track in eval metrics tracker for rolling window stats
+        outcome_str = episode_result['outcome']
+        try:
+            outcome = EpisodeOutcome[outcome_str.upper()]
+        except KeyError:
+            outcome = EpisodeOutcome.UNKNOWN
+
+        self.eval_metrics_tracker.add_episode(
+            episode=self.total_eval_episodes,
+            outcome=outcome,
+            total_reward=episode_result['reward'],
+            steps=episode_result['steps'],
+        )
+        self.total_eval_episodes += 1
+
+        # Get rolling stats for logging
+        eval_rolling_stats = self.eval_metrics_tracker.get_rolling_stats(
+            window=self.eval_rolling_window
+        )
+        eval_rolling_success_rate = eval_rolling_stats.get('success_rate', 0.0)
+
+        # Log to W&B
+        if self.wandb_logger and self.wandb_logger.should_log("eval"):
+            reward_value = float(episode_result['reward'])
+            if not np.isfinite(reward_value):
+                reward_value = 0.0
+            self.wandb_logger.log_metrics({
+                'eval/episode': int(self.total_eval_episodes),
+                'eval/episode_reward': reward_value,
+                'eval/episode_steps': int(episode_result['steps']),
+                'eval/episode_success': int(episode_result['success']),
+                'eval/rolling_success_rate': float(eval_rolling_success_rate),
+                'eval/spawn_point': spawn_point,
+                'eval/training_episode': training_episode_num,
+            }, step=training_episode_num)
+
+        # Log to CSV
+        if self.csv_logger:
+            self.csv_logger.log_eval_episode(
+                eval_episode=self.total_eval_episodes,
+                training_episode=training_episode_num,
+                outcome=episode_result['outcome'],
+                success=episode_result['success'],
+                reward=episode_result['reward'],
+                steps=episode_result['steps'],
+                spawn_point=spawn_point,
+                spawn_speed=spawn_speed,
+            )
+
+        # Update Rich console with eval stats (inline, no mode switch)
+        if self.rich_console:
+            self.rich_console.update_eval_inline(
+                eval_episode=self.total_eval_episodes,
+                outcome=episode_result['outcome'],
+                reward=episode_result['reward'],
+                steps=episode_result['steps'],
+                spawn_point=spawn_point,
+                rolling_success_rate=eval_rolling_success_rate,
+            )
+
+        # Console log (brief)
+        if self.console_logger:
+            self.console_logger.log_eval_inline(
+                eval_episode=self.total_eval_episodes,
+                outcome=episode_result['outcome'],
+                success=episode_result['success'],
+                reward=episode_result['reward'],
+                steps=episode_result['steps'],
+                rolling_success_rate=eval_rolling_success_rate,
+                spawn_point=spawn_point,
+            )
 
     def _handle_checkpointing(self, episode_num: int):
         """Handle checkpoint saving logic.
