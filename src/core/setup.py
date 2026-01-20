@@ -1,5 +1,6 @@
 """Training setup builder - creates environment and agents from scenario config."""
 from typing import Any, Dict, Optional, Tuple, List
+import math
 from pathlib import Path
 import yaml
 import numpy as np
@@ -54,7 +55,156 @@ def load_spawn_points_from_map(map_path: str, spawn_names: List[str]) -> np.ndar
     return np.array(poses, dtype=np.float64)
 
 
-def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict[str, RewardStrategy]]:
+def _coerce_bundle_list(value: Any) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            raise ValueError("environment.map_bundles cannot be empty")
+        return [value]
+    if isinstance(value, (list, tuple)):
+        bundles = [str(item).strip() for item in value]
+        bundles = [item for item in bundles if item]
+        if not bundles:
+            raise ValueError("environment.map_bundles cannot be empty")
+        return bundles
+    raise TypeError("environment.map_bundles must be a string or list of strings")
+
+
+def _resolve_bundle_yaml(map_dir: Path, bundle: str) -> Path:
+    bundle_str = str(bundle).strip()
+    if not bundle_str:
+        raise ValueError("map bundle identifier cannot be empty")
+
+    candidate_path = Path(bundle_str)
+    if candidate_path.is_absolute():
+        resolved = candidate_path
+        if resolved.is_file():
+            return resolved
+        if resolved.with_suffix(".yaml").is_file():
+            return resolved.with_suffix(".yaml")
+        raise FileNotFoundError(f"Map YAML not found for bundle '{bundle_str}': {resolved}")
+
+    if candidate_path.suffix:
+        resolved = (map_dir / candidate_path).resolve()
+        if resolved.is_file():
+            return resolved
+
+    resolved = (map_dir / candidate_path).resolve()
+    if resolved.is_file():
+        return resolved
+
+    yaml_with_suffix = resolved.with_suffix(".yaml")
+    if yaml_with_suffix.is_file():
+        return yaml_with_suffix
+
+    if resolved.is_dir():
+        yaml_files = sorted(resolved.glob("*.yaml"))
+        if yaml_files:
+            return yaml_files[0].resolve()
+
+    search_name = candidate_path.name
+    matches = sorted(map_dir.rglob(f"{search_name}.yaml"))
+    if matches:
+        return matches[0].resolve()
+
+    raise FileNotFoundError(f"Map YAML not found for bundle '{bundle_str}' within {map_dir}")
+
+
+def _relative_yaml_name(map_dir: Path, yaml_path: Path) -> str:
+    try:
+        return yaml_path.relative_to(map_dir).as_posix()
+    except ValueError:
+        return str(yaml_path)
+
+
+def _apply_map_bundle(env_config: Dict[str, Any], bundle: str) -> Dict[str, Any]:
+    map_root = env_config.get("map_dir") or env_config.get("map_root") or "maps"
+    map_dir = Path(str(map_root)).expanduser()
+    if not map_dir.is_absolute():
+        map_dir = (Path.cwd() / map_dir).resolve()
+
+    yaml_path = _resolve_bundle_yaml(map_dir, bundle)
+    env_config["map_dir"] = str(map_dir)
+    env_config["map_yaml"] = _relative_yaml_name(map_dir, yaml_path)
+    env_config["map"] = env_config["map_yaml"]
+    env_config["map_bundle"] = str(bundle)
+    return env_config
+
+
+def _apply_map_split(
+    env_config: Dict[str, Any],
+    experiment_config: Dict[str, Any],
+    mode: str,
+) -> Dict[str, Any]:
+    map_bundles = _coerce_bundle_list(env_config.get("map_bundles"))
+    if not map_bundles:
+        return env_config
+
+    split_cfg = env_config.get("map_split") or {}
+    if not isinstance(split_cfg, dict):
+        raise TypeError("environment.map_split must be a mapping when provided")
+
+    train_ratio = split_cfg.get("train_ratio", 0.8)
+    try:
+        train_ratio = float(train_ratio)
+    except (TypeError, ValueError):
+        train_ratio = 0.8
+    if not 0.0 < train_ratio < 1.0:
+        raise ValueError("map_split.train_ratio must be between 0 and 1")
+
+    seed = split_cfg.get("seed")
+    if seed is None:
+        seed = experiment_config.get("seed", env_config.get("seed", 0))
+    try:
+        seed = int(seed)
+    except (TypeError, ValueError):
+        seed = 0
+
+    shuffle = split_cfg.get("shuffle", True)
+    rng = np.random.default_rng(seed)
+    bundles = list(map_bundles)
+    if shuffle:
+        rng.shuffle(bundles)
+
+    total = len(bundles)
+    if total == 1:
+        train_bundles = bundles
+        eval_bundles: List[str] = []
+    else:
+        train_count = int(math.floor(train_ratio * total))
+        train_count = max(1, min(total - 1, train_count))
+        train_bundles = bundles[:train_count]
+        eval_bundles = bundles[train_count:]
+
+    is_eval = str(mode).lower() in {"eval", "evaluation", "test"}
+    active_bundles = eval_bundles if is_eval else train_bundles
+    if not active_bundles:
+        active_bundles = train_bundles
+
+    pick_key = "eval_pick" if is_eval else "train_pick"
+    pick_strategy = split_cfg.get(pick_key, split_cfg.get("pick", "first"))
+    if pick_strategy not in {"first", "random"}:
+        pick_strategy = "first"
+    if pick_strategy == "random":
+        chosen = active_bundles[int(rng.integers(0, len(active_bundles)))]
+    else:
+        chosen = active_bundles[0]
+
+    env_config = dict(env_config)
+    env_config["map_bundles_train"] = list(train_bundles)
+    env_config["map_bundles_eval"] = list(eval_bundles)
+    env_config["map_bundle_active"] = chosen
+    env_config["map_split_mode"] = "eval" if is_eval else "train"
+    return _apply_map_bundle(env_config, chosen)
+
+
+def create_training_setup(
+    scenario: Dict[str, Any],
+    *,
+    mode: str = "train",
+) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict[str, RewardStrategy]]:
     """Create training setup from scenario configuration.
 
     Args:
@@ -62,6 +212,7 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
             - experiment: {name, episodes, seed}
             - environment: {map, num_agents, max_steps, ...}
             - agents: {agent_id: {algorithm, params, observation, reward, ...}}
+        mode: "train" or "eval" (used for map bundle splits)
 
     Returns:
         Tuple of (env, agents, reward_strategies):
@@ -74,7 +225,8 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
 
     # Extract configuration sections
     experiment_config = scenario['experiment']
-    env_config = scenario['environment']
+    env_config = dict(scenario['environment'])
+    env_config = _apply_map_split(env_config, experiment_config, mode)
     agent_configs = scenario['agents']
 
     # Set random seed if specified
@@ -102,6 +254,12 @@ def create_training_setup(scenario: Dict[str, Any]) -> Tuple[F110ParallelEnv, Di
         'timestep': env_config.get('timestep', 0.01),
         'max_steps': env_config.get('max_steps', 5000),
     }
+    if 'map_dir' in env_config:
+        env_kwargs['map_dir'] = env_config['map_dir']
+    if 'map_yaml' in env_config:
+        env_kwargs['map_yaml'] = env_config['map_yaml']
+    if 'map_ext' in env_config:
+        env_kwargs['map_ext'] = env_config['map_ext']
     if env_seed is not None:
         env_kwargs['seed'] = env_seed
 

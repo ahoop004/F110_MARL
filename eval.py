@@ -301,7 +301,7 @@ def main():
 
     # Create environment and agents
     print("Creating environment and agents...")
-    env, agents, reward_strategies = create_training_setup(scenario)
+    env, agents, reward_strategies = create_training_setup(scenario, mode="eval")
 
     # Extract observation presets and target IDs
     observation_presets = {}

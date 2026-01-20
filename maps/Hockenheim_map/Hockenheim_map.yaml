@@ -1,0 +1,9 @@
+image: Hockenheim_map.png
+resolution: 0.06702
+origin:
+- -19.911213834397966
+- -50.87622999687852
+- 0.0
+occupied_thresh: 0.45
+free_thresh: 0.196
+negate: 0

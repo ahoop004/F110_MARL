@@ -577,7 +577,7 @@ def main() -> None:
         f"Episodes: {scenario['experiment'].get('episodes', 'N/A')}",
     )
 
-    env, agents, reward_strategies = create_training_setup(scenario)
+    env, agents, reward_strategies = create_training_setup(scenario, mode="train")
 
     train_agent_cfg = scenario["agents"][train_agent_id]
     train_params = train_agent_cfg.get("params", {})
@@ -706,7 +706,7 @@ def main() -> None:
             max_steps=max_steps,
             rolling_window=eval_cfg.get("rolling_window"),
         )
-        eval_env_raw, eval_agents, _ = create_training_setup(scenario)
+        eval_env_raw, eval_agents, _ = create_training_setup(scenario, mode="eval")
         eval_other_agents = {aid: agent for aid, agent in eval_agents.items() if aid != train_agent_id}
 
         eval_env = SB3SingleAgentWrapper(

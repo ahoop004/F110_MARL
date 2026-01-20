@@ -1,6 +1,0 @@
-image: line_map.png
-resolution: 0.06505
-origin: [10,10, 0.000000]
-negate: 1
-occupied_thresh: 0.45
-free_thresh: 0.196
