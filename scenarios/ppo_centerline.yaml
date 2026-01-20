@@ -9,8 +9,8 @@ experiment:
   episodes: 1000
   seed: 42
 environment:
-  max_steps: 1500
-  action_repeat: 2
+  max_steps: 10000
+  action_repeat: 1
   num_agents: 2
 agents:
   car_0:

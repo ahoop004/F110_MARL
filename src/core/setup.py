@@ -112,6 +112,48 @@ def _resolve_bundle_yaml(map_dir: Path, bundle: str) -> Path:
     raise FileNotFoundError(f"Map YAML not found for bundle '{bundle_str}' within {map_dir}")
 
 
+def _discover_map_bundles(env_config: Dict[str, Any]) -> List[str]:
+    map_root = env_config.get("map_dir") or env_config.get("map_root") or "maps"
+    map_dir = Path(str(map_root)).expanduser()
+    if not map_dir.is_absolute():
+        map_dir = (Path.cwd() / map_dir).resolve()
+
+    bundles: List[str] = []
+    for entry in sorted(map_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        yaml_files = sorted(entry.glob("*.yaml"))
+        if not yaml_files:
+            continue
+        yaml_path = yaml_files[0]
+        try:
+            metadata = yaml.safe_load(yaml_path.read_text())
+        except Exception:
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        image_field = metadata.get("image")
+        if image_field:
+            image_path = (yaml_path.parent / image_field).expanduser().resolve()
+        else:
+            image_path = None
+            for ext in (".png", ".pgm", ".jpg", ".jpeg"):
+                candidate = yaml_path.with_suffix(ext)
+                if candidate.exists():
+                    image_path = candidate
+                    break
+        if image_path is None or not image_path.exists():
+            continue
+        stem = yaml_path.stem
+        centerline_path = yaml_path.with_name(f"{stem}_centerline.csv")
+        walls_path = yaml_path.with_name(f"{stem}_walls.csv")
+        if not centerline_path.exists() or not walls_path.exists():
+            continue
+        bundles.append(entry.name)
+
+    return bundles
+
+
 def _relative_yaml_name(map_dir: Path, yaml_path: Path) -> str:
     try:
         return yaml_path.relative_to(map_dir).as_posix()
@@ -138,7 +180,18 @@ def _apply_map_split(
     experiment_config: Dict[str, Any],
     mode: str,
 ) -> Dict[str, Any]:
-    map_bundles = _coerce_bundle_list(env_config.get("map_bundles"))
+    map_bundles_raw = env_config.get("map_bundles")
+    if (
+        map_bundles_raw is None
+        or map_bundles_raw is True
+        or (isinstance(map_bundles_raw, str) and map_bundles_raw.strip().lower() in {"auto", "all"})
+        or (isinstance(map_bundles_raw, (list, tuple)) and not map_bundles_raw)
+    ):
+        map_bundles = _discover_map_bundles(env_config)
+        env_config = dict(env_config)
+        env_config["map_bundles"] = list(map_bundles)
+    else:
+        map_bundles = _coerce_bundle_list(map_bundles_raw)
     if not map_bundles:
         return env_config
 

@@ -1,12 +1,6 @@
 environment:
   map_dir: maps
-  map_bundles:
-  - Budapest_map
-  - Spa_map
-  - Silverstone_map
-  - Spielberg_map
-  - levine
-  - circle_map
+  map_bundles: auto
   map_split:
     train_ratio: 0.8
     seed: 42

@@ -553,6 +553,22 @@ class EpisodeProgressCallback(BaseCallback):
         return True
 
 
+class RenderCallback(BaseCallback):
+    """Render the environment during training."""
+
+    def __init__(self, render_every: int = 1):
+        super().__init__()
+        self.render_every = max(1, int(render_every))
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.render_every == 0:
+            try:
+                self.training_env.env_method("render")
+            except Exception:
+                return True
+        return True
+
+
 def main() -> None:
     args = parse_args()
 
@@ -662,6 +678,16 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         callbacks.append(EpisodeProgressCallback(log_every, console_logger))
+    if env_config.get("render"):
+        render_every_env = os.environ.get("F110_RENDER_EVERY_STEPS")
+        if render_every_env is None:
+            render_every = 1
+        else:
+            try:
+                render_every = int(render_every_env)
+            except (TypeError, ValueError):
+                render_every = 1
+        callbacks.append(RenderCallback(render_every))
 
     ftg_agents = {}
     ftg_schedules = {}

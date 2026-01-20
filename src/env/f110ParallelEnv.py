@@ -1453,6 +1453,14 @@ class F110ParallelEnv(ParallelEnv):
             spawn_mapping = {}
         self._last_spawn_selection = dict(spawn_mapping)
 
+        if isinstance(velocities, dict):
+            vel_array = np.full(self.n_agents, np.nan, dtype=np.float32)
+            agent_index = self._agent_id_to_index
+            for agent_id, vel in velocities.items():
+                if agent_id in agent_index:
+                    vel_array[agent_index[agent_id]] = float(vel)
+            velocities = vel_array
+
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses, velocities=velocities)

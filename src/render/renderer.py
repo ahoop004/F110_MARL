@@ -173,6 +173,9 @@ else:
             if map_meta is None:
                 raise ValueError('update_map requires preloaded map_meta metadata')
             meta = map_meta
+            map_name = meta.get("name") or meta.get("map_name") or Path(map_path_no_ext).name
+            if map_name:
+                self.set_caption(f"F110 - {map_name}")
 
             if map_image_path is not None:
                 img_path = str(map_image_path)

@@ -63,6 +63,8 @@ class SB3SingleAgentWrapper(gym.Env):
         super().__init__()
 
         self.env = env
+        self.render_mode = getattr(env, "render_mode", None)
+        self.metadata = getattr(env, "metadata", {"render_modes": []})
         self.agent_id = agent_id
         self.observation_preset = observation_preset
         self.target_id = target_id
