@@ -185,6 +185,8 @@ def _apply_map_split(
 
     pick_key = "eval_pick" if is_eval else "train_pick"
     pick_strategy = split_cfg.get(pick_key, split_cfg.get("pick", "first"))
+    if str(env_config.get("map_cycle", "")).lower() == "per_episode":
+        pick_strategy = env_config.get("map_pick", pick_strategy)
     if pick_strategy not in {"first", "random"}:
         pick_strategy = "first"
     if pick_strategy == "random":
@@ -272,6 +274,34 @@ def create_training_setup(
         env_kwargs['render_mode'] = 'human' if env_config['render'] else None
     if 'vehicle_params' in env_config:
         env_kwargs['vehicle_params'] = env_config['vehicle_params']
+    passthrough_keys = [
+        "map_root",
+        "map_bundle",
+        "map_bundle_active",
+        "map_bundles",
+        "map_bundles_train",
+        "map_bundles_eval",
+        "map_split_mode",
+        "map_cycle",
+        "map_pick",
+        "epoch_shuffle",
+        "centerline_autoload",
+        "centerline_csv",
+        "centerline_render",
+        "centerline_features",
+        "walls_autoload",
+        "walls_csv",
+        "track_threshold",
+        "track_inverted",
+        "spawn_policy",
+        "spawn_centerline",
+        "spawn_offsets",
+        "spawn_target",
+        "spawn_ego",
+    ]
+    for key in passthrough_keys:
+        if key in env_config and key not in env_kwargs:
+            env_kwargs[key] = env_config[key]
 
     map_data = None
     centerline_requested = bool(

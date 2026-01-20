@@ -15,10 +15,12 @@ from rewards.composer import ComposedReward
 from rewards.presets import (
     GAPLOCK_FULL,
     GAPLOCK_SIMPLE,
+    CENTERLINE_RACING,
     PRESETS,
     load_preset,
     merge_config,
 )
+from rewards.centerline import CenterlineReward
 from rewards.builder import build_reward_strategy
 
 __all__ = [
@@ -27,8 +29,10 @@ __all__ = [
     'ComposedReward',
     'GAPLOCK_FULL',
     'GAPLOCK_SIMPLE',
+    'CENTERLINE_RACING',
     'PRESETS',
     'load_preset',
     'merge_config',
     'build_reward_strategy',
+    'CenterlineReward',
 ]

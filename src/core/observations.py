@@ -49,6 +49,17 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
     if config.get('relative_pose', {}).get('enabled', False):
         dim += 4  # dx, dy, relative_theta, distance
 
+    # Centerline extras (single-agent)
+    if config.get('speed', {}).get('enabled', False):
+        dim += 1  # speed magnitude
+    if config.get('prev_action', {}).get('enabled', False):
+        prev_dim = config.get('prev_action', {}).get('dim', 2)
+        try:
+            prev_dim = int(prev_dim)
+        except (TypeError, ValueError):
+            prev_dim = 2
+        dim += max(prev_dim, 0)
+
     return dim
 
 
@@ -150,11 +161,48 @@ FULL_OBS: Dict[str, Any] = {
 }
 
 
+# Centerline observation configuration (1083 dims).
+# - LiDAR: 1080 beams, 10.0m max range
+# - Speed magnitude: 1 dim
+# - Previous action: 2 dims
+# - Total: 1080 + 1 + 2 = 1083 dims
+CENTERLINE_OBS: Dict[str, Any] = {
+    'lidar': {
+        'enabled': True,
+        'beams': 1080,
+        'max_range': 10.0,
+        'normalize': True,
+    },
+    'ego_state': {
+        'pose': False,
+        'velocity': False,
+    },
+    'target_state': {
+        'enabled': False,
+    },
+    'relative_pose': {
+        'enabled': False,
+    },
+    'speed': {
+        'enabled': True,
+    },
+    'prev_action': {
+        'enabled': True,
+        'dim': 2,
+    },
+    'normalization': {
+        'enabled': True,
+        'trainable_only': True,
+    },
+}
+
+
 # Registry of all presets
 OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = {
     'gaplock': GAPLOCK_OBS,
     'minimal': MINIMAL_OBS,
     'full': FULL_OBS,
+    'centerline': CENTERLINE_OBS,
 }
 
 
@@ -162,7 +210,7 @@ def load_observation_preset(name: str) -> Dict[str, Any]:
     """Load an observation preset by name.
 
     Args:
-        name: Preset name ('gaplock', 'minimal', or 'full')
+        name: Preset name ('gaplock', 'minimal', 'full', or 'centerline')
 
     Returns:
         Deep copy of preset configuration
@@ -275,4 +323,5 @@ __all__ = [
     'GAPLOCK_OBS',
     'MINIMAL_OBS',
     'FULL_OBS',
+    'CENTERLINE_OBS',
 ]

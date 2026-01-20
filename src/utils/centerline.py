@@ -232,3 +232,25 @@ def progress_from_spacing(
         seen.add(value)
         unique.append(value)
     return tuple(unique)
+
+
+def centerline_heading(centerline: np.ndarray, index: int) -> float:
+    """Return heading (theta) at a centerline index."""
+    if centerline.ndim == 2 and centerline.shape[1] >= 3:
+        theta = float(centerline[index, 2])
+        if np.isfinite(theta):
+            return theta
+    points = centerline[:, :2].astype(np.float32, copy=False)
+    prev_idx = max(0, index - 1)
+    next_idx = min(points.shape[0] - 1, index + 1)
+    delta = points[next_idx] - points[prev_idx]
+    if np.allclose(delta, 0.0):
+        return 0.0
+    return float(np.arctan2(delta[1], delta[0]))
+
+
+def centerline_pose(centerline: np.ndarray, index: int) -> np.ndarray:
+    """Return pose [x, y, theta] at a centerline index."""
+    point = np.asarray(centerline[index], dtype=np.float32).reshape(-1)
+    theta = centerline_heading(centerline, index)
+    return np.array([point[0], point[1], theta], dtype=np.float32)

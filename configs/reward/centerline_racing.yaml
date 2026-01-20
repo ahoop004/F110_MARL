@@ -1,0 +1,5 @@
+agents:
+  car_0:
+    reward:
+      type: centerline
+      preset: centerline_racing

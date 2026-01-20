@@ -274,6 +274,65 @@ def flatten_gaplock_obs(
     return np.concatenate(components)
 
 
+def flatten_centerline_obs(
+    obs_dict: Dict[str, Any],
+    scales: Optional[Dict[str, float]] = None,
+) -> np.ndarray:
+    """Flatten centerline observation dict to a normalized feature vector.
+
+    Input features:
+    - LiDAR scans clipped to 10m and normalized to [0, 1]
+    - Speed magnitude normalized to [0, 1]
+    - Previous action clipped to [-1, 1]
+    """
+    scales = scales or {}
+
+    lidar_range = float(scales.get("lidar_range", 10.0))
+    if lidar_range <= 0.0:
+        lidar_range = 10.0
+
+    scan = obs_dict.get("scans")
+    if scan is None:
+        scan = obs_dict.get("lidar")
+    if scan is None:
+        lidar = np.zeros(108, dtype=np.float32)
+    else:
+        lidar = np.asarray(scan, dtype=np.float32).reshape(-1)
+    lidar_norm = np.clip(lidar, 0.0, lidar_range) / lidar_range
+
+    velocity = obs_dict.get("velocity")
+    if velocity is None:
+        vx = 0.0
+        vy = 0.0
+    else:
+        vel_arr = np.asarray(velocity, dtype=np.float32).reshape(-1)
+        vx = float(vel_arr[0]) if vel_arr.size > 0 else 0.0
+        vy = float(vel_arr[1]) if vel_arr.size > 1 else 0.0
+    speed = float(np.sqrt(vx * vx + vy * vy))
+    speed_scale = float(scales.get("speed", 1.0))
+    if speed_scale <= 0.0:
+        speed_scale = 1.0
+    speed_norm = np.clip(speed / speed_scale, 0.0, 1.0)
+
+    prev_action = obs_dict.get("prev_action")
+    if prev_action is None:
+        prev_arr = np.zeros(2, dtype=np.float32)
+    else:
+        prev_arr = np.asarray(prev_action, dtype=np.float32).reshape(-1)
+        if prev_arr.size < 2:
+            padded = np.zeros(2, dtype=np.float32)
+            padded[: prev_arr.size] = prev_arr
+            prev_arr = padded
+        else:
+            prev_arr = prev_arr[:2]
+    prev_norm = np.clip(prev_arr, -1.0, 1.0)
+
+    return np.concatenate(
+        [lidar_norm.astype(np.float32), np.array([speed_norm], dtype=np.float32), prev_norm.astype(np.float32)],
+        axis=0,
+    )
+
+
 def flatten_observation(
     obs_dict: Dict[str, Any],
     preset: str = 'gaplock',
@@ -296,11 +355,12 @@ def flatten_observation(
     """
     if preset == 'gaplock':
         return flatten_gaplock_obs(obs_dict, target_id, scales=scales)
+    elif preset == 'centerline':
+        return flatten_centerline_obs(obs_dict, scales=scales)
     else:
         raise ValueError(
             f"Unsupported observation preset: {preset}. "
-            f"Supported: gaplock"
+            f"Supported: gaplock, centerline"
         )
 
-
-__all__ = ['flatten_observation', 'flatten_gaplock_obs']
+__all__ = ['flatten_observation', 'flatten_gaplock_obs', 'flatten_centerline_obs']

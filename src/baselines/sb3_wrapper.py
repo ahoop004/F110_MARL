@@ -92,6 +92,9 @@ class SB3SingleAgentWrapper(gym.Env):
 
         # Define action space (Discrete or Box)
         self.action_set = action_set
+        self._action_low = np.asarray(action_low, dtype=np.float32)
+        self._action_high = np.asarray(action_high, dtype=np.float32)
+        self._prev_action_norm = np.zeros(2, dtype=np.float32)
         if action_set is not None:
             # Discrete action space for DQN/QR-DQN
             action_set_array = np.asarray(action_set, dtype=np.float32)
@@ -102,8 +105,9 @@ class SB3SingleAgentWrapper(gym.Env):
         else:
             # Continuous action space for SAC/TD3/PPO
             self.action_space = spaces.Box(
-                low=action_low,
-                high=action_high,
+                low=-1.0,
+                high=1.0,
+                shape=self._action_low.shape,
                 dtype=np.float32
             )
 
@@ -262,9 +266,12 @@ class SB3SingleAgentWrapper(gym.Env):
         self.current_obs_dict = obs_dict
         self.episode_steps = 0
         self._reset_frame_buffer()
+        self._prev_action_norm = np.zeros(2, dtype=np.float32)
 
         # Extract observation for controlled agent
-        obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
+        obs_with_prev = dict(obs_dict[self.agent_id])
+        obs_with_prev["prev_action"] = self._prev_action_norm
+        obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
         obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
         if self._last_spawn_info:
@@ -298,7 +305,11 @@ class SB3SingleAgentWrapper(gym.Env):
             action_idx = int(action)
             continuous_action = self.action_set[action_idx]
         else:
-            continuous_action = action
+            action_norm = np.asarray(action, dtype=np.float32)
+            self._prev_action_norm = np.clip(action_norm, -1.0, 1.0)
+            continuous_action = self._action_low + (self._prev_action_norm + 1.0) * 0.5 * (
+                self._action_high - self._action_low
+            )
 
         # Build action dict for all agents
         actions = {self.agent_id: continuous_action}
@@ -360,7 +371,9 @@ class SB3SingleAgentWrapper(gym.Env):
             raise RuntimeError("Environment returned no observations during step.")
 
         # Extract results for controlled agent
-        obs = self._flatten_obs(obs_dict[self.agent_id], all_obs=obs_dict)
+        obs_with_prev = dict(obs_dict[self.agent_id])
+        obs_with_prev["prev_action"] = self._prev_action_norm
+        obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
         obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
         target_finished = False
@@ -375,9 +388,22 @@ class SB3SingleAgentWrapper(gym.Env):
 
         # Determine episode outcome for curriculum tracking
         if terminated or truncated:
-            outcome = determine_outcome(info, truncated=truncated)
-            info["outcome"] = outcome.value
-            info['is_success'] = outcome.is_success()
+            if self.observation_preset == "centerline":
+                success = bool(info.get("finish_line", False))
+                if success:
+                    outcome_value = "finish"
+                elif info.get("collision", False):
+                    outcome_value = "collision"
+                elif truncated:
+                    outcome_value = "timeout"
+                else:
+                    outcome_value = "terminated"
+                info["outcome"] = outcome_value
+                info["is_success"] = success
+            else:
+                outcome = determine_outcome(info, truncated=truncated)
+                info["outcome"] = outcome.value
+                info['is_success'] = outcome.is_success()
 
         if reward_components:
             info['reward_components'] = reward_components
@@ -418,6 +444,8 @@ class SB3SingleAgentWrapper(gym.Env):
             'done': terminated or truncated,
             'truncated': truncated,
             'timestep': timestep,
+            'action': self._prev_action_norm,
+            'centerline': getattr(self.env, 'centerline_points', None),
         }
 
         # Add target obs if target_id is specified (for adversarial tasks)

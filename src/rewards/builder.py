@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from rewards.base import RewardStrategy
 from rewards.presets import load_preset, merge_config
 from rewards.gaplock import GaplockReward
+from rewards.centerline import CenterlineReward
 
 
 def build_reward_strategy(
@@ -67,11 +68,12 @@ def build_reward_strategy(
     # Create reward strategy based on type
     if reward_type == 'gaplock':
         return GaplockReward(reward_config)
-    else:
-        raise ValueError(
-            f"Unknown reward type: {reward_type}. "
-            f"Available types: gaplock"
-        )
+    if reward_type == 'centerline':
+        return CenterlineReward(reward_config)
+    raise ValueError(
+        f"Unknown reward type: {reward_type}. "
+        f"Available types: gaplock, centerline"
+    )
 
 
 __all__ = ['build_reward_strategy']

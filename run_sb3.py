@@ -323,9 +323,17 @@ def build_policy_kwargs(params: Dict[str, Any], model_name: str) -> Dict[str, An
     hidden_dims = params.get("hidden_dims", [256, 256])
     pi_dims = params.get("pi_hidden_dims")
     qf_dims = params.get("qf_hidden_dims")
+    vf_dims = params.get("vf_hidden_dims")
     supports_split = model_name in {"SAC", "TD3", "TQC", "DDPG"}
+    supports_vf_split = model_name in {"PPO", "A2C"}
 
-    if supports_split and (pi_dims is not None or qf_dims is not None):
+    if supports_vf_split and (pi_dims is not None or vf_dims is not None):
+        if pi_dims is None:
+            pi_dims = hidden_dims
+        if vf_dims is None:
+            vf_dims = hidden_dims
+        net_arch = {"pi": pi_dims, "vf": vf_dims}
+    elif supports_split and (pi_dims is not None or qf_dims is not None):
         if pi_dims is None:
             pi_dims = hidden_dims
         if qf_dims is None:

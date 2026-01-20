@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, Tuple, MutableMapping, Optional
+import csv
+import math
 
 import numpy as np
 import yaml
@@ -19,6 +21,8 @@ class MapData:
     track_mask: np.ndarray | None
     centerline_path: Optional[Path] = None
     centerline: Optional[np.ndarray] = None
+    walls_path: Optional[Path] = None
+    walls: Optional[Dict[int, np.ndarray]] = None
     spawn_points: Dict[str, np.ndarray] = field(default_factory=dict)
 
 
@@ -170,6 +174,38 @@ class MapLoader:
             else:
                 centerline = cached_cl
 
+        walls_path: Optional[Path] = None
+        walls: Optional[Dict[int, np.ndarray]] = None
+        walls_auto_raw = env_cfg.get("walls_autoload", True)
+        walls_auto = True if walls_auto_raw is None else bool(walls_auto_raw)
+        explicit_walls = env_cfg.get("walls_csv")
+        if explicit_walls or walls_auto:
+            if explicit_walls:
+                candidate_path = Path(explicit_walls)
+                if candidate_path.is_absolute():
+                    candidate = candidate_path.resolve()
+                else:
+                    candidate = (map_dir / candidate_path).resolve()
+            else:
+                candidate = cached.yaml_path.with_name(f"{cached.yaml_path.stem}_walls.csv")
+            if candidate.exists():
+                walls_path = candidate
+
+        if walls_path is not None:
+            wl_mtime = walls_path.stat().st_mtime_ns
+            cached_walls = cached.walls
+            if (
+                cached.walls_path != walls_path
+                or cached.walls_mtime != wl_mtime
+                or cached_walls is None
+            ):
+                walls = self._load_walls(walls_path)
+                cached.walls = walls
+                cached.walls_path = walls_path
+                cached.walls_mtime = wl_mtime
+            else:
+                walls = cached_walls
+
         return MapData(
             metadata=metadata_view,
             image_path=cached.image_path,
@@ -178,6 +214,8 @@ class MapLoader:
             track_mask=track_mask,
             centerline_path=centerline_path,
             centerline=centerline,
+            walls_path=walls_path,
+            walls=walls,
             spawn_points={name: value.copy() for name, value in cached.spawn_points.items()},
         )
 
@@ -251,6 +289,26 @@ class MapLoader:
         return np.asarray(data, dtype=np.float32)
 
     @staticmethod
+    def _load_walls(path: Path) -> Dict[int, np.ndarray]:
+        walls: Dict[int, list] = {}
+        with path.open("r", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                try:
+                    wall_id = int(float(row.get("wall_id", 0)))
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    x = float(row.get("x", "nan"))
+                    y = float(row.get("y", "nan"))
+                except (TypeError, ValueError):
+                    continue
+                if math.isnan(x) or math.isnan(y):
+                    continue
+                walls.setdefault(wall_id, []).append([x, y])
+        return {wid: np.asarray(points, dtype=np.float32) for wid, points in walls.items()}
+
+    @staticmethod
     def _parse_spawn_points(metadata: Dict[str, Any]) -> Dict[str, np.ndarray]:
         annotations = metadata.get("annotations")
         if not isinstance(annotations, dict):
@@ -298,4 +356,7 @@ class _CachedMap:
     centerline_path: Optional[Path] = None
     centerline_mtime: Optional[int] = None
     centerline: Optional[np.ndarray] = None
+    walls_path: Optional[Path] = None
+    walls_mtime: Optional[int] = None
+    walls: Optional[Dict[int, np.ndarray]] = None
     spawn_points: Dict[str, np.ndarray] = field(default_factory=dict)

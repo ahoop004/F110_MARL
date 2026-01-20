@@ -1,0 +1,36 @@
+environment:
+  map_dir: maps
+  map_bundles:
+  - Budapest_map
+  - Spa_map
+  - Silverstone_map
+  - Spielberg_map
+  - levine
+  - circle_map
+  map_split:
+    train_ratio: 0.8
+    seed: 42
+    shuffle: true
+  map_cycle: per_episode
+  map_pick: random
+  lidar_range: 10.0
+  lidar_beams: 1080
+  centerline_autoload: true
+  centerline_features: true
+  centerline_render: false
+  walls_autoload: true
+  spawn_policy: centerline_relative
+  spawn_centerline:
+    mode: random
+    avoid_finish: true
+    min_progress: 0.05
+    max_progress: 0.95
+  spawn_offsets:
+    s_offset: -1.0
+    d_offset: 0.0
+    d_max: 1.0
+  spawn_target:
+    enabled: true
+    speed: 0.5
+  spawn_ego:
+    speed: 0.5

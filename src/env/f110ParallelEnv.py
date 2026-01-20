@@ -15,7 +15,8 @@ from src.physics import Simulator, Integrator
 from src.env.start_pose_state import StartPoseState
 from src.env.collision import build_terminations
 from src.env.state_buffer import StateBuffers
-from src.utils.centerline import progress_from_spacing
+from src.utils.centerline import progress_from_spacing, centerline_arc_length, centerline_pose
+from src.utils.map_loader import MapLoader
 
 # Type checking only imports (don't execute at runtime)
 if TYPE_CHECKING:
@@ -119,6 +120,45 @@ class F110ParallelEnv(ParallelEnv):
         self.integrator = self._resolve_integrator(merged)
 
         self._configure_map_paths(merged, map_data)
+        self._map_loader = MapLoader(base_dir=Path.cwd())
+        self._map_root = Path(merged.get("map_dir") or merged.get("map_root") or Path.cwd()).resolve()
+        self._map_cycle_mode = str(merged.get("map_cycle", "")).strip().lower()
+        self._map_pick_mode = str(merged.get("map_pick", "first")).strip().lower()
+        self._map_epoch_shuffle = bool(merged.get("epoch_shuffle", False))
+        self._map_split_mode = str(merged.get("map_split_mode", "train")).strip().lower()
+        self._map_bundles_train = list(merged.get("map_bundles_train") or [])
+        self._map_bundles_eval = list(merged.get("map_bundles_eval") or [])
+        self._map_bundles = list(merged.get("map_bundles") or [])
+        if not self._map_bundles_train and self._map_bundles:
+            self._map_bundles_train = list(self._map_bundles)
+        if not self._map_bundles_eval and self._map_bundles:
+            self._map_bundles_eval = []
+        self._map_bundle_active = merged.get("map_bundle_active") or merged.get("map_bundle")
+        self._map_cycle_indices = {"train": 0, "eval": 0}
+        self._map_cycle_order = {
+            "train": list(self._map_bundles_train),
+            "eval": list(self._map_bundles_eval),
+        }
+        if self._map_epoch_shuffle:
+            for key, order in self._map_cycle_order.items():
+                if order:
+                    self.rng.shuffle(order)
+                    self._map_cycle_indices[key] = 0
+        self.walls = getattr(map_data, "walls", None) if map_data is not None else None
+        self.walls_path = getattr(map_data, "walls_path", None) if map_data is not None else None
+        self._track_mask = getattr(map_data, "track_mask", None) if map_data is not None else None
+        self.spawn_policy = merged.get("spawn_policy")
+        self.spawn_centerline_cfg = merged.get("spawn_centerline", {}) or {}
+        self.spawn_offsets_cfg = merged.get("spawn_offsets", {}) or {}
+        self.spawn_target_cfg = merged.get("spawn_target", {}) or {}
+        self.spawn_ego_cfg = merged.get("spawn_ego", {}) or {}
+        self._track_threshold = merged.get("track_threshold")
+        self._track_inverted = bool(merged.get("track_inverted", False))
+        self._centerline_csv = merged.get("centerline_csv")
+        self._walls_csv = merged.get("walls_csv")
+        self._walls_autoload = bool(merged.get("walls_autoload", True))
+        self._spawn_centerline_index = 0
+        self._last_spawn_metadata: Dict[str, Any] = {}
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
         self.params = self._configure_vehicle_params(merged)
@@ -190,6 +230,7 @@ class F110ParallelEnv(ParallelEnv):
 
         self.map_meta = meta
         self.map_image_path = img_path
+        self._map_data = map_data
         self._spawn_points = self._extract_spawn_points(map_data, meta)
         random_spawn_cfg = merged.get("random_spawn")
         if random_spawn_cfg is None:
@@ -197,10 +238,12 @@ class F110ParallelEnv(ParallelEnv):
         allow_reuse_flag = False
         if isinstance(random_spawn_cfg, Mapping):
             enabled_val = random_spawn_cfg.get("enabled", True)
-            self._random_spawn_enabled = bool(enabled_val) and bool(self._spawn_points)
+            self._random_spawn_requested = bool(enabled_val)
+            self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
             allow_reuse_flag = bool(random_spawn_cfg.get("allow_reuse", False))
         else:
-            self._random_spawn_enabled = bool(random_spawn_cfg) and bool(self._spawn_points)
+            self._random_spawn_requested = bool(random_spawn_cfg)
+            self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
             allow_reuse_flag = bool(merged.get("random_spawn_allow_reuse", False))
         if not self._spawn_points:
             self._random_spawn_enabled = False
@@ -601,6 +644,202 @@ class F110ParallelEnv(ParallelEnv):
 
         poses = np.stack(pose_rows, axis=0)
         return spawn_mapping, poses
+
+    def _select_map_bundle(self) -> Optional[str]:
+        if self._map_cycle_mode != "per_episode":
+            return None
+        mode = "eval" if self._map_split_mode == "eval" else "train"
+        bundles = self._map_cycle_order.get(mode) or []
+        if not bundles:
+            return None
+        pick = self._map_pick_mode
+        if pick == "random":
+            return bundles[int(self.rng.integers(0, len(bundles)))]
+        if pick == "first":
+            return bundles[0]
+        idx = int(self._map_cycle_indices.get(mode, 0))
+        bundle = bundles[idx % len(bundles)]
+        idx += 1
+        if idx >= len(bundles):
+            if self._map_epoch_shuffle:
+                self.rng.shuffle(bundles)
+            idx = 0
+        self._map_cycle_indices[mode] = idx
+        return bundle
+
+    def _apply_map_data(self, map_data: Any, bundle: Optional[str] = None) -> None:
+        if map_data is None:
+            return
+        self._map_data = map_data
+        self.map_dir = Path(map_data.yaml_path).parent
+        self.map_ext = map_data.image_path.suffix or ".png"
+        self.map_name = map_data.yaml_path.name
+        self.map_yaml = map_data.yaml_path.name
+        self.map_path = map_data.yaml_path
+        self.yaml_path = map_data.yaml_path
+        self.map_meta = dict(map_data.metadata)
+        self.map_image_path = map_data.image_path
+        self._track_mask = map_data.track_mask
+        self.walls = map_data.walls
+        self.walls_path = map_data.walls_path
+        self._spawn_points = self._extract_spawn_points(map_data, self.map_meta)
+        self._spawn_point_names = sorted(self._spawn_points.keys())
+        if not self._spawn_points:
+            self._random_spawn_enabled = False
+        else:
+            self._random_spawn_enabled = bool(getattr(self, "_random_spawn_requested", False))
+
+        # Update simulation + renderer
+        self.sim.set_map(str(self.yaml_path), self.map_ext)
+        if self.renderer is not None:
+            self.renderer.update_map(
+                str(self.yaml_path.with_suffix("")),
+                self.map_ext,
+                map_meta=self.map_meta,
+                map_image_path=self.map_image_path,
+            )
+
+        # Update centerline + render
+        self.set_centerline(map_data.centerline, path=map_data.centerline_path)
+        self._update_renderer_centerline()
+
+        # Update observation bounds based on new map
+        width, height = map_data.image_size
+        R = float(self.map_meta.get("resolution", 1.0))
+        x0, y0, _ = self.map_meta.get('origin', (0.0, 0.0, 0.0))
+        x_min = x0
+        x_max = x0 + width * R
+        y_min = y0
+        y_max = y0 + height * R
+        self._build_observation_spaces(x_min, x_max, y_min, y_max)
+
+        if bundle is not None:
+            self._map_bundle_active = bundle
+
+    def _maybe_cycle_map(self) -> None:
+        bundle = self._select_map_bundle()
+        if bundle is None:
+            return
+        if bundle == self._map_bundle_active:
+            return
+        map_cfg = {
+            "map_dir": str(self._map_root),
+            "map_bundle": bundle,
+            "map_ext": self.map_ext,
+            "centerline_autoload": True,
+            "centerline_csv": self._centerline_csv,
+            "centerline_render": self.centerline_render_enabled,
+            "centerline_features": self.centerline_features_enabled,
+            "walls_autoload": self._walls_autoload,
+            "walls_csv": self._walls_csv,
+            "track_threshold": self._track_threshold,
+            "track_inverted": self._track_inverted,
+        }
+        map_data = self._map_loader.load(map_cfg)
+        self._apply_map_data(map_data, bundle=bundle)
+
+    def _sample_centerline_spawn(self) -> Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]:
+        if str(self.spawn_policy or "").lower() != "centerline_relative":
+            return None
+        centerline = self.centerline_points
+        if centerline is None or centerline.shape[0] == 0:
+            return None
+
+        mode = str(self.spawn_centerline_cfg.get("mode", "random")).lower()
+        if self._map_split_mode == "eval":
+            mode_eval = self.spawn_centerline_cfg.get("mode_eval")
+            if mode_eval is not None:
+                mode = str(mode_eval).lower()
+            elif mode == "random":
+                mode = "round_robin"
+        min_progress = float(self.spawn_centerline_cfg.get("min_progress", 0.05))
+        max_progress = float(self.spawn_centerline_cfg.get("max_progress", 0.95))
+        avoid_finish = bool(self.spawn_centerline_cfg.get("avoid_finish", True))
+
+        if avoid_finish:
+            min_progress = max(min_progress, 0.05)
+            max_progress = min(max_progress, 0.95)
+
+        n_points = centerline.shape[0]
+        min_idx = int(max(0, min_progress * (n_points - 1)))
+        max_idx = int(min(n_points - 1, max_progress * (n_points - 1)))
+        if max_idx <= min_idx:
+            min_idx = 0
+            max_idx = n_points - 1
+
+        if mode == "round_robin":
+            idx = self._spawn_centerline_index
+            if idx < min_idx or idx > max_idx:
+                idx = min_idx
+            self._spawn_centerline_index = idx + 1
+            if self._spawn_centerline_index > max_idx:
+                self._spawn_centerline_index = min_idx
+        else:
+            idx = int(self.rng.integers(min_idx, max_idx + 1))
+
+        s_offset = float(self.spawn_offsets_cfg.get("s_offset", 0.0))
+        d_offset = float(self.spawn_offsets_cfg.get("d_offset", 0.0))
+        d_max = self.spawn_offsets_cfg.get("d_max")
+        d_max = float(d_max) if d_max is not None else None
+
+        spacing = centerline_arc_length(centerline) / max(n_points - 1, 1)
+        offset_idx = int(round(s_offset / spacing)) if spacing > 0.0 else 0
+        ego_idx = (idx + offset_idx) % n_points
+
+        target_enabled = bool(self.spawn_target_cfg.get("enabled", True))
+        target_pose = centerline_pose(centerline, idx)
+        ego_pose = centerline_pose(centerline, ego_idx)
+        d_offset = self._clamp_d_offset(centerline, ego_idx, d_offset, d_max)
+
+        normal = np.array([-np.sin(ego_pose[2]), np.cos(ego_pose[2])], dtype=np.float32)
+        ego_pose[:2] = ego_pose[:2] + normal * d_offset
+
+        agent_order = self.possible_agents
+        poses = np.zeros((len(agent_order), 3), dtype=np.float32)
+        for i, aid in enumerate(agent_order):
+            if target_enabled and aid == "car_1":
+                poses[i] = target_pose
+            else:
+                poses[i] = ego_pose
+
+        speeds = {}
+        target_speed = float(self.spawn_target_cfg.get("speed", 0.0))
+        ego_speed = float(self.spawn_ego_cfg.get("speed", target_speed))
+        for aid in agent_order:
+            if target_enabled and aid == "car_1":
+                speeds[aid] = target_speed
+            else:
+                speeds[aid] = ego_speed
+
+        metadata = {
+            "spawn_s": float(idx) / max(n_points - 1, 1),
+            "spawn_d": float(d_offset),
+        }
+        return poses, speeds, metadata
+
+    def _clamp_d_offset(
+        self,
+        centerline: np.ndarray,
+        index: int,
+        d_offset: float,
+        d_max: Optional[float],
+    ) -> float:
+        limit = d_max if d_max is not None else None
+        if self.walls:
+            point = centerline[index, :2].astype(np.float32)
+            distances = []
+            for wall_points in self.walls.values():
+                if wall_points is None or len(wall_points) == 0:
+                    continue
+                diffs = wall_points[:, :2] - point
+                dist = float(np.min(np.linalg.norm(diffs, axis=1)))
+                distances.append(dist)
+            if distances:
+                wall_limit = max(min(distances) - 0.1, 0.0)
+                limit = wall_limit if limit is None else min(limit, wall_limit)
+        if limit is None:
+            return float(d_offset)
+        return float(np.clip(d_offset, -limit, limit))
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
@@ -1131,6 +1370,7 @@ class F110ParallelEnv(ParallelEnv):
             reseed_sim = getattr(self.sim, "reseed", None)
             if callable(reseed_sim):
                 reseed_sim(seed_value)
+        self._maybe_cycle_map()
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
         self.current_time = 0.0
@@ -1144,6 +1384,7 @@ class F110ParallelEnv(ParallelEnv):
         self._render_ticker.clear()
         self._render_ticker_dirty = True
         self._render_wrapped_obs.clear()
+        self._last_spawn_metadata = {}
         poses = None
         velocities = None
         spawn_mapping: Dict[str, str] = {}
@@ -1191,7 +1432,16 @@ class F110ParallelEnv(ParallelEnv):
             # Extract speed locking parameter
             if isinstance(options, dict) and "lock_speed_steps" in options:
                 self._lock_speed_steps = max(0, int(options["lock_speed_steps"]))
-        # Case 2: Default to config start_poses
+        # Case 2: Centerline-based spawn policy
+        if poses is None:
+            spawn_policy = self._sample_centerline_spawn()
+            if spawn_policy is not None:
+                poses, velocities, meta = spawn_policy
+                self._update_start_from_poses(poses)
+                spawn_mapping = {}
+                self._last_spawn_metadata = dict(meta)
+
+        # Case 3: Default to config start_poses
         if poses is None and self._random_spawn_enabled:
             sampled = self._sample_random_spawn()
             if sampled is not None:
@@ -1213,10 +1463,16 @@ class F110ParallelEnv(ParallelEnv):
         self._reset_finish_line_tracking()
 
         infos = {aid: {} for aid in self.agents}
+        if self._map_bundle_active:
+            for aid in infos:
+                infos[aid]["map_bundle"] = str(self._map_bundle_active)
         if spawn_mapping:
             for aid, name in spawn_mapping.items():
                 if aid in infos:
                     infos[aid]["spawn_point"] = name
+        if self._last_spawn_metadata:
+            for aid in infos:
+                infos[aid].update(self._last_spawn_metadata)
         self._inject_finish_line_info(infos)
         return obs, infos
 
@@ -1305,6 +1561,12 @@ class F110ParallelEnv(ParallelEnv):
             for aid in infos:
                 infos[aid]["time_limit"] = True
         self._inject_finish_line_info(infos)
+        if self._map_bundle_active:
+            for aid in infos:
+                infos[aid]["map_bundle"] = str(self._map_bundle_active)
+        if self._last_spawn_metadata:
+            for aid in infos:
+                infos[aid].update(self._last_spawn_metadata)
 
         # Add collision info for outcome determination
         # The training loop needs this to categorize episode outcomes

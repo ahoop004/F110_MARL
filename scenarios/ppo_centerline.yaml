@@ -1,0 +1,37 @@
+includes:
+- ../configs/env/centerline_multi.yaml
+- ../configs/reward/centerline_racing.yaml
+- ../configs/agents/ftg_defender.yaml
+- ../configs/evaluation/centerline_multi_eval.yaml
+- ../configs/wandb.yaml
+experiment:
+  name: ppo_centerline
+  episodes: 1000
+  seed: 42
+environment:
+  max_steps: 1500
+  action_repeat: 2
+  num_agents: 2
+agents:
+  car_0:
+    algorithm: sb3_ppo
+    target_id: car_1
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.0
+      activation: tanh
+      pi_hidden_dims:
+      - 32
+      - 32
+      vf_hidden_dims:
+      - 64
+      - 64
+      batch_size: 256
+    observation:
+      preset: centerline
+    frame_stack: 4

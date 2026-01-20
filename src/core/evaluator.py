@@ -45,8 +45,14 @@ class EvaluationConfig:
         """
         self.num_episodes = num_episodes
         self.deterministic = deterministic
-        self.spawn_points = spawn_points or ['spawn_pinch_left', 'spawn_pinch_right']
-        self.spawn_speeds = spawn_speeds or [0.44, 0.44]
+        if spawn_points is None:
+            self.spawn_points = ['spawn_pinch_left', 'spawn_pinch_right']
+        else:
+            self.spawn_points = list(spawn_points)
+        if spawn_speeds is None:
+            self.spawn_speeds = [0.44, 0.44]
+        else:
+            self.spawn_speeds = list(spawn_speeds)
         self.lock_speed_steps = lock_speed_steps
         self.ftg_override = ftg_override or {}
         self.max_steps = max_steps
@@ -187,6 +193,7 @@ class Evaluator:
         self.target_ids = target_ids or {}
         self.obs_scales = obs_scales or {}
         self.spawn_configs = spawn_configs or getattr(env, 'spawn_configs', {})
+        self._use_spawn_policy = self._detect_spawn_policy()
         try:
             action_repeat = int(action_repeat)
         except (TypeError, ValueError):
@@ -201,6 +208,12 @@ class Evaluator:
             if self.primary_agent_id
             else None
         )
+
+    def _detect_spawn_policy(self) -> bool:
+        env = self.env
+        while hasattr(env, "env"):
+            env = env.env
+        return bool(getattr(env, "spawn_policy", None))
 
     def evaluate(
         self,
@@ -234,6 +247,9 @@ class Evaluator:
             self._apply_ftg_override()
 
         episodes = []
+        spawn_points = list(self.config.spawn_points)
+        if not spawn_points and self._use_spawn_policy:
+            spawn_points = ["centerline"]
 
         # ========================================
         # EVALUATION LOOP (DETERMINISTIC)
@@ -242,8 +258,8 @@ class Evaluator:
         for ep_idx in range(self.config.num_episodes):
             # Sequential spawn selection (cycle through spawn points)
             # Ensures consistent ordering for reproducible evaluation
-            spawn_idx = ep_idx % len(self.config.spawn_points)
-            spawn_point = self.config.spawn_points[spawn_idx]
+            spawn_idx = ep_idx % len(spawn_points)
+            spawn_point = spawn_points[spawn_idx]
             spawn_speed = self.config.spawn_speeds[spawn_idx] if spawn_idx < len(self.config.spawn_speeds) else 0.44
 
             if verbose:
@@ -297,7 +313,10 @@ class Evaluator:
         # ========================================
 
         # Validate spawn point exists in configuration
-        if spawn_point not in self.spawn_configs:
+        if not self.spawn_configs or spawn_point not in self.spawn_configs:
+            if self._use_spawn_policy:
+                obs, _info = self.env.reset()
+                return self._run_episode_loop(obs, episode_num)
             raise ValueError(
                 f"Spawn point '{spawn_point}' not found in spawn_configs. "
                 f"Available: {list(self.spawn_configs.keys())}"
@@ -406,6 +425,26 @@ class Evaluator:
                     )
 
             truncated = truncations.get(self.primary_agent_id, False)
+            preset = self.observation_presets.get(self.primary_agent_id)
+            if preset == "centerline":
+                success = bool(agent_info.get("finish_line", False))
+                if success:
+                    outcome_value = "finish"
+                elif agent_info.get("collision", False):
+                    outcome_value = "collision"
+                elif truncated:
+                    outcome_value = "timeout"
+                else:
+                    outcome_value = "terminated"
+                return {
+                    'episode': episode_num,
+                    'spawn_point': spawn_point,
+                    'spawn_speed': spawn_speed,
+                    'outcome': outcome_value,
+                    'success': success,
+                    'reward': episode_reward,
+                    'steps': episode_steps,
+                }
             outcome = determine_outcome(agent_info, truncated)
         else:
             outcome = EpisodeOutcome.UNKNOWN

@@ -49,6 +49,13 @@ class SB3EvaluationCallback(BaseCallback):
             eval_window = 100
         self.eval_rolling_window = max(1, int(eval_window))
         self.eval_success_history: deque = deque(maxlen=self.eval_rolling_window)
+        self._use_spawn_policy = self._detect_spawn_policy()
+
+    def _detect_spawn_policy(self) -> bool:
+        env = self.eval_env
+        while hasattr(env, "env"):
+            env = env.env
+        return bool(getattr(env, "spawn_policy", None))
 
     def _should_log(self, key: str) -> bool:
         if not self.wandb_run:
@@ -202,7 +209,7 @@ class SB3EvaluationCallback(BaseCallback):
         return int(bool(done_flags))
 
     def _run_eval(self, training_episode: Optional[int] = None) -> None:
-        if not self.spawn_configs:
+        if not self.spawn_configs and not self._use_spawn_policy:
             if self.verbose > 0:
                 print("Eval skipped: spawn_configs missing")
             return
@@ -223,9 +230,15 @@ class SB3EvaluationCallback(BaseCallback):
         lock_speed_steps = int(phase_settings.get("lock_speed_steps", 0))
 
         if not spawn_points:
-            if self.verbose > 0:
-                print("Eval skipped: no spawn_points configured")
-            return
+            if self._use_spawn_policy:
+                spawn_points = ["centerline"] * num_episodes
+            else:
+                if self.verbose > 0:
+                    print("Eval skipped: no spawn_points configured")
+                return
+
+        if not spawn_speeds:
+            spawn_speeds = [0.0] * len(spawn_points)
 
         self.eval_run_count += 1
 
@@ -401,7 +414,9 @@ class SB3EvaluationCallback(BaseCallback):
         spawn_speed: float,
         lock_speed_steps: int
     ) -> Dict[str, Any]:
-        if spawn_point not in self.spawn_configs:
+        if not self.spawn_configs or spawn_point not in self.spawn_configs:
+            if self._use_spawn_policy:
+                return {"lock_speed_steps": int(lock_speed_steps)}
             raise ValueError(
                 f"Spawn point '{spawn_point}' not found in spawn_configs. "
                 f"Available: {list(self.spawn_configs.keys())}"
