@@ -34,3 +34,18 @@ agents:
       - 64
       - 64
       batch_size: 256
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
+  tags:
+  - improved
+
+  - ppo
+  - comparison
+  - gaplock
+  notes: "PPO"
+  mode: online

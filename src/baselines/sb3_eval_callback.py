@@ -6,7 +6,7 @@ from collections import deque
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from metrics.outcomes import determine_outcome, EpisodeOutcome
+from metrics.outcomes import determine_outcome
 
 try:
     import wandb
@@ -256,8 +256,9 @@ class SB3EvaluationCallback(BaseCallback):
             steps = 0
             ep_reward = 0.0
             outcome_value = None
-            success = False
+            success_flag = None
             truncated = False
+            info = {}
 
             while not done and steps < self.config.max_steps:
                 action, _ = self.model.predict(obs, deterministic=self.config.deterministic)
@@ -269,11 +270,15 @@ class SB3EvaluationCallback(BaseCallback):
 
                 if done:
                     outcome_value = info.get("outcome")
-                    success = bool(info.get("is_success", False))
+                    success_flag = info.get("is_success")
 
-            if not outcome_value:
-                outcome_value = determine_outcome(info, truncated=truncated).value
-                success = outcome_value == EpisodeOutcome.TARGET_CRASH.value
+            if outcome_value is None or success_flag is None:
+                outcome = determine_outcome(info, truncated=truncated)
+                if outcome_value is None:
+                    outcome_value = outcome.value
+                if success_flag is None:
+                    success_flag = outcome.is_success()
+            success = bool(success_flag)
 
             rewards.append(ep_reward)
             lengths.append(steps)

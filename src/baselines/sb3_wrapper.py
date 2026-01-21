@@ -464,7 +464,11 @@ class SB3SingleAgentWrapper(gym.Env):
 
         # Determine episode outcome for curriculum tracking
         if terminated or truncated:
-            if self.observation_preset == "centerline":
+            if self.target_id:
+                outcome = determine_outcome(info, truncated=truncated)
+                info["outcome"] = outcome.value
+                info["is_success"] = outcome.is_success()
+            elif self.observation_preset == "centerline":
                 success = bool(info.get("finish_line", False))
                 if success:
                     outcome_value = "finish"
