@@ -1,6 +1,6 @@
 agents:
   car_0:
-    frame_stack: 1
+    frame_stack: 2
     action_stack: 4
     observation:
       preset: centerline
