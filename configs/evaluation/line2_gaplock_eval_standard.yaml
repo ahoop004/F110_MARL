@@ -3,7 +3,7 @@ evaluation:
   frequency: 100
   gate_eval_schedule: true
   gate_phase_advancement: true
-  num_episodes: 12
+  num_episodes: 50
   deterministic: true
   spawn_points:
   - spawn_pinch_left
