@@ -3,7 +3,7 @@ method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval/success_rate
+  name: eval_agg/success_rate
   goal: maximize
 parameters:
   seed:
@@ -73,4 +73,4 @@ command:
 - --scenario
 - scenarios/ppo.yaml
 - --wandb
-name: PPO_sweep
+name: PPO_seed_sweep

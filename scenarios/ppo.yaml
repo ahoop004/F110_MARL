@@ -7,7 +7,7 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 1000
+  episodes: 2000
   seed: 42
 environment:
   max_steps: 1200
