@@ -372,6 +372,7 @@ class CurriculumCallback(BaseCallback):
                 log_dict.update({
                     "train/outcome": outcome_value,
                     "train/success": int(success),
+                    "train/episode_success": int(success),
                     "train/episode": int(self.episode_count),
                     "train/episode_reward": float(reward),
                     "train/episode_steps": int(length),

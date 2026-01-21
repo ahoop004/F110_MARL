@@ -157,6 +157,7 @@ class SB3TrainLoggingCallback(BaseCallback):
             "train/episode_reward": float(reward),
             "train/episode_steps": int(length),
             "train/success": int(success),
+            "train/episode_success": int(success),
             "train/success_rate": success_rate,
             "train/reward_mean": reward_mean,
             "train/steps_mean": steps_mean,

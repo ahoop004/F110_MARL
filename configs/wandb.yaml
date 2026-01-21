@@ -6,8 +6,8 @@ wandb:
       train: true
       # target: true
       # spawn: true
-      curriculum: true
-      curriculum_phase: true
+      # curriculum: true
+      # curriculum_phase: true
       eval: true
       eval_agg: true
       sb3_callbacks: true
@@ -16,6 +16,7 @@ wandb:
       train/episode: true
       train/outcome: true
       train/success: true
+      train/episode_success: true
       train/episode_reward: true
       train/episode_steps: true
       train/success_rate: true
