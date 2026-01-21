@@ -20,6 +20,7 @@ if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
 
 from baselines.sb3_curriculum_callback import CurriculumCallback
 from baselines.sb3_eval_callback import SB3EvaluationCallback
+from baselines.sb3_train_callback import SB3TrainLoggingCallback
 from baselines.sb3_wrapper import SB3SingleAgentWrapper
 from core.evaluator import EvaluationConfig
 from core.obs_flatten import flatten_observation
@@ -779,6 +780,14 @@ def main() -> None:
                     verbose=1,
                 )
             )
+
+    if wandb_logger and wandb_logger.run and curriculum_callback is None:
+        callbacks.append(
+            SB3TrainLoggingCallback(
+                wandb_run=wandb_logger.run,
+                wandb_logging=scenario.get("wandb", {}).get("logging"),
+            )
+        )
 
     callback = CallbackList(callbacks) if callbacks else None
 
