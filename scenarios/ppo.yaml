@@ -20,20 +20,20 @@ agents:
     target_id: car_1
     params:
       learning_rate: 0.0003
-      gamma: 0.998
+      gamma: 0.99
       n_steps: 2048
       n_epochs: 10
       gae_lambda: 0.95
       clip_range: 0.2
       ent_coef: 0.0
-      activation: tanh
+      activation: relu
       pi_hidden_dims:
-      - 128
-      - 128
+      - 256
+      - 256
       vf_hidden_dims:
       - 256
       - 256
-      batch_size: 256
+      batch_size: 64
 wandb:
   enabled: true
   project: marl-f110

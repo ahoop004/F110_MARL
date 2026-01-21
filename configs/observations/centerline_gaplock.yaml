@@ -1,7 +1,7 @@
 agents:
   car_0:
     frame_stack: 4
-    action_stack: 2
+    action_stack: 1
     observation:
       preset: centerline
       overrides:
@@ -21,7 +21,7 @@ agents:
           enabled: true
         prev_action:
           enabled: true
-          dim: 4
+          dim: 2
         normalization:
           enabled: true
           trainable_only: true
