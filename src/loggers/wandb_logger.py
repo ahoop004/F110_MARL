@@ -96,17 +96,23 @@ class WandbLogger:
             # Flatten nested config for W&B
             flat_config = self._flatten_config(config) if config else {}
 
+            run_name = name
+            if not run_name and self.custom_run_id:
+                run_name = self.custom_run_id
+
             # Initialize W&B
             self.run = wandb.init(
                 project=project,
                 config=flat_config,
-                name=name,
+                name=run_name,
                 tags=tags,
                 group=group,
                 job_type=job_type,
                 entity=entity,
                 notes=notes,
                 mode=mode,
+                id=self.custom_run_id,
+                resume="allow",
                 **kwargs,
             )
 

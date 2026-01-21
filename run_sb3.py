@@ -155,9 +155,12 @@ def initialize_loggers(
 
     if wandb_enabled:
         console_logger.print_info("Initializing Weights & Biases...")
+        wandb_name = wandb_config.get("name")
+        if isinstance(wandb_name, str) and wandb_name.strip() == "":
+            wandb_name = None
         wandb_logger = WandbLogger(
             project=wandb_config.get("project", "f110-marl"),
-            name=wandb_config.get("name", scenario["experiment"]["name"]),
+            name=wandb_name,
             config=None if sweep_mode else scenario,
             tags=wandb_config.get("tags", []),
             group=wandb_config.get("group", default_group),
