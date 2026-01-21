@@ -26,8 +26,11 @@ agents:
       gae_lambda: 0.95
       clip_range: 0.2
       ent_coef: 0.0
-      activation: relu
-      hidden_dims:
+      activation: tanh
+      pi_hidden_dims:
+      - 128
+      - 128
+      vf_hidden_dims:
       - 256
       - 256
       batch_size: 256
