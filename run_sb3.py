@@ -310,12 +310,22 @@ def compute_obs_dim(
     preset: Optional[str],
     target_id: Optional[str],
     frame_stack: int,
+    action_dim: Optional[int] = None,
+    action_stack: int = 1,
 ) -> int:
     """Compute flattened observation dimension."""
     if preset:
         dummy_obs = obs_space.sample()
         if target_id:
             dummy_obs["central_state"] = obs_space.sample()
+        if preset == "centerline" and action_stack > 1:
+            if action_dim is None:
+                action_dim = 2
+            try:
+                action_dim = int(action_dim)
+            except (TypeError, ValueError):
+                action_dim = 2
+            dummy_obs["prev_action"] = np.zeros(action_dim * action_stack, dtype=np.float32)
         flat_dummy = flatten_observation(dummy_obs, preset=preset, target_id=target_id)
         obs_dim = int(flat_dummy.shape[0])
     else:
@@ -617,6 +627,9 @@ def main() -> None:
     frame_stack = int(train_agent_cfg.get("frame_stack", 1) or 1)
     if frame_stack < 1:
         frame_stack = 1
+    action_stack = int(train_agent_cfg.get("action_stack", 1) or 1)
+    if action_stack < 1:
+        action_stack = 1
 
     env_config = scenario.get("environment", {})
     action_repeat = parse_action_repeat(env_config)
@@ -629,7 +642,15 @@ def main() -> None:
     if obs_space is None or action_space is None:
         raise ValueError(f"Agent '{train_agent_id}' not found in environment spaces.")
 
-    obs_dim = compute_obs_dim(obs_space, observation_preset, target_id, frame_stack)
+    action_dim = int(np.prod(action_space.shape)) if isinstance(action_space, spaces.Box) else 2
+    obs_dim = compute_obs_dim(
+        obs_space,
+        observation_preset,
+        target_id,
+        frame_stack,
+        action_dim=action_dim,
+        action_stack=action_stack,
+    )
 
     if not isinstance(action_space, spaces.Box):
         raise ValueError("On-policy SB3 runner expects continuous action spaces.")
@@ -650,6 +671,7 @@ def main() -> None:
         reward_strategy=reward_strategy,
         spawn_curriculum=spawn_curriculum,
         frame_stack=frame_stack,
+        action_stack=action_stack,
         action_repeat=action_repeat,
         action_constraints=action_constraints,
     )
@@ -762,6 +784,7 @@ def main() -> None:
             target_id=target_id,
             reward_strategy=reward_strategy,
             frame_stack=frame_stack,
+            action_stack=action_stack,
             action_repeat=action_repeat,
         )
         eval_env.set_other_agents(eval_other_agents)

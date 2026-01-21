@@ -1,0 +1,22 @@
+agents:
+  car_0:
+    observation:
+      preset: full
+      overrides:
+        lidar:
+          enabled: true
+          beams: 1080
+          max_range: 12.0
+          normalize: true
+        ego_state:
+          pose: true
+          velocity: true
+        target_state:
+          enabled: true
+          pose: true
+          velocity: true
+        relative_pose:
+          enabled: true
+        normalization:
+          enabled: true
+          trainable_only: true

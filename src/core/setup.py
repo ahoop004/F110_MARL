@@ -488,6 +488,17 @@ def create_training_setup(
                 if target_id:
                     # Create dummy central state (same structure as ego obs)
                     dummy_obs['central_state'] = obs_space.sample()
+                if preset_name == "centerline":
+                    action_stack = agent_config.get("action_stack", 1)
+                    try:
+                        action_stack = int(action_stack)
+                    except (TypeError, ValueError):
+                        action_stack = 1
+                    action_dim = get_space_dim(action_space)
+                    if action_stack > 1 and action_dim > 0:
+                        dummy_obs["prev_action"] = np.zeros(
+                            int(action_dim) * action_stack, dtype=np.float32
+                        )
                 flat_dummy = flatten_observation(dummy_obs, preset=preset_name, target_id=target_id)
                 obs_dim = flat_dummy.shape[0]
             else:
@@ -506,6 +517,15 @@ def create_training_setup(
             raise ValueError(f"frame_stack must be an integer >= 1 (agent {agent_id})") from exc
         if frame_stack < 1:
             raise ValueError(f"frame_stack must be >= 1 (agent {agent_id})")
+        action_stack = agent_config.get('action_stack', 1)
+        if action_stack is None:
+            action_stack = 1
+        try:
+            action_stack = int(action_stack)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"action_stack must be an integer >= 1 (agent {agent_id})") from exc
+        if action_stack < 1:
+            raise ValueError(f"action_stack must be >= 1 (agent {agent_id})")
 
         if frame_stack > 1:
             obs_dim *= frame_stack
@@ -515,6 +535,7 @@ def create_training_setup(
         agent_kwargs['action_dim'] = action_dim
         agent_kwargs['act_dim'] = action_dim  # Alias for PPO
         agent_kwargs['frame_stack'] = frame_stack
+        agent_kwargs['action_stack'] = action_stack
 
         # Extract action bounds for continuous action spaces (SAC, TD3, etc.)
         if isinstance(action_space, spaces.Box):
