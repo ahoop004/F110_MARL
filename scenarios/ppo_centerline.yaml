@@ -13,7 +13,7 @@ experiment:
 environment:
   max_steps: 1200
   action_repeat: 2
-  num_agents: 1
+  num_agents: 2
 agents:
   car_0:
     algorithm: sb3_ppo
