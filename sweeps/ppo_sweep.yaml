@@ -16,12 +16,12 @@ parameters:
     - 1
     - 2
     - 4
-  seed:
-    values:
-    - 42
-    - 23452
-    - 8675309
-    - 32456
+  # seed:
+  #   values:
+  #   - 42
+  #   - 23452
+  #   - 8675309
+  #   - 32456
 #   learning_rate:
 #     values:
 #     - 0.0001
