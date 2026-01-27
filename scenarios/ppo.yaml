@@ -20,17 +20,17 @@ environment:
     target_on_centerline: true
     offsets:
       x_range:
-      - -0.6
-      - 0.6
+      - 1.5
+      - 2.5
       y_range:
-      - -0.3
-      - 0.3
+      - -0.8
+      - 0.8
       theta_range:
       - -0.2
       - 0.2
       frame: target
-    min_separation: 0.35
-    min_wall_distance: 0.2
+    min_separation: 0.85
+    min_wall_distance: 0.3
     reject_offtrack: true
     max_attempts: 50
 agents:
