@@ -10,7 +10,7 @@ experiment:
   episodes: 2000
   seed: 42
 environment:
-  max_steps: 2000
+  max_steps: 5000
   action_repeat: 2
   centerline_autoload: true
   spawn_centerline:
@@ -23,7 +23,7 @@ environment:
     target_on_centerline: true
     offsets:
       x_range_behind:
-      - -1.0
+      - -0.3
       - 0.0
       x_range_front:
       - 2.5

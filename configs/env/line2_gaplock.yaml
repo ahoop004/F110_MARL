@@ -91,4 +91,4 @@ environment:
     v_switch: 0.8
     a_max: 2.0
     v_min: -1.0
-    v_max: 1.0
+    v_max: 2.0
