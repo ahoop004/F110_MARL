@@ -1,5 +1,5 @@
 evaluation:
-  enabled: true
+  enabled: false
   frequency: 100
   gate_eval_schedule: true
   gate_phase_advancement: true

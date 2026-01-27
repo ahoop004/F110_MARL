@@ -3,3 +3,14 @@ agents:
     reward:
       type: gaplock_centerline_pressure
       preset: gaplock_centerline_pressure
+      overrides:
+        gaplock_centerline_pressure:
+          centerline_weight: 0.03
+          centerline_scale: 1.5
+          wall_weight: 0.03
+          wall_distance_scale: 2.0
+          success_reward: 200.0
+          self_crash_penalty: -100.0
+          collision_penalty: -100.0
+          timeout_penalty: -50.0
+          target_finish_penalty: -50.0

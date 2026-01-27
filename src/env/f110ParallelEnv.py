@@ -242,7 +242,7 @@ class F110ParallelEnv(ParallelEnv):
         self._random_spawn_cfg = random_spawn_cfg if isinstance(random_spawn_cfg, Mapping) else {}
         self._random_spawn_mode = "map"
         self._random_spawn_target_agent = None
-        self._random_spawn_offsets: Dict[str, Tuple[float, float]] = {
+        self._random_spawn_offsets: Dict[str, Any] = {
             "x_range": (0.0, 0.0),
             "y_range": (0.0, 0.0),
             "theta_range": (0.0, 0.0),
@@ -662,7 +662,7 @@ class F110ParallelEnv(ParallelEnv):
         return spawn_points
 
     @staticmethod
-    def _parse_spawn_offsets(offsets_cfg: Mapping[str, Any]) -> Dict[str, Tuple[float, float]]:
+    def _parse_spawn_offsets(offsets_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         def _coerce_range(value: Any, min_key: str, max_key: str) -> Tuple[float, float]:
             if isinstance(value, (list, tuple)) and len(value) == 2:
                 low, high = value
@@ -687,11 +687,38 @@ class F110ParallelEnv(ParallelEnv):
                 low_val, high_val = high_val, low_val
             return low_val, high_val
 
-        return {
-            "x_range": _coerce_range(offsets_cfg.get("x_range"), "x_min", "x_max"),
-            "y_range": _coerce_range(offsets_cfg.get("y_range"), "y_min", "y_max"),
-            "theta_range": _coerce_range(offsets_cfg.get("theta_range"), "theta_min", "theta_max"),
+        x_range = _coerce_range(offsets_cfg.get("x_range"), "x_min", "x_max")
+        y_range = _coerce_range(offsets_cfg.get("y_range"), "y_min", "y_max")
+        theta_range = _coerce_range(offsets_cfg.get("theta_range"), "theta_min", "theta_max")
+
+        x_ranges: List[Tuple[float, float]] = []
+        raw_ranges = offsets_cfg.get("x_ranges")
+        if isinstance(raw_ranges, (list, tuple)):
+            for entry in raw_ranges:
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    x_ranges.append(_coerce_range(entry, "x_min", "x_max"))
+        for key in ("x_range_behind", "x_range_front"):
+            if key in offsets_cfg:
+                x_ranges.append(_coerce_range(offsets_cfg.get(key), "x_min", "x_max"))
+
+        parsed = {
+            "x_range": x_range,
+            "y_range": y_range,
+            "theta_range": theta_range,
         }
+        if x_ranges:
+            parsed["x_ranges"] = x_ranges
+        return parsed
+
+    def _sample_offset_from_ranges(
+        self,
+        rng: np.random.Generator,
+        ranges: List[Tuple[float, float]],
+    ) -> float:
+        if not ranges:
+            return 0.0
+        low, high = ranges[int(rng.integers(0, len(ranges)))]
+        return self._sample_offset(rng, low, high)
 
     def _world_to_track_rc(self, x: float, y: float) -> Optional[Tuple[int, int]]:
         mask = self._track_mask
@@ -799,6 +826,7 @@ class F110ParallelEnv(ParallelEnv):
             return None
 
         x_range = self._random_spawn_offsets.get("x_range", (0.0, 0.0))
+        x_ranges = self._random_spawn_offsets.get("x_ranges")
         y_range = self._random_spawn_offsets.get("y_range", (0.0, 0.0))
         theta_range = self._random_spawn_offsets.get("theta_range", (0.0, 0.0))
         frame = str(self._random_spawn_frame or "world").strip().lower()
@@ -861,7 +889,10 @@ class F110ParallelEnv(ParallelEnv):
                     continue
                 placed = False
                 for _ in range(self._random_spawn_max_attempts):
-                    dx = self._sample_offset(rng, x_range[0], x_range[1])
+                    if isinstance(x_ranges, list) and x_ranges:
+                        dx = self._sample_offset_from_ranges(rng, x_ranges)
+                    else:
+                        dx = self._sample_offset(rng, x_range[0], x_range[1])
                     dy = self._sample_offset(rng, y_range[0], y_range[1])
                     dtheta = self._sample_offset(rng, theta_range[0], theta_range[1])
 
@@ -1074,6 +1105,38 @@ class F110ParallelEnv(ParallelEnv):
         n_points = centerline.shape[0]
         min_idx = int(max(0, min_progress * (n_points - 1)))
         max_idx = int(min(n_points - 1, max_progress * (n_points - 1)))
+        min_distance = self.spawn_centerline_cfg.get("min_distance_m")
+        max_distance = self.spawn_centerline_cfg.get("max_distance_m")
+        if min_distance is None:
+            min_distance = self.spawn_centerline_cfg.get("min_distance")
+        if max_distance is None:
+            max_distance = self.spawn_centerline_cfg.get("max_distance")
+        if min_distance is not None or max_distance is not None:
+            try:
+                total_length = float(centerline_arc_length(centerline))
+            except (TypeError, ValueError):
+                total_length = 0.0
+            spacing = total_length / max(n_points - 1, 1)
+            if spacing > 0.0:
+                try:
+                    min_dist_val = float(min_distance) if min_distance is not None else 0.0
+                except (TypeError, ValueError):
+                    min_dist_val = 0.0
+                try:
+                    max_dist_val = float(max_distance) if max_distance is not None else total_length
+                except (TypeError, ValueError):
+                    max_dist_val = total_length
+                if min_dist_val < 0.0:
+                    min_dist_val = 0.0
+                if max_dist_val < 0.0:
+                    max_dist_val = 0.0
+                if min_dist_val > max_dist_val:
+                    min_dist_val, max_dist_val = max_dist_val, min_dist_val
+                min_idx = int(max(0, math.floor(min_dist_val / spacing)))
+                max_idx = int(min(n_points - 1, math.floor(max_dist_val / spacing)))
+                if avoid_finish:
+                    min_idx = max(min_idx, int(0.05 * (n_points - 1)))
+                    max_idx = min(max_idx, int(0.95 * (n_points - 1)))
         if max_idx <= min_idx:
             min_idx = 0
             max_idx = n_points - 1

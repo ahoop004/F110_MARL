@@ -3,6 +3,23 @@ agents:
     reward:
       preset: gaplock_full
       overrides:
+        terminal:
+          target_crash: 200.0
+          self_crash: -20.0
+          collision: 0.0
+          timeout: -100.0
+          idle_stop: -5.0
+          target_finish: -20.0
+        pressure:
+          enabled: true
+          distance_threshold: 1.3
+          timeout: 1.2
+          min_speed: 0.3
+          heading_tolerance: 1.57
+          bonus: 0.12
+          bonus_interval: 5
+          streak_bonus: 0.1
+          streak_cap: 40
         forcing:
           enabled: true
           pinch_pockets:
@@ -28,19 +45,52 @@ agents:
             time_scaled: true
         distance:
           enabled: false
+          reward_near: 0.004
           near_distance: 1.0
           far_distance: 2.5
-          reward_near: 0.004
           penalty_far: 0.002
+          gradient:
+            enabled: true
+            scale: 0.2
+            time_scaled: true
+            clip:
+            - -0.2
+            - 0.2
+            points:
+            - - 0.25
+              - -1.0
+            - - 0.5
+              - -0.5
+            - - 0.75
+              - 0.0
+            - - 1.0
+              - 0.3
+            - - 1.5
+              - 0.5
+            - - 2.0
+              - 0.2
+            - - 2.5
+              - 0.0
+            - - 3.5
+              - -0.3
         heading:
           enabled: true
           coefficient: 0.001
         speed:
           enabled: true
           bonus_coef: 0.0005
+          target_speed: 0.6
         step_reward: -0.001
-        terminal:
-          target_crash: 200.0
-          self_crash: -20.0
-          timeout: -100.0
-          collision: 0.0
+        penalties:
+          enabled: true
+          idle:
+            penalty: 0.05
+            speed_threshold: 0.12
+            patience_steps: 25
+          reverse:
+            penalty: 0.1
+            speed_threshold: 0.02
+          brake:
+            penalty: 0.05
+            speed_threshold: 0.4
+            drop_threshold: 0.25

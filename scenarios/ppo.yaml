@@ -13,15 +13,21 @@ environment:
   max_steps: 2000
   action_repeat: 2
   centerline_autoload: true
+  spawn_centerline:
+    min_distance_m: 5.0
+    max_distance_m: 15.0
   random_spawn:
     enabled: true
     mode: target_relative
     target_agent: car_1
     target_on_centerline: true
     offsets:
-      x_range:
-      - -1.5
+      x_range_behind:
       - -2.5
+      - -1.5
+      x_range_front:
+      - 2.5
+      - 1.5
       y_range:
       - -0.8
       - 0.8
