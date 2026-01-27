@@ -1,4 +1,5 @@
 from collections import deque
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
 import gymnasium as gym
@@ -146,6 +147,8 @@ class F110ParallelEnv(ParallelEnv):
                     self._map_cycle_indices[key] = 0
         self.walls = getattr(map_data, "walls", None) if map_data is not None else None
         self.walls_path = getattr(map_data, "walls_path", None) if map_data is not None else None
+        self._wall_points: Optional[np.ndarray] = None
+        self._refresh_wall_points()
         self._track_mask = getattr(map_data, "track_mask", None) if map_data is not None else None
         self.spawn_policy = merged.get("spawn_policy")
         self.spawn_centerline_cfg = merged.get("spawn_centerline", {}) or {}
@@ -236,11 +239,68 @@ class F110ParallelEnv(ParallelEnv):
         if random_spawn_cfg is None:
             random_spawn_cfg = merged.get("spawn_random")
         allow_reuse_flag = False
+        self._random_spawn_cfg = random_spawn_cfg if isinstance(random_spawn_cfg, Mapping) else {}
+        self._random_spawn_mode = "map"
+        self._random_spawn_target_agent = None
+        self._random_spawn_offsets: Dict[str, Tuple[float, float]] = {
+            "x_range": (0.0, 0.0),
+            "y_range": (0.0, 0.0),
+            "theta_range": (0.0, 0.0),
+        }
+        self._random_spawn_frame = "world"
+        self._random_spawn_target_on_centerline = False
+        self._random_spawn_min_separation = 0.0
+        self._random_spawn_min_wall_distance = 0.0
+        self._random_spawn_reject_offtrack = False
+        self._random_spawn_max_attempts = 50
         if isinstance(random_spawn_cfg, Mapping):
             enabled_val = random_spawn_cfg.get("enabled", True)
             self._random_spawn_requested = bool(enabled_val)
             self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
             allow_reuse_flag = bool(random_spawn_cfg.get("allow_reuse", False))
+            mode_raw = random_spawn_cfg.get("mode")
+            if mode_raw:
+                self._random_spawn_mode = str(mode_raw).strip().lower()
+            target_agent = random_spawn_cfg.get("target_agent")
+            if target_agent:
+                self._random_spawn_target_agent = str(target_agent)
+            target_on_centerline = random_spawn_cfg.get("target_on_centerline")
+            if target_on_centerline is not None:
+                self._random_spawn_target_on_centerline = bool(target_on_centerline)
+            min_sep_raw = random_spawn_cfg.get("min_separation")
+            if min_sep_raw is not None:
+                try:
+                    self._random_spawn_min_separation = max(0.0, float(min_sep_raw))
+                except (TypeError, ValueError):
+                    self._random_spawn_min_separation = 0.0
+            min_wall_raw = random_spawn_cfg.get("min_wall_distance")
+            if min_wall_raw is None:
+                min_wall_raw = random_spawn_cfg.get("min_wall_clearance")
+            if min_wall_raw is not None:
+                try:
+                    self._random_spawn_min_wall_distance = max(0.0, float(min_wall_raw))
+                except (TypeError, ValueError):
+                    self._random_spawn_min_wall_distance = 0.0
+            offsets_cfg = random_spawn_cfg.get("offsets")
+            if isinstance(offsets_cfg, Mapping):
+                self._random_spawn_offsets = self._parse_spawn_offsets(offsets_cfg)
+                frame_raw = offsets_cfg.get("frame") or random_spawn_cfg.get("frame")
+                if frame_raw:
+                    self._random_spawn_frame = str(frame_raw).strip().lower()
+            elif random_spawn_cfg.get("frame"):
+                self._random_spawn_frame = str(random_spawn_cfg.get("frame")).strip().lower()
+            if self._random_spawn_mode in {"target_relative", "target-relative", "target"} and not random_spawn_cfg.get("frame"):
+                if not (isinstance(offsets_cfg, Mapping) and offsets_cfg.get("frame")):
+                    self._random_spawn_frame = "target"
+            reject_offtrack_raw = random_spawn_cfg.get("reject_offtrack")
+            if reject_offtrack_raw is not None:
+                self._random_spawn_reject_offtrack = bool(reject_offtrack_raw)
+            max_attempts_raw = random_spawn_cfg.get("max_attempts")
+            if max_attempts_raw is not None:
+                try:
+                    self._random_spawn_max_attempts = max(1, int(max_attempts_raw))
+                except (TypeError, ValueError):
+                    self._random_spawn_max_attempts = 50
         else:
             self._random_spawn_requested = bool(random_spawn_cfg)
             self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
@@ -601,9 +661,255 @@ class F110ParallelEnv(ParallelEnv):
                 spawn_points[str(name)] = arr
         return spawn_points
 
+    @staticmethod
+    def _parse_spawn_offsets(offsets_cfg: Mapping[str, Any]) -> Dict[str, Tuple[float, float]]:
+        def _coerce_range(value: Any, min_key: str, max_key: str) -> Tuple[float, float]:
+            if isinstance(value, (list, tuple)) and len(value) == 2:
+                low, high = value
+            elif value is None:
+                low = offsets_cfg.get(min_key, 0.0)
+                high = offsets_cfg.get(max_key, 0.0)
+            else:
+                try:
+                    val = float(value)
+                except (TypeError, ValueError):
+                    val = 0.0
+                low, high = -abs(val), abs(val)
+            try:
+                low_val = float(low)
+            except (TypeError, ValueError):
+                low_val = 0.0
+            try:
+                high_val = float(high)
+            except (TypeError, ValueError):
+                high_val = 0.0
+            if low_val > high_val:
+                low_val, high_val = high_val, low_val
+            return low_val, high_val
+
+        return {
+            "x_range": _coerce_range(offsets_cfg.get("x_range"), "x_min", "x_max"),
+            "y_range": _coerce_range(offsets_cfg.get("y_range"), "y_min", "y_max"),
+            "theta_range": _coerce_range(offsets_cfg.get("theta_range"), "theta_min", "theta_max"),
+        }
+
+    def _world_to_track_rc(self, x: float, y: float) -> Optional[Tuple[int, int]]:
+        mask = self._track_mask
+        if mask is None:
+            return None
+        meta = self.map_meta or {}
+        try:
+            resolution = float(meta.get("resolution", 1.0))
+        except (TypeError, ValueError):
+            resolution = 1.0
+        origin = meta.get("origin", (0.0, 0.0, 0.0))
+        try:
+            ox = float(origin[0])
+            oy = float(origin[1])
+        except (TypeError, ValueError, IndexError):
+            ox, oy = 0.0, 0.0
+        try:
+            otheta = float(origin[2])
+        except (TypeError, ValueError, IndexError):
+            otheta = 0.0
+        cos_o = math.cos(otheta)
+        sin_o = math.sin(otheta)
+        x_trans = x - ox
+        y_trans = y - oy
+        x_rot = x_trans * cos_o + y_trans * sin_o
+        y_rot = -x_trans * sin_o + y_trans * cos_o
+        if x_rot < 0.0 or y_rot < 0.0:
+            return None
+        try:
+            col = int(x_rot / resolution)
+            row = int(y_rot / resolution)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+        height, width = mask.shape
+        if row < 0 or row >= height or col < 0 or col >= width:
+            return None
+        return row, col
+
+    def _point_on_track(self, x: float, y: float) -> bool:
+        mask = self._track_mask
+        if mask is None:
+            return True
+        rc = self._world_to_track_rc(x, y)
+        if rc is None:
+            return False
+        row, col = rc
+        return bool(mask[row, col])
+
+    def _refresh_wall_points(self) -> None:
+        if not self.walls:
+            self._wall_points = None
+            return
+        arrays = [pts for pts in self.walls.values() if isinstance(pts, np.ndarray) and pts.size > 0]
+        if not arrays:
+            self._wall_points = None
+            return
+        self._wall_points = np.vstack(arrays).astype(np.float32, copy=False)
+
+    def _distance_to_walls(self, x: float, y: float) -> Optional[float]:
+        if self._wall_points is None or self._wall_points.size == 0:
+            return None
+        point = np.array([x, y], dtype=np.float32)
+        diffs = self._wall_points[:, :2] - point
+        d2 = np.einsum("ij,ij->i", diffs, diffs)
+        if d2.size == 0:
+            return None
+        return float(np.sqrt(np.min(d2)))
+
+    def _sample_offset(self, rng: np.random.Generator, low: float, high: float) -> float:
+        if low > high:
+            low, high = high, low
+        if low == high:
+            return float(low)
+        return float(rng.uniform(low, high))
+
+    def _sample_target_relative_spawn(self) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
+        agent_ids = list(self.possible_agents)
+        if not agent_ids:
+            return None
+
+        target_id = self._random_spawn_target_agent
+        if target_id is None:
+            if "car_1" in agent_ids:
+                target_id = "car_1"
+            elif len(agent_ids) > 1:
+                target_id = agent_ids[1]
+            else:
+                target_id = agent_ids[0]
+        if target_id not in agent_ids:
+            target_id = agent_ids[0]
+
+        rng = getattr(self, "rng", None)
+        if rng is None:
+            rng = np.random.default_rng(self.seed)
+            self.rng = rng
+
+        use_centerline = bool(self._random_spawn_target_on_centerline)
+        candidates = self._spawn_point_names
+        cfg_points = self._random_spawn_cfg.get("spawn_points")
+        if isinstance(cfg_points, (list, tuple)):
+            filtered = [str(name) for name in cfg_points if str(name) in self._spawn_points]
+            if filtered:
+                candidates = filtered
+        if not candidates and not use_centerline:
+            return None
+
+        x_range = self._random_spawn_offsets.get("x_range", (0.0, 0.0))
+        y_range = self._random_spawn_offsets.get("y_range", (0.0, 0.0))
+        theta_range = self._random_spawn_offsets.get("theta_range", (0.0, 0.0))
+        frame = str(self._random_spawn_frame or "world").strip().lower()
+        use_target_frame = frame in {"target", "target_frame", "target-relative", "target_relative", "relative", "local"}
+        min_sep = float(self._random_spawn_min_separation or 0.0)
+        min_sep_sq = min_sep * min_sep
+        min_wall = float(self._random_spawn_min_wall_distance or 0.0)
+
+        for _ in range(self._random_spawn_max_attempts):
+            spawn_meta: Optional[Dict[str, float]] = None
+            if use_centerline:
+                sampled = self._sample_centerline_index()
+                if sampled is None:
+                    if not candidates:
+                        return None
+                    use_centerline = False
+                    continue
+                centerline, n_points, idx = sampled
+                target_pose = centerline_pose(centerline, idx)
+                spawn_name = "centerline"
+                spawn_meta = {
+                    "spawn_s": float(idx) / max(n_points - 1, 1),
+                    "spawn_d": 0.0,
+                }
+            else:
+                spawn_name = str(rng.choice(candidates))
+                raw = self._spawn_points.get(spawn_name)
+                if raw is None:
+                    continue
+                if raw.shape[0] < 3:
+                    target_pose = np.zeros(3, dtype=np.float32)
+                    target_pose[: raw.shape[0]] = raw
+                else:
+                    target_pose = np.asarray(raw[:3], dtype=np.float32)
+
+            target_x = float(target_pose[0])
+            target_y = float(target_pose[1])
+            target_theta = float(target_pose[2])
+            if self._random_spawn_reject_offtrack and not self._point_on_track(target_x, target_y):
+                continue
+            if min_wall > 0.0:
+                wall_dist = self._distance_to_walls(target_x, target_y)
+                if wall_dist is not None and wall_dist < min_wall:
+                    continue
+
+            poses = np.zeros((len(agent_ids), 3), dtype=np.float32)
+            spawn_mapping: Dict[str, str] = {}
+
+            target_idx = agent_ids.index(target_id)
+            poses[target_idx] = target_pose
+            for aid in agent_ids:
+                spawn_mapping[aid] = spawn_name
+
+            ok = True
+            cos_t = math.cos(target_theta)
+            sin_t = math.sin(target_theta)
+            placed_indices = [target_idx]
+            for idx, aid in enumerate(agent_ids):
+                if aid == target_id:
+                    continue
+                placed = False
+                for _ in range(self._random_spawn_max_attempts):
+                    dx = self._sample_offset(rng, x_range[0], x_range[1])
+                    dy = self._sample_offset(rng, y_range[0], y_range[1])
+                    dtheta = self._sample_offset(rng, theta_range[0], theta_range[1])
+
+                    if use_target_frame:
+                        x = target_x + cos_t * dx - sin_t * dy
+                        y = target_y + sin_t * dx + cos_t * dy
+                    else:
+                        x = target_x + dx
+                        y = target_y + dy
+                    theta = target_theta + dtheta
+
+                    if self._random_spawn_reject_offtrack and not self._point_on_track(x, y):
+                        continue
+                    if min_wall > 0.0:
+                        wall_dist = self._distance_to_walls(x, y)
+                        if wall_dist is not None and wall_dist < min_wall:
+                            continue
+                    if min_sep_sq > 0.0:
+                        too_close = False
+                        for placed_idx in placed_indices:
+                            px, py = poses[placed_idx, 0], poses[placed_idx, 1]
+                            dxp = x - float(px)
+                            dyp = y - float(py)
+                            if dxp * dxp + dyp * dyp < min_sep_sq:
+                                too_close = True
+                                break
+                        if too_close:
+                            continue
+                    poses[idx] = np.array([x, y, theta], dtype=np.float32)
+                    placed = True
+                    break
+                if not placed:
+                    ok = False
+                    break
+                placed_indices.append(idx)
+            if ok:
+                if use_centerline and spawn_meta:
+                    self._last_spawn_metadata = dict(spawn_meta)
+                return spawn_mapping, poses
+
+        return None
+
     def _sample_random_spawn(self) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
         if not self._random_spawn_enabled or not self._spawn_point_names:
             return None
+
+        if self._random_spawn_mode in {"target_relative", "target-relative", "target"}:
+            return self._sample_target_relative_spawn()
 
         agent_ids = self.possible_agents
         count = len(agent_ids)
@@ -611,6 +917,11 @@ class F110ParallelEnv(ParallelEnv):
             return None
 
         pool = self._spawn_point_names
+        cfg_points = self._random_spawn_cfg.get("spawn_points")
+        if isinstance(cfg_points, (list, tuple)):
+            filtered = [str(name) for name in cfg_points if str(name) in self._spawn_points]
+            if filtered:
+                pool = filtered
         replace = self._random_spawn_allow_reuse or len(pool) < count
 
         rng = getattr(self, "rng", None)
@@ -682,6 +993,7 @@ class F110ParallelEnv(ParallelEnv):
         self._track_mask = map_data.track_mask
         self.walls = map_data.walls
         self.walls_path = map_data.walls_path
+        self._refresh_wall_points()
         self._spawn_points = self._extract_spawn_points(map_data, self.map_meta)
         self._spawn_point_names = sorted(self._spawn_points.keys())
         if not self._spawn_points:
@@ -738,9 +1050,7 @@ class F110ParallelEnv(ParallelEnv):
         map_data = self._map_loader.load(map_cfg)
         self._apply_map_data(map_data, bundle=bundle)
 
-    def _sample_centerline_spawn(self) -> Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]:
-        if str(self.spawn_policy or "").lower() != "centerline_relative":
-            return None
+    def _resolve_centerline_sampling(self) -> Optional[Tuple[np.ndarray, int, int, int, str]]:
         centerline = self.centerline_points
         if centerline is None or centerline.shape[0] == 0:
             return None
@@ -752,6 +1062,7 @@ class F110ParallelEnv(ParallelEnv):
                 mode = str(mode_eval).lower()
             elif mode == "random":
                 mode = "round_robin"
+
         min_progress = float(self.spawn_centerline_cfg.get("min_progress", 0.05))
         max_progress = float(self.spawn_centerline_cfg.get("max_progress", 0.95))
         avoid_finish = bool(self.spawn_centerline_cfg.get("avoid_finish", True))
@@ -767,6 +1078,14 @@ class F110ParallelEnv(ParallelEnv):
             min_idx = 0
             max_idx = n_points - 1
 
+        return centerline, n_points, min_idx, max_idx, mode
+
+    def _sample_centerline_index(self) -> Optional[Tuple[np.ndarray, int, int]]:
+        resolved = self._resolve_centerline_sampling()
+        if resolved is None:
+            return None
+        centerline, n_points, min_idx, max_idx, mode = resolved
+
         if mode == "round_robin":
             idx = self._spawn_centerline_index
             if idx < min_idx or idx > max_idx:
@@ -776,6 +1095,16 @@ class F110ParallelEnv(ParallelEnv):
                 self._spawn_centerline_index = min_idx
         else:
             idx = int(self.rng.integers(min_idx, max_idx + 1))
+
+        return centerline, n_points, idx
+
+    def _sample_centerline_spawn(self) -> Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]:
+        if str(self.spawn_policy or "").lower() != "centerline_relative":
+            return None
+        sampled = self._sample_centerline_index()
+        if sampled is None:
+            return None
+        centerline, n_points, idx = sampled
 
         s_offset = float(self.spawn_offsets_cfg.get("s_offset", 0.0))
         d_offset = float(self.spawn_offsets_cfg.get("d_offset", 0.0))

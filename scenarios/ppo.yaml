@@ -10,8 +10,29 @@ experiment:
   episodes: 2000
   seed: 42
 environment:
-  max_steps: 1200
+  max_steps: 2000
   action_repeat: 2
+  centerline_autoload: true
+  random_spawn:
+    enabled: true
+    mode: target_relative
+    target_agent: car_1
+    target_on_centerline: true
+    offsets:
+      x_range:
+      - -0.6
+      - 0.6
+      y_range:
+      - -0.3
+      - 0.3
+      theta_range:
+      - -0.2
+      - 0.2
+      frame: target
+    min_separation: 0.35
+    min_wall_distance: 0.2
+    reject_offtrack: true
+    max_attempts: 50
 agents:
   car_0:
     role: attacker

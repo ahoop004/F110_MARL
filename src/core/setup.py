@@ -351,6 +351,9 @@ def create_training_setup(
         "spawn_offsets",
         "spawn_target",
         "spawn_ego",
+        "random_spawn",
+        "spawn_random",
+        "random_spawn_allow_reuse",
     ]
     for key in passthrough_keys:
         if key in env_config and key not in env_kwargs:
