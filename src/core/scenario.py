@@ -130,7 +130,12 @@ def expand_reward_preset(config: Dict[str, Any]) -> Dict[str, Any]:
 
     # Apply overrides if present
     if 'overrides' in config:
-        return merge_reward_config(preset, config['overrides'])
+        preset = merge_reward_config(preset, config['overrides'])
+
+    # Preserve explicit type (and any other top-level keys) from config
+    if 'type' in config:
+        preset = copy.deepcopy(preset)
+        preset['type'] = config['type']
 
     return preset
 
