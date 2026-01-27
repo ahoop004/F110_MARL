@@ -701,6 +701,16 @@ class F110ParallelEnv(ParallelEnv):
             if key in offsets_cfg:
                 x_ranges.append(_coerce_range(offsets_cfg.get(key), "x_min", "x_max"))
 
+        y_ranges: List[Tuple[float, float]] = []
+        raw_ranges = offsets_cfg.get("y_ranges")
+        if isinstance(raw_ranges, (list, tuple)):
+            for entry in raw_ranges:
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    y_ranges.append(_coerce_range(entry, "y_min", "y_max"))
+        for key in ("y_range_left", "y_range_right"):
+            if key in offsets_cfg:
+                y_ranges.append(_coerce_range(offsets_cfg.get(key), "y_min", "y_max"))
+
         parsed = {
             "x_range": x_range,
             "y_range": y_range,
@@ -708,6 +718,8 @@ class F110ParallelEnv(ParallelEnv):
         }
         if x_ranges:
             parsed["x_ranges"] = x_ranges
+        if y_ranges:
+            parsed["y_ranges"] = y_ranges
         return parsed
 
     def _sample_offset_from_ranges(
@@ -828,6 +840,7 @@ class F110ParallelEnv(ParallelEnv):
         x_range = self._random_spawn_offsets.get("x_range", (0.0, 0.0))
         x_ranges = self._random_spawn_offsets.get("x_ranges")
         y_range = self._random_spawn_offsets.get("y_range", (0.0, 0.0))
+        y_ranges = self._random_spawn_offsets.get("y_ranges")
         theta_range = self._random_spawn_offsets.get("theta_range", (0.0, 0.0))
         frame = str(self._random_spawn_frame or "world").strip().lower()
         use_target_frame = frame in {"target", "target_frame", "target-relative", "target_relative", "relative", "local"}
@@ -893,7 +906,10 @@ class F110ParallelEnv(ParallelEnv):
                         dx = self._sample_offset_from_ranges(rng, x_ranges)
                     else:
                         dx = self._sample_offset(rng, x_range[0], x_range[1])
-                    dy = self._sample_offset(rng, y_range[0], y_range[1])
+                    if isinstance(y_ranges, list) and y_ranges:
+                        dy = self._sample_offset_from_ranges(rng, y_ranges)
+                    else:
+                        dy = self._sample_offset(rng, y_range[0], y_range[1])
                     dtheta = self._sample_offset(rng, theta_range[0], theta_range[1])
 
                     if use_target_frame:
