@@ -20,8 +20,8 @@ environment:
     target_on_centerline: true
     offsets:
       x_range:
-      - 1.5
-      - 2.5
+      - -1.5
+      - -2.5
       y_range:
       - -0.8
       - 0.8
