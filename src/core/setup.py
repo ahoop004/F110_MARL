@@ -491,6 +491,25 @@ def create_training_setup(
                 if target_id:
                     # Create dummy central state (same structure as ego obs)
                     dummy_obs['central_state'] = obs_space.sample()
+                prev_cfg = obs_config.get("prev_action", {})
+                if isinstance(prev_cfg, dict) and prev_cfg.get("enabled"):
+                    prev_dim = prev_cfg.get("dim", 2)
+                    try:
+                        prev_dim = int(prev_dim)
+                    except (TypeError, ValueError):
+                        prev_dim = 2
+                    action_stack = agent_config.get("action_stack")
+                    if action_stack is None:
+                        action_stack = obs_config.get("action_stack")
+                    try:
+                        action_stack = int(action_stack) if action_stack is not None else 1
+                    except (TypeError, ValueError):
+                        action_stack = 1
+                    if action_stack < 1:
+                        action_stack = 1
+                    prev_dim = max(prev_dim, 0) * action_stack
+                    if prev_dim > 0:
+                        dummy_obs["prev_action"] = np.zeros(prev_dim, dtype=np.float32)
                 flat_dummy = flatten_observation(dummy_obs, preset=preset_name, target_id=target_id)
                 obs_dim = flat_dummy.shape[0]
             else:
@@ -500,7 +519,11 @@ def create_training_setup(
 
         action_dim = get_space_dim(action_space)
 
-        frame_stack = agent_config.get('frame_stack', 1)
+        frame_stack = agent_config.get('frame_stack')
+        if frame_stack is None:
+            obs_cfg_for_stack = agent_config.get('observation')
+            if isinstance(obs_cfg_for_stack, dict):
+                frame_stack = obs_cfg_for_stack.get('frame_stack')
         if frame_stack is None:
             frame_stack = 1
         try:

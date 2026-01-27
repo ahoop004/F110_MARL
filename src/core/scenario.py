@@ -195,6 +195,12 @@ def expand_agent_config(agent_config: Dict[str, Any]) -> Dict[str, Any]:
     # Expand observation preset
     if 'observation' in config:
         config['observation'] = expand_observation_preset(config['observation'])
+        obs_cfg = config.get('observation')
+        if isinstance(obs_cfg, dict):
+            if 'frame_stack' not in config and obs_cfg.get('frame_stack') is not None:
+                config['frame_stack'] = obs_cfg.get('frame_stack')
+            if 'action_stack' not in config and obs_cfg.get('action_stack') is not None:
+                config['action_stack'] = obs_cfg.get('action_stack')
 
     # Expand reward preset
     if 'reward' in config:

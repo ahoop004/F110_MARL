@@ -310,12 +310,15 @@ def compute_obs_dim(
     preset: Optional[str],
     target_id: Optional[str],
     frame_stack: int,
+    prev_action_dim: Optional[int] = None,
 ) -> int:
     """Compute flattened observation dimension."""
     if preset:
         dummy_obs = obs_space.sample()
         if target_id:
             dummy_obs["central_state"] = obs_space.sample()
+        if prev_action_dim:
+            dummy_obs["prev_action"] = np.zeros(prev_action_dim, dtype=np.float32)
         flat_dummy = flatten_observation(dummy_obs, preset=preset, target_id=target_id)
         obs_dim = int(flat_dummy.shape[0])
     else:
@@ -617,6 +620,16 @@ def main() -> None:
     frame_stack = int(train_agent_cfg.get("frame_stack", 1) or 1)
     if frame_stack < 1:
         frame_stack = 1
+    obs_cfg = train_agent_cfg.get("observation", {})
+    action_stack = train_agent_cfg.get("action_stack")
+    if action_stack is None and isinstance(obs_cfg, dict):
+        action_stack = obs_cfg.get("action_stack")
+    try:
+        action_stack = int(action_stack) if action_stack is not None else 1
+    except (TypeError, ValueError):
+        action_stack = 1
+    if action_stack < 1:
+        action_stack = 1
 
     env_config = scenario.get("environment", {})
     action_repeat = parse_action_repeat(env_config)
@@ -629,7 +642,23 @@ def main() -> None:
     if obs_space is None or action_space is None:
         raise ValueError(f"Agent '{train_agent_id}' not found in environment spaces.")
 
-    obs_dim = compute_obs_dim(obs_space, observation_preset, target_id, frame_stack)
+    prev_action_dim = None
+    if isinstance(obs_cfg, dict):
+        prev_cfg = obs_cfg.get("prev_action", {})
+        if isinstance(prev_cfg, dict) and prev_cfg.get("enabled"):
+            prev_dim = prev_cfg.get("dim", 2)
+            try:
+                prev_dim = int(prev_dim)
+            except (TypeError, ValueError):
+                prev_dim = 2
+            prev_action_dim = max(prev_dim, 0) * action_stack
+    obs_dim = compute_obs_dim(
+        obs_space,
+        observation_preset,
+        target_id,
+        frame_stack,
+        prev_action_dim=prev_action_dim,
+    )
 
     if not isinstance(action_space, spaces.Box):
         raise ValueError("On-policy SB3 runner expects continuous action spaces.")
@@ -650,6 +679,7 @@ def main() -> None:
         reward_strategy=reward_strategy,
         spawn_curriculum=spawn_curriculum,
         frame_stack=frame_stack,
+        action_stack=action_stack,
         action_repeat=action_repeat,
         action_constraints=action_constraints,
     )
@@ -762,6 +792,7 @@ def main() -> None:
             target_id=target_id,
             reward_strategy=reward_strategy,
             frame_stack=frame_stack,
+            action_stack=action_stack,
             action_repeat=action_repeat,
         )
         eval_env.set_other_agents(eval_other_agents)

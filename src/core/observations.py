@@ -6,7 +6,10 @@ state components, and normalization options.
 """
 
 from typing import Dict, Any, Optional
+from pathlib import Path
 import copy
+
+import yaml
 
 
 # Observation dimension calculations
@@ -63,7 +66,14 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
             prev_dim = int(prev_dim)
         except (TypeError, ValueError):
             prev_dim = 2
-        dim += max(prev_dim, 0)
+        action_stack = config.get('action_stack', 1)
+        try:
+            action_stack = int(action_stack)
+        except (TypeError, ValueError):
+            action_stack = 1
+        if action_stack < 1:
+            action_stack = 1
+        dim += max(prev_dim, 0) * action_stack
 
     return dim
 
@@ -203,13 +213,45 @@ CENTERLINE_OBS: Dict[str, Any] = {
 }
 
 
-# Registry of all presets
-OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = {
+DEFAULT_OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = {
     'gaplock': GAPLOCK_OBS,
     'minimal': MINIMAL_OBS,
     'full': FULL_OBS,
     'centerline': CENTERLINE_OBS,
 }
+
+
+def _load_yaml_presets() -> Optional[Dict[str, Dict[str, Any]]]:
+    config_path = Path(__file__).resolve().parents[2] / "configs/observations/observation.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(config_path.read_text())
+    except Exception as exc:
+        print(f"Warning: failed to load observation presets from {config_path}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        return None
+    presets = data.get("presets") or data.get("observation_presets")
+    if not isinstance(presets, dict):
+        return None
+    defaults = data.get("defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+    merged: Dict[str, Dict[str, Any]] = {}
+    for name, cfg in presets.items():
+        if not isinstance(cfg, dict):
+            continue
+        merged_cfg = copy.deepcopy(cfg)
+        for key in ("frame_stack", "action_stack"):
+            if key in defaults and key not in merged_cfg:
+                merged_cfg[key] = copy.deepcopy(defaults[key])
+        merged[str(name)] = merged_cfg
+    return merged or None
+
+
+# Registry of all presets
+OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = _load_yaml_presets() or DEFAULT_OBSERVATION_PRESETS
 
 
 def load_observation_preset(name: str) -> Dict[str, Any]:

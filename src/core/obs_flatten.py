@@ -323,8 +323,6 @@ def flatten_centerline_obs(
             padded = np.zeros(2, dtype=np.float32)
             padded[: prev_arr.size] = prev_arr
             prev_arr = padded
-        else:
-            prev_arr = prev_arr[:2]
     prev_norm = np.clip(prev_arr, -1.0, 1.0)
 
     return np.concatenate(

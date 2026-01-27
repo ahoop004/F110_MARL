@@ -1,0 +1,83 @@
+defaults:
+  frame_stack: 2
+  action_stack: 1
+
+presets:
+  gaplock:
+    lidar:
+      enabled: true
+      beams: 720
+      max_range: 10.0
+      normalize: true
+    ego_state:
+      pose: false
+      velocity: true
+    target_state:
+      enabled: false
+      pose: false
+      velocity: false
+    relative_pose:
+      enabled: false
+      dim: 5
+    normalization:
+      enabled: true
+      trainable_only: true
+
+  minimal:
+    lidar:
+      enabled: true
+      beams: 720
+      max_range: 10.0
+      normalize: true
+    ego_state:
+      pose: true
+      velocity: true
+    target_state:
+      enabled: false
+    relative_pose:
+      enabled: false
+    normalization:
+      enabled: true
+      trainable_only: true
+
+  full:
+    lidar:
+      enabled: true
+      beams: 7200
+      max_range: 10.0
+      normalize: true
+    ego_state:
+      pose: true
+      velocity: true
+    target_state:
+      enabled: true
+      pose: true
+      velocity: true
+    relative_pose:
+      enabled: true
+    normalization:
+      enabled: true
+      trainable_only: true
+
+  centerline:
+    frame_stack: 4
+    lidar:
+      enabled: true
+      beams: 7200
+      max_range: 10.0
+      normalize: true
+    ego_state:
+      pose: false
+      velocity: false
+    target_state:
+      enabled: false
+    relative_pose:
+      enabled: false
+    speed:
+      enabled: true
+    prev_action:
+      enabled: true
+      dim: 2
+    normalization:
+      enabled: true
+      trainable_only: true
