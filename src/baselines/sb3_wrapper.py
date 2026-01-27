@@ -317,6 +317,9 @@ class SB3SingleAgentWrapper(gym.Env):
         # Reset underlying environment
         obs_dict, info_dict = self.env.reset(seed=seed, options=options)
 
+        if self.reward_strategy and hasattr(self.reward_strategy, "reset"):
+            self.reward_strategy.reset()
+
         # Store current observations for reward computation
         self.current_obs_dict = obs_dict
         self.episode_steps = 0

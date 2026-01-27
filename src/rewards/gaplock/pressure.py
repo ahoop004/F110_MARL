@@ -49,11 +49,13 @@ class PressureReward:
         # State
         self.pressure_streak = 0
         self.steps_since_bonus = 0
+        self.time_since_pressure = 0.0
 
     def reset(self) -> None:
         """Reset pressure state for new episode."""
         self.pressure_streak = 0
         self.steps_since_bonus = 0
+        self.time_since_pressure = 0.0
 
     def compute(self, step_info: dict) -> Dict[str, float]:
         """Compute pressure reward.
@@ -107,11 +109,11 @@ class PressureReward:
                 in_pressure = False
 
         components = {}
-
         if in_pressure:
             # Update streak
             self.pressure_streak += 1
             self.steps_since_bonus += 1
+            self.time_since_pressure = 0.0
 
             # Base pressure bonus (every N steps)
             if self.steps_since_bonus >= self.bonus_interval:
@@ -124,9 +126,14 @@ class PressureReward:
                 components['pressure/streak'] = self.streak_bonus * (capped_streak / self.streak_cap)
 
         else:
-            # Lost pressure
-            self.pressure_streak = 0
-            self.steps_since_bonus = 0
+            timestep = float(step_info.get('timestep', 0.01))
+            if timestep < 0.0:
+                timestep = 0.0
+            self.time_since_pressure += timestep
+            if self.timeout <= 0.0 or self.time_since_pressure > self.timeout:
+                # Lost pressure for too long; reset streak tracking
+                self.pressure_streak = 0
+                self.steps_since_bonus = 0
 
         return components
 
