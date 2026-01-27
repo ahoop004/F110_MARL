@@ -1,5 +1,5 @@
 defaults:
-  frame_stack: 2
+  frame_stack: 3
   action_stack: 1
 
 presets:

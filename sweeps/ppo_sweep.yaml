@@ -12,6 +12,16 @@ parameters:
     - 23452
     - 8675309
     - 32456
+  agents.car_0.frame_stack:
+    values:
+    - 1
+    - 2
+    - 4
+  agents.car_0.action_stack:
+    values:
+    - 1
+    - 2
+    - 4
 #   learning_rate:
 #     values:
 #     - 0.0001
