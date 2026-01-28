@@ -190,6 +190,13 @@ class SB3TrainLoggingCallback(BaseCallback):
         if outcome is not None:
             log_dict["train/outcome"] = outcome
 
+        # Log reward components (e.g., gaplock_pressure/centerline, gaplock_pressure/terminal)
+        if isinstance(info, dict):
+            reward_components = info.get("reward_components", {})
+            if isinstance(reward_components, dict):
+                for comp_name, comp_value in reward_components.items():
+                    log_dict[f"reward/{comp_name}"] = float(comp_value)
+
         log_dict = self._filter_metrics(log_dict)
         if not log_dict:
             if self.csv_logger:

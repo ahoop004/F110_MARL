@@ -867,6 +867,10 @@ class EnhancedTrainingLoop:
                     "train/reward_mean": float(rolling_stats.get("avg_reward", 0.0)),
                     "train/steps_mean": float(rolling_stats.get("avg_steps", 0.0)),
                 })
+                # Log reward components (e.g., gaplock_pressure/centerline, gaplock_pressure/terminal)
+                if metrics.reward_components:
+                    for comp_name, comp_value in metrics.reward_components.items():
+                        log_dict[f"reward/{comp_name}"] = float(comp_value)
 
             if log_spawn:
                 spawn_point = self._current_spawn_mapping.get(primary_id)

@@ -36,6 +36,17 @@ Example scenario file:
       tags: [ppo, baseline]
 """
 
+# Suppress noisy warnings from dependencies before imports
+import warnings
+import os as _os
+
+# Pydantic warnings from f1tenth_gym internals
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+# Gym deprecation warning (SB3 still uses gym internally)
+warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+# TensorFlow CPU optimization info (not an error)
+_os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 import argparse
 import os
 import sys
