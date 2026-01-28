@@ -8,11 +8,11 @@ agents:
       bubble_radius: 3              # Bubble radius around closest obstacle (indices)
       max_steer: 0.42               # Steering limit (radians)
       min_speed: 0.2                # Minimum commanded speed
-      max_speed: 0.7                # Maximum commanded speed
-      steering_gain: 0.30           # Steering gain on gap offset
+      max_speed: 0.8                # Maximum commanded speed
+      steering_gain: 0.35           # Steering gain on gap offset
       fov: 4.71238898               # Lidar field of view (radians, 270 deg)
       normalized: false             # True if lidar is normalized to [0,1]
-      steer_smooth: 0.7             # Steering low-pass (higher = smoother/slower)
+      steer_smooth: 0.6             # Steering low-pass (higher = smoother/slower)
       mode: lidar                   # Observation mode (lidar)
 
       center_bias_gain: 0.0         # Bias toward center of track when gaps are symmetric
@@ -32,17 +32,17 @@ agents:
       use_disparity_extender: true  # Expand obstacles using disparity extender
       disparity_threshold: 0.35     # Disparity threshold (meters)
       vehicle_width: 0.225          # Vehicle width for disparity extender (meters)
-      safety_margin: 0.12           # Extra safety margin (meters)
+      safety_margin: 0.08           # Extra safety margin (meters)
 
       no_cutback_enabled: true      # Prevent cutback maneuvers
       cutback_clearance: 0.9        # Clearance required to allow cutback (meters)
       cutback_hold_steps: 8         # Steps to hold cutback decision
 
-      wall_avoid_kick: 0.06         # Bias away from closest wall
+      wall_avoid_kick: 0.05         # Bias away from closest wall
       panic_threshold_near: 4.0     # Distance threshold for "near" panic (meters)
       panic_threshold_very_near: 2.0 # Distance threshold for "very near" panic (meters)
-      panic_factor_near: 1.1        # Steering scale when near walls
-      panic_factor_very_near: 1.3   # Steering scale when very near walls
+      panic_factor_near: 1.0        # Steering scale when near walls
+      panic_factor_very_near: 1.0   # Steering scale when very near walls
       evasive_threshold: 1.0        # Distance threshold for evasive override (meters)
       evasive_steer_scale: 0.5      # Max steer scale in evasive mode
 

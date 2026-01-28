@@ -90,8 +90,8 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
 GAPLOCK_OBS: Dict[str, Any] = {
     'lidar': {
         'enabled': True,
-        'beams': 108,
-        'max_range': 12.0,
+        'beams': 54,
+        'max_range': 10.0,
         'normalize': True,
     },
     'ego_state': {

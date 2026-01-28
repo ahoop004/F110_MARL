@@ -10,7 +10,7 @@ experiment:
   episodes: 2000
   seed: 42
 environment:
-  max_steps: 5000
+  # max_steps: 5000
   action_repeat: 2
   centerline_autoload: true
   spawn_centerline:
@@ -38,7 +38,7 @@ environment:
       - -0.2
       - 0.2
       frame: target
-    min_separation: 0.85
+    min_separation: 0.3
     min_wall_distance: 0.3
     reject_offtrack: true
     max_attempts: 50
@@ -59,7 +59,7 @@ agents:
       hidden_dims:
       - 256
       - 256
-      batch_size: 256
+      batch_size: 64
     observation:
       preset: gaplock
 wandb:
