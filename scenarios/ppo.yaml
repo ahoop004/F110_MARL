@@ -23,17 +23,17 @@ environment:
     target_on_centerline: true
     offsets:
       x_range_behind:
-      - -0.1
+      - -0.05
       - 0.0
       x_range_front:
+      - 1.5
       - 0.5
-      - 0.0
       y_range_left:
-      - -0.8
-      - -0.4
+      - -0.35
+      - -0.3
       y_range_right:
-      - 0.4
-      - 0.8
+      - 0.3
+      - 0.35
       theta_range:
       - -0.2
       - 0.2
