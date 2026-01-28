@@ -48,7 +48,7 @@ agents:
     algorithm: sb3_ppo
     target_id: car_1
     params:
-      device: cuda
+      device: cpu
       learning_rate: 0.0003
       gamma: 0.99
       n_steps: 2048
