@@ -29,7 +29,7 @@ agents:
       gap_min_range: 0.4            # Min range for valid gap points (meters)
       target_mode: center           # "midgap" or "farthest" target point
 
-      use_disparity_extender: true  # Expand obstacles using disparity extender
+      use_disparity_extender: false  # Expand obstacles using disparity extender
       disparity_threshold: 0.35     # Disparity threshold (meters)
       vehicle_width: 0.225          # Vehicle width for disparity extender (meters)
       safety_margin: 0.08           # Extra safety margin (meters)
@@ -38,7 +38,7 @@ agents:
       cutback_clearance: 0.9        # Clearance required to allow cutback (meters)
       cutback_hold_steps: 8         # Steps to hold cutback decision
 
-      wall_avoid_kick: 0.05         # Bias away from closest wall
+      wall_avoid_kick: 0.02         # Bias away from closest wall
       panic_threshold_near: 4.0     # Distance threshold for "near" panic (meters)
       panic_threshold_very_near: 2.0 # Distance threshold for "very near" panic (meters)
       panic_factor_near: 1.0        # Steering scale when near walls
