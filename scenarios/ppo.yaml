@@ -59,7 +59,7 @@ agents:
       hidden_dims:
       - 256
       - 256
-      batch_size: 64
+      batch_size: 256
     observation:
       preset: gaplock
 wandb:
