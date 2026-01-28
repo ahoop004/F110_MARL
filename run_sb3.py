@@ -621,7 +621,7 @@ def main() -> None:
         f"Episodes: {scenario['experiment'].get('episodes', 'N/A')}",
     )
 
-    env, agents, reward_strategies = create_training_setup(scenario, mode="train")
+    env, agents, reward_strategies = create_training_setup(scenario, mode="train", skip_sb3_agents=True)
     output_dir = Path("outputs") / scenario.get("experiment", {}).get("name", "run") / run_id
     csv_logger = CSVLogger(output_dir=str(output_dir), scenario_config=scenario, enabled=True)
 
@@ -698,7 +698,7 @@ def main() -> None:
         obs_config=obs_cfg if isinstance(obs_cfg, dict) else None,
     )
 
-    other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}
+    other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id and agent is not None}
     sb3_env.set_other_agents(other_agents)
 
     monitor_env = Monitor(
@@ -793,8 +793,8 @@ def main() -> None:
             max_steps=max_steps,
             rolling_window=eval_cfg.get("rolling_window"),
         )
-        eval_env_raw, eval_agents, _ = create_training_setup(scenario, mode="eval")
-        eval_other_agents = {aid: agent for aid, agent in eval_agents.items() if aid != train_agent_id}
+        eval_env_raw, eval_agents, _ = create_training_setup(scenario, mode="eval", skip_sb3_agents=True)
+        eval_other_agents = {aid: agent for aid, agent in eval_agents.items() if aid != train_agent_id and agent is not None}
 
         eval_env = SB3SingleAgentWrapper(
             eval_env_raw,

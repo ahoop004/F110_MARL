@@ -259,6 +259,7 @@ def create_training_setup(
     scenario: Dict[str, Any],
     *,
     mode: str = "train",
+    skip_sb3_agents: bool = False,
 ) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict[str, RewardStrategy]]:
     """Create training setup from scenario configuration.
 
@@ -268,11 +269,13 @@ def create_training_setup(
             - environment: {map, num_agents, max_steps, ...}
             - agents: {agent_id: {algorithm, params, observation, reward, ...}}
         mode: "train" or "eval" (used for map bundle splits)
+        skip_sb3_agents: If True, skip creating SB3 agents (sb3_ppo, sb3_sac, etc.)
+            to avoid double model allocation when run_sb3.py builds its own model.
 
     Returns:
         Tuple of (env, agents, reward_strategies):
             - env: F110ParallelEnv instance
-            - agents: Dict mapping agent_id -> agent instance
+            - agents: Dict mapping agent_id -> agent instance (None for skipped SB3 agents)
             - reward_strategies: Dict mapping agent_id -> RewardStrategy (for trainable agents)
     """
     # Register built-in agents
@@ -547,9 +550,13 @@ def create_training_setup(
             agent_kwargs['action_low'] = action_space.low
             agent_kwargs['action_high'] = action_space.high
 
-        # Create agent
-        agent = AgentFactory.create(algorithm, agent_kwargs)
-        agents[agent_id] = agent
+        # Create agent (skip SB3 agents if requested to avoid double model allocation)
+        if skip_sb3_agents and algorithm.startswith('sb3_'):
+            # Store None for SB3 agents - run_sb3.py will build its own model
+            agents[agent_id] = None
+        else:
+            agent = AgentFactory.create(algorithm, agent_kwargs)
+            agents[agent_id] = agent
 
         # Build reward strategy if configured
         # Only trainable agents will have reward configs; FTG and other
