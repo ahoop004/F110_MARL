@@ -15,7 +15,7 @@ environment:
   centerline_autoload: true
   spawn_centerline:
     min_distance_m: 5.0
-    max_distance_m: 5.01
+    max_distance_m: 5.0
   random_spawn:
     enabled: true
     mode: target_relative
