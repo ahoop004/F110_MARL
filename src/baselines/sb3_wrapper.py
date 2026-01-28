@@ -61,6 +61,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_stack: int = 1,
         action_repeat: int = 1,
         action_constraints: Optional[Dict[str, Any]] = None,
+        obs_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -70,6 +71,7 @@ class SB3SingleAgentWrapper(gym.Env):
         self.agent_id = agent_id
         self.observation_preset = observation_preset
         self.target_id = target_id
+        self.obs_config = obs_config
         self.reward_strategy = reward_strategy
         self.spawn_curriculum = spawn_curriculum
         self._episode_count = 0
@@ -262,6 +264,7 @@ class SB3SingleAgentWrapper(gym.Env):
                     preset=self.observation_preset,
                     target_id=self.target_id,
                     scales=self.obs_scales,
+                    config=self.obs_config,
                 )
             else:
                 return flatten_observation(
@@ -269,6 +272,7 @@ class SB3SingleAgentWrapper(gym.Env):
                     preset=self.observation_preset,
                     target_id=self.target_id,
                     scales=self.obs_scales,
+                    config=self.obs_config,
                 )
 
         # Otherwise, try to convert to array

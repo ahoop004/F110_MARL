@@ -311,15 +311,25 @@ def compute_obs_dim(
     target_id: Optional[str],
     frame_stack: int,
     prev_action_dim: Optional[int] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> int:
-    """Compute flattened observation dimension."""
+    """Compute flattened observation dimension.
+
+    Args:
+        obs_space: Observation space from environment
+        preset: Observation preset name
+        target_id: Target agent ID (for adversarial tasks)
+        frame_stack: Frame stacking multiplier
+        prev_action_dim: Dimension of previous action (if included)
+        config: Optional observation config (if None, loads from preset)
+    """
     if preset:
         dummy_obs = obs_space.sample()
         if target_id:
             dummy_obs["central_state"] = obs_space.sample()
         if prev_action_dim:
             dummy_obs["prev_action"] = np.zeros(prev_action_dim, dtype=np.float32)
-        flat_dummy = flatten_observation(dummy_obs, preset=preset, target_id=target_id)
+        flat_dummy = flatten_observation(dummy_obs, preset=preset, target_id=target_id, config=config)
         obs_dim = int(flat_dummy.shape[0])
     else:
         obs_dim = get_space_dim(obs_space)
@@ -660,6 +670,7 @@ def main() -> None:
         target_id,
         frame_stack,
         prev_action_dim=prev_action_dim,
+        config=obs_cfg if isinstance(obs_cfg, dict) else None,
     )
 
     if not isinstance(action_space, spaces.Box):
@@ -684,6 +695,7 @@ def main() -> None:
         action_stack=action_stack,
         action_repeat=action_repeat,
         action_constraints=action_constraints,
+        obs_config=obs_cfg if isinstance(obs_cfg, dict) else None,
     )
 
     other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}
@@ -796,6 +808,7 @@ def main() -> None:
             frame_stack=frame_stack,
             action_stack=action_stack,
             action_repeat=action_repeat,
+            obs_config=obs_cfg if isinstance(obs_cfg, dict) else None,
         )
         eval_env.set_other_agents(eval_other_agents)
 

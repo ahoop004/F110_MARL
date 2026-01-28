@@ -80,13 +80,13 @@ def compute_obs_dim(config: Dict[str, Any]) -> int:
 
 # Preset observation configurations
 
-# Gaplock observation configuration (119 dims with 108-beam LiDAR).
-# Flattening uses:
-# - LiDAR: 108 beams, 12.0m max range, normalized
-# - Ego velocity: 3 dims (vx, vy, omega)
-# - Target velocity: 3 dims (vx, vy, omega)
-# - Relative pose: 5 dims (rel_x, rel_y, sin(Δθ), cos(Δθ), distance)
-# - Total: beams + 11
+# Gaplock observation configuration for adversarial racing.
+# Default flattening uses (controlled by config):
+# - LiDAR: N beams (default 54), max_range=10.0m, normalized to [0,1]
+# - Ego velocity: 3 dims (vx, vy, omega) - if ego_state.velocity=true
+# - Target velocity: 3 dims (vx, vy, omega) - if target_state.enabled/velocity=true
+# - Relative pose: 5 dims (rel_x, rel_y, sin(Δθ), cos(Δθ), distance) - if relative_pose.enabled=true
+# - Total: beams + 11 (with defaults)
 GAPLOCK_OBS: Dict[str, Any] = {
     'lidar': {
         'enabled': True,

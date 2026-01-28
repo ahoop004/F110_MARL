@@ -13,11 +13,11 @@ presets:
       pose: false
       velocity: true
     target_state:
-      enabled: false
+      enabled: true
       pose: false
-      velocity: false
+      velocity: true
     relative_pose:
-      enabled: false
+      enabled: true
       dim: 5
     normalization:
       enabled: true
