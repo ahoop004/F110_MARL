@@ -269,11 +269,19 @@ class CurriculumCallback(BaseCallback):
                 info = {}
                 if 'infos' in self.locals and len(self.locals['infos']) > 0:
                     info = self.locals['infos'][0] if isinstance(self.locals['infos'], list) else self.locals['infos']
+                length = self.current_episode_length
+                if isinstance(info, dict):
+                    info_steps = info.get("episode_steps")
+                    if info_steps is not None:
+                        try:
+                            length = int(info_steps)
+                        except (TypeError, ValueError):
+                            length = self.current_episode_length
 
                 # Process the completed episode
                 self._process_episode(
                     reward=self.current_episode_reward,
-                    length=self.current_episode_length,
+                    length=length,
                     success=info.get('is_success', False),
                     target_finished=info.get('target_finished', False),
                     target_collision=info.get('target_collision', False),

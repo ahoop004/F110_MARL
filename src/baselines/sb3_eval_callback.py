@@ -254,6 +254,7 @@ class SB3EvaluationCallback(BaseCallback):
             )
             done = False
             steps = 0
+            sim_steps = None
             ep_reward = 0.0
             outcome_value = None
             success_flag = None
@@ -267,6 +268,13 @@ class SB3EvaluationCallback(BaseCallback):
                 steps += 1
                 truncated = bool(trunc)
                 done = bool(terminated or trunc)
+                if isinstance(info, dict):
+                    info_steps = info.get("episode_steps")
+                    if info_steps is not None:
+                        try:
+                            sim_steps = int(info_steps)
+                        except (TypeError, ValueError):
+                            sim_steps = None
 
                 if done:
                     outcome_value = info.get("outcome")
@@ -279,9 +287,10 @@ class SB3EvaluationCallback(BaseCallback):
                 if success_flag is None:
                     success_flag = outcome.is_success()
             success = bool(success_flag)
+            final_steps = sim_steps if sim_steps is not None else steps
 
             rewards.append(ep_reward)
-            lengths.append(steps)
+            lengths.append(final_steps)
             success_count += int(success)
             eval_successes.append(bool(success))
             outcome_counts[outcome_value] = outcome_counts.get(outcome_value, 0) + 1
@@ -312,7 +321,7 @@ class SB3EvaluationCallback(BaseCallback):
                     )  # FIXED: Use training episode instead of num_timesteps
                 details_log = self._filter_metrics({
                     "eval/episode_reward": reward_value,
-                    "eval/episode_steps": int(steps),
+                    "eval/episode_steps": int(final_steps),
                     "eval/episode_success": int(success),
                     "eval/episode_success_rate": float(success_rate_so_far),
                     "eval/rolling_success_rate": float(eval_rolling_success_rate),

@@ -110,10 +110,18 @@ class SB3TrainLoggingCallback(BaseCallback):
                     info = infos[0]
                 elif isinstance(infos, dict):
                     info = infos
+            length = self.current_episode_length
+            if isinstance(info, dict):
+                info_steps = info.get("episode_steps")
+                if info_steps is not None:
+                    try:
+                        length = int(info_steps)
+                    except (TypeError, ValueError):
+                        length = self.current_episode_length
 
             self._process_episode(
                 reward=self.current_episode_reward,
-                length=self.current_episode_length,
+                length=length,
                 success=bool(info.get("is_success", False)),
                 outcome=info.get("outcome"),
                 info=info,

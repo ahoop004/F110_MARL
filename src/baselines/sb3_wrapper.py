@@ -520,6 +520,7 @@ class SB3SingleAgentWrapper(gym.Env):
         if terminated or truncated:
             if self._episode_spawn_info:
                 info.update(self._episode_spawn_info)
+        info["episode_steps"] = int(self.episode_steps)
 
         return obs, total_reward, terminated, truncated, info
 
