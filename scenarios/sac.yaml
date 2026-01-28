@@ -1,67 +1,82 @@
 includes:
 - ../configs/env/line2_gaplock.yaml
-- ../configs/reward/gaplock_attacker.yaml
+- ../configs/reward/gaplock_centerline_pressure.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased.yaml
-- ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
+- ../configs/agents/action_constraints.yaml
+- ../configs/evaluation/line2_gaplock_eval_standard.yaml
 - ../configs/wandb.yaml
 experiment:
   name: sac
-  episodes: 10000
+  episodes: 2000
   seed: 42
 environment:
+  max_steps: 2000
   action_repeat: 2
-  max_steps: 1200
+  centerline_autoload: true
+  spawn_centerline:
+    min_distance_m: 5.0
+    max_distance_m: 5.0
+  random_spawn:
+    enabled: true
+    mode: target_relative
+    target_agent: car_1
+    target_on_centerline: true
+    offsets:
+      # x_range_behind:
+      # - -0.05
+      # - 0.0
+      x_range_front:
+      - 1.5
+      - 0.5
+      y_range_left:
+      - -0.35
+      - -0.0
+      y_range_right:
+      - 0.0
+      - 0.35
+      theta_range:
+      - -0.2
+      - 0.2
+      frame: target
+    min_separation: 0.3
+    min_wall_distance: 0.3
+    reject_offtrack: true
+    max_attempts: 50
 agents:
   car_0:
     role: attacker
     algorithm: sb3_sac
     target_id: car_1
     params:
-      # SB3 SAC parameters (using proven SB3 defaults)
+      device: cuda
       learning_rate: 0.0003
       gamma: 0.99
       tau: 0.005
-      ent_coef: auto  # Automatic entropy tuning
+      ent_coef: auto
       target_entropy: auto
-      hidden_dims:
-      - 64
-      - 64
-      activation: relu
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 100
-      per:
-        enabled: true
-        alpha: 0.6
-        beta: 0.4
-        beta_final: 1.0
-        beta_anneal_steps: 200000
-        epsilon: 1.0e-6
-        max_priority: 1.0
-        normalize_weights: true
-      her:
-        enabled: true
-        reward_mode: replace
-        success_mode: distance
-        distance_threshold: 1.0
-        success_reward: 0.0
-        failure_reward: -1.0
-        done_on_success: true
-        probability: 1.0
-      train_freq: 1  # Train every step (off-policy continuous)
-      gradient_steps: 1  # Number of gradient steps per environment step
+      learning_starts: 1000
+      train_freq: 1
+      gradient_steps: 1
+      activation: relu
+      hidden_dims:
+      - 256
+      - 256
     observation:
       preset: gaplock
 wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
   tags:
   - improved
   - curriculum_v2
   - sac
   - comparison
   - gaplock
-  notes: SAC curriculum for gaplock adversarial task
+  notes: "SAC for gaplock adversarial task (use run_v2.py)"
   mode: online
