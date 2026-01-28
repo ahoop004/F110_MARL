@@ -22,17 +22,17 @@ environment:
     target_agent: car_1
     target_on_centerline: true
     offsets:
-      x_range_behind:
-      - -0.05
-      - 0.0
+      # x_range_behind:
+      # - -0.05
+      # - 0.0
       x_range_front:
       - 1.5
       - 0.5
       y_range_left:
       - -0.35
-      - -0.3
+      - -0.0
       y_range_right:
-      - 0.3
+      - 0.0
       - 0.35
       theta_range:
       - -0.2
