@@ -27,7 +27,7 @@ from core.obs_flatten import flatten_observation
 from core.run_id import resolve_run_id, set_run_id_env
 from core.scenario import ScenarioError, load_and_expand_scenario
 from core.setup import create_training_setup
-from loggers import ConsoleLogger, WandbLogger
+from loggers import ConsoleLogger, WandbLogger, CSVLogger
 
 try:
     from stable_baselines3 import A2C, PPO
@@ -612,6 +612,8 @@ def main() -> None:
     )
 
     env, agents, reward_strategies = create_training_setup(scenario, mode="train")
+    output_dir = Path("outputs") / scenario.get("experiment", {}).get("name", "run") / run_id
+    csv_logger = CSVLogger(output_dir=str(output_dir), scenario_config=scenario, enabled=True)
 
     train_agent_cfg = scenario["agents"][train_agent_id]
     train_params = train_agent_cfg.get("params", {})
@@ -812,13 +814,19 @@ def main() -> None:
                 )
             )
 
-    if wandb_logger and wandb_logger.run and curriculum_callback is None:
-        callbacks.append(
-            SB3TrainLoggingCallback(
-                wandb_run=wandb_logger.run,
-                wandb_logging=scenario.get("wandb", {}).get("logging"),
-            )
+    run_metadata = {
+        "run_id": run_id,
+        "scenario": scenario.get("experiment", {}).get("name", ""),
+        "seed": scenario.get("experiment", {}).get("seed", ""),
+    }
+    callbacks.append(
+        SB3TrainLoggingCallback(
+            wandb_run=wandb_logger.run if wandb_logger else None,
+            wandb_logging=scenario.get("wandb", {}).get("logging"),
+            csv_logger=csv_logger,
+            run_metadata=run_metadata,
         )
+    )
 
     callback = CallbackList(callbacks) if callbacks else None
 
@@ -828,6 +836,8 @@ def main() -> None:
     finally:
         if wandb_logger:
             wandb_logger.finish()
+        if csv_logger:
+            csv_logger.close()
 
 
 if __name__ == "__main__":

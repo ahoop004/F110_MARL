@@ -6,6 +6,9 @@ from typing import Any, Dict, Optional
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
+from metrics.outcomes import EpisodeOutcome, determine_outcome
+from metrics.tracker import EpisodeMetrics
+
 
 class SB3TrainLoggingCallback(BaseCallback):
     """Log per-episode training metrics to W&B during SB3 runs."""
@@ -14,12 +17,16 @@ class SB3TrainLoggingCallback(BaseCallback):
         self,
         wandb_run: Optional[Any] = None,
         wandb_logging: Optional[Dict[str, Any]] = None,
+        csv_logger: Optional[Any] = None,
+        run_metadata: Optional[Dict[str, Any]] = None,
         window_size: int = 100,
         verbose: int = 0,
     ):
         super().__init__(verbose)
         self.wandb_run = wandb_run
         self.wandb_logging = wandb_logging if isinstance(wandb_logging, dict) else None
+        self.csv_logger = csv_logger
+        self.run_metadata = run_metadata or {}
         self.window_size = max(1, int(window_size))
         self.episode_count = 0
         self.episode_rewards = deque(maxlen=self.window_size)
@@ -76,6 +83,7 @@ class SB3TrainLoggingCallback(BaseCallback):
             self.current_episode_length += 1
 
         done = None
+        truncated = False
         if "dones" in self.locals:
             dones = self.locals["dones"]
             if isinstance(dones, (list, np.ndarray)):
@@ -90,6 +98,7 @@ class SB3TrainLoggingCallback(BaseCallback):
                     terminated = bool(terminated[0])
                 if isinstance(truncated, (list, np.ndarray)):
                     truncated = bool(truncated[0])
+                truncated = bool(truncated)
                 done = bool(terminated or truncated)
 
         processed_direct = False
@@ -107,6 +116,8 @@ class SB3TrainLoggingCallback(BaseCallback):
                 length=self.current_episode_length,
                 success=bool(info.get("is_success", False)),
                 outcome=info.get("outcome"),
+                info=info,
+                truncated=truncated,
             )
             processed_direct = True
 
@@ -125,6 +136,8 @@ class SB3TrainLoggingCallback(BaseCallback):
                                 length=ep_info["l"],
                                 success=bool(ep_info.get("is_success", False)),
                                 outcome=ep_info.get("outcome"),
+                                info=None,
+                                truncated=False,
                             )
             self.model.ep_info_buffer.clear()
 
@@ -139,6 +152,8 @@ class SB3TrainLoggingCallback(BaseCallback):
         length: int,
         success: bool,
         outcome: Optional[str] = None,
+        info: Optional[Dict[str, Any]] = None,
+        truncated: bool = False,
     ) -> None:
         self.episode_count += 1
         self.episode_rewards.append(float(reward))
@@ -146,6 +161,8 @@ class SB3TrainLoggingCallback(BaseCallback):
         self.episode_lengths.append(int(length))
 
         if not self._should_log("train"):
+            if self.csv_logger:
+                self._log_csv(reward, length, success, outcome, info, truncated)
             return
 
         success_rate = float(sum(self.episode_successes) / len(self.episode_successes)) if self.episode_successes else 0.0
@@ -167,9 +184,77 @@ class SB3TrainLoggingCallback(BaseCallback):
 
         log_dict = self._filter_metrics(log_dict)
         if not log_dict:
+            if self.csv_logger:
+                self._log_csv(reward, length, success, outcome, info, truncated)
             return
 
         self.wandb_run.log(log_dict, step=self.episode_count)
+
+        if self.csv_logger:
+            self._log_csv(reward, length, success, outcome, info, truncated)
+
+    def _log_csv(
+        self,
+        reward: float,
+        length: int,
+        success: bool,
+        outcome: Optional[str],
+        info: Optional[Dict[str, Any]],
+        truncated: bool,
+    ) -> None:
+        if not self.csv_logger:
+            return
+        info_dict = info if isinstance(info, dict) else {}
+        outcome_value = outcome
+        if not outcome_value:
+            try:
+                outcome_value = determine_outcome(info_dict, truncated=truncated).value
+            except Exception:
+                outcome_value = None
+        if outcome_value:
+            try:
+                outcome_enum = EpisodeOutcome(outcome_value)
+            except ValueError:
+                outcome_enum = determine_outcome(info_dict, truncated=truncated)
+        else:
+            outcome_enum = determine_outcome(info_dict, truncated=truncated)
+
+        reward_components = info_dict.get("reward_components", {})
+        if not isinstance(reward_components, dict):
+            reward_components = {}
+        metrics = EpisodeMetrics(
+            episode=self.episode_count,
+            outcome=outcome_enum,
+            total_reward=float(reward),
+            steps=int(length),
+            reward_components=reward_components,
+        )
+        extra = {
+            "spawn_point": info_dict.get("spawn_point", ""),
+            "spawn_s": info_dict.get("spawn_s", ""),
+            "spawn_d": info_dict.get("spawn_d", ""),
+            "spawn_x": info_dict.get("spawn_x", ""),
+            "spawn_y": info_dict.get("spawn_y", ""),
+            "target_x": info_dict.get("target_x", ""),
+            "target_y": info_dict.get("target_y", ""),
+            "spawn_dx": info_dict.get("spawn_dx", ""),
+            "spawn_dy": info_dict.get("spawn_dy", ""),
+            "run_id": self.run_metadata.get("run_id", ""),
+            "scenario": self.run_metadata.get("scenario", ""),
+            "seed": self.run_metadata.get("seed", ""),
+        }
+        rolling_stats = {
+            "success_rate": float(sum(self.episode_successes) / len(self.episode_successes))
+            if self.episode_successes else 0.0,
+            "avg_reward": float(np.mean(self.episode_rewards)) if self.episode_rewards else 0.0,
+            "avg_steps": float(np.mean(self.episode_lengths)) if self.episode_lengths else 0.0,
+        }
+        self.csv_logger.log_episode(
+            episode=self.episode_count,
+            metrics=metrics,
+            rolling_stats=rolling_stats,
+            extra=extra,
+        )
 
 
 __all__ = ["SB3TrainLoggingCallback"]

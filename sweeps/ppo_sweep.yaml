@@ -3,7 +3,7 @@ method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
 metric:
-  name: eval_agg/success_rate
+  name: train/success_rate
   goal: maximize
 parameters:
   agents.car_0.frame_stack:

@@ -6,7 +6,7 @@ presets:
   gaplock:
     lidar:
       enabled: true
-      beams: 720
+      beams: 54
       max_range: 10.0
       normalize: true
     ego_state:

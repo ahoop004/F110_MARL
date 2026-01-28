@@ -91,6 +91,7 @@ class SB3SingleAgentWrapper(gym.Env):
         self.action_repeat = max(1, action_repeat)
         self._frame_buffer: Optional[deque] = None
         self._action_buffer: Optional[deque] = None
+        self._episode_spawn_info: Dict[str, Any] = {}
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -320,6 +321,40 @@ class SB3SingleAgentWrapper(gym.Env):
         if self.reward_strategy and hasattr(self.reward_strategy, "reset"):
             self.reward_strategy.reset()
 
+        self._episode_spawn_info = {}
+        info_for_agent = info_dict.get(self.agent_id, {}) if isinstance(info_dict, dict) else {}
+        for key in ("spawn_point", "spawn_s", "spawn_d"):
+            if key in info_for_agent:
+                self._episode_spawn_info[key] = info_for_agent.get(key)
+        if self._last_spawn_info:
+            spawn_mapping = self._last_spawn_info.get('spawn_points', {})
+            spawn_point = spawn_mapping.get(self.agent_id)
+            if spawn_point:
+                self._episode_spawn_info["spawn_point"] = spawn_point
+        attacker_pose = None
+        target_pose = None
+        if isinstance(obs_dict, dict):
+            attacker_pose = obs_dict.get(self.agent_id, {}).get("pose")
+            if self.target_id:
+                target_pose = obs_dict.get(self.target_id, {}).get("pose")
+        if attacker_pose is not None:
+            attacker_arr = np.asarray(attacker_pose, dtype=np.float32).reshape(-1)
+            if attacker_arr.size >= 2:
+                self._episode_spawn_info["spawn_x"] = float(attacker_arr[0])
+                self._episode_spawn_info["spawn_y"] = float(attacker_arr[1])
+        if target_pose is not None:
+            target_arr = np.asarray(target_pose, dtype=np.float32).reshape(-1)
+            if target_arr.size >= 2:
+                self._episode_spawn_info["target_x"] = float(target_arr[0])
+                self._episode_spawn_info["target_y"] = float(target_arr[1])
+        if "spawn_x" in self._episode_spawn_info and "target_x" in self._episode_spawn_info:
+            self._episode_spawn_info["spawn_dx"] = (
+                self._episode_spawn_info["spawn_x"] - self._episode_spawn_info["target_x"]
+            )
+            self._episode_spawn_info["spawn_dy"] = (
+                self._episode_spawn_info["spawn_y"] - self._episode_spawn_info["target_y"]
+            )
+
         # Store current observations for reward computation
         self.current_obs_dict = obs_dict
         self.episode_steps = 0
@@ -478,6 +513,9 @@ class SB3SingleAgentWrapper(gym.Env):
 
         if reward_components:
             info['reward_components'] = reward_components
+        if terminated or truncated:
+            if self._episode_spawn_info:
+                info.update(self._episode_spawn_info)
 
         return obs, total_reward, terminated, truncated, info
 
