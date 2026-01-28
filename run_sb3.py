@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """On-policy SB3 training runner (PPO/A2C) using the v2 scenario format."""
 
+# Suppress noisy warnings from dependencies before imports
+import warnings
+import os
+
+# Pydantic warnings from f1tenth_gym internals
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+# Gym deprecation warning (SB3 still uses gym internally)
+warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+# TensorFlow CPU optimization info (not an error)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 import argparse
 import math
 import os
