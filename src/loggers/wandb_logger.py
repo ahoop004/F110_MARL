@@ -96,8 +96,8 @@ class WandbLogger:
             # Flatten nested config for W&B
             flat_config = self._flatten_config(config) if config else {}
 
-            # Initialize W&B
-            self.run = wandb.init(
+            # Initialize W&B (use run_id for alignment when provided).
+            init_kwargs = dict(
                 project=project,
                 config=flat_config,
                 name=name,
@@ -109,6 +109,10 @@ class WandbLogger:
                 mode=mode,
                 **kwargs,
             )
+            if run_id:
+                init_kwargs.setdefault("id", run_id)
+                init_kwargs.setdefault("resume", "allow")
+            self.run = wandb.init(**init_kwargs)
 
             # Capture W&B run information
             if self.run is not None:

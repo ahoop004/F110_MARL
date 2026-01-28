@@ -5,7 +5,7 @@ agents:
       preset: gaplock_centerline_pressure
       overrides:
         gaplock_centerline_pressure:
-          centerline_weight: 0.01
+          centerline_weight: 0.1
           # wall_weight: 0.03
           centerline_scale: 1.0
           # wall_distance_scale: 2.0
