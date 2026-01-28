@@ -13,9 +13,9 @@ presets:
       pose: false
       velocity: true
     target_state:
-      enabled: true
+      enabled: false
       pose: false
-      velocity: true
+      velocity: false
     relative_pose:
       enabled: true
       dim: 5

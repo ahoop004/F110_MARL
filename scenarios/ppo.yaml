@@ -15,7 +15,7 @@ environment:
   centerline_autoload: true
   spawn_centerline:
     min_distance_m: 5.0
-    max_distance_m: 15.0
+    max_distance_m: 5.01
   random_spawn:
     enabled: true
     mode: target_relative
@@ -23,16 +23,16 @@ environment:
     target_on_centerline: true
     offsets:
       x_range_behind:
-      - -0.3
+      - -0.1
       - 0.0
       x_range_front:
       - 0.5
       - 0.0
       y_range_left:
       - -0.8
-      - -0.3
+      - -0.4
       y_range_right:
-      - 0.3
+      - 0.4
       - 0.8
       theta_range:
       - -0.2
