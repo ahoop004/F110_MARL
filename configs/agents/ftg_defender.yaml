@@ -29,7 +29,7 @@ agents:
       gap_min_range: 0.4            # Min range for valid gap points (meters)
       target_mode: center           # "midgap" or "farthest" target point
 
-      use_disparity_extender: false  # Expand obstacles using disparity extender
+      use_disparity_extender: true  # Expand obstacles using disparity extender
       disparity_threshold: 0.35     # Disparity threshold (meters)
       vehicle_width: 0.225          # Vehicle width for disparity extender (meters)
       safety_margin: 0.08           # Extra safety margin (meters)
