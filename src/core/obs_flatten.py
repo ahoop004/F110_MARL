@@ -401,8 +401,16 @@ def flatten_observation(
     Raises:
         ValueError: If preset not supported
     """
-    # Load config from preset if not provided
-    if config is None:
+    # Load config from preset if not provided or if config only has preset reference
+    needs_preset_load = config is None
+    if not needs_preset_load and isinstance(config, dict):
+        # Check if config only has preset/meta keys but no actual observation settings
+        actual_setting_keys = {'lidar', 'ego_state', 'target_state', 'relative_pose',
+                               'speed', 'prev_action', 'normalization'}
+        if not any(k in config for k in actual_setting_keys):
+            needs_preset_load = True
+
+    if needs_preset_load:
         try:
             from src.core.observations import load_observation_preset
             config = load_observation_preset(preset)
