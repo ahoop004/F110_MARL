@@ -44,6 +44,13 @@ except ImportError as exc:
     )
     raise
 
+try:
+    from rich.panel import Panel
+    from rich.table import Table
+    RICH_PANEL_AVAILABLE = True
+except Exception:
+    RICH_PANEL_AVAILABLE = False
+
 
 ON_POLICY_ALGOS = {"sb3_ppo", "sb3_a2c", "ppo", "a2c"}
 
@@ -227,6 +234,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--cuda-device",
+        type=int,
+        default=None,
+        help="CUDA device index to use with --device cuda/auto (e.g., 0, 1)",
+    )
+
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Disable console output",
@@ -266,7 +280,15 @@ def resolve_cli_overrides(scenario: Dict[str, Any], args: argparse.Namespace) ->
             algo = str(agent_cfg.get("algorithm", "")).lower()
             if algo in ON_POLICY_ALGOS:
                 if args.device == "auto":
-                    resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+                    if torch.cuda.is_available():
+                        if args.cuda_device is not None:
+                            resolved_device = f"cuda:{int(args.cuda_device)}"
+                        else:
+                            resolved_device = "cuda"
+                    else:
+                        resolved_device = "cpu"
+                elif args.device == "cuda" and args.cuda_device is not None:
+                    resolved_device = f"cuda:{int(args.cuda_device)}"
                 else:
                     resolved_device = args.device
                 agent_cfg["device"] = resolved_device
@@ -755,11 +777,30 @@ class StopOnEpisodeCallback(BaseCallback):
 class EpisodeProgressCallback(BaseCallback):
     """Periodic episode progress logging."""
 
-    def __init__(self, log_every: int, console_logger: Optional[ConsoleLogger] = None):
+    def __init__(
+        self,
+        log_every: int,
+        console_logger: Optional[ConsoleLogger] = None,
+        window_size: int = 100,
+    ):
         super().__init__()
         self.log_every = max(1, int(log_every))
         self.console_logger = console_logger
+        self.window_size = max(1, int(window_size))
         self.episode_count = 0
+        self.current_episode_reward = 0.0
+        self.current_episode_length = 0
+        self.episode_rewards: Deque[float] = deque(maxlen=self.window_size)
+        self.episode_successes: Deque[bool] = deque(maxlen=self.window_size)
+        self.episode_lengths: Deque[int] = deque(maxlen=self.window_size)
+        self.curriculum_callback: Optional[CurriculumCallback] = None
+        self.anneal_callback: Optional["AnnealOnSuccessRateCallback"] = None
+
+    def set_curriculum_callback(self, callback: Optional[CurriculumCallback]) -> None:
+        self.curriculum_callback = callback
+
+    def set_anneal_callback(self, callback: Optional["AnnealOnSuccessRateCallback"]) -> None:
+        self.anneal_callback = callback
 
     def _count_episode_ends(self) -> int:
         dones = self.locals.get("dones")
@@ -775,12 +816,177 @@ class EpisodeProgressCallback(BaseCallback):
             return int(np.sum(done_flags))
         return int(bool(done_flags))
 
+    def _collect_done_flags(self) -> List[bool]:
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return []
+            terminated_arr = np.array(terminated, dtype=bool).reshape(-1)
+            truncated_arr = np.array(truncated, dtype=bool).reshape(-1)
+            return np.logical_or(terminated_arr, truncated_arr).tolist()
+        return np.array(dones, dtype=bool).reshape(-1).tolist()
+
+    def _collect_infos(self) -> List[Dict[str, Any]]:
+        infos = self.locals.get("infos")
+        if infos is None:
+            return []
+        if isinstance(infos, list):
+            return [entry if isinstance(entry, dict) else {} for entry in infos]
+        if isinstance(infos, tuple):
+            return [entry if isinstance(entry, dict) else {} for entry in infos]
+        if isinstance(infos, dict):
+            return [infos]
+        return []
+
+    def _safe_metric(self, key: str) -> Optional[float]:
+        logger = getattr(self.model, "logger", None)
+        if logger is None:
+            return None
+        values = getattr(logger, "name_to_value", None)
+        if not isinstance(values, dict):
+            return None
+        raw = values.get(key)
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _format_optional(self, value: Optional[float], fmt: str) -> str:
+        if value is None:
+            return "n/a"
+        return format(value, fmt)
+
+    def _curriculum_status(self) -> str:
+        callback = self.curriculum_callback
+        if callback is None:
+            return "off"
+        try:
+            phase_idx = callback.get_current_phase_index()
+            phase_cfg = callback.get_current_phase_config()
+            if phase_idx is None or not phase_cfg:
+                return "on"
+            phase_name = str(phase_cfg.get("name", "unknown"))
+            return f"on p{int(phase_idx)}:{phase_name}"
+        except Exception:
+            return "on"
+
+    def _anneal_status(self) -> str:
+        callback = self.anneal_callback
+        if callback is None:
+            return "off"
+        activation = callback.activation_episode
+        if activation is None:
+            return "waiting"
+        min_rate = callback.post_anneal_min_rate
+        if min_rate is None:
+            return f"on@{activation}"
+        return f"on@{activation},min={min_rate:.1%}"
+
     def _on_step(self) -> bool:
-        done_count = self._count_episode_ends()
-        if done_count > 0:
-            self.episode_count += done_count
-            if self.console_logger and self.episode_count % self.log_every == 0:
-                self.console_logger.print_info(f"Progress: episode {self.episode_count}")
+        if "rewards" in self.locals:
+            rewards = self.locals["rewards"]
+            if isinstance(rewards, (list, np.ndarray)):
+                step_reward = float(rewards[0])
+            else:
+                step_reward = float(rewards)
+            self.current_episode_reward += step_reward
+            self.current_episode_length += 1
+
+        done_flags = self._collect_done_flags()
+        if not done_flags:
+            return True
+        infos = self._collect_infos()
+        done_count = 0
+        for idx, done in enumerate(done_flags):
+            if not done:
+                continue
+            done_count += 1
+            info = infos[idx] if idx < len(infos) else {}
+            success = bool(info.get("is_success", False))
+            self.episode_count += 1
+            self.episode_rewards.append(float(self.current_episode_reward))
+            self.episode_successes.append(success)
+            self.episode_lengths.append(int(self.current_episode_length))
+            self.current_episode_reward = 0.0
+            self.current_episode_length = 0
+
+        if done_count > 0 and self.console_logger and self.episode_count % self.log_every == 0:
+            sr = (
+                float(sum(self.episode_successes) / len(self.episode_successes))
+                if self.episode_successes
+                else 0.0
+            )
+            r_mean = float(np.mean(self.episode_rewards)) if self.episode_rewards else 0.0
+            l_mean = float(np.mean(self.episode_lengths)) if self.episode_lengths else 0.0
+            approx_kl = self._safe_metric("train/approx_kl")
+            clip_frac = self._safe_metric("train/clip_fraction")
+            val_loss = self._safe_metric("train/value_loss")
+            pol_loss = self._safe_metric("train/policy_gradient_loss")
+            ent_loss = self._safe_metric("train/entropy_loss")
+            msg = (
+                f"Ep {self.episode_count} | SR{self.window_size} {sr:.1%} | "
+                f"R{self.window_size} {r_mean:.2f} | L{self.window_size} {l_mean:.1f} | "
+                f"KL {self._format_optional(approx_kl, '.4f')} | "
+                f"Clip {self._format_optional(clip_frac, '.3f')} | "
+                f"VLoss {self._format_optional(val_loss, '.3f')} | "
+                f"PLoss {self._format_optional(pol_loss, '.3f')} | "
+                f"Ent {self._format_optional(ent_loss, '.3f')} | "
+                f"Curr {self._curriculum_status()} | "
+                f"Anneal {self._anneal_status()}"
+            )
+            printed_rich = False
+            if RICH_PANEL_AVAILABLE and hasattr(self.console_logger, "console"):
+                try:
+                    progress_table = Table.grid(expand=True)
+                    progress_table.add_column(justify="left")
+                    progress_table.add_column(justify="left")
+                    progress_table.add_column(justify="left")
+                    progress_table.add_row(
+                        f"[bold cyan]Episode[/bold cyan] {self.episode_count}",
+                        f"[bold cyan]SR{self.window_size}[/bold cyan] {sr:.1%}",
+                        f"[bold cyan]R{self.window_size}[/bold cyan] {r_mean:.2f}",
+                    )
+                    progress_table.add_row(
+                        f"[bold cyan]L{self.window_size}[/bold cyan] {l_mean:.1f}",
+                        f"[bold cyan]Curriculum[/bold cyan] {self._curriculum_status()}",
+                        f"[bold cyan]Anneal[/bold cyan] {self._anneal_status()}",
+                    )
+
+                    ppo_table = Table.grid(expand=True)
+                    ppo_table.add_column(justify="left")
+                    ppo_table.add_column(justify="left")
+                    ppo_table.add_column(justify="left")
+                    ppo_table.add_column(justify="left")
+                    ppo_table.add_column(justify="left")
+                    ppo_table.add_row(
+                        f"[bold magenta]KL[/bold magenta] {self._format_optional(approx_kl, '.4f')}",
+                        f"[bold magenta]Clip[/bold magenta] {self._format_optional(clip_frac, '.3f')}",
+                        f"[bold magenta]VLoss[/bold magenta] {self._format_optional(val_loss, '.3f')}",
+                        f"[bold magenta]PLoss[/bold magenta] {self._format_optional(pol_loss, '.3f')}",
+                        f"[bold magenta]Ent[/bold magenta] {self._format_optional(ent_loss, '.3f')}",
+                    )
+
+                    container = Table.grid(expand=True)
+                    container.add_row(progress_table)
+                    container.add_row(ppo_table)
+
+                    self.console_logger.console.print(
+                        Panel(
+                            container,
+                            title="SB3 Snapshot",
+                            border_style="blue",
+                            padding=(0, 1),
+                        )
+                    )
+                    printed_rich = True
+                except Exception:
+                    printed_rich = False
+            if not printed_rich:
+                self.console_logger.print_info(msg)
         return True
 
 
@@ -1048,6 +1254,7 @@ def main() -> None:
     total_timesteps = decision_steps * episodes
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
+    progress_callback: Optional[EpisodeProgressCallback] = None
     log_every_env = os.environ.get("F110_LOG_EVERY_EPISODES")
     if log_every_env is None:
         log_every = 25
@@ -1057,11 +1264,14 @@ def main() -> None:
         except ValueError:
             log_every = 25
     if log_every > 0:
-        callbacks.append(EpisodeProgressCallback(log_every, console_logger))
+        progress_callback = EpisodeProgressCallback(log_every, console_logger)
+        callbacks.append(progress_callback)
     anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
     if gated_schedules:
         anneal_guard_callback = AnnealOnSuccessRateCallback(gated_schedules, console_logger)
         callbacks.append(anneal_guard_callback)
+        if progress_callback is not None:
+            progress_callback.set_anneal_callback(anneal_guard_callback)
     if env_config.get("render"):
         render_every_env = os.environ.get("F110_RENDER_EVERY_STEPS")
         if render_every_env is None:
@@ -1112,6 +1322,8 @@ def main() -> None:
             ),
         )
         callbacks.append(curriculum_callback)
+        if progress_callback is not None:
+            progress_callback.set_curriculum_callback(curriculum_callback)
 
     if eval_cfg.get("enabled", False):
         eval_config = EvaluationConfig(
