@@ -23,25 +23,25 @@ agents:
     target_id: car_1
     params:
       learning_rate: 0.0003
-      learning_rate_schedule:
-        type: linear
-        final: 1.0e-05
-        gate:
-          success_rate: 0.85
-          window_episodes: 100
+      # learning_rate_schedule:
+      #   type: linear
+      #   final: 1.0e-05
+      #   gate:
+      #     success_rate: 0.85
+      #     window_episodes: 100
       gamma: 0.99
       n_steps: 2048
       n_epochs: 10
       gae_lambda: 0.95
       clip_range: 0.2
-      clip_range_schedule:
-        type: linear
-        final: 0.05
-        gate:
-          success_rate: 0.85
-          window_episodes: 100
-      clip_range_vf: 0.2
-      target_kl: 0.02
+      # clip_range_schedule:
+      #   type: linear
+      #   final: 0.05
+      #   gate:
+      #     success_rate: 0.85
+      #     window_episodes: 100
+      # clip_range_vf: 0.2
+      # target_kl: 0.02
       max_grad_norm: 0.5
       vf_coef: 0.5
       normalize_advantage: true
