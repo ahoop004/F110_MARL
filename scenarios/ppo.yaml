@@ -6,11 +6,11 @@ includes:
 - ../configs/wandb.yaml
 experiment:
   name: ppo
-  episodes: 2000
+  episodes: 10000
   seed: 42
 environment:
-  max_steps: 1200
-  action_repeat: 2
+  max_steps: 2700
+  action_repeat: 3
   spawn_y_curriculum:
     enabled: true
     mode: success_adaptive
