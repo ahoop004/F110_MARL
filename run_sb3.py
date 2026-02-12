@@ -5,8 +5,10 @@ import argparse
 import math
 import os
 import sys
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch.nn as nn
@@ -45,6 +47,51 @@ except ImportError as exc:
 ON_POLICY_ALGOS = {"sb3_ppo", "sb3_a2c", "ppo", "a2c"}
 
 
+@dataclass
+class GatedScheduleSpec:
+    """Metadata for a linear schedule gated by rolling training success."""
+
+    key: str
+    schedule: "GatedLinearSchedule"
+    success_threshold: float
+    window_episodes: int
+
+
+class GatedLinearSchedule:
+    """Linear schedule that stays flat until activated, then anneals to final value."""
+
+    def __init__(self, initial_value: float, final_value: float):
+        self.initial_value = float(initial_value)
+        self.final_value = float(final_value)
+        self._activated = False
+        self._start_progress_remaining: Optional[float] = None
+
+    @property
+    def activated(self) -> bool:
+        return self._activated
+
+    def activate(self, progress_remaining: Optional[float] = None) -> None:
+        self._activated = True
+        if progress_remaining is not None:
+            self._start_progress_remaining = max(0.0, float(progress_remaining))
+
+    def __call__(self, progress_remaining: float) -> float:
+        if not self._activated:
+            return self.initial_value
+
+        if self._start_progress_remaining is None:
+            self._start_progress_remaining = max(0.0, float(progress_remaining))
+
+        start = float(self._start_progress_remaining)
+        if start <= 0.0:
+            return self.final_value
+
+        current = max(0.0, float(progress_remaining))
+        progress = (start - current) / start
+        progress = min(max(progress, 0.0), 1.0)
+        return self.initial_value + (self.final_value - self.initial_value) * progress
+
+
 def _linear_schedule(initial_value: float, final_value: float):
     """Create a linear schedule callable for SB3 (progress_remaining: 1 -> 0)."""
     initial_value = float(initial_value)
@@ -61,7 +108,7 @@ def _resolve_scheduled_param(
     key: str,
     default_value: float,
     default_linear_final: Optional[float] = None,
-):
+) -> tuple[Any, Optional[GatedScheduleSpec]]:
     """Resolve scalar/scheduled SB3 parameter from scenario params.
 
     Supports either:
@@ -73,13 +120,13 @@ def _resolve_scheduled_param(
     schedule_cfg = params.get(f"{key}_schedule")
 
     if schedule_cfg is None:
-        return base_value
+        return base_value, None
 
     if isinstance(schedule_cfg, str):
         schedule_type = schedule_cfg.strip().lower()
         if schedule_type == "linear":
             final_value = 0.0 if default_linear_final is None else float(default_linear_final)
-            return _linear_schedule(base_value, final_value)
+            return _linear_schedule(base_value, final_value), None
         raise ValueError(
             f"Unsupported {key}_schedule '{schedule_cfg}'. Use 'linear' or a schedule dict."
         )
@@ -96,7 +143,26 @@ def _resolve_scheduled_param(
         final_value = float(schedule_cfg["final"])
     else:
         final_value = 0.0 if default_linear_final is None else float(default_linear_final)
-    return _linear_schedule(initial_value, final_value)
+
+    gate_cfg = schedule_cfg.get("gate")
+    if gate_cfg is None:
+        return _linear_schedule(initial_value, final_value), None
+    if not isinstance(gate_cfg, dict):
+        raise ValueError(f"{key}_schedule.gate must be a dict when provided.")
+
+    success_threshold = float(gate_cfg.get("success_rate", gate_cfg.get("threshold", 0.85)))
+    window_episodes = int(gate_cfg.get("window_episodes", gate_cfg.get("window", 100)))
+    if window_episodes <= 0:
+        raise ValueError(f"{key}_schedule.gate.window_episodes must be > 0.")
+
+    gated_schedule = GatedLinearSchedule(initial_value, final_value)
+    spec = GatedScheduleSpec(
+        key=key,
+        schedule=gated_schedule,
+        success_threshold=success_threshold,
+        window_episodes=window_episodes,
+    )
+    return gated_schedule, spec
 
 
 def parse_args() -> argparse.Namespace:
@@ -433,23 +499,29 @@ def build_model(
     policy_kwargs: Dict[str, Any],
     device: str,
     seed: Optional[int],
-):
+) -> tuple[Any, List[GatedScheduleSpec]]:
     """Create SB3 on-policy model."""
-    learning_rate = _resolve_scheduled_param(
+    gated_specs: List[GatedScheduleSpec] = []
+
+    learning_rate, lr_gate = _resolve_scheduled_param(
         params,
         key="learning_rate",
         default_value=3e-4,
         default_linear_final=0.0,
     )
+    if lr_gate is not None:
+        gated_specs.append(lr_gate)
     gamma = params.get("gamma", 0.995)
 
     if algorithm in {"sb3_ppo", "ppo"}:
-        clip_range = _resolve_scheduled_param(
+        clip_range, clip_gate = _resolve_scheduled_param(
             params,
             key="clip_range",
             default_value=0.2,
             default_linear_final=0.02,
         )
+        if clip_gate is not None:
+            gated_specs.append(clip_gate)
         model = PPO(
             policy="MlpPolicy",
             env=env,
@@ -489,7 +561,7 @@ def build_model(
     else:
         raise ValueError(f"Unsupported on-policy algorithm: {algorithm}")
 
-    return model
+    return model, gated_specs
 
 
 def build_spawn_curriculum(env, scenario: Dict[str, Any], console_logger: ConsoleLogger):
@@ -646,6 +718,83 @@ class RenderCallback(BaseCallback):
         return True
 
 
+class AnnealOnSuccessRateCallback(BaseCallback):
+    """Activate gated schedules once rolling training success meets configured thresholds."""
+
+    def __init__(
+        self,
+        gated_schedules: List[GatedScheduleSpec],
+        console_logger: Optional[ConsoleLogger] = None,
+    ):
+        super().__init__()
+        self.gated_schedules = gated_schedules
+        self.console_logger = console_logger
+        max_window = max((spec.window_episodes for spec in gated_schedules), default=1)
+        self.success_history: Deque[bool] = deque(maxlen=max_window)
+        self.episode_count = 0
+
+    def _collect_done_flags(self):
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return []
+            terminated_arr = np.array(terminated, dtype=bool).reshape(-1)
+            truncated_arr = np.array(truncated, dtype=bool).reshape(-1)
+            return np.logical_or(terminated_arr, truncated_arr).tolist()
+        return np.array(dones, dtype=bool).reshape(-1).tolist()
+
+    def _collect_infos(self):
+        infos = self.locals.get("infos")
+        if infos is None:
+            return []
+        if isinstance(infos, list):
+            return infos
+        if isinstance(infos, tuple):
+            return list(infos)
+        if isinstance(infos, dict):
+            return [infos]
+        return []
+
+    def _on_step(self) -> bool:
+        done_flags = self._collect_done_flags()
+        if not done_flags:
+            return True
+
+        infos = self._collect_infos()
+        for idx, done in enumerate(done_flags):
+            if not done:
+                continue
+            info = infos[idx] if idx < len(infos) and isinstance(infos[idx], dict) else {}
+            success = bool(info.get("is_success", False))
+            self.success_history.append(success)
+            self.episode_count += 1
+
+        if not self.success_history:
+            return True
+
+        for spec in self.gated_schedules:
+            if spec.schedule.activated:
+                continue
+            if len(self.success_history) < spec.window_episodes:
+                continue
+
+            recent = list(self.success_history)[-spec.window_episodes :]
+            success_rate = float(sum(recent) / len(recent))
+            if success_rate < spec.success_threshold:
+                continue
+
+            progress_remaining = getattr(self.model, "_current_progress_remaining", None)
+            spec.schedule.activate(progress_remaining=progress_remaining)
+            if self.console_logger:
+                self.console_logger.print_success(
+                    f"Activated {spec.key} annealing at episode {self.episode_count} "
+                    f"(rolling success={success_rate:.1%} over {spec.window_episodes} episodes)."
+                )
+        return True
+
+
 def main() -> None:
     args = parse_args()
 
@@ -734,7 +883,14 @@ def main() -> None:
 
     device = train_agent_cfg.get("device", train_params.get("device", "cuda"))
     policy_kwargs = build_policy_kwargs(train_params, "PPO" if "ppo" in algorithm else "A2C")
-    model = build_model(algorithm, train_params, monitor_env, policy_kwargs, device, scenario["experiment"].get("seed"))
+    model, gated_schedules = build_model(
+        algorithm,
+        train_params,
+        monitor_env,
+        policy_kwargs,
+        device,
+        scenario["experiment"].get("seed"),
+    )
 
     episodes = int(scenario["experiment"].get("episodes", 0) or 0)
     if episodes <= 0:
@@ -757,6 +913,8 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         callbacks.append(EpisodeProgressCallback(log_every, console_logger))
+    if gated_schedules:
+        callbacks.append(AnnealOnSuccessRateCallback(gated_schedules, console_logger))
     if env_config.get("render"):
         render_every_env = os.environ.get("F110_RENDER_EVERY_STEPS")
         if render_every_env is None:
