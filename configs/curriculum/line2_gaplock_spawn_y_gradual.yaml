@@ -1,0 +1,144 @@
+curriculum:
+  type: phased
+  start_phase: 0
+  phases:
+  - name: y_spread_01_start
+    description: car_0 y fixed at 0.0768
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_02_add_n0p10
+    description: Expand y support to -0.10
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_03_add_n0p25
+    description: Expand y support to -0.25
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_04_add_n0p40
+    description: Expand y support to -0.40
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      - spawn_y_n0p40
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_05_add_n0p55
+    description: Expand y support to -0.55
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      - spawn_y_n0p40
+      - spawn_y_n0p55
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_06_add_n0p70
+    description: Expand y support to -0.70
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      - spawn_y_n0p40
+      - spawn_y_n0p55
+      - spawn_y_n0p70
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_07_add_n0p85
+    description: Expand y support to -0.85
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      - spawn_y_n0p40
+      - spawn_y_n0p55
+      - spawn_y_n0p70
+      - spawn_y_n0p85
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0
+  - name: y_spread_08_full_to_n1p00
+    description: Full y support down to -1.00
+    criteria:
+      window_size: 100
+      success_rate: 0.85
+      min_episodes: 100
+      patience: 1000000
+    spawn:
+      points:
+      - spawn_y_0p0768
+      - spawn_y_n0p10
+      - spawn_y_n0p25
+      - spawn_y_n0p40
+      - spawn_y_n0p55
+      - spawn_y_n0p70
+      - spawn_y_n0p85
+      - spawn_y_n1p00
+      speed_range:
+      - 0.0
+      - 0.0
+    lock_speed_steps: 0

@@ -91,6 +91,7 @@ class SB3SingleAgentWrapper(gym.Env):
             else None
         )
         self._local_rng = None
+        self._spawn_y_state: Dict[str, Any] = {}
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -339,20 +340,32 @@ class SB3SingleAgentWrapper(gym.Env):
             return None
 
         try:
-            y_start = float(cfg.get("y_start", poses[agent_idx, 1]))
-            y_final = float(cfg.get("y_final", -1.0))
-            ramp_episodes = int(cfg.get("ramp_episodes", 1000))
+            mode = str(cfg.get("mode", "linear")).strip().lower()
         except (TypeError, ValueError):
             return None
-
-        if ramp_episodes <= 0:
-            progress = 1.0
+        if mode == "success_adaptive":
+            low, high, progress, extra_meta = self._resolve_success_adaptive_bounds(
+                cfg=cfg,
+                poses=poses,
+                agent_idx=agent_idx,
+            )
         else:
-            progress = min(max(float(episode) / float(ramp_episodes), 0.0), 1.0)
+            try:
+                y_start = float(cfg.get("y_start", poses[agent_idx, 1]))
+                y_final = float(cfg.get("y_final", -1.0))
+                ramp_episodes = int(cfg.get("ramp_episodes", 1000))
+            except (TypeError, ValueError):
+                return None
 
-        y_min = y_start + (y_final - y_start) * progress
-        low = min(y_start, y_min)
-        high = max(y_start, y_min)
+            if ramp_episodes <= 0:
+                progress = 1.0
+            else:
+                progress = min(max(float(episode) / float(ramp_episodes), 0.0), 1.0)
+
+            y_min = y_start + (y_final - y_start) * progress
+            low = min(y_start, y_min)
+            high = max(y_start, y_min)
+            extra_meta = {}
 
         rng = getattr(self.env, "rng", None)
         if rng is None:
@@ -371,12 +384,118 @@ class SB3SingleAgentWrapper(gym.Env):
             "options": options,
             "spawn_points": spawn_points,
             "spawn_y_curriculum": {
+                "spawn_y_mode": mode,
                 "spawn_y": sampled_y,
                 "spawn_y_min": float(low),
                 "spawn_y_max": float(high),
                 "spawn_y_progress": float(progress),
+                **extra_meta,
             },
         }
+
+    def _resolve_success_adaptive_bounds(
+        self,
+        cfg: Dict[str, Any],
+        poses: np.ndarray,
+        agent_idx: int,
+    ) -> Tuple[float, float, float, Dict[str, Any]]:
+        state = self._spawn_y_state
+        if "mode" not in state:
+            y_ref = float(poses[agent_idx, 1])
+            y_upper_cfg = float(cfg.get("y_upper", cfg.get("y_start", y_ref)))
+            y_lower_start_cfg = float(cfg.get("y_lower_start", cfg.get("y_start", y_ref)))
+            y_lower_bound_cfg = float(cfg.get("y_lower_bound", cfg.get("y_final", -1.0)))
+
+            y_upper = max(y_upper_cfg, y_lower_start_cfg)
+            y_lower_start = min(y_upper_cfg, y_lower_start_cfg)
+            y_lower_bound = min(y_lower_bound_cfg, y_upper)
+
+            window = max(1, int(cfg.get("window_episodes", 100)))
+            update_every = max(1, int(cfg.get("update_every_episodes", window)))
+            sr_low = float(cfg.get("sr_lower_bound", 0.85))
+            sr_high = float(cfg.get("sr_upper_bound", 0.95))
+
+            inc_min_raw = float(cfg.get("increment_min", -0.001))
+            inc_max_raw = float(cfg.get("increment_max", -0.01))
+            inc_small = -abs(inc_min_raw)
+            inc_large = -abs(inc_max_raw)
+            if abs(inc_large) < abs(inc_small):
+                inc_small, inc_large = inc_large, inc_small
+
+            state["mode"] = "success_adaptive"
+            state["y_upper"] = y_upper
+            state["y_lower_start"] = y_lower_start
+            state["y_lower_bound"] = y_lower_bound
+            state["y_lower"] = y_lower_start
+            state["window"] = window
+            state["update_every"] = update_every
+            state["sr_low"] = sr_low
+            state["sr_high"] = sr_high
+            state["inc_small"] = inc_small
+            state["inc_large"] = inc_large
+            state["history"] = deque(maxlen=window)
+            state["completed_episodes"] = 0
+            state["last_window_sr"] = None
+            state["last_increment"] = 0.0
+
+        y_upper = float(state["y_upper"])
+        y_lower = float(state["y_lower"])
+        y_lower_start = float(state["y_lower_start"])
+        y_lower_bound = float(state["y_lower_bound"])
+
+        denom = (y_lower_start - y_lower_bound)
+        if denom <= 1e-9:
+            progress = 1.0
+        else:
+            progress = (y_lower_start - y_lower) / denom
+            progress = float(np.clip(progress, 0.0, 1.0))
+
+        extra_meta = {
+            "spawn_y_window_sr": state.get("last_window_sr"),
+            "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
+            "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
+        }
+        return y_lower, y_upper, progress, extra_meta
+
+    def _update_success_adaptive_spawn_y(self, success: bool) -> None:
+        cfg = self.spawn_y_curriculum
+        state = self._spawn_y_state
+        if not cfg or state.get("mode") != "success_adaptive":
+            return
+
+        history = state.get("history")
+        if history is None:
+            return
+        history.append(bool(success))
+        state["completed_episodes"] = int(state.get("completed_episodes", 0)) + 1
+
+        window = int(state.get("window", 100))
+        update_every = int(state.get("update_every", window))
+        completed = int(state.get("completed_episodes", 0))
+        if completed % update_every != 0:
+            return
+        if len(history) < window:
+            return
+
+        sr = float(sum(history) / len(history))
+        state["last_window_sr"] = sr
+
+        sr_low = float(state.get("sr_low", 0.85))
+        sr_high = float(state.get("sr_high", 0.95))
+        if sr < sr_low:
+            state["last_increment"] = 0.0
+            return
+
+        denom = max(sr_high - sr_low, 1e-9)
+        alpha = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
+        inc_small = float(state.get("inc_small", -0.001))
+        inc_large = float(state.get("inc_large", -0.01))
+        increment = inc_small + alpha * (inc_large - inc_small)
+
+        y_lower = float(state.get("y_lower", state.get("y_lower_start", 0.0)))
+        y_lower_bound = float(state.get("y_lower_bound", -1.0))
+        state["y_lower"] = max(y_lower_bound, y_lower + increment)
+        state["last_increment"] = float(increment)
 
     def step(
         self,
@@ -510,6 +629,7 @@ class SB3SingleAgentWrapper(gym.Env):
                 outcome = determine_outcome(info, truncated=truncated)
                 info["outcome"] = outcome.value
                 info['is_success'] = outcome.is_success()
+            self._update_success_adaptive_spawn_y(bool(info.get("is_success", False)))
 
         if reward_components:
             info['reward_components'] = reward_components

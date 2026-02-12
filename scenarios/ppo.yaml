@@ -11,6 +11,21 @@ experiment:
 environment:
   max_steps: 1200
   action_repeat: 2
+  spawn_y_curriculum:
+    enabled: true
+    mode: success_adaptive
+    # y sampled each episode from [current_lower, y_upper]
+    y_upper: 0.07689
+    y_lower_start: 0.0768
+    y_lower_bound: -1.0
+    # update lower bound every N episodes using rolling success
+    window_episodes: 100
+    update_every_episodes: 100
+    # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
+    sr_lower_bound: 0.85
+    sr_upper_bound: 0.95
+    increment_min: -0.001
+    increment_max: -0.01
 evaluation:
   enabled: false
   frequency: 0
