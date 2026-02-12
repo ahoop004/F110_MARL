@@ -564,6 +564,67 @@ def build_model(
     return model, gated_specs
 
 
+def _resolve_model_path(path_value: Any) -> Optional[Path]:
+    """Resolve warm-start path, accepting with/without .zip suffix."""
+    if path_value is None:
+        return None
+    raw = str(path_value).strip()
+    if not raw:
+        return None
+    expanded = os.path.expandvars(raw)
+    path = Path(expanded).expanduser()
+    if path.exists():
+        return path
+    zip_path = path if path.suffix == ".zip" else Path(f"{path}.zip")
+    if zip_path.exists():
+        return zip_path
+    return None
+
+
+def maybe_apply_warm_start(
+    *,
+    model,
+    algorithm: str,
+    train_params: Dict[str, Any],
+    console_logger: ConsoleLogger,
+) -> None:
+    """Warm-start from a saved SB3 checkpoint by copying policy weights only.
+
+    Copying only policy weights intentionally resets optimizer/LR schedule state
+    while preserving the learned policy/value function parameters.
+    """
+    warm_path = _resolve_model_path(train_params.get("warm_start_model_path"))
+    if warm_path is None:
+        return
+
+    algo_key = algorithm.lower()
+    if algo_key in {"sb3_ppo", "ppo"}:
+        model_class = PPO
+    elif algo_key in {"sb3_a2c", "a2c"}:
+        model_class = A2C
+    else:
+        raise ValueError(f"Warm start unsupported for algorithm: {algorithm}")
+
+    console_logger.print_info(f"Warm-start loading weights from: {warm_path}")
+    source_model = model_class.load(str(warm_path), device=model.device)
+    model.policy.load_state_dict(source_model.policy.state_dict(), strict=True)
+
+    # Optional compatibility mode: restore optimizer states too (not recommended).
+    reset_lr = bool(train_params.get("warm_start_reset_lr", True))
+    if not reset_lr:
+        try:
+            model.policy.optimizer.load_state_dict(source_model.policy.optimizer.state_dict())
+            console_logger.print_warning(
+                "Loaded optimizer state from warm-start model (warm_start_reset_lr=false)."
+            )
+        except Exception as exc:
+            console_logger.print_warning(f"Failed to load warm-start optimizer state: {exc}")
+
+    del source_model
+    if reset_lr:
+        console_logger.print_success("Warm-start applied with fresh optimizer/LR schedule.")
+
+
 def build_spawn_curriculum(env, scenario: Dict[str, Any], console_logger: ConsoleLogger):
     """Create spawn curriculum (or sampler) if configured."""
     env_config = scenario.get("environment", {})
@@ -732,6 +793,17 @@ class AnnealOnSuccessRateCallback(BaseCallback):
         max_window = max((spec.window_episodes for spec in gated_schedules), default=1)
         self.success_history: Deque[bool] = deque(maxlen=max_window)
         self.episode_count = 0
+        self._activation_episode: Optional[int] = None
+        self._post_anneal_breached = False
+        self._post_anneal_min_rate: Optional[float] = None
+
+        self._monitor_spec: Optional[GatedScheduleSpec] = None
+        for spec in gated_schedules:
+            if spec.key == "learning_rate":
+                self._monitor_spec = spec
+                break
+        if self._monitor_spec is None and gated_schedules:
+            self._monitor_spec = gated_schedules[0]
 
     def _collect_done_flags(self):
         dones = self.locals.get("dones")
@@ -787,12 +859,57 @@ class AnnealOnSuccessRateCallback(BaseCallback):
 
             progress_remaining = getattr(self.model, "_current_progress_remaining", None)
             spec.schedule.activate(progress_remaining=progress_remaining)
+            if self._monitor_spec is spec and self._activation_episode is None:
+                self._activation_episode = int(self.episode_count)
             if self.console_logger:
                 self.console_logger.print_success(
                     f"Activated {spec.key} annealing at episode {self.episode_count} "
                     f"(rolling success={success_rate:.1%} over {spec.window_episodes} episodes)."
                 )
+
+        self._update_post_anneal_guard()
         return True
+
+    def _update_post_anneal_guard(self) -> None:
+        spec = self._monitor_spec
+        if spec is None:
+            return
+        if self._activation_episode is None:
+            return
+        if len(self.success_history) < spec.window_episodes:
+            return
+
+        recent = list(self.success_history)[-spec.window_episodes :]
+        rolling_rate = float(sum(recent) / len(recent))
+        if self._post_anneal_min_rate is None or rolling_rate < self._post_anneal_min_rate:
+            self._post_anneal_min_rate = rolling_rate
+        if rolling_rate < spec.success_threshold:
+            self._post_anneal_breached = True
+
+    @property
+    def activation_episode(self) -> Optional[int]:
+        return self._activation_episode
+
+    @property
+    def post_anneal_min_rate(self) -> Optional[float]:
+        return self._post_anneal_min_rate
+
+    def is_post_anneal_stable(self) -> bool:
+        spec = self._monitor_spec
+        if spec is None:
+            return False
+        if self._activation_episode is None:
+            return False
+        if self._post_anneal_breached:
+            return False
+        if self._post_anneal_min_rate is None:
+            return False
+        return self._post_anneal_min_rate >= spec.success_threshold
+
+    def monitor_threshold(self) -> Optional[float]:
+        if self._monitor_spec is None:
+            return None
+        return float(self._monitor_spec.success_threshold)
 
 
 def main() -> None:
@@ -871,6 +988,7 @@ def main() -> None:
         frame_stack=frame_stack,
         action_repeat=action_repeat,
         action_constraints=action_constraints,
+        spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
     )
 
     other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}
@@ -890,6 +1008,12 @@ def main() -> None:
         policy_kwargs,
         device,
         scenario["experiment"].get("seed"),
+    )
+    maybe_apply_warm_start(
+        model=model,
+        algorithm=algorithm,
+        train_params=train_params,
+        console_logger=console_logger,
     )
 
     episodes = int(scenario["experiment"].get("episodes", 0) or 0)
@@ -913,8 +1037,10 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         callbacks.append(EpisodeProgressCallback(log_every, console_logger))
+    anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
     if gated_schedules:
-        callbacks.append(AnnealOnSuccessRateCallback(gated_schedules, console_logger))
+        anneal_guard_callback = AnnealOnSuccessRateCallback(gated_schedules, console_logger)
+        callbacks.append(anneal_guard_callback)
     if env_config.get("render"):
         render_every_env = os.environ.get("F110_RENDER_EVERY_STEPS")
         if render_every_env is None:
@@ -991,6 +1117,7 @@ def main() -> None:
             reward_strategy=reward_strategy,
             frame_stack=frame_stack,
             action_repeat=action_repeat,
+            spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
         )
         eval_env.set_other_agents(eval_other_agents)
 
@@ -1022,6 +1149,32 @@ def main() -> None:
     console_logger.print_info("Starting SB3 on-policy training...")
     try:
         model.learn(total_timesteps=total_timesteps, callback=callback)
+        if anneal_guard_callback is None:
+            console_logger.print_warning("Skipping end-of-run model save: annealing guard callback not active.")
+        elif not anneal_guard_callback.is_post_anneal_stable():
+            threshold = anneal_guard_callback.monitor_threshold()
+            activation_episode = anneal_guard_callback.activation_episode
+            min_rate = anneal_guard_callback.post_anneal_min_rate
+            if activation_episode is None:
+                console_logger.print_warning(
+                    "Skipping end-of-run model save: annealing phase was never reached."
+                )
+            else:
+                threshold_str = f"{threshold:.1%}" if threshold is not None else "N/A"
+                min_rate_str = f"{min_rate:.1%}" if min_rate is not None else "N/A"
+                console_logger.print_warning(
+                    "Skipping end-of-run model save: post-anneal success floor not maintained "
+                    f"(threshold={threshold_str}, min_rolling={min_rate_str})."
+                )
+        else:
+            out_dir = ROOT_DIR / "outputs" / "best_sb3" / scenario["experiment"]["name"]
+            out_dir.mkdir(parents=True, exist_ok=True)
+            model_path = out_dir / f"{run_id}_anneal85"
+            model.save(str(model_path))
+            console_logger.print_success(
+                f"Saved gated best model: {model_path}.zip "
+                f"(anneal reached at episode {anneal_guard_callback.activation_episode})."
+            )
     finally:
         if wandb_logger:
             wandb_logger.finish()

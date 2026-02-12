@@ -60,6 +60,7 @@ class SB3SingleAgentWrapper(gym.Env):
         frame_stack: int = 1,
         action_repeat: int = 1,
         action_constraints: Optional[Dict[str, Any]] = None,
+        spawn_y_curriculum: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -84,6 +85,12 @@ class SB3SingleAgentWrapper(gym.Env):
             action_repeat = 1
         self.action_repeat = max(1, action_repeat)
         self._frame_buffer: Optional[deque] = None
+        self.spawn_y_curriculum = (
+            dict(spawn_y_curriculum)
+            if isinstance(spawn_y_curriculum, dict)
+            else None
+        )
+        self._local_rng = None
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -262,8 +269,14 @@ class SB3SingleAgentWrapper(gym.Env):
             obs: Initial observation for controlled agent
             info: Info dict
         """
-        # Apply spawn curriculum if configured and no explicit options provided
-        if options is None and self.spawn_curriculum is not None:
+        # Apply simple spawn-y curriculum first when configured.
+        if options is None and self.spawn_y_curriculum:
+            sampled = self._sample_spawn_y_curriculum(episode=self._episode_count)
+            if sampled is not None:
+                self._last_spawn_info = sampled
+                options = sampled["options"]
+        # Otherwise apply spawn curriculum if configured and no explicit options provided.
+        elif options is None and self.spawn_curriculum is not None:
             spawn_info = self.spawn_curriculum.sample_spawn(episode=self._episode_count)
             self._last_spawn_info = spawn_info
             options = {
@@ -295,9 +308,75 @@ class SB3SingleAgentWrapper(gym.Env):
             if spawn_point:
                 info = dict(info)
                 info['spawn_point'] = spawn_point
+            y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
+            if isinstance(y_curriculum, dict):
+                info = dict(info)
+                info.update(y_curriculum)
         self._episode_count += 1
 
         return obs, info
+
+    def _sample_spawn_y_curriculum(self, episode: int) -> Optional[Dict[str, Any]]:
+        cfg = self.spawn_y_curriculum
+        if not cfg or not bool(cfg.get("enabled", True)):
+            return None
+
+        base_poses = getattr(self.env, "start_poses", None)
+        if base_poses is None:
+            return None
+        poses = np.asarray(base_poses, dtype=np.float32).copy()
+        if poses.ndim != 2 or poses.shape[1] < 3:
+            return None
+
+        possible_agents = list(getattr(self.env, "possible_agents", []))
+        if not possible_agents:
+            return None
+        try:
+            agent_idx = possible_agents.index(self.agent_id)
+        except ValueError:
+            return None
+        if agent_idx >= poses.shape[0]:
+            return None
+
+        try:
+            y_start = float(cfg.get("y_start", poses[agent_idx, 1]))
+            y_final = float(cfg.get("y_final", -1.0))
+            ramp_episodes = int(cfg.get("ramp_episodes", 1000))
+        except (TypeError, ValueError):
+            return None
+
+        if ramp_episodes <= 0:
+            progress = 1.0
+        else:
+            progress = min(max(float(episode) / float(ramp_episodes), 0.0), 1.0)
+
+        y_min = y_start + (y_final - y_start) * progress
+        low = min(y_start, y_min)
+        high = max(y_start, y_min)
+
+        rng = getattr(self.env, "rng", None)
+        if rng is None:
+            if self._local_rng is None:
+                self._local_rng = np.random.default_rng()
+            rng = self._local_rng
+        sampled_y = float(rng.uniform(low, high))
+
+        poses[agent_idx, 1] = sampled_y
+
+        spawn_name = str(cfg.get("name", "spawn_y_curriculum"))
+        spawn_points = {self.agent_id: spawn_name}
+        options = {"poses": poses}
+
+        return {
+            "options": options,
+            "spawn_points": spawn_points,
+            "spawn_y_curriculum": {
+                "spawn_y": sampled_y,
+                "spawn_y_min": float(low),
+                "spawn_y_max": float(high),
+                "spawn_y_progress": float(progress),
+            },
+        }
 
     def step(
         self,
