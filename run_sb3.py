@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 import torch.nn as nn
 from gymnasium import spaces
 
@@ -218,6 +219,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--device",
+        type=str,
+        choices=["cpu", "cuda", "auto"],
+        default=None,
+        help="Compute device (overrides scenario config): cpu, cuda, or auto",
+    )
+
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Disable console output",
@@ -250,6 +259,18 @@ def resolve_cli_overrides(scenario: Dict[str, Any], args: argparse.Namespace) ->
         scenario.setdefault("environment", {})["render"] = True
     elif args.no_render:
         scenario.setdefault("environment", {})["render"] = False
+
+    if args.device is not None:
+        # Apply to all on-policy trainable agents to keep behavior consistent.
+        for agent_cfg in scenario.get("agents", {}).values():
+            algo = str(agent_cfg.get("algorithm", "")).lower()
+            if algo in ON_POLICY_ALGOS:
+                if args.device == "auto":
+                    resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+                else:
+                    resolved_device = args.device
+                agent_cfg["device"] = resolved_device
+                agent_cfg.setdefault("params", {})["device"] = resolved_device
 
     return scenario
 
