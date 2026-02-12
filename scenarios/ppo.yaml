@@ -19,11 +19,22 @@ agents:
     target_id: car_1
     params:
       learning_rate: 0.0003
+      learning_rate_schedule:
+        type: linear
+        final: 1.0e-05
       gamma: 0.99
       n_steps: 2048
       n_epochs: 10
       gae_lambda: 0.95
       clip_range: 0.2
+      clip_range_schedule:
+        type: linear
+        final: 0.05
+      clip_range_vf: 0.2
+      target_kl: 0.02
+      max_grad_norm: 0.5
+      vf_coef: 0.5
+      normalize_advantage: true
       ent_coef: 0.0
       activation: relu
       hidden_dims:

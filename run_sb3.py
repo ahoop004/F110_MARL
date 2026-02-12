@@ -45,6 +45,60 @@ except ImportError as exc:
 ON_POLICY_ALGOS = {"sb3_ppo", "sb3_a2c", "ppo", "a2c"}
 
 
+def _linear_schedule(initial_value: float, final_value: float):
+    """Create a linear schedule callable for SB3 (progress_remaining: 1 -> 0)."""
+    initial_value = float(initial_value)
+    final_value = float(final_value)
+
+    def func(progress_remaining: float) -> float:
+        return final_value + (initial_value - final_value) * float(progress_remaining)
+
+    return func
+
+
+def _resolve_scheduled_param(
+    params: Dict[str, Any],
+    key: str,
+    default_value: float,
+    default_linear_final: Optional[float] = None,
+):
+    """Resolve scalar/scheduled SB3 parameter from scenario params.
+
+    Supports either:
+    - `<key>: <float>` (fixed)
+    - `<key>_schedule: {type: linear, initial: x, final: y}`
+    - `<key>_schedule: linear` (uses current `<key>` as initial; final defaults if provided)
+    """
+    base_value = float(params.get(key, default_value))
+    schedule_cfg = params.get(f"{key}_schedule")
+
+    if schedule_cfg is None:
+        return base_value
+
+    if isinstance(schedule_cfg, str):
+        schedule_type = schedule_cfg.strip().lower()
+        if schedule_type == "linear":
+            final_value = 0.0 if default_linear_final is None else float(default_linear_final)
+            return _linear_schedule(base_value, final_value)
+        raise ValueError(
+            f"Unsupported {key}_schedule '{schedule_cfg}'. Use 'linear' or a schedule dict."
+        )
+
+    if not isinstance(schedule_cfg, dict):
+        raise ValueError(f"{key}_schedule must be a string or dict.")
+
+    schedule_type = str(schedule_cfg.get("type", "linear")).strip().lower()
+    if schedule_type != "linear":
+        raise ValueError(f"Unsupported {key}_schedule type '{schedule_type}'. Only 'linear' is supported.")
+
+    initial_value = float(schedule_cfg.get("initial", base_value))
+    if "final" in schedule_cfg:
+        final_value = float(schedule_cfg["final"])
+    else:
+        final_value = 0.0 if default_linear_final is None else float(default_linear_final)
+    return _linear_schedule(initial_value, final_value)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -381,10 +435,21 @@ def build_model(
     seed: Optional[int],
 ):
     """Create SB3 on-policy model."""
-    learning_rate = params.get("learning_rate", 3e-4)
+    learning_rate = _resolve_scheduled_param(
+        params,
+        key="learning_rate",
+        default_value=3e-4,
+        default_linear_final=0.0,
+    )
     gamma = params.get("gamma", 0.995)
 
     if algorithm in {"sb3_ppo", "ppo"}:
+        clip_range = _resolve_scheduled_param(
+            params,
+            key="clip_range",
+            default_value=0.2,
+            default_linear_final=0.02,
+        )
         model = PPO(
             policy="MlpPolicy",
             env=env,
@@ -394,8 +459,13 @@ def build_model(
             n_epochs=params.get("n_epochs", 10),
             gamma=gamma,
             gae_lambda=params.get("gae_lambda", 0.95),
-            clip_range=params.get("clip_range", 0.2),
+            clip_range=clip_range,
+            clip_range_vf=params.get("clip_range_vf", None),
             ent_coef=params.get("ent_coef", 0.02),
+            vf_coef=params.get("vf_coef", 0.5),
+            max_grad_norm=params.get("max_grad_norm", 0.5),
+            target_kl=params.get("target_kl", None),
+            normalize_advantage=params.get("normalize_advantage", True),
             policy_kwargs=policy_kwargs,
             device=device,
             verbose=0,

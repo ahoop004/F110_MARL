@@ -1,0 +1,25 @@
+name: f110_marl
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - numba
+  - pyyaml
+  - pillow
+  - pyglet
+  - gymnasium
+  - pettingzoo
+  - tensorboard
+  - rich
+  - pytest
+  - matplotlib
+  - seaborn
+  - pip:
+      - torch
+      - stable-baselines3
+      - sb3-contrib
+      - wandb
