@@ -795,12 +795,20 @@ class EpisodeProgressCallback(BaseCallback):
         self.episode_lengths: Deque[int] = deque(maxlen=self.window_size)
         self.curriculum_callback: Optional[CurriculumCallback] = None
         self.anneal_callback: Optional["AnnealOnSuccessRateCallback"] = None
+        self.spawn_y_curriculum_config: Optional[Dict[str, Any]] = None
+        self.last_spawn_y_min: Optional[float] = None
+        self.last_spawn_y_max: Optional[float] = None
+        self.last_spawn_y_progress: Optional[float] = None
+        self.last_spawn_y_window_sr: Optional[float] = None
 
     def set_curriculum_callback(self, callback: Optional[CurriculumCallback]) -> None:
         self.curriculum_callback = callback
 
     def set_anneal_callback(self, callback: Optional["AnnealOnSuccessRateCallback"]) -> None:
         self.anneal_callback = callback
+
+    def set_spawn_y_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
+        self.spawn_y_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
 
     def _count_episode_ends(self) -> int:
         dones = self.locals.get("dones")
@@ -863,7 +871,11 @@ class EpisodeProgressCallback(BaseCallback):
     def _curriculum_status(self) -> str:
         callback = self.curriculum_callback
         if callback is None:
-            return "off"
+            cfg = self.spawn_y_curriculum_config
+            if not cfg or not bool(cfg.get("enabled", False)):
+                return "off"
+            mode = str(cfg.get("mode", "linear"))
+            return f"spawn_y:{mode}"
         try:
             phase_idx = callback.get_current_phase_index()
             phase_cfg = callback.get_current_phase_config()
@@ -884,7 +896,25 @@ class EpisodeProgressCallback(BaseCallback):
         min_rate = callback.post_anneal_min_rate
         if min_rate is None:
             return f"on@{activation}"
-        return f"on@{activation},min={min_rate:.1%}"
+            return f"on@{activation},min={min_rate:.1%}"
+
+    def _spawn_y_status(self) -> str:
+        cfg = self.spawn_y_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return "n/a"
+        if self.last_spawn_y_min is None or self.last_spawn_y_max is None:
+            return "warming"
+        progress_txt = (
+            f",p={self.last_spawn_y_progress:.1%}"
+            if self.last_spawn_y_progress is not None
+            else ""
+        )
+        sr_txt = (
+            f",sr={self.last_spawn_y_window_sr:.1%}"
+            if self.last_spawn_y_window_sr is not None
+            else ""
+        )
+        return f"[{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{progress_txt}{sr_txt}"
 
     def _on_step(self) -> bool:
         if "rewards" in self.locals:
@@ -907,6 +937,30 @@ class EpisodeProgressCallback(BaseCallback):
             done_count += 1
             info = infos[idx] if idx < len(infos) else {}
             success = bool(info.get("is_success", False))
+            y_min = info.get("spawn_y_min")
+            y_max = info.get("spawn_y_max")
+            y_prog = info.get("spawn_y_progress")
+            y_sr = info.get("spawn_y_window_sr")
+            if y_min is not None:
+                try:
+                    self.last_spawn_y_min = float(y_min)
+                except (TypeError, ValueError):
+                    pass
+            if y_max is not None:
+                try:
+                    self.last_spawn_y_max = float(y_max)
+                except (TypeError, ValueError):
+                    pass
+            if y_prog is not None:
+                try:
+                    self.last_spawn_y_progress = float(y_prog)
+                except (TypeError, ValueError):
+                    pass
+            if y_sr is not None:
+                try:
+                    self.last_spawn_y_window_sr = float(y_sr)
+                except (TypeError, ValueError):
+                    pass
             self.episode_count += 1
             self.episode_rewards.append(float(self.current_episode_reward))
             self.episode_successes.append(success)
@@ -954,6 +1008,11 @@ class EpisodeProgressCallback(BaseCallback):
                         f"[bold cyan]L{self.window_size}[/bold cyan] {l_mean:.1f}",
                         f"[bold cyan]Curriculum[/bold cyan] {self._curriculum_status()}",
                         f"[bold cyan]Anneal[/bold cyan] {self._anneal_status()}",
+                    )
+                    progress_table.add_row(
+                        f"[bold cyan]SpawnY[/bold cyan] {self._spawn_y_status()}",
+                        "",
+                        "",
                     )
 
                     ppo_table = Table.grid(expand=True)
@@ -1265,6 +1324,7 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         progress_callback = EpisodeProgressCallback(log_every, console_logger)
+        progress_callback.set_spawn_y_curriculum_config(env_config.get("spawn_y_curriculum"))
         callbacks.append(progress_callback)
     anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
     if gated_schedules:
