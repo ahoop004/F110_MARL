@@ -35,8 +35,8 @@ environment:
     window_episodes: 200
     update_every_episodes: 50
     # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
-    sr_lower_bound: 0.85
-    sr_upper_bound: 0.95
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
     increment_min: 0.02
     increment_max: 0.08
     # auto-regress when curriculum gets too hard
@@ -58,8 +58,8 @@ environment:
     window_episodes: 200
     update_every_episodes: 50
     # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
-    sr_lower_bound: 0.85
-    sr_upper_bound: 0.95
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
     increment_min: -0.005
     increment_max: -0.025
     # auto-regress when curriculum gets too hard
@@ -89,8 +89,8 @@ agents:
         final: 0.00005
         window_episodes: 200
         update_every_episodes: 50
-        sr_lower_bound: 0.85
-        sr_upper_bound: 0.95
+        sr_lower_bound: 0.90
+        sr_upper_bound: 0.99
         increment_min: 0.000005
         increment_max: 0.00002
         regression_enabled: true
@@ -112,8 +112,8 @@ agents:
         final: 0.08
         window_episodes: 200
         update_every_episodes: 50
-        sr_lower_bound: 0.85
-        sr_upper_bound: 0.95
+        sr_lower_bound: 0.90
+        sr_upper_bound: 0.99
         increment_min: 0.005
         increment_max: 0.02
         regression_enabled: true
