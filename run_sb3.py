@@ -875,7 +875,10 @@ class EpisodeProgressCallback(BaseCallback):
             if not cfg or not bool(cfg.get("enabled", False)):
                 return "off"
             mode = str(cfg.get("mode", "linear"))
-            return f"spawn_y:{mode}"
+            progress_pct = self._spawn_y_curriculum_percent()
+            if progress_pct is None:
+                return f"spawn_y:{mode}"
+            return f"spawn_y:{mode} {progress_pct:.1f}%"
         try:
             phase_idx = callback.get_current_phase_index()
             phase_cfg = callback.get_current_phase_config()
@@ -896,25 +899,55 @@ class EpisodeProgressCallback(BaseCallback):
         min_rate = callback.post_anneal_min_rate
         if min_rate is None:
             return f"on@{activation}"
-            return f"on@{activation},min={min_rate:.1%}"
+        return f"on@{activation},min={min_rate:.1%}"
+
+    def _spawn_y_curriculum_percent(self) -> Optional[float]:
+        cfg = self.spawn_y_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return None
+
+        if self.last_spawn_y_progress is not None:
+            try:
+                progress = float(self.last_spawn_y_progress)
+                return float(np.clip(progress, 0.0, 1.0) * 100.0)
+            except (TypeError, ValueError):
+                pass
+
+        if self.last_spawn_y_min is None:
+            return None
+
+        mode = str(cfg.get("mode", "linear")).strip().lower()
+        try:
+            if mode == "success_adaptive":
+                y_start = float(cfg.get("y_lower_start", cfg.get("y_start", self.last_spawn_y_min)))
+                y_bound = float(cfg.get("y_lower_bound", cfg.get("y_final", y_start)))
+            else:
+                y_start = float(cfg.get("y_start", self.last_spawn_y_min))
+                y_bound = float(cfg.get("y_final", y_start))
+        except (TypeError, ValueError):
+            return None
+
+        denom = y_start - y_bound
+        if abs(denom) <= 1e-9:
+            return 100.0
+
+        progress = (y_start - float(self.last_spawn_y_min)) / denom
+        return float(np.clip(progress, 0.0, 1.0) * 100.0)
 
     def _spawn_y_status(self) -> str:
         cfg = self.spawn_y_curriculum_config
         if not cfg or not bool(cfg.get("enabled", False)):
             return "n/a"
+        progress_pct = self._spawn_y_curriculum_percent()
+        pct_txt = f"{progress_pct:.1f}%" if progress_pct is not None else "n/a"
         if self.last_spawn_y_min is None or self.last_spawn_y_max is None:
-            return "warming"
-        progress_txt = (
-            f",p={self.last_spawn_y_progress:.1%}"
-            if self.last_spawn_y_progress is not None
-            else ""
-        )
+            return f"{pct_txt} (warming)"
         sr_txt = (
             f",sr={self.last_spawn_y_window_sr:.1%}"
             if self.last_spawn_y_window_sr is not None
             else ""
         )
-        return f"[{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{progress_txt}{sr_txt}"
+        return f"{pct_txt} [{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{sr_txt}"
 
     def _on_step(self) -> bool:
         if "rewards" in self.locals:

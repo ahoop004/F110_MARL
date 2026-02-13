@@ -255,6 +255,24 @@ class SB3SingleAgentWrapper(gym.Env):
             if aid != self.agent_id
         }
 
+    def _attach_spawn_metadata_to_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(info, dict):
+            info = {}
+        if not self._last_spawn_info:
+            return info
+
+        merged = dict(info)
+        spawn_mapping = self._last_spawn_info.get("spawn_points", {})
+        if isinstance(spawn_mapping, dict):
+            spawn_point = spawn_mapping.get(self.agent_id)
+            if spawn_point:
+                merged["spawn_point"] = spawn_point
+
+        y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
+        if isinstance(y_curriculum, dict):
+            merged.update(y_curriculum)
+        return merged
+
     def reset(
         self,
         seed: Optional[int] = None,
@@ -302,17 +320,7 @@ class SB3SingleAgentWrapper(gym.Env):
         obs_with_prev["prev_action"] = self._prev_action_norm
         obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
         obs = self._stack_obs(obs, update=True)
-        info = info_dict.get(self.agent_id, {})
-        if self._last_spawn_info:
-            spawn_mapping = self._last_spawn_info.get('spawn_points', {})
-            spawn_point = spawn_mapping.get(self.agent_id)
-            if spawn_point:
-                info = dict(info)
-                info['spawn_point'] = spawn_point
-            y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
-            if isinstance(y_curriculum, dict):
-                info = dict(info)
-                info.update(y_curriculum)
+        info = self._attach_spawn_metadata_to_info(info_dict.get(self.agent_id, {}))
         self._episode_count += 1
 
         return obs, info
@@ -497,6 +505,41 @@ class SB3SingleAgentWrapper(gym.Env):
         state["y_lower"] = max(y_lower_bound, y_lower + increment)
         state["last_increment"] = float(increment)
 
+    def _refresh_spawn_y_runtime_metadata(self) -> None:
+        if not self._last_spawn_info:
+            return
+        y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
+        if not isinstance(y_curriculum, dict):
+            return
+
+        state = self._spawn_y_state
+        if state.get("mode") != "success_adaptive":
+            return
+        try:
+            y_upper = float(state["y_upper"])
+            y_lower = float(state["y_lower"])
+            y_lower_start = float(state["y_lower_start"])
+            y_lower_bound = float(state["y_lower_bound"])
+        except (KeyError, TypeError, ValueError):
+            return
+
+        denom = (y_lower_start - y_lower_bound)
+        if denom <= 1e-9:
+            progress = 1.0
+        else:
+            progress = float(np.clip((y_lower_start - y_lower) / denom, 0.0, 1.0))
+
+        y_curriculum.update(
+            {
+                "spawn_y_min": y_lower,
+                "spawn_y_max": y_upper,
+                "spawn_y_progress": progress,
+                "spawn_y_window_sr": state.get("last_window_sr"),
+                "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
+                "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
+            }
+        )
+
     def step(
         self,
         action: np.ndarray
@@ -597,6 +640,7 @@ class SB3SingleAgentWrapper(gym.Env):
         obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
         obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
+        info = dict(info) if isinstance(info, dict) else {}
         target_finished = False
         if self.target_id and isinstance(info_dict, dict):
             target_info = info_dict.get(self.target_id, {})
@@ -630,10 +674,12 @@ class SB3SingleAgentWrapper(gym.Env):
                 info["outcome"] = outcome.value
                 info['is_success'] = outcome.is_success()
             self._update_success_adaptive_spawn_y(bool(info.get("is_success", False)))
+            self._refresh_spawn_y_runtime_metadata()
 
         if reward_components:
             info['reward_components'] = reward_components
 
+        info = self._attach_spawn_metadata_to_info(info)
         return obs, total_reward, terminated, truncated, info
 
     def _build_reward_info(

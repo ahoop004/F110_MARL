@@ -254,6 +254,8 @@ class CurriculumCallback(BaseCallback):
         Uses direct tracking of rewards and dones from locals instead of
         unreliable ep_info_buffer which can lose data.
         """
+        direct_episode_processed = False
+
         # Get current step info from locals
         if 'rewards' in self.locals:
             step_reward = self.locals['rewards'][0] if isinstance(self.locals['rewards'], (list, np.ndarray)) else self.locals['rewards']
@@ -279,6 +281,7 @@ class CurriculumCallback(BaseCallback):
                     target_collision=info.get('target_collision', False),
                     outcome=info.get('outcome')
                 )
+                direct_episode_processed = True
 
                 # Reset tracking for next episode
                 self.current_episode_reward = 0.0
@@ -286,7 +289,7 @@ class CurriculumCallback(BaseCallback):
 
         # Also check ep_info_buffer as fallback (for compatibility)
         # but with deduplication to avoid double-counting
-        if len(self.model.ep_info_buffer) > 0:
+        if not direct_episode_processed and len(self.model.ep_info_buffer) > 0:
             for ep_info in self.model.ep_info_buffer:
                 if 'r' in ep_info and 'l' in ep_info:
                     # Create unique ID for this episode to avoid reprocessing
@@ -315,7 +318,7 @@ class CurriculumCallback(BaseCallback):
 
     def _on_rollout_end(self) -> None:
         """Called at the end of each rollout (for on-policy algorithms)."""
-        # Episodes are tracked in _on_step via ep_info_buffer
+        # Episodes are tracked in _on_step via done/info signals.
         pass
 
     def _process_episode(
