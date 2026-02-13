@@ -939,7 +939,13 @@ class EpisodeProgressCallback(BaseCallback):
         self.curriculum_callback: Optional[CurriculumCallback] = None
         self.anneal_callback: Optional["AnnealOnSuccessRateCallback"] = None
         self.adaptive_hparam_callback: Optional["AdaptiveHyperparamCallback"] = None
+        self.spawn_x_curriculum_config: Optional[Dict[str, Any]] = None
         self.spawn_y_curriculum_config: Optional[Dict[str, Any]] = None
+        self.last_spawn_x_min: Optional[float] = None
+        self.last_spawn_x_max: Optional[float] = None
+        self.last_spawn_x_progress: Optional[float] = None
+        self.last_spawn_x_window_sr: Optional[float] = None
+        self.last_spawn_x_adjustment: Optional[str] = None
         self.last_spawn_y_min: Optional[float] = None
         self.last_spawn_y_max: Optional[float] = None
         self.last_spawn_y_progress: Optional[float] = None
@@ -960,6 +966,9 @@ class EpisodeProgressCallback(BaseCallback):
 
     def set_adaptive_hparam_callback(self, callback: Optional["AdaptiveHyperparamCallback"]) -> None:
         self.adaptive_hparam_callback = callback
+
+    def set_spawn_x_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
+        self.spawn_x_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
 
     def set_spawn_y_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
         self.spawn_y_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
@@ -1025,14 +1034,26 @@ class EpisodeProgressCallback(BaseCallback):
     def _curriculum_status(self) -> str:
         callback = self.curriculum_callback
         if callback is None:
-            cfg = self.spawn_y_curriculum_config
-            if not cfg or not bool(cfg.get("enabled", False)):
+            parts: List[str] = []
+            cfg_x = self.spawn_x_curriculum_config
+            if cfg_x and bool(cfg_x.get("enabled", False)):
+                mode_x = str(cfg_x.get("mode", "linear"))
+                pct_x = self._spawn_x_curriculum_percent()
+                if pct_x is None:
+                    parts.append(f"spawn_x:{mode_x}")
+                else:
+                    parts.append(f"spawn_x:{mode_x} {pct_x:.1f}%")
+            cfg_y = self.spawn_y_curriculum_config
+            if cfg_y and bool(cfg_y.get("enabled", False)):
+                mode_y = str(cfg_y.get("mode", "linear"))
+                pct_y = self._spawn_y_curriculum_percent()
+                if pct_y is None:
+                    parts.append(f"spawn_y:{mode_y}")
+                else:
+                    parts.append(f"spawn_y:{mode_y} {pct_y:.1f}%")
+            if not parts:
                 return "off"
-            mode = str(cfg.get("mode", "linear"))
-            progress_pct = self._spawn_y_curriculum_percent()
-            if progress_pct is None:
-                return f"spawn_y:{mode}"
-            return f"spawn_y:{mode} {progress_pct:.1f}%"
+            return " | ".join(parts)
         try:
             phase_idx = callback.get_current_phase_index()
             phase_cfg = callback.get_current_phase_config()
@@ -1060,6 +1081,59 @@ class EpisodeProgressCallback(BaseCallback):
         if callback is not None:
             return callback.status_text()
         return self._anneal_status()
+
+    def _spawn_x_curriculum_percent(self) -> Optional[float]:
+        cfg = self.spawn_x_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return None
+
+        if self.last_spawn_x_progress is not None:
+            try:
+                progress = float(self.last_spawn_x_progress)
+                return float(np.clip(progress, 0.0, 1.0) * 100.0)
+            except (TypeError, ValueError):
+                pass
+
+        if self.last_spawn_x_min is None:
+            return None
+
+        mode = str(cfg.get("mode", "linear")).strip().lower()
+        try:
+            if mode == "success_adaptive":
+                x_start = float(cfg.get("x_lower_start", cfg.get("x_start", self.last_spawn_x_min)))
+                x_bound = float(cfg.get("x_lower_bound", cfg.get("x_final", x_start)))
+            else:
+                x_start = float(cfg.get("x_start", self.last_spawn_x_min))
+                x_bound = float(cfg.get("x_final", x_start))
+        except (TypeError, ValueError):
+            return None
+
+        denom = x_start - x_bound
+        if abs(denom) <= 1e-9:
+            return 100.0
+
+        progress = (x_start - float(self.last_spawn_x_min)) / denom
+        return float(np.clip(progress, 0.0, 1.0) * 100.0)
+
+    def _spawn_x_status(self) -> str:
+        cfg = self.spawn_x_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return "n/a"
+        progress_pct = self._spawn_x_curriculum_percent()
+        pct_txt = f"{progress_pct:.1f}%" if progress_pct is not None else "n/a"
+        if self.last_spawn_x_min is None or self.last_spawn_x_max is None:
+            return f"{pct_txt} (warming)"
+        sr_txt = (
+            f",sr={self.last_spawn_x_window_sr:.1%}"
+            if self.last_spawn_x_window_sr is not None
+            else ""
+        )
+        adj_txt = (
+            f",adj={self.last_spawn_x_adjustment}"
+            if self.last_spawn_x_adjustment
+            else ""
+        )
+        return f"{pct_txt} x=[{self.last_spawn_x_min:.3f},{self.last_spawn_x_max:.3f}]{sr_txt}{adj_txt}"
 
     def _spawn_y_curriculum_percent(self) -> Optional[float]:
         cfg = self.spawn_y_curriculum_config
@@ -1169,6 +1243,11 @@ class EpisodeProgressCallback(BaseCallback):
             done_count += 1
             info = infos[idx] if idx < len(infos) else {}
             success = bool(info.get("is_success", False))
+            x_min = info.get("spawn_x_min")
+            x_max = info.get("spawn_x_max")
+            x_prog = info.get("spawn_x_progress")
+            x_sr = info.get("spawn_x_window_sr")
+            x_adj = info.get("spawn_x_last_adjustment")
             y_min = info.get("spawn_y_min")
             y_max = info.get("spawn_y_max")
             y_prog = info.get("spawn_y_progress")
@@ -1179,6 +1258,28 @@ class EpisodeProgressCallback(BaseCallback):
             ftg_prog = info.get("ftg_curriculum_progress")
             ftg_sr = info.get("ftg_curriculum_window_sr")
             ftg_adj = info.get("ftg_curriculum_last_adjustment")
+            if x_min is not None:
+                try:
+                    self.last_spawn_x_min = float(x_min)
+                except (TypeError, ValueError):
+                    pass
+            if x_max is not None:
+                try:
+                    self.last_spawn_x_max = float(x_max)
+                except (TypeError, ValueError):
+                    pass
+            if x_prog is not None:
+                try:
+                    self.last_spawn_x_progress = float(x_prog)
+                except (TypeError, ValueError):
+                    pass
+            if x_sr is not None:
+                try:
+                    self.last_spawn_x_window_sr = float(x_sr)
+                except (TypeError, ValueError):
+                    pass
+            if x_adj is not None:
+                self.last_spawn_x_adjustment = str(x_adj)
             if y_min is not None:
                 try:
                     self.last_spawn_y_min = float(y_min)
@@ -1261,6 +1362,8 @@ class EpisodeProgressCallback(BaseCallback):
                 f"PLoss {self._format_optional(pol_loss, '.3f')} | "
                 f"Ent {self._format_optional(ent_loss, '.3f')} | "
                 f"Curr {self._curriculum_status()} | "
+                f"SpawnX {self._spawn_x_status()} | "
+                f"SpawnY {self._spawn_y_status()} | "
                 f"FTG {self._ftg_curriculum_status()} | "
                 f"Sched {self._schedule_status()}"
             )
@@ -1282,9 +1385,9 @@ class EpisodeProgressCallback(BaseCallback):
                         f"[bold cyan]Sched[/bold cyan] {self._schedule_status()}",
                     )
                     progress_table.add_row(
+                        f"[bold cyan]SpawnX[/bold cyan] {self._spawn_x_status()}",
                         f"[bold cyan]SpawnY[/bold cyan] {self._spawn_y_status()}",
                         f"[bold cyan]FTG[/bold cyan] {self._ftg_curriculum_status()}",
-                        "",
                     )
 
                     ppo_table = Table.grid(expand=True)
@@ -1747,6 +1850,7 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         progress_callback = EpisodeProgressCallback(log_every, console_logger)
+        progress_callback.set_spawn_x_curriculum_config(env_config.get("spawn_x_curriculum"))
         progress_callback.set_spawn_y_curriculum_config(env_config.get("spawn_y_curriculum"))
         if adaptive_hparam_callback is not None:
             progress_callback.set_adaptive_hparam_callback(adaptive_hparam_callback)
