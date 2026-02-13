@@ -25,6 +25,7 @@ from baselines.sb3_curriculum_callback import CurriculumCallback
 from baselines.sb3_eval_callback import SB3EvaluationCallback
 from baselines.sb3_train_callback import SB3TrainLoggingCallback
 from baselines.sb3_wrapper import SB3SingleAgentWrapper
+from core.adaptive_controller import AdaptiveScalarController
 from core.evaluator import EvaluationConfig
 from core.obs_flatten import flatten_observation
 from core.run_id import resolve_run_id, set_run_id_env
@@ -63,6 +64,14 @@ class GatedScheduleSpec:
     schedule: "GatedLinearSchedule"
     success_threshold: float
     window_episodes: int
+
+
+@dataclass
+class AdaptiveHyperparamSpec:
+    """Metadata for success-adaptive hyperparameter control."""
+
+    key: str
+    controller: AdaptiveScalarController
 
 
 class GatedLinearSchedule:
@@ -171,6 +180,114 @@ def _resolve_scheduled_param(
         window_episodes=window_episodes,
     )
     return gated_schedule, spec
+
+
+def _is_adaptive_curriculum_enabled(params: Dict[str, Any], key: str) -> bool:
+    cfg = params.get(f"{key}_curriculum")
+    return isinstance(cfg, dict) and bool(cfg.get("enabled", False))
+
+
+def _build_adaptive_controller(
+    *,
+    cfg: Dict[str, Any],
+    default_start: float,
+    default_final: float,
+) -> AdaptiveScalarController:
+    start = float(cfg.get("start", cfg.get("initial", default_start)))
+    final = float(cfg.get("final", default_final))
+
+    window = max(1, int(cfg.get("window_episodes", 100)))
+    update_every = max(1, int(cfg.get("update_every_episodes", window)))
+    sr_low = float(cfg.get("sr_lower_bound", 0.85))
+    sr_high = float(cfg.get("sr_upper_bound", 0.95))
+
+    span = abs(final - start)
+    default_inc_min = max(span * 0.02, 1e-9)
+    default_inc_max = max(span * 0.10, default_inc_min)
+
+    inc_min_raw = float(cfg.get("increment_min", default_inc_min))
+    inc_max_raw = float(cfg.get("increment_max", default_inc_max))
+    inc_small_mag = abs(inc_min_raw)
+    inc_large_mag = abs(inc_max_raw)
+    if inc_large_mag < inc_small_mag:
+        inc_small_mag, inc_large_mag = inc_large_mag, inc_small_mag
+
+    regress_enabled = bool(cfg.get("regression_enabled", False))
+    regress_trigger = float(cfg.get("regression_sr_trigger", max(0.0, sr_low - 0.20)))
+    regress_floor = float(cfg.get("regression_sr_floor", max(0.0, regress_trigger - 0.20)))
+    regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
+    regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
+
+    regress_inc_min_raw = float(
+        cfg.get("regression_increment_min", cfg.get("regression_step_min", inc_small_mag))
+    )
+    regress_inc_max_raw = float(
+        cfg.get("regression_increment_max", cfg.get("regression_step_max", inc_large_mag))
+    )
+    regress_small_mag = abs(regress_inc_min_raw)
+    regress_large_mag = abs(regress_inc_max_raw)
+    if regress_large_mag < regress_small_mag:
+        regress_small_mag, regress_large_mag = regress_large_mag, regress_small_mag
+
+    direction = 1.0 if final >= start else -1.0
+    advance_small = direction * inc_small_mag
+    advance_large = direction * inc_large_mag
+    regress_small = -direction * regress_small_mag
+    regress_large = -direction * regress_large_mag
+
+    return AdaptiveScalarController(
+        initial_value=start,
+        value_min=min(start, final),
+        value_max=max(start, final),
+        window_size=window,
+        update_every=update_every,
+        advance_sr_low=sr_low,
+        advance_sr_high=sr_high,
+        advance_step_min=advance_small,
+        advance_step_max=advance_large,
+        regression_enabled=regress_enabled,
+        regression_sr_trigger=regress_trigger,
+        regression_sr_floor=regress_floor,
+        regression_step_min=regress_small,
+        regression_step_max=regress_large,
+        regression_patience_updates=regress_patience,
+        regression_cooldown_updates=regress_cooldown,
+        progress_start=start,
+        progress_end=final,
+    )
+
+
+def _resolve_adaptive_hparam_specs(
+    algorithm: str,
+    params: Dict[str, Any],
+) -> List[AdaptiveHyperparamSpec]:
+    specs: List[AdaptiveHyperparamSpec] = []
+    algo_key = str(algorithm).strip().lower()
+    defaults: Dict[str, Tuple[float, float]] = {
+        "learning_rate": (float(params.get("learning_rate", 3e-4)), 1e-5),
+        "ent_coef": (float(params.get("ent_coef", 0.02 if "ppo" in algo_key else 0.0)), 0.0),
+    }
+    if "ppo" in algo_key:
+        defaults["clip_range"] = (float(params.get("clip_range", 0.2)), 0.02)
+
+    for key, (default_start, default_final) in defaults.items():
+        cfg = params.get(f"{key}_curriculum")
+        if not (isinstance(cfg, dict) and bool(cfg.get("enabled", False))):
+            continue
+        mode = str(cfg.get("mode", "success_adaptive")).strip().lower()
+        if mode != "success_adaptive":
+            continue
+        try:
+            controller = _build_adaptive_controller(
+                cfg=cfg,
+                default_start=default_start,
+                default_final=default_final,
+            )
+        except (TypeError, ValueError):
+            continue
+        specs.append(AdaptiveHyperparamSpec(key=key, controller=controller))
+
+    return specs
 
 
 def parse_args() -> argparse.Namespace:
@@ -546,25 +663,31 @@ def build_model(
     """Create SB3 on-policy model."""
     gated_specs: List[GatedScheduleSpec] = []
 
-    learning_rate, lr_gate = _resolve_scheduled_param(
-        params,
-        key="learning_rate",
-        default_value=3e-4,
-        default_linear_final=0.0,
-    )
-    if lr_gate is not None:
-        gated_specs.append(lr_gate)
+    if _is_adaptive_curriculum_enabled(params, "learning_rate"):
+        learning_rate = float(params.get("learning_rate", 3e-4))
+    else:
+        learning_rate, lr_gate = _resolve_scheduled_param(
+            params,
+            key="learning_rate",
+            default_value=3e-4,
+            default_linear_final=0.0,
+        )
+        if lr_gate is not None:
+            gated_specs.append(lr_gate)
     gamma = params.get("gamma", 0.995)
 
     if algorithm in {"sb3_ppo", "ppo"}:
-        clip_range, clip_gate = _resolve_scheduled_param(
-            params,
-            key="clip_range",
-            default_value=0.2,
-            default_linear_final=0.02,
-        )
-        if clip_gate is not None:
-            gated_specs.append(clip_gate)
+        if _is_adaptive_curriculum_enabled(params, "clip_range"):
+            clip_range = float(params.get("clip_range", 0.2))
+        else:
+            clip_range, clip_gate = _resolve_scheduled_param(
+                params,
+                key="clip_range",
+                default_value=0.2,
+                default_linear_final=0.02,
+            )
+            if clip_gate is not None:
+                gated_specs.append(clip_gate)
         model = PPO(
             policy="MlpPolicy",
             env=env,
@@ -576,7 +699,7 @@ def build_model(
             gae_lambda=params.get("gae_lambda", 0.95),
             clip_range=clip_range,
             clip_range_vf=params.get("clip_range_vf", None),
-            ent_coef=params.get("ent_coef", 0.02),
+            ent_coef=float(params.get("ent_coef", 0.02)),
             vf_coef=params.get("vf_coef", 0.5),
             max_grad_norm=params.get("max_grad_norm", 0.5),
             target_kl=params.get("target_kl", None),
@@ -594,7 +717,7 @@ def build_model(
             n_steps=params.get("n_steps", 5),
             gamma=gamma,
             gae_lambda=params.get("gae_lambda", 1.0),
-            ent_coef=params.get("ent_coef", 0.0),
+            ent_coef=float(params.get("ent_coef", 0.0)),
             vf_coef=params.get("vf_coef", 0.5),
             policy_kwargs=policy_kwargs,
             device=device,
@@ -815,6 +938,7 @@ class EpisodeProgressCallback(BaseCallback):
         self.episode_lengths: Deque[int] = deque(maxlen=self.window_size)
         self.curriculum_callback: Optional[CurriculumCallback] = None
         self.anneal_callback: Optional["AnnealOnSuccessRateCallback"] = None
+        self.adaptive_hparam_callback: Optional["AdaptiveHyperparamCallback"] = None
         self.spawn_y_curriculum_config: Optional[Dict[str, Any]] = None
         self.last_spawn_y_min: Optional[float] = None
         self.last_spawn_y_max: Optional[float] = None
@@ -833,6 +957,9 @@ class EpisodeProgressCallback(BaseCallback):
 
     def set_anneal_callback(self, callback: Optional["AnnealOnSuccessRateCallback"]) -> None:
         self.anneal_callback = callback
+
+    def set_adaptive_hparam_callback(self, callback: Optional["AdaptiveHyperparamCallback"]) -> None:
+        self.adaptive_hparam_callback = callback
 
     def set_spawn_y_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
         self.spawn_y_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
@@ -927,6 +1054,12 @@ class EpisodeProgressCallback(BaseCallback):
         if min_rate is None:
             return f"on@{activation}"
         return f"on@{activation},min={min_rate:.1%}"
+
+    def _schedule_status(self) -> str:
+        callback = self.adaptive_hparam_callback
+        if callback is not None:
+            return callback.status_text()
+        return self._anneal_status()
 
     def _spawn_y_curriculum_percent(self) -> Optional[float]:
         cfg = self.spawn_y_curriculum_config
@@ -1129,7 +1262,7 @@ class EpisodeProgressCallback(BaseCallback):
                 f"Ent {self._format_optional(ent_loss, '.3f')} | "
                 f"Curr {self._curriculum_status()} | "
                 f"FTG {self._ftg_curriculum_status()} | "
-                f"Anneal {self._anneal_status()}"
+                f"Sched {self._schedule_status()}"
             )
             printed_rich = False
             if RICH_PANEL_AVAILABLE and hasattr(self.console_logger, "console"):
@@ -1146,7 +1279,7 @@ class EpisodeProgressCallback(BaseCallback):
                     progress_table.add_row(
                         f"[bold cyan]L{self.window_size}[/bold cyan] {l_mean:.1f}",
                         f"[bold cyan]Curriculum[/bold cyan] {self._curriculum_status()}",
-                        f"[bold cyan]Anneal[/bold cyan] {self._anneal_status()}",
+                        f"[bold cyan]Sched[/bold cyan] {self._schedule_status()}",
                     )
                     progress_table.add_row(
                         f"[bold cyan]SpawnY[/bold cyan] {self._spawn_y_status()}",
@@ -1202,6 +1335,138 @@ class RenderCallback(BaseCallback):
             except Exception:
                 return True
         return True
+
+
+class _MutableScalarSchedule:
+    """Callable schedule that always returns an externally updated scalar."""
+
+    def __init__(self, value: float):
+        self.value = float(value)
+
+    def set(self, value: float) -> None:
+        self.value = float(value)
+
+    def __call__(self, progress_remaining: float) -> float:
+        _ = progress_remaining
+        return self.value
+
+
+class AdaptiveHyperparamCallback(BaseCallback):
+    """Update optimizer hyperparameters using success-adaptive controllers."""
+
+    def __init__(
+        self,
+        specs: List[AdaptiveHyperparamSpec],
+        console_logger: Optional[ConsoleLogger] = None,
+    ):
+        super().__init__()
+        self.specs = specs
+        self.console_logger = console_logger
+        self.episode_count = 0
+        self._lr_schedule: Optional[_MutableScalarSchedule] = None
+        self._clip_schedule: Optional[_MutableScalarSchedule] = None
+
+    def _collect_done_flags(self):
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return []
+            terminated_arr = np.array(terminated, dtype=bool).reshape(-1)
+            truncated_arr = np.array(truncated, dtype=bool).reshape(-1)
+            return np.logical_or(terminated_arr, truncated_arr).tolist()
+        return np.array(dones, dtype=bool).reshape(-1).tolist()
+
+    def _collect_infos(self):
+        infos = self.locals.get("infos")
+        if infos is None:
+            return []
+        if isinstance(infos, list):
+            return infos
+        if isinstance(infos, tuple):
+            return list(infos)
+        if isinstance(infos, dict):
+            return [infos]
+        return []
+
+    def _apply_value(self, key: str, value: float) -> None:
+        model = self.model
+        if key == "learning_rate":
+            if self._lr_schedule is None:
+                self._lr_schedule = _MutableScalarSchedule(value)
+                model.lr_schedule = self._lr_schedule
+            else:
+                self._lr_schedule.set(value)
+            optimizer = getattr(getattr(model, "policy", None), "optimizer", None)
+            if optimizer is not None and hasattr(model, "_update_learning_rate"):
+                try:
+                    model._update_learning_rate(optimizer)
+                except Exception:
+                    pass
+            return
+
+        if key == "clip_range":
+            if not hasattr(model, "clip_range"):
+                return
+            if self._clip_schedule is None:
+                self._clip_schedule = _MutableScalarSchedule(value)
+                model.clip_range = self._clip_schedule
+            else:
+                self._clip_schedule.set(value)
+            return
+
+        if key == "ent_coef":
+            if hasattr(model, "ent_coef"):
+                model.ent_coef = float(value)
+
+    def _on_training_start(self) -> None:
+        for spec in self.specs:
+            self._apply_value(spec.key, spec.controller.value)
+
+    def _on_step(self) -> bool:
+        done_flags = self._collect_done_flags()
+        if not done_flags:
+            return True
+
+        infos = self._collect_infos()
+        for idx, done in enumerate(done_flags):
+            if not done:
+                continue
+            info = infos[idx] if idx < len(infos) and isinstance(infos[idx], dict) else {}
+            success = bool(info.get("is_success", False))
+            self.episode_count += 1
+            for spec in self.specs:
+                updated_cycle = spec.controller.observe(success)
+                if not updated_cycle:
+                    continue
+                self._apply_value(spec.key, spec.controller.value)
+                if self.console_logger and spec.controller.last_adjustment != "hold":
+                    sr = spec.controller.last_window_sr
+                    sr_txt = f"{sr:.1%}" if sr is not None else "n/a"
+                    self.console_logger.print_info(
+                        f"{spec.key} {spec.controller.last_adjustment} -> {spec.controller.value:.6g} "
+                        f"(sr={sr_txt}, ep={self.episode_count})"
+                    )
+        return True
+
+    def status_text(self) -> str:
+        if not self.specs:
+            return "off"
+        parts = []
+        for spec in self.specs:
+            key = spec.key
+            short = "lr" if key == "learning_rate" else ("clip" if key == "clip_range" else "ent")
+            value = spec.controller.value
+            if key == "learning_rate":
+                value_txt = f"{value:.2e}"
+            else:
+                value_txt = f"{value:.4f}"
+            sr = spec.controller.last_window_sr
+            sr_txt = f",sr={sr:.0%}" if sr is not None else ""
+            adj_txt = f",adj={spec.controller.last_adjustment}"
+            parts.append(f"{short}={value_txt}{sr_txt}{adj_txt}")
+        return " | ".join(parts)
 
 
 class AnnealOnSuccessRateCallback(BaseCallback):
@@ -1414,6 +1679,7 @@ def main() -> None:
         frame_stack=frame_stack,
         action_repeat=action_repeat,
         action_constraints=action_constraints,
+        spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
         spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
         ftg_curriculum=ftg_curricula,
     )
@@ -1436,6 +1702,13 @@ def main() -> None:
         device,
         scenario["experiment"].get("seed"),
     )
+    adaptive_hparam_specs = _resolve_adaptive_hparam_specs(algorithm, train_params)
+    adaptive_hparam_keys = {spec.key for spec in adaptive_hparam_specs}
+    if adaptive_hparam_keys and console_logger:
+        keys_text = ", ".join(sorted(adaptive_hparam_keys))
+        console_logger.print_info(f"Adaptive hyperparameter control enabled: {keys_text}")
+    if adaptive_hparam_keys:
+        gated_schedules = [spec for spec in gated_schedules if spec.key not in adaptive_hparam_keys]
     maybe_apply_warm_start(
         model=model,
         algorithm=algorithm,
@@ -1454,6 +1727,15 @@ def main() -> None:
     total_timesteps = decision_steps * episodes
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
+    adaptive_hparam_callback: Optional[AdaptiveHyperparamCallback] = None
+    if adaptive_hparam_specs:
+        adaptive_hparam_callback = AdaptiveHyperparamCallback(adaptive_hparam_specs, console_logger)
+        callbacks.append(adaptive_hparam_callback)
+    anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
+    if gated_schedules:
+        anneal_guard_callback = AnnealOnSuccessRateCallback(gated_schedules, console_logger)
+        callbacks.append(anneal_guard_callback)
+
     progress_callback: Optional[EpisodeProgressCallback] = None
     log_every_env = os.environ.get("F110_LOG_EVERY_EPISODES")
     if log_every_env is None:
@@ -1466,13 +1748,11 @@ def main() -> None:
     if log_every > 0:
         progress_callback = EpisodeProgressCallback(log_every, console_logger)
         progress_callback.set_spawn_y_curriculum_config(env_config.get("spawn_y_curriculum"))
-        callbacks.append(progress_callback)
-    anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
-    if gated_schedules:
-        anneal_guard_callback = AnnealOnSuccessRateCallback(gated_schedules, console_logger)
-        callbacks.append(anneal_guard_callback)
-        if progress_callback is not None:
+        if adaptive_hparam_callback is not None:
+            progress_callback.set_adaptive_hparam_callback(adaptive_hparam_callback)
+        if anneal_guard_callback is not None:
             progress_callback.set_anneal_callback(anneal_guard_callback)
+        callbacks.append(progress_callback)
     if env_config.get("render"):
         render_every_env = os.environ.get("F110_RENDER_EVERY_STEPS")
         if render_every_env is None:
@@ -1551,6 +1831,7 @@ def main() -> None:
             reward_strategy=reward_strategy,
             frame_stack=frame_stack,
             action_repeat=action_repeat,
+            spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
             spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
         )
         eval_env.set_other_agents(eval_other_agents)

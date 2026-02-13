@@ -61,6 +61,7 @@ class SB3SingleAgentWrapper(gym.Env):
         frame_stack: int = 1,
         action_repeat: int = 1,
         action_constraints: Optional[Dict[str, Any]] = None,
+        spawn_x_curriculum: Optional[Dict[str, Any]] = None,
         spawn_y_curriculum: Optional[Dict[str, Any]] = None,
         ftg_curriculum: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
@@ -87,12 +88,19 @@ class SB3SingleAgentWrapper(gym.Env):
             action_repeat = 1
         self.action_repeat = max(1, action_repeat)
         self._frame_buffer: Optional[deque] = None
+        self.spawn_x_curriculum = (
+            dict(spawn_x_curriculum)
+            if isinstance(spawn_x_curriculum, dict)
+            else None
+        )
         self.spawn_y_curriculum = (
             dict(spawn_y_curriculum)
             if isinstance(spawn_y_curriculum, dict)
             else None
         )
         self._local_rng = None
+        self._spawn_x_controller: Optional[AdaptiveScalarController] = None
+        self._spawn_x_context: Dict[str, float] = {}
         self._spawn_y_controller: Optional[AdaptiveScalarController] = None
         self._spawn_y_context: Dict[str, float] = {}
         self.ftg_curriculum = (
@@ -286,6 +294,9 @@ class SB3SingleAgentWrapper(gym.Env):
         y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
         if isinstance(y_curriculum, dict):
             merged.update(y_curriculum)
+        x_curriculum = self._last_spawn_info.get("spawn_x_curriculum")
+        if isinstance(x_curriculum, dict):
+            merged.update(x_curriculum)
         self._attach_ftg_curriculum_metadata(merged)
         return merged
 
@@ -333,7 +344,7 @@ class SB3SingleAgentWrapper(gym.Env):
             regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
             regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
 
-            params_state: Dict[str, Dict[str, float]] = {}
+            params_state: Dict[str, AdaptiveScalarController] = {}
             start_params: Dict[str, float] = {}
             for param_name, param_cfg in raw_params.items():
                 if not isinstance(param_cfg, dict):
@@ -349,19 +360,6 @@ class SB3SingleAgentWrapper(gym.Env):
 
                 delta = final - start
                 span = abs(delta)
-                if span <= 1e-9:
-                    params_state[str(param_name)] = {
-                        "start": start,
-                        "final": final,
-                        "current": final,
-                        "inc_small": 0.0,
-                        "inc_large": 0.0,
-                        "regress_small": 0.0,
-                        "regress_large": 0.0,
-                    }
-                    start_params[str(param_name)] = final
-                    continue
-
                 direction = 1.0 if delta > 0 else -1.0
                 default_inc_min = max(span * 0.05, 1e-6)
                 default_inc_max = max(span * 0.20, default_inc_min)
@@ -407,15 +405,27 @@ class SB3SingleAgentWrapper(gym.Env):
                 if regress_large_mag < regress_small_mag:
                     regress_small_mag, regress_large_mag = regress_large_mag, regress_small_mag
 
-                params_state[str(param_name)] = {
-                    "start": start,
-                    "final": final,
-                    "current": start,
-                    "inc_small": direction * inc_small_mag,
-                    "inc_large": direction * inc_large_mag,
-                    "regress_small": -direction * regress_small_mag,
-                    "regress_large": -direction * regress_large_mag,
-                }
+                controller = AdaptiveScalarController(
+                    initial_value=start,
+                    value_min=min(start, final),
+                    value_max=max(start, final),
+                    window_size=window,
+                    update_every=update_every,
+                    advance_sr_low=sr_low,
+                    advance_sr_high=sr_high,
+                    advance_step_min=direction * inc_small_mag,
+                    advance_step_max=direction * inc_large_mag,
+                    regression_enabled=regress_enabled,
+                    regression_sr_trigger=regress_trigger,
+                    regression_sr_floor=regress_floor,
+                    regression_step_min=-direction * regress_small_mag,
+                    regression_step_max=-direction * regress_large_mag,
+                    regression_patience_updates=regress_patience,
+                    regression_cooldown_updates=regress_cooldown,
+                    progress_start=start,
+                    progress_end=final,
+                )
+                params_state[str(param_name)] = controller
                 start_params[str(param_name)] = start
 
             if not params_state:
@@ -434,9 +444,6 @@ class SB3SingleAgentWrapper(gym.Env):
                 "regress_floor": regress_floor,
                 "regress_patience": regress_patience,
                 "regress_cooldown": regress_cooldown,
-                "regress_low_streak": 0,
-                "regress_cooldown_left": 0,
-                "history": deque(maxlen=window),
                 "completed_episodes": 0,
                 "last_window_sr": None,
                 "last_increment": {name: 0.0 for name in params_state.keys()},
@@ -450,18 +457,13 @@ class SB3SingleAgentWrapper(gym.Env):
             return None
 
         progress_values: List[float] = []
-        for item in params_state.values():
-            try:
-                start = float(item["start"])
-                final = float(item["final"])
-                current = float(item["current"])
-            except (KeyError, TypeError, ValueError):
+        for controller in params_state.values():
+            if not isinstance(controller, AdaptiveScalarController):
                 continue
-            denom = final - start
-            if abs(denom) <= 1e-9:
-                progress_values.append(1.0)
+            progress = controller.progress()
+            if progress is None:
                 continue
-            progress_values.append(float(np.clip((current - start) / denom, 0.0, 1.0)))
+            progress_values.append(float(np.clip(progress, 0.0, 1.0)))
         if not progress_values:
             return None
         return float(sum(progress_values) / len(progress_values))
@@ -473,17 +475,25 @@ class SB3SingleAgentWrapper(gym.Env):
             state = self._ftg_curriculum_state.get(agent_id)
             if not isinstance(state, dict):
                 continue
+            params_state = state.get("params", {})
+            if not isinstance(params_state, dict) or not params_state:
+                continue
+            first_param = next(iter(params_state.values()))
+            if not isinstance(first_param, AdaptiveScalarController):
+                continue
             progress = self._compute_ftg_progress(state)
             info["ftg_curriculum_agent"] = agent_id
             info["ftg_curriculum_mode"] = state.get("mode")
             info["ftg_curriculum_progress"] = progress
-            info["ftg_curriculum_window_sr"] = state.get("last_window_sr")
+            info["ftg_curriculum_window_sr"] = first_param.last_window_sr
             info["ftg_curriculum_last_adjustment"] = state.get("last_adjustment")
-            info["ftg_curriculum_regress_low_streak"] = int(state.get("regress_low_streak", 0))
-            info["ftg_curriculum_regression_enabled"] = bool(state.get("regress_enabled", False))
-            for param_name, values in state.get("params", {}).items():
+            info["ftg_curriculum_regress_low_streak"] = int(first_param.regression_low_streak)
+            info["ftg_curriculum_regression_enabled"] = bool(first_param.regression_enabled)
+            for param_name, controller in params_state.items():
+                if not isinstance(controller, AdaptiveScalarController):
+                    continue
                 try:
-                    info[f"ftg_{param_name}"] = float(values.get("current"))
+                    info[f"ftg_{param_name}"] = float(controller.value)
                 except (TypeError, ValueError):
                     continue
             break
@@ -495,94 +505,38 @@ class SB3SingleAgentWrapper(gym.Env):
         for agent_id, state in self._ftg_curriculum_state.items():
             if state.get("mode") != "success_adaptive":
                 continue
-            history = state.get("history")
-            if history is None:
-                continue
-            history.append(bool(success))
-            state["completed_episodes"] = int(state.get("completed_episodes", 0)) + 1
-
-            window = int(state.get("window", 100))
-            update_every = int(state.get("update_every", window))
-            completed = int(state.get("completed_episodes", 0))
-            if completed % update_every != 0:
-                continue
-            if len(history) < window:
-                continue
-
-            sr = float(sum(history) / len(history))
-            state["last_window_sr"] = sr
-
-            sr_low = float(state.get("sr_low", 0.85))
-            sr_high = float(state.get("sr_high", 0.95))
             params_state = state.get("params", {})
-            regress_enabled = bool(state.get("regress_enabled", False))
-            if regress_enabled:
-                cooldown_left = int(state.get("regress_cooldown_left", 0))
-                if cooldown_left > 0:
-                    state["regress_cooldown_left"] = cooldown_left - 1
-                regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
-                if sr < regress_trigger:
-                    state["regress_low_streak"] = int(state.get("regress_low_streak", 0)) + 1
-                else:
-                    state["regress_low_streak"] = 0
-
-            update_mode = "hold"
-            blend = 0.0
-            step_small_key = ""
-            step_large_key = ""
-
-            if sr >= sr_low:
-                denom = max(sr_high - sr_low, 1e-9)
-                blend = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
-                update_mode = "advance"
-                step_small_key = "inc_small"
-                step_large_key = "inc_large"
-                if regress_enabled:
-                    state["regress_low_streak"] = 0
-            elif regress_enabled:
-                cooldown_left = int(state.get("regress_cooldown_left", 0))
-                regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
-                regress_floor = float(state.get("regress_floor", max(0.0, regress_trigger - 0.20)))
-                regress_patience = max(1, int(state.get("regress_patience", 1)))
-                low_streak = int(state.get("regress_low_streak", 0))
-                if sr < regress_trigger and cooldown_left <= 0 and low_streak >= regress_patience:
-                    denom = max(regress_trigger - regress_floor, 1e-9)
-                    blend = float(np.clip((regress_trigger - sr) / denom, 0.0, 1.0))
-                    update_mode = "regress"
-                    step_small_key = "regress_small"
-                    step_large_key = "regress_large"
-                    state["regress_cooldown_left"] = int(state.get("regress_cooldown", 0))
-
+            if not isinstance(params_state, dict) or not params_state:
+                continue
+            updated_cycle = False
             updates: Dict[str, float] = {}
             any_change = False
-            for param_name, param_state in params_state.items():
-                if update_mode == "hold":
-                    state["last_increment"][param_name] = 0.0
+            representative: Optional[AdaptiveScalarController] = None
+            for param_name, controller in params_state.items():
+                if not isinstance(controller, AdaptiveScalarController):
                     continue
-                try:
-                    current = float(param_state["current"])
-                    start = float(param_state["start"])
-                    final = float(param_state["final"])
-                    step_small = float(param_state[step_small_key])
-                    step_large = float(param_state[step_large_key])
-                except (KeyError, TypeError, ValueError):
-                    state["last_increment"][param_name] = 0.0
-                    continue
-
-                increment = step_small + blend * (step_large - step_small)
-                next_value = float(np.clip(current + increment, min(start, final), max(start, final)))
-                actual_delta = float(next_value - current)
-                param_state["current"] = next_value
-                state["last_increment"][param_name] = actual_delta
-                updates[param_name] = next_value
-                if abs(actual_delta) > 1e-12:
+                if representative is None:
+                    representative = controller
+                cycle = controller.observe(bool(success))
+                updated_cycle = updated_cycle or cycle
+                if cycle:
+                    state["last_increment"][param_name] = float(controller.last_delta)
+                updates[param_name] = float(controller.value)
+                if cycle and abs(float(controller.last_delta)) > 1e-12:
                     any_change = True
 
-            state["last_adjustment"] = update_mode if any_change else "hold"
+            if representative is not None:
+                state["completed_episodes"] = int(representative.completed_events)
+                state["last_window_sr"] = representative.last_window_sr
+                if updated_cycle:
+                    state["last_adjustment"] = (
+                        str(representative.last_adjustment) if any_change else "hold"
+                    )
 
-            agent = self.other_agents.get(agent_id) if self.other_agents else None
-            if agent is not None and updates:
-                self._apply_agent_params(agent, updates)
+            if updated_cycle and self.other_agents:
+                agent = self.other_agents.get(agent_id)
+                if agent is not None and updates:
+                    self._apply_agent_params(agent, updates)
 
     def reset(
         self,
@@ -599,9 +553,9 @@ class SB3SingleAgentWrapper(gym.Env):
             obs: Initial observation for controlled agent
             info: Info dict
         """
-        # Apply simple spawn-y curriculum first when configured.
-        if options is None and self.spawn_y_curriculum:
-            sampled = self._sample_spawn_y_curriculum(episode=self._episode_count)
+        # Apply simple spawn-x/y curricula when configured.
+        if options is None and (self.spawn_x_curriculum or self.spawn_y_curriculum):
+            sampled = self._sample_spawn_curricula(episode=self._episode_count)
             if sampled is not None:
                 self._last_spawn_info = sampled
                 options = sampled["options"]
@@ -636,32 +590,53 @@ class SB3SingleAgentWrapper(gym.Env):
 
         return obs, info
 
-    def _sample_spawn_y_curriculum(self, episode: int) -> Optional[Dict[str, Any]]:
+    def _sample_spawn_curricula(self, episode: int) -> Optional[Dict[str, Any]]:
+        sampled: Optional[Dict[str, Any]] = None
+        if self.spawn_y_curriculum:
+            sampled = self._sample_spawn_y_curriculum(episode=episode, base=sampled)
+        if self.spawn_x_curriculum:
+            sampled = self._sample_spawn_x_curriculum(episode=episode, base=sampled)
+        return sampled
+
+    def _sample_spawn_y_curriculum(
+        self,
+        episode: int,
+        base: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         cfg = self.spawn_y_curriculum
         if not cfg or not bool(cfg.get("enabled", True)):
-            return None
+            return base
 
-        base_poses = getattr(self.env, "start_poses", None)
-        if base_poses is None:
-            return None
-        poses = np.asarray(base_poses, dtype=np.float32).copy()
+        poses = None
+        if isinstance(base, dict):
+            options = base.get("options")
+            if isinstance(options, dict):
+                existing_poses = options.get("poses")
+                if existing_poses is not None:
+                    poses = np.asarray(existing_poses, dtype=np.float32)
+
+        if poses is None:
+            base_poses = getattr(self.env, "start_poses", None)
+            if base_poses is None:
+                return base
+            poses = np.asarray(base_poses, dtype=np.float32).copy()
         if poses.ndim != 2 or poses.shape[1] < 3:
-            return None
+            return base
 
         possible_agents = list(getattr(self.env, "possible_agents", []))
         if not possible_agents:
-            return None
+            return base
         try:
             agent_idx = possible_agents.index(self.agent_id)
         except ValueError:
-            return None
+            return base
         if agent_idx >= poses.shape[0]:
-            return None
+            return base
 
         try:
             mode = str(cfg.get("mode", "linear")).strip().lower()
         except (TypeError, ValueError):
-            return None
+            return base
         if mode == "success_adaptive":
             low, high, progress, extra_meta = self._resolve_success_adaptive_bounds(
                 cfg=cfg,
@@ -674,7 +649,7 @@ class SB3SingleAgentWrapper(gym.Env):
                 y_final = float(cfg.get("y_final", -1.0))
                 ramp_episodes = int(cfg.get("ramp_episodes", 1000))
             except (TypeError, ValueError):
-                return None
+                return base
 
             if ramp_episodes <= 0:
                 progress = 1.0
@@ -695,22 +670,119 @@ class SB3SingleAgentWrapper(gym.Env):
 
         poses[agent_idx, 1] = sampled_y
 
+        sampled = dict(base) if isinstance(base, dict) else {}
         spawn_name = str(cfg.get("name", "spawn_y_curriculum"))
-        spawn_points = {self.agent_id: spawn_name}
-        options = {"poses": poses}
+        spawn_points = dict(sampled.get("spawn_points", {}))
+        existing_spawn = str(spawn_points.get(self.agent_id, "")).strip()
+        if existing_spawn and spawn_name not in existing_spawn.split("+"):
+            spawn_points[self.agent_id] = f"{existing_spawn}+{spawn_name}"
+        else:
+            spawn_points[self.agent_id] = spawn_name
 
-        return {
-            "options": options,
-            "spawn_points": spawn_points,
-            "spawn_y_curriculum": {
-                "spawn_y_mode": mode,
-                "spawn_y": sampled_y,
-                "spawn_y_min": float(low),
-                "spawn_y_max": float(high),
-                "spawn_y_progress": float(progress),
-                **extra_meta,
-            },
+        sampled["options"] = {"poses": poses}
+        sampled["spawn_points"] = spawn_points
+        sampled["spawn_y_curriculum"] = {
+            "spawn_y_mode": mode,
+            "spawn_y": sampled_y,
+            "spawn_y_min": float(low),
+            "spawn_y_max": float(high),
+            "spawn_y_progress": float(progress),
+            **extra_meta,
         }
+        return sampled
+
+    def _sample_spawn_x_curriculum(
+        self,
+        episode: int,
+        base: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        cfg = self.spawn_x_curriculum
+        if not cfg or not bool(cfg.get("enabled", True)):
+            return base
+
+        poses = None
+        if isinstance(base, dict):
+            options = base.get("options")
+            if isinstance(options, dict):
+                existing_poses = options.get("poses")
+                if existing_poses is not None:
+                    poses = np.asarray(existing_poses, dtype=np.float32)
+
+        if poses is None:
+            base_poses = getattr(self.env, "start_poses", None)
+            if base_poses is None:
+                return base
+            poses = np.asarray(base_poses, dtype=np.float32).copy()
+        if poses.ndim != 2 or poses.shape[1] < 3:
+            return base
+
+        possible_agents = list(getattr(self.env, "possible_agents", []))
+        if not possible_agents:
+            return base
+        try:
+            agent_idx = possible_agents.index(self.agent_id)
+        except ValueError:
+            return base
+        if agent_idx >= poses.shape[0]:
+            return base
+
+        try:
+            mode = str(cfg.get("mode", "linear")).strip().lower()
+        except (TypeError, ValueError):
+            return base
+        if mode == "success_adaptive":
+            low, high, progress, extra_meta = self._resolve_success_adaptive_x_bounds(
+                cfg=cfg,
+                poses=poses,
+                agent_idx=agent_idx,
+            )
+        else:
+            try:
+                x_start = float(cfg.get("x_start", poses[agent_idx, 0]))
+                x_final = float(cfg.get("x_final", -1.0))
+                ramp_episodes = int(cfg.get("ramp_episodes", 1000))
+            except (TypeError, ValueError):
+                return base
+
+            if ramp_episodes <= 0:
+                progress = 1.0
+            else:
+                progress = min(max(float(episode) / float(ramp_episodes), 0.0), 1.0)
+
+            x_min = x_start + (x_final - x_start) * progress
+            low = min(x_start, x_min)
+            high = max(x_start, x_min)
+            extra_meta = {}
+
+        rng = getattr(self.env, "rng", None)
+        if rng is None:
+            if self._local_rng is None:
+                self._local_rng = np.random.default_rng()
+            rng = self._local_rng
+        sampled_x = float(rng.uniform(low, high))
+
+        poses[agent_idx, 0] = sampled_x
+
+        sampled = dict(base) if isinstance(base, dict) else {}
+        spawn_name = str(cfg.get("name", "spawn_x_curriculum"))
+        spawn_points = dict(sampled.get("spawn_points", {}))
+        existing_spawn = str(spawn_points.get(self.agent_id, "")).strip()
+        if existing_spawn and spawn_name not in existing_spawn.split("+"):
+            spawn_points[self.agent_id] = f"{existing_spawn}+{spawn_name}"
+        else:
+            spawn_points[self.agent_id] = spawn_name
+
+        sampled["options"] = {"poses": poses}
+        sampled["spawn_points"] = spawn_points
+        sampled["spawn_x_curriculum"] = {
+            "spawn_x_mode": mode,
+            "spawn_x": sampled_x,
+            "spawn_x_min": float(low),
+            "spawn_x_max": float(high),
+            "spawn_x_progress": float(progress),
+            **extra_meta,
+        }
+        return sampled
 
     def _resolve_success_adaptive_bounds(
         self,
@@ -797,9 +869,101 @@ class SB3SingleAgentWrapper(gym.Env):
         }
         return y_lower, y_upper, progress, extra_meta
 
+    def _resolve_success_adaptive_x_bounds(
+        self,
+        cfg: Dict[str, Any],
+        poses: np.ndarray,
+        agent_idx: int,
+    ) -> Tuple[float, float, float, Dict[str, Any]]:
+        controller = self._spawn_x_controller
+        if controller is None:
+            x_ref = float(poses[agent_idx, 0])
+            x_upper_cfg = float(cfg.get("x_upper", cfg.get("x_start", x_ref)))
+            x_lower_start_cfg = float(cfg.get("x_lower_start", cfg.get("x_start", x_ref)))
+            x_lower_bound_cfg = float(cfg.get("x_lower_bound", cfg.get("x_final", -1.0)))
+
+            x_upper = max(x_upper_cfg, x_lower_start_cfg)
+            x_lower_start = min(x_upper_cfg, x_lower_start_cfg)
+            x_lower_bound = min(x_lower_bound_cfg, x_upper)
+
+            window = max(1, int(cfg.get("window_episodes", 100)))
+            update_every = max(1, int(cfg.get("update_every_episodes", window)))
+            sr_low = float(cfg.get("sr_lower_bound", 0.85))
+            sr_high = float(cfg.get("sr_upper_bound", 0.95))
+
+            regress_enabled = bool(cfg.get("regression_enabled", False))
+            regress_trigger = float(cfg.get("regression_sr_trigger", max(0.0, sr_low - 0.20)))
+            regress_floor = float(cfg.get("regression_sr_floor", max(0.0, regress_trigger - 0.20)))
+            regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
+            regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
+
+            inc_min_raw = float(cfg.get("increment_min", -0.001))
+            inc_max_raw = float(cfg.get("increment_max", -0.01))
+            inc_small = -abs(inc_min_raw)
+            inc_large = -abs(inc_max_raw)
+            if abs(inc_large) < abs(inc_small):
+                inc_small, inc_large = inc_large, inc_small
+
+            regress_inc_min_raw = float(cfg.get("regression_increment_min", abs(inc_min_raw)))
+            regress_inc_max_raw = float(cfg.get("regression_increment_max", abs(inc_max_raw)))
+            regress_inc_small = abs(regress_inc_min_raw)
+            regress_inc_large = abs(regress_inc_max_raw)
+            if regress_inc_large < regress_inc_small:
+                regress_inc_small, regress_inc_large = regress_inc_large, regress_inc_small
+
+            controller = AdaptiveScalarController(
+                initial_value=x_lower_start,
+                value_min=x_lower_bound,
+                value_max=x_lower_start,
+                window_size=window,
+                update_every=update_every,
+                advance_sr_low=sr_low,
+                advance_sr_high=sr_high,
+                advance_step_min=inc_small,
+                advance_step_max=inc_large,
+                regression_enabled=regress_enabled,
+                regression_sr_trigger=regress_trigger,
+                regression_sr_floor=regress_floor,
+                regression_step_min=regress_inc_small,
+                regression_step_max=regress_inc_large,
+                regression_patience_updates=regress_patience,
+                regression_cooldown_updates=regress_cooldown,
+                progress_start=x_lower_start,
+                progress_end=x_lower_bound,
+            )
+            self._spawn_x_controller = controller
+            self._spawn_x_context = {
+                "x_upper": float(x_upper),
+                "x_lower_start": float(x_lower_start),
+                "x_lower_bound": float(x_lower_bound),
+            }
+
+        x_upper = float(self._spawn_x_context.get("x_upper", poses[agent_idx, 0]))
+        x_lower = float(controller.value)
+        progress = controller.progress()
+        if progress is None:
+            progress = 0.0
+
+        extra_meta = {
+            "spawn_x_window_sr": controller.last_window_sr,
+            "spawn_x_last_increment": float(controller.last_delta),
+            "spawn_x_completed_episodes": int(controller.completed_events),
+            "spawn_x_last_adjustment": str(controller.last_adjustment),
+            "spawn_x_regress_low_streak": int(controller.regression_low_streak),
+            "spawn_x_regression_enabled": bool(controller.regression_enabled),
+        }
+        return x_lower, x_upper, progress, extra_meta
+
     def _update_success_adaptive_spawn_y(self, success: bool) -> None:
         cfg = self.spawn_y_curriculum
         controller = self._spawn_y_controller
+        if not cfg or controller is None:
+            return
+        controller.observe(bool(success))
+
+    def _update_success_adaptive_spawn_x(self, success: bool) -> None:
+        cfg = self.spawn_x_curriculum
+        controller = self._spawn_x_controller
         if not cfg or controller is None:
             return
         controller.observe(bool(success))
@@ -831,6 +995,36 @@ class SB3SingleAgentWrapper(gym.Env):
                 "spawn_y_last_adjustment": str(controller.last_adjustment),
                 "spawn_y_regress_low_streak": int(controller.regression_low_streak),
                 "spawn_y_regression_enabled": bool(controller.regression_enabled),
+            }
+        )
+
+    def _refresh_spawn_x_runtime_metadata(self) -> None:
+        if not self._last_spawn_info:
+            return
+        x_curriculum = self._last_spawn_info.get("spawn_x_curriculum")
+        if not isinstance(x_curriculum, dict):
+            return
+
+        controller = self._spawn_x_controller
+        if controller is None:
+            return
+        x_upper = float(self._spawn_x_context.get("x_upper", x_curriculum.get("spawn_x_max", 0.0)))
+        x_lower = float(controller.value)
+        progress = controller.progress()
+        if progress is None:
+            progress = 0.0
+
+        x_curriculum.update(
+            {
+                "spawn_x_min": x_lower,
+                "spawn_x_max": x_upper,
+                "spawn_x_progress": progress,
+                "spawn_x_window_sr": controller.last_window_sr,
+                "spawn_x_last_increment": float(controller.last_delta),
+                "spawn_x_completed_episodes": int(controller.completed_events),
+                "spawn_x_last_adjustment": str(controller.last_adjustment),
+                "spawn_x_regress_low_streak": int(controller.regression_low_streak),
+                "spawn_x_regression_enabled": bool(controller.regression_enabled),
             }
         )
 
@@ -967,8 +1161,10 @@ class SB3SingleAgentWrapper(gym.Env):
                 outcome = determine_outcome(info, truncated=truncated)
                 info["outcome"] = outcome.value
                 info['is_success'] = outcome.is_success()
+            self._update_success_adaptive_spawn_x(bool(info.get("is_success", False)))
             self._update_success_adaptive_spawn_y(bool(info.get("is_success", False)))
             self._update_success_adaptive_ftg_curriculum(bool(info.get("is_success", False)))
+            self._refresh_spawn_x_runtime_metadata()
             self._refresh_spawn_y_runtime_metadata()
 
         if reward_components:
