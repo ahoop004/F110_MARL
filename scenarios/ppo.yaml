@@ -15,7 +15,7 @@ environment:
   max_steps: 2700
   action_repeat: 3
   curriculum_orchestrator:
-    enabled: false
+    enabled: true
     order: [y, ftg, x,]
     # order: [y, ftg, x,  lr, clip, ent]
     trigger_threshold: 1.0
@@ -154,7 +154,7 @@ agents:
       batch_size: 64
   car_1:
     ftg_curriculum:
-      enabled: false
+      enabled: true
       mode: success_adaptive
       # update FTG parameters every N episodes from rolling success
       window_episodes: 200
