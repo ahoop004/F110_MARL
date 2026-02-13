@@ -59,6 +59,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_set: Optional[np.ndarray] = None,
         spawn_curriculum: Optional[Any] = None,
         frame_stack: int = 1,
+        action_stack: int = 0,
         action_repeat: int = 1,
         action_constraints: Optional[Dict[str, Any]] = None,
         spawn_x_curriculum: Optional[Dict[str, Any]] = None,
@@ -82,6 +83,11 @@ class SB3SingleAgentWrapper(gym.Env):
         except (TypeError, ValueError):
             frame_stack = 1
         self.frame_stack = max(1, frame_stack)
+        try:
+            action_stack = int(action_stack)
+        except (TypeError, ValueError):
+            action_stack = 0
+        self.action_stack = max(0, action_stack)
         try:
             action_repeat = int(action_repeat)
         except (TypeError, ValueError):
@@ -153,13 +159,15 @@ class SB3SingleAgentWrapper(gym.Env):
             self._speed_index = int(self._action_constraints.get("speed_index", 1))
         except (TypeError, ValueError):
             self._speed_index = 1
-        self._prev_action_norm = np.zeros(2, dtype=np.float32)
+        self._prev_action_norm = np.zeros_like(self._action_low, dtype=np.float32)
+        self._action_history: Optional[deque] = None
         if action_set is not None:
             # Discrete action space for DQN/QR-DQN
             action_set_array = np.asarray(action_set, dtype=np.float32)
             if action_set_array.ndim != 2:
                 raise ValueError("action_set must be 2D array of shape (n_actions, action_dim)")
             self.action_set = action_set_array
+            self._prev_action_norm = np.zeros(action_set_array.shape[1], dtype=np.float32)
             self.action_space = spaces.Discrete(len(action_set_array))
         else:
             # Continuous action space for SAC/TD3/PPO
@@ -182,12 +190,34 @@ class SB3SingleAgentWrapper(gym.Env):
 
         if self.frame_stack > 1:
             self._reset_frame_buffer()
+        self._reset_action_history()
 
     def _reset_frame_buffer(self) -> None:
         if self.frame_stack > 1:
             self._frame_buffer = deque(maxlen=self.frame_stack)
         else:
             self._frame_buffer = None
+
+    def _reset_action_history(self) -> None:
+        if self.action_stack <= 0:
+            self._action_history = None
+            return
+
+        history = deque(maxlen=self.action_stack)
+        zero_action = np.zeros_like(self._prev_action_norm, dtype=np.float32)
+        for _ in range(self.action_stack):
+            history.append(zero_action.copy())
+        self._action_history = history
+
+    def _append_action_stack(self, obs: np.ndarray) -> np.ndarray:
+        if self.action_stack <= 0:
+            return obs
+        if self._action_history is None:
+            self._reset_action_history()
+        if self._action_history is None:
+            return obs
+        action_hist = np.concatenate(list(self._action_history), axis=0).astype(np.float32)
+        return np.concatenate([obs.astype(np.float32), action_hist], axis=0)
 
     def _stack_obs(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
         if self.frame_stack <= 1:
@@ -681,11 +711,13 @@ class SB3SingleAgentWrapper(gym.Env):
         self.episode_steps = 0
         self._reset_frame_buffer()
         self._prev_action_norm = np.zeros(2, dtype=np.float32)
+        self._reset_action_history()
 
         # Extract observation for controlled agent
         obs_with_prev = dict(obs_dict[self.agent_id])
         obs_with_prev["prev_action"] = self._prev_action_norm
         obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
+        obs = self._append_action_stack(obs)
         obs = self._stack_obs(obs, update=True)
         info = self._attach_spawn_metadata_to_info(info_dict.get(self.agent_id, {}))
         self._episode_count += 1
@@ -1158,6 +1190,11 @@ class SB3SingleAgentWrapper(gym.Env):
         if self.action_set is not None:
             action_idx = int(action)
             continuous_action = self.action_set[action_idx]
+            self._prev_action_norm = np.clip(
+                np.asarray(continuous_action, dtype=np.float32),
+                -1.0,
+                1.0,
+            )
         else:
             action_norm = np.asarray(action, dtype=np.float32)
             self._prev_action_norm = np.clip(action_norm, -1.0, 1.0)
@@ -1172,6 +1209,9 @@ class SB3SingleAgentWrapper(gym.Env):
                 if continuous_action[self._speed_index] > self._max_v:
                     continuous_action = continuous_action.copy()
                     continuous_action[self._speed_index] = self._max_v
+
+        if self._action_history is not None:
+            self._action_history.append(self._prev_action_norm.copy())
 
         # Build action dict for all agents
         actions = {self.agent_id: continuous_action}
@@ -1236,6 +1276,7 @@ class SB3SingleAgentWrapper(gym.Env):
         obs_with_prev = dict(obs_dict[self.agent_id])
         obs_with_prev["prev_action"] = self._prev_action_norm
         obs = self._flatten_obs(obs_with_prev, all_obs=obs_dict)
+        obs = self._append_action_stack(obs)
         obs = self._stack_obs(obs, update=True)
         info = info_dict.get(self.agent_id, {})
         info = dict(info) if isinstance(info, dict) else {}

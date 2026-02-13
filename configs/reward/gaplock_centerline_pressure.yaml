@@ -3,3 +3,21 @@ agents:
     reward:
       type: gaplock_centerline_pressure
       preset: gaplock_centerline_pressure
+      overrides:
+        gaplock_centerline_pressure:
+          # Shaping term weights.
+          centerline_weight: 1.0
+          wall_weight: 1.0
+
+          # Normalization scales for shaping terms.
+          # centerline term = clip(|lateral_error| / centerline_scale, 0, 1)
+          # wall term       = clip(1 - min_wall_dist / wall_distance_scale, 0, 1)
+          centerline_scale: 1.0
+          wall_distance_scale: 1.0
+
+          # Terminal rewards/penalties.
+          success_reward: 200.0
+          self_crash_penalty: -100.0
+          collision_penalty: -100.0
+          timeout_penalty: -50.0
+          target_finish_penalty: -50.0

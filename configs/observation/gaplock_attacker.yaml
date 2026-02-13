@@ -1,0 +1,47 @@
+agents:
+  car_0:
+    # Observation configuration for the trainable attacker.
+    observation:
+      preset: gaplock
+      overrides:
+        # LiDAR features.
+        lidar:
+          enabled: true
+          beams: 108
+          max_range: 12.0
+          normalize: true
+
+        # Ego features.
+        ego_state:
+          pose: false
+          velocity: true
+
+        # Target features (adversarial setup).
+        target_state:
+          enabled: true
+          pose: false
+          velocity: true
+
+        # Relative target pose features.
+        relative_pose:
+          enabled: true
+          dim: 5
+
+        # Optional features used by some presets/flatteners.
+        speed:
+          enabled: false
+        prev_action:
+          enabled: false
+          dim: 2
+        # Append previous normalized actions to each flattened observation.
+        # When enabled, adds `size * action_dim` features.
+        action_stack:
+          enabled: false
+          size: 3
+
+        # Observation normalization metadata.
+        normalization:
+          enabled: true
+          trainable_only: true
+
+    frame_stack: 1

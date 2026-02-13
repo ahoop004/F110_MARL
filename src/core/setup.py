@@ -470,13 +470,18 @@ def create_training_setup(
         # If observation preset specified, use flattened dimension
         if 'observation' in agent_config and isinstance(agent_config['observation'], dict):
             obs_config = agent_config['observation']
+            preset_name = None
             if 'preset' in obs_config:
                 preset_name = obs_config['preset']
+            elif '_preset' in obs_config:
+                preset_name = obs_config['_preset']
+            elif obs_config.get("speed", {}).get("enabled") or obs_config.get("prev_action", {}).get("enabled"):
+                preset_name = "centerline"
+            elif obs_config.get("target_state", {}).get("enabled"):
+                preset_name = "gaplock"
             elif len(obs_config) > 0:
                 # Expanded preset - default to gaplock
                 preset_name = 'gaplock'
-            else:
-                preset_name = None
 
             if preset_name:
                 # Create a dummy observation and flatten it to get dimension
