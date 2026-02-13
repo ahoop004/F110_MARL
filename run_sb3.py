@@ -736,6 +736,26 @@ def build_spawn_curriculum(env, scenario: Dict[str, Any], console_logger: Consol
     return spawn_curriculum, spawn_configs
 
 
+def build_ftg_curricula(
+    scenario: Dict[str, Any],
+    train_agent_id: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Collect independently toggled FTG curricula from scenario agent configs."""
+    curricula: Dict[str, Dict[str, Any]] = {}
+    for agent_id, agent_cfg in scenario.get("agents", {}).items():
+        if agent_id == train_agent_id:
+            continue
+        if str(agent_cfg.get("algorithm", "")).strip().lower() != "ftg":
+            continue
+        ftg_curriculum = agent_cfg.get("ftg_curriculum")
+        if not isinstance(ftg_curriculum, dict):
+            continue
+        if not bool(ftg_curriculum.get("enabled", False)):
+            continue
+        curricula[str(agent_id)] = dict(ftg_curriculum)
+    return curricula
+
+
 class StopOnEpisodeCallback(BaseCallback):
     """Stop training after a fixed number of episodes."""
 
@@ -800,6 +820,13 @@ class EpisodeProgressCallback(BaseCallback):
         self.last_spawn_y_max: Optional[float] = None
         self.last_spawn_y_progress: Optional[float] = None
         self.last_spawn_y_window_sr: Optional[float] = None
+        self.last_spawn_y_adjustment: Optional[str] = None
+        self.last_ftg_curriculum_agent: Optional[str] = None
+        self.last_ftg_curriculum_mode: Optional[str] = None
+        self.last_ftg_curriculum_progress: Optional[float] = None
+        self.last_ftg_curriculum_window_sr: Optional[float] = None
+        self.last_ftg_curriculum_adjustment: Optional[str] = None
+        self.last_ftg_curriculum_params: Dict[str, float] = {}
 
     def set_curriculum_callback(self, callback: Optional[CurriculumCallback]) -> None:
         self.curriculum_callback = callback
@@ -947,7 +974,46 @@ class EpisodeProgressCallback(BaseCallback):
             if self.last_spawn_y_window_sr is not None
             else ""
         )
-        return f"{pct_txt} [{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{sr_txt}"
+        adj_txt = (
+            f",adj={self.last_spawn_y_adjustment}"
+            if self.last_spawn_y_adjustment
+            else ""
+        )
+        return f"{pct_txt} y=[{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{sr_txt}{adj_txt}"
+
+    def _ftg_curriculum_status(self) -> str:
+        if self.last_ftg_curriculum_agent is None:
+            return "n/a"
+
+        mode_txt = (
+            f"{self.last_ftg_curriculum_mode} "
+            if self.last_ftg_curriculum_mode
+            else ""
+        )
+        pct_txt = (
+            f"{self.last_ftg_curriculum_progress:.1%}"
+            if self.last_ftg_curriculum_progress is not None
+            else "n/a"
+        )
+        sr_txt = (
+            f",sr={self.last_ftg_curriculum_window_sr:.1%}"
+            if self.last_ftg_curriculum_window_sr is not None
+            else ""
+        )
+        adj_txt = (
+            f",adj={self.last_ftg_curriculum_adjustment}"
+            if self.last_ftg_curriculum_adjustment
+            else ""
+        )
+        params_txt = ""
+        if self.last_ftg_curriculum_params:
+            param_parts = []
+            for key in sorted(self.last_ftg_curriculum_params.keys()):
+                value = self.last_ftg_curriculum_params[key]
+                param_parts.append(f"{key}={value:.3f}")
+            params_txt = " " + ",".join(param_parts[:3])
+
+        return f"{self.last_ftg_curriculum_agent} {mode_txt}{pct_txt}{sr_txt}{adj_txt}{params_txt}"
 
     def _on_step(self) -> bool:
         if "rewards" in self.locals:
@@ -974,6 +1040,12 @@ class EpisodeProgressCallback(BaseCallback):
             y_max = info.get("spawn_y_max")
             y_prog = info.get("spawn_y_progress")
             y_sr = info.get("spawn_y_window_sr")
+            y_adj = info.get("spawn_y_last_adjustment")
+            ftg_agent = info.get("ftg_curriculum_agent")
+            ftg_mode = info.get("ftg_curriculum_mode")
+            ftg_prog = info.get("ftg_curriculum_progress")
+            ftg_sr = info.get("ftg_curriculum_window_sr")
+            ftg_adj = info.get("ftg_curriculum_last_adjustment")
             if y_min is not None:
                 try:
                     self.last_spawn_y_min = float(y_min)
@@ -994,6 +1066,39 @@ class EpisodeProgressCallback(BaseCallback):
                     self.last_spawn_y_window_sr = float(y_sr)
                 except (TypeError, ValueError):
                     pass
+            if y_adj is not None:
+                self.last_spawn_y_adjustment = str(y_adj)
+            if ftg_agent is not None:
+                self.last_ftg_curriculum_agent = str(ftg_agent)
+            if ftg_mode is not None:
+                self.last_ftg_curriculum_mode = str(ftg_mode)
+            if ftg_prog is not None:
+                try:
+                    self.last_ftg_curriculum_progress = float(ftg_prog)
+                except (TypeError, ValueError):
+                    pass
+            if ftg_sr is not None:
+                try:
+                    self.last_ftg_curriculum_window_sr = float(ftg_sr)
+                except (TypeError, ValueError):
+                    pass
+            if ftg_adj is not None:
+                self.last_ftg_curriculum_adjustment = str(ftg_adj)
+            ftg_params: Dict[str, float] = {}
+            if isinstance(info, dict):
+                for metric_key, metric_value in info.items():
+                    if not isinstance(metric_key, str):
+                        continue
+                    if not metric_key.startswith("ftg_"):
+                        continue
+                    if metric_key.startswith("ftg_curriculum_"):
+                        continue
+                    try:
+                        ftg_params[metric_key[len("ftg_"):]] = float(metric_value)
+                    except (TypeError, ValueError):
+                        continue
+            if ftg_params:
+                self.last_ftg_curriculum_params = ftg_params
             self.episode_count += 1
             self.episode_rewards.append(float(self.current_episode_reward))
             self.episode_successes.append(success)
@@ -1023,6 +1128,7 @@ class EpisodeProgressCallback(BaseCallback):
                 f"PLoss {self._format_optional(pol_loss, '.3f')} | "
                 f"Ent {self._format_optional(ent_loss, '.3f')} | "
                 f"Curr {self._curriculum_status()} | "
+                f"FTG {self._ftg_curriculum_status()} | "
                 f"Anneal {self._anneal_status()}"
             )
             printed_rich = False
@@ -1044,7 +1150,7 @@ class EpisodeProgressCallback(BaseCallback):
                     )
                     progress_table.add_row(
                         f"[bold cyan]SpawnY[/bold cyan] {self._spawn_y_status()}",
-                        "",
+                        f"[bold cyan]FTG[/bold cyan] {self._ftg_curriculum_status()}",
                         "",
                     )
 
@@ -1292,6 +1398,7 @@ def main() -> None:
     action_high = action_space.high
 
     spawn_curriculum, spawn_configs = build_spawn_curriculum(env, scenario, console_logger)
+    ftg_curricula = build_ftg_curricula(scenario, train_agent_id)
 
     reward_strategy = reward_strategies.get(train_agent_id)
     sb3_env = SB3SingleAgentWrapper(
@@ -1308,6 +1415,7 @@ def main() -> None:
         action_repeat=action_repeat,
         action_constraints=action_constraints,
         spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
+        ftg_curriculum=ftg_curricula,
     )
 
     other_agents = {aid: agent for aid, agent in agents.items() if aid != train_agent_id}

@@ -4,7 +4,7 @@ Converts PettingZoo ParallelEnv to single-agent Gymnasium environment
 for training with SB3 algorithms (SAC, TD3, PPO).
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from collections import deque
 import numpy as np
 import gymnasium as gym
@@ -61,6 +61,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_repeat: int = 1,
         action_constraints: Optional[Dict[str, Any]] = None,
         spawn_y_curriculum: Optional[Dict[str, Any]] = None,
+        ftg_curriculum: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         super().__init__()
 
@@ -92,6 +93,16 @@ class SB3SingleAgentWrapper(gym.Env):
         )
         self._local_rng = None
         self._spawn_y_state: Dict[str, Any] = {}
+        self.ftg_curriculum = (
+            {
+                str(agent): dict(cfg)
+                for agent, cfg in ftg_curriculum.items()
+                if isinstance(cfg, dict)
+            }
+            if isinstance(ftg_curriculum, dict)
+            else {}
+        )
+        self._ftg_curriculum_state: Dict[str, Dict[str, Any]] = {}
 
         # Define observation space (Box for continuous observations)
         self.observation_space = spaces.Box(
@@ -254,14 +265,16 @@ class SB3SingleAgentWrapper(gym.Env):
             aid: agent for aid, agent in agents.items()
             if aid != self.agent_id
         }
+        self._initialize_ftg_curriculum()
 
     def _attach_spawn_metadata_to_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(info, dict):
             info = {}
-        if not self._last_spawn_info:
-            return info
-
         merged = dict(info)
+        if not self._last_spawn_info:
+            self._attach_ftg_curriculum_metadata(merged)
+            return merged
+
         spawn_mapping = self._last_spawn_info.get("spawn_points", {})
         if isinstance(spawn_mapping, dict):
             spawn_point = spawn_mapping.get(self.agent_id)
@@ -271,7 +284,303 @@ class SB3SingleAgentWrapper(gym.Env):
         y_curriculum = self._last_spawn_info.get("spawn_y_curriculum")
         if isinstance(y_curriculum, dict):
             merged.update(y_curriculum)
+        self._attach_ftg_curriculum_metadata(merged)
         return merged
+
+    def _apply_agent_params(self, agent: Any, params: Dict[str, float]) -> None:
+        if not params:
+            return
+        if hasattr(agent, "apply_config"):
+            agent.apply_config(params)
+            return
+        for key, value in params.items():
+            if hasattr(agent, key):
+                setattr(agent, key, value)
+
+    def _initialize_ftg_curriculum(self) -> None:
+        self._ftg_curriculum_state = {}
+        if not self.ftg_curriculum or not self.other_agents:
+            return
+
+        for agent_id, cfg in self.ftg_curriculum.items():
+            if not bool(cfg.get("enabled", False)):
+                continue
+            mode = str(cfg.get("mode", "success_adaptive")).strip().lower()
+            if mode != "success_adaptive":
+                continue
+
+            agent = self.other_agents.get(agent_id)
+            if agent is None:
+                continue
+
+            raw_params = cfg.get("params", {})
+            if not isinstance(raw_params, dict) or not raw_params:
+                continue
+
+            try:
+                window = max(1, int(cfg.get("window_episodes", 100)))
+                update_every = max(1, int(cfg.get("update_every_episodes", window)))
+                sr_low = float(cfg.get("sr_lower_bound", 0.85))
+                sr_high = float(cfg.get("sr_upper_bound", 0.95))
+            except (TypeError, ValueError):
+                continue
+
+            regress_enabled = bool(cfg.get("regression_enabled", False))
+            regress_trigger = float(cfg.get("regression_sr_trigger", max(0.0, sr_low - 0.20)))
+            regress_floor = float(cfg.get("regression_sr_floor", max(0.0, regress_trigger - 0.20)))
+            regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
+            regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
+
+            params_state: Dict[str, Dict[str, float]] = {}
+            start_params: Dict[str, float] = {}
+            for param_name, param_cfg in raw_params.items():
+                if not isinstance(param_cfg, dict):
+                    continue
+                if not hasattr(agent, param_name):
+                    continue
+                try:
+                    current_value = float(getattr(agent, param_name))
+                    start = float(param_cfg.get("start", current_value))
+                    final = float(param_cfg.get("final", current_value))
+                except (TypeError, ValueError):
+                    continue
+
+                delta = final - start
+                span = abs(delta)
+                if span <= 1e-9:
+                    params_state[str(param_name)] = {
+                        "start": start,
+                        "final": final,
+                        "current": final,
+                        "inc_small": 0.0,
+                        "inc_large": 0.0,
+                        "regress_small": 0.0,
+                        "regress_large": 0.0,
+                    }
+                    start_params[str(param_name)] = final
+                    continue
+
+                direction = 1.0 if delta > 0 else -1.0
+                default_inc_min = max(span * 0.05, 1e-6)
+                default_inc_max = max(span * 0.20, default_inc_min)
+
+                try:
+                    inc_min_raw = float(
+                        param_cfg.get("increment_min", cfg.get("increment_min", default_inc_min))
+                    )
+                except (TypeError, ValueError):
+                    inc_min_raw = default_inc_min
+                try:
+                    inc_max_raw = float(
+                        param_cfg.get("increment_max", cfg.get("increment_max", default_inc_max))
+                    )
+                except (TypeError, ValueError):
+                    inc_max_raw = default_inc_max
+
+                inc_small_mag = abs(inc_min_raw)
+                inc_large_mag = abs(inc_max_raw)
+                if inc_large_mag < inc_small_mag:
+                    inc_small_mag, inc_large_mag = inc_large_mag, inc_small_mag
+
+                try:
+                    regress_inc_min_raw = float(
+                        param_cfg.get(
+                            "regression_increment_min",
+                            cfg.get("regression_increment_min", abs(inc_min_raw)),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    regress_inc_min_raw = abs(inc_min_raw)
+                try:
+                    regress_inc_max_raw = float(
+                        param_cfg.get(
+                            "regression_increment_max",
+                            cfg.get("regression_increment_max", abs(inc_max_raw)),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    regress_inc_max_raw = abs(inc_max_raw)
+                regress_small_mag = abs(regress_inc_min_raw)
+                regress_large_mag = abs(regress_inc_max_raw)
+                if regress_large_mag < regress_small_mag:
+                    regress_small_mag, regress_large_mag = regress_large_mag, regress_small_mag
+
+                params_state[str(param_name)] = {
+                    "start": start,
+                    "final": final,
+                    "current": start,
+                    "inc_small": direction * inc_small_mag,
+                    "inc_large": direction * inc_large_mag,
+                    "regress_small": -direction * regress_small_mag,
+                    "regress_large": -direction * regress_large_mag,
+                }
+                start_params[str(param_name)] = start
+
+            if not params_state:
+                continue
+
+            self._apply_agent_params(agent, start_params)
+
+            self._ftg_curriculum_state[agent_id] = {
+                "mode": mode,
+                "window": window,
+                "update_every": update_every,
+                "sr_low": sr_low,
+                "sr_high": sr_high,
+                "regress_enabled": regress_enabled,
+                "regress_trigger": regress_trigger,
+                "regress_floor": regress_floor,
+                "regress_patience": regress_patience,
+                "regress_cooldown": regress_cooldown,
+                "regress_low_streak": 0,
+                "regress_cooldown_left": 0,
+                "history": deque(maxlen=window),
+                "completed_episodes": 0,
+                "last_window_sr": None,
+                "last_increment": {name: 0.0 for name in params_state.keys()},
+                "last_adjustment": "hold",
+                "params": params_state,
+            }
+
+    def _compute_ftg_progress(self, state: Dict[str, Any]) -> Optional[float]:
+        params_state = state.get("params")
+        if not isinstance(params_state, dict) or not params_state:
+            return None
+
+        progress_values: List[float] = []
+        for item in params_state.values():
+            try:
+                start = float(item["start"])
+                final = float(item["final"])
+                current = float(item["current"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            denom = final - start
+            if abs(denom) <= 1e-9:
+                progress_values.append(1.0)
+                continue
+            progress_values.append(float(np.clip((current - start) / denom, 0.0, 1.0)))
+        if not progress_values:
+            return None
+        return float(sum(progress_values) / len(progress_values))
+
+    def _attach_ftg_curriculum_metadata(self, info: Dict[str, Any]) -> None:
+        if not self._ftg_curriculum_state:
+            return
+        for agent_id in sorted(self._ftg_curriculum_state.keys()):
+            state = self._ftg_curriculum_state.get(agent_id)
+            if not isinstance(state, dict):
+                continue
+            progress = self._compute_ftg_progress(state)
+            info["ftg_curriculum_agent"] = agent_id
+            info["ftg_curriculum_mode"] = state.get("mode")
+            info["ftg_curriculum_progress"] = progress
+            info["ftg_curriculum_window_sr"] = state.get("last_window_sr")
+            info["ftg_curriculum_last_adjustment"] = state.get("last_adjustment")
+            info["ftg_curriculum_regress_low_streak"] = int(state.get("regress_low_streak", 0))
+            info["ftg_curriculum_regression_enabled"] = bool(state.get("regress_enabled", False))
+            for param_name, values in state.get("params", {}).items():
+                try:
+                    info[f"ftg_{param_name}"] = float(values.get("current"))
+                except (TypeError, ValueError):
+                    continue
+            break
+
+    def _update_success_adaptive_ftg_curriculum(self, success: bool) -> None:
+        if not self._ftg_curriculum_state:
+            return
+
+        for agent_id, state in self._ftg_curriculum_state.items():
+            if state.get("mode") != "success_adaptive":
+                continue
+            history = state.get("history")
+            if history is None:
+                continue
+            history.append(bool(success))
+            state["completed_episodes"] = int(state.get("completed_episodes", 0)) + 1
+
+            window = int(state.get("window", 100))
+            update_every = int(state.get("update_every", window))
+            completed = int(state.get("completed_episodes", 0))
+            if completed % update_every != 0:
+                continue
+            if len(history) < window:
+                continue
+
+            sr = float(sum(history) / len(history))
+            state["last_window_sr"] = sr
+
+            sr_low = float(state.get("sr_low", 0.85))
+            sr_high = float(state.get("sr_high", 0.95))
+            params_state = state.get("params", {})
+            regress_enabled = bool(state.get("regress_enabled", False))
+            if regress_enabled:
+                cooldown_left = int(state.get("regress_cooldown_left", 0))
+                if cooldown_left > 0:
+                    state["regress_cooldown_left"] = cooldown_left - 1
+                regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
+                if sr < regress_trigger:
+                    state["regress_low_streak"] = int(state.get("regress_low_streak", 0)) + 1
+                else:
+                    state["regress_low_streak"] = 0
+
+            update_mode = "hold"
+            blend = 0.0
+            step_small_key = ""
+            step_large_key = ""
+
+            if sr >= sr_low:
+                denom = max(sr_high - sr_low, 1e-9)
+                blend = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
+                update_mode = "advance"
+                step_small_key = "inc_small"
+                step_large_key = "inc_large"
+                if regress_enabled:
+                    state["regress_low_streak"] = 0
+            elif regress_enabled:
+                cooldown_left = int(state.get("regress_cooldown_left", 0))
+                regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
+                regress_floor = float(state.get("regress_floor", max(0.0, regress_trigger - 0.20)))
+                regress_patience = max(1, int(state.get("regress_patience", 1)))
+                low_streak = int(state.get("regress_low_streak", 0))
+                if sr < regress_trigger and cooldown_left <= 0 and low_streak >= regress_patience:
+                    denom = max(regress_trigger - regress_floor, 1e-9)
+                    blend = float(np.clip((regress_trigger - sr) / denom, 0.0, 1.0))
+                    update_mode = "regress"
+                    step_small_key = "regress_small"
+                    step_large_key = "regress_large"
+                    state["regress_cooldown_left"] = int(state.get("regress_cooldown", 0))
+
+            updates: Dict[str, float] = {}
+            any_change = False
+            for param_name, param_state in params_state.items():
+                if update_mode == "hold":
+                    state["last_increment"][param_name] = 0.0
+                    continue
+                try:
+                    current = float(param_state["current"])
+                    start = float(param_state["start"])
+                    final = float(param_state["final"])
+                    step_small = float(param_state[step_small_key])
+                    step_large = float(param_state[step_large_key])
+                except (KeyError, TypeError, ValueError):
+                    state["last_increment"][param_name] = 0.0
+                    continue
+
+                increment = step_small + blend * (step_large - step_small)
+                next_value = float(np.clip(current + increment, min(start, final), max(start, final)))
+                actual_delta = float(next_value - current)
+                param_state["current"] = next_value
+                state["last_increment"][param_name] = actual_delta
+                updates[param_name] = next_value
+                if abs(actual_delta) > 1e-12:
+                    any_change = True
+
+            state["last_adjustment"] = update_mode if any_change else "hold"
+
+            agent = self.other_agents.get(agent_id) if self.other_agents else None
+            if agent is not None and updates:
+                self._apply_agent_params(agent, updates)
 
     def reset(
         self,
@@ -423,12 +732,25 @@ class SB3SingleAgentWrapper(gym.Env):
             sr_low = float(cfg.get("sr_lower_bound", 0.85))
             sr_high = float(cfg.get("sr_upper_bound", 0.95))
 
+            regress_enabled = bool(cfg.get("regression_enabled", False))
+            regress_trigger = float(cfg.get("regression_sr_trigger", max(0.0, sr_low - 0.20)))
+            regress_floor = float(cfg.get("regression_sr_floor", max(0.0, regress_trigger - 0.20)))
+            regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
+            regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
+
             inc_min_raw = float(cfg.get("increment_min", -0.001))
             inc_max_raw = float(cfg.get("increment_max", -0.01))
             inc_small = -abs(inc_min_raw)
             inc_large = -abs(inc_max_raw)
             if abs(inc_large) < abs(inc_small):
                 inc_small, inc_large = inc_large, inc_small
+
+            regress_inc_min_raw = float(cfg.get("regression_increment_min", abs(inc_min_raw)))
+            regress_inc_max_raw = float(cfg.get("regression_increment_max", abs(inc_max_raw)))
+            regress_inc_small = abs(regress_inc_min_raw)
+            regress_inc_large = abs(regress_inc_max_raw)
+            if regress_inc_large < regress_inc_small:
+                regress_inc_small, regress_inc_large = regress_inc_large, regress_inc_small
 
             state["mode"] = "success_adaptive"
             state["y_upper"] = y_upper
@@ -441,10 +763,20 @@ class SB3SingleAgentWrapper(gym.Env):
             state["sr_high"] = sr_high
             state["inc_small"] = inc_small
             state["inc_large"] = inc_large
+            state["regress_enabled"] = regress_enabled
+            state["regress_trigger"] = regress_trigger
+            state["regress_floor"] = regress_floor
+            state["regress_patience"] = regress_patience
+            state["regress_cooldown"] = regress_cooldown
+            state["regress_inc_small"] = regress_inc_small
+            state["regress_inc_large"] = regress_inc_large
+            state["regress_low_streak"] = 0
+            state["regress_cooldown_left"] = 0
             state["history"] = deque(maxlen=window)
             state["completed_episodes"] = 0
             state["last_window_sr"] = None
             state["last_increment"] = 0.0
+            state["last_adjustment"] = "hold"
 
         y_upper = float(state["y_upper"])
         y_lower = float(state["y_lower"])
@@ -462,6 +794,9 @@ class SB3SingleAgentWrapper(gym.Env):
             "spawn_y_window_sr": state.get("last_window_sr"),
             "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
             "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
+            "spawn_y_last_adjustment": str(state.get("last_adjustment", "hold")),
+            "spawn_y_regress_low_streak": int(state.get("regress_low_streak", 0)),
+            "spawn_y_regression_enabled": bool(state.get("regress_enabled", False)),
         }
         return y_lower, y_upper, progress, extra_meta
 
@@ -490,20 +825,63 @@ class SB3SingleAgentWrapper(gym.Env):
 
         sr_low = float(state.get("sr_low", 0.85))
         sr_high = float(state.get("sr_high", 0.95))
-        if sr < sr_low:
-            state["last_increment"] = 0.0
-            return
-
-        denom = max(sr_high - sr_low, 1e-9)
-        alpha = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
-        inc_small = float(state.get("inc_small", -0.001))
-        inc_large = float(state.get("inc_large", -0.01))
-        increment = inc_small + alpha * (inc_large - inc_small)
 
         y_lower = float(state.get("y_lower", state.get("y_lower_start", 0.0)))
+        y_lower_start = float(state.get("y_lower_start", y_lower))
         y_lower_bound = float(state.get("y_lower_bound", -1.0))
-        state["y_lower"] = max(y_lower_bound, y_lower + increment)
-        state["last_increment"] = float(increment)
+
+        increment = 0.0
+        adjustment = "hold"
+        regress_enabled = bool(state.get("regress_enabled", False))
+
+        if regress_enabled:
+            cooldown_left = int(state.get("regress_cooldown_left", 0))
+            if cooldown_left > 0:
+                state["regress_cooldown_left"] = cooldown_left - 1
+            regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
+            if sr < regress_trigger:
+                state["regress_low_streak"] = int(state.get("regress_low_streak", 0)) + 1
+            else:
+                state["regress_low_streak"] = 0
+
+        if sr >= sr_low:
+            denom = max(sr_high - sr_low, 1e-9)
+            alpha = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
+            inc_small = float(state.get("inc_small", -0.001))
+            inc_large = float(state.get("inc_large", -0.01))
+            increment = inc_small + alpha * (inc_large - inc_small)
+            adjustment = "advance"
+            if regress_enabled:
+                state["regress_low_streak"] = 0
+        elif regress_enabled:
+            cooldown_left = int(state.get("regress_cooldown_left", 0))
+            regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
+            regress_floor = float(state.get("regress_floor", max(0.0, regress_trigger - 0.20)))
+            regress_patience = max(1, int(state.get("regress_patience", 1)))
+            low_streak = int(state.get("regress_low_streak", 0))
+            if sr < regress_trigger and cooldown_left <= 0 and low_streak >= regress_patience:
+                denom = max(regress_trigger - regress_floor, 1e-9)
+                beta = float(np.clip((regress_trigger - sr) / denom, 0.0, 1.0))
+                regress_inc_small = float(state.get("regress_inc_small", 0.001))
+                regress_inc_large = float(state.get("regress_inc_large", 0.01))
+                increment = regress_inc_small + beta * (regress_inc_large - regress_inc_small)
+                adjustment = "regress"
+                state["regress_cooldown_left"] = int(state.get("regress_cooldown", 0))
+
+        if increment < 0.0:
+            next_y = max(y_lower_bound, y_lower + increment)
+        elif increment > 0.0:
+            next_y = min(y_lower_start, y_lower + increment)
+        else:
+            next_y = y_lower
+
+        actual_increment = float(next_y - y_lower)
+        state["y_lower"] = float(next_y)
+        state["last_increment"] = actual_increment
+        if abs(actual_increment) <= 1e-12:
+            state["last_adjustment"] = "hold"
+        else:
+            state["last_adjustment"] = adjustment
 
     def _refresh_spawn_y_runtime_metadata(self) -> None:
         if not self._last_spawn_info:
@@ -537,6 +915,9 @@ class SB3SingleAgentWrapper(gym.Env):
                 "spawn_y_window_sr": state.get("last_window_sr"),
                 "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
                 "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
+                "spawn_y_last_adjustment": str(state.get("last_adjustment", "hold")),
+                "spawn_y_regress_low_streak": int(state.get("regress_low_streak", 0)),
+                "spawn_y_regression_enabled": bool(state.get("regress_enabled", False)),
             }
         )
 
@@ -674,6 +1055,7 @@ class SB3SingleAgentWrapper(gym.Env):
                 info["outcome"] = outcome.value
                 info['is_success'] = outcome.is_success()
             self._update_success_adaptive_spawn_y(bool(info.get("is_success", False)))
+            self._update_success_adaptive_ftg_curriculum(bool(info.get("is_success", False)))
             self._refresh_spawn_y_runtime_metadata()
 
         if reward_components:

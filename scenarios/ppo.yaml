@@ -26,6 +26,14 @@ environment:
     sr_upper_bound: 0.95
     increment_min: -0.001
     increment_max: -0.01
+    # auto-regress when curriculum gets too hard
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.002
+    regression_increment_max: 0.02
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
 evaluation:
   enabled: false
   frequency: 0
@@ -68,6 +76,37 @@ agents:
       batch_size: 64
     observation:
       preset: gaplock
+  car_1:
+    ftg_curriculum:
+      enabled: false
+      mode: success_adaptive
+      # update FTG parameters every N episodes from rolling success
+      window_episodes: 100
+      update_every_episodes: 100
+      # map SR in [sr_lower_bound, sr_upper_bound] -> parameter increments
+      sr_lower_bound: 0.85
+      sr_upper_bound: 0.95
+      # auto-regress FTG when attacker success drops
+      regression_enabled: true
+      regression_sr_trigger: 0.70
+      regression_sr_floor: 0.40
+      regression_patience_updates: 2
+      regression_cooldown_updates: 1
+      params:
+        steering_gain:
+          start: 0.35
+          final: 0.60
+          increment_min: 0.005
+          increment_max: 0.03
+          regression_increment_min: 0.005
+          regression_increment_max: 0.03
+        bubble_radius:
+          start: 3.0
+          final: 3.5
+          increment_min: 0.02
+          increment_max: 0.10
+          regression_increment_min: 0.02
+          regression_increment_max: 0.10
 wandb:
   enabled: true
   project: marl-f110
