@@ -11,6 +11,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from src.core.obs_flatten import flatten_observation
+from src.core.adaptive_controller import AdaptiveScalarController
 from src.rewards.base import RewardStrategy
 from src.metrics.outcomes import determine_outcome
 
@@ -92,7 +93,8 @@ class SB3SingleAgentWrapper(gym.Env):
             else None
         )
         self._local_rng = None
-        self._spawn_y_state: Dict[str, Any] = {}
+        self._spawn_y_controller: Optional[AdaptiveScalarController] = None
+        self._spawn_y_context: Dict[str, float] = {}
         self.ftg_curriculum = (
             {
                 str(agent): dict(cfg)
@@ -716,8 +718,8 @@ class SB3SingleAgentWrapper(gym.Env):
         poses: np.ndarray,
         agent_idx: int,
     ) -> Tuple[float, float, float, Dict[str, Any]]:
-        state = self._spawn_y_state
-        if "mode" not in state:
+        controller = self._spawn_y_controller
+        if controller is None:
             y_ref = float(poses[agent_idx, 1])
             y_upper_cfg = float(cfg.get("y_upper", cfg.get("y_start", y_ref)))
             y_lower_start_cfg = float(cfg.get("y_lower_start", cfg.get("y_start", y_ref)))
@@ -752,136 +754,55 @@ class SB3SingleAgentWrapper(gym.Env):
             if regress_inc_large < regress_inc_small:
                 regress_inc_small, regress_inc_large = regress_inc_large, regress_inc_small
 
-            state["mode"] = "success_adaptive"
-            state["y_upper"] = y_upper
-            state["y_lower_start"] = y_lower_start
-            state["y_lower_bound"] = y_lower_bound
-            state["y_lower"] = y_lower_start
-            state["window"] = window
-            state["update_every"] = update_every
-            state["sr_low"] = sr_low
-            state["sr_high"] = sr_high
-            state["inc_small"] = inc_small
-            state["inc_large"] = inc_large
-            state["regress_enabled"] = regress_enabled
-            state["regress_trigger"] = regress_trigger
-            state["regress_floor"] = regress_floor
-            state["regress_patience"] = regress_patience
-            state["regress_cooldown"] = regress_cooldown
-            state["regress_inc_small"] = regress_inc_small
-            state["regress_inc_large"] = regress_inc_large
-            state["regress_low_streak"] = 0
-            state["regress_cooldown_left"] = 0
-            state["history"] = deque(maxlen=window)
-            state["completed_episodes"] = 0
-            state["last_window_sr"] = None
-            state["last_increment"] = 0.0
-            state["last_adjustment"] = "hold"
+            controller = AdaptiveScalarController(
+                initial_value=y_lower_start,
+                value_min=y_lower_bound,
+                value_max=y_lower_start,
+                window_size=window,
+                update_every=update_every,
+                advance_sr_low=sr_low,
+                advance_sr_high=sr_high,
+                advance_step_min=inc_small,
+                advance_step_max=inc_large,
+                regression_enabled=regress_enabled,
+                regression_sr_trigger=regress_trigger,
+                regression_sr_floor=regress_floor,
+                regression_step_min=regress_inc_small,
+                regression_step_max=regress_inc_large,
+                regression_patience_updates=regress_patience,
+                regression_cooldown_updates=regress_cooldown,
+                progress_start=y_lower_start,
+                progress_end=y_lower_bound,
+            )
+            self._spawn_y_controller = controller
+            self._spawn_y_context = {
+                "y_upper": float(y_upper),
+                "y_lower_start": float(y_lower_start),
+                "y_lower_bound": float(y_lower_bound),
+            }
 
-        y_upper = float(state["y_upper"])
-        y_lower = float(state["y_lower"])
-        y_lower_start = float(state["y_lower_start"])
-        y_lower_bound = float(state["y_lower_bound"])
-
-        denom = (y_lower_start - y_lower_bound)
-        if denom <= 1e-9:
-            progress = 1.0
-        else:
-            progress = (y_lower_start - y_lower) / denom
-            progress = float(np.clip(progress, 0.0, 1.0))
+        y_upper = float(self._spawn_y_context.get("y_upper", poses[agent_idx, 1]))
+        y_lower = float(controller.value)
+        progress = controller.progress()
+        if progress is None:
+            progress = 0.0
 
         extra_meta = {
-            "spawn_y_window_sr": state.get("last_window_sr"),
-            "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
-            "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
-            "spawn_y_last_adjustment": str(state.get("last_adjustment", "hold")),
-            "spawn_y_regress_low_streak": int(state.get("regress_low_streak", 0)),
-            "spawn_y_regression_enabled": bool(state.get("regress_enabled", False)),
+            "spawn_y_window_sr": controller.last_window_sr,
+            "spawn_y_last_increment": float(controller.last_delta),
+            "spawn_y_completed_episodes": int(controller.completed_events),
+            "spawn_y_last_adjustment": str(controller.last_adjustment),
+            "spawn_y_regress_low_streak": int(controller.regression_low_streak),
+            "spawn_y_regression_enabled": bool(controller.regression_enabled),
         }
         return y_lower, y_upper, progress, extra_meta
 
     def _update_success_adaptive_spawn_y(self, success: bool) -> None:
         cfg = self.spawn_y_curriculum
-        state = self._spawn_y_state
-        if not cfg or state.get("mode") != "success_adaptive":
+        controller = self._spawn_y_controller
+        if not cfg or controller is None:
             return
-
-        history = state.get("history")
-        if history is None:
-            return
-        history.append(bool(success))
-        state["completed_episodes"] = int(state.get("completed_episodes", 0)) + 1
-
-        window = int(state.get("window", 100))
-        update_every = int(state.get("update_every", window))
-        completed = int(state.get("completed_episodes", 0))
-        if completed % update_every != 0:
-            return
-        if len(history) < window:
-            return
-
-        sr = float(sum(history) / len(history))
-        state["last_window_sr"] = sr
-
-        sr_low = float(state.get("sr_low", 0.85))
-        sr_high = float(state.get("sr_high", 0.95))
-
-        y_lower = float(state.get("y_lower", state.get("y_lower_start", 0.0)))
-        y_lower_start = float(state.get("y_lower_start", y_lower))
-        y_lower_bound = float(state.get("y_lower_bound", -1.0))
-
-        increment = 0.0
-        adjustment = "hold"
-        regress_enabled = bool(state.get("regress_enabled", False))
-
-        if regress_enabled:
-            cooldown_left = int(state.get("regress_cooldown_left", 0))
-            if cooldown_left > 0:
-                state["regress_cooldown_left"] = cooldown_left - 1
-            regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
-            if sr < regress_trigger:
-                state["regress_low_streak"] = int(state.get("regress_low_streak", 0)) + 1
-            else:
-                state["regress_low_streak"] = 0
-
-        if sr >= sr_low:
-            denom = max(sr_high - sr_low, 1e-9)
-            alpha = float(np.clip((sr - sr_low) / denom, 0.0, 1.0))
-            inc_small = float(state.get("inc_small", -0.001))
-            inc_large = float(state.get("inc_large", -0.01))
-            increment = inc_small + alpha * (inc_large - inc_small)
-            adjustment = "advance"
-            if regress_enabled:
-                state["regress_low_streak"] = 0
-        elif regress_enabled:
-            cooldown_left = int(state.get("regress_cooldown_left", 0))
-            regress_trigger = float(state.get("regress_trigger", max(0.0, sr_low - 0.20)))
-            regress_floor = float(state.get("regress_floor", max(0.0, regress_trigger - 0.20)))
-            regress_patience = max(1, int(state.get("regress_patience", 1)))
-            low_streak = int(state.get("regress_low_streak", 0))
-            if sr < regress_trigger and cooldown_left <= 0 and low_streak >= regress_patience:
-                denom = max(regress_trigger - regress_floor, 1e-9)
-                beta = float(np.clip((regress_trigger - sr) / denom, 0.0, 1.0))
-                regress_inc_small = float(state.get("regress_inc_small", 0.001))
-                regress_inc_large = float(state.get("regress_inc_large", 0.01))
-                increment = regress_inc_small + beta * (regress_inc_large - regress_inc_small)
-                adjustment = "regress"
-                state["regress_cooldown_left"] = int(state.get("regress_cooldown", 0))
-
-        if increment < 0.0:
-            next_y = max(y_lower_bound, y_lower + increment)
-        elif increment > 0.0:
-            next_y = min(y_lower_start, y_lower + increment)
-        else:
-            next_y = y_lower
-
-        actual_increment = float(next_y - y_lower)
-        state["y_lower"] = float(next_y)
-        state["last_increment"] = actual_increment
-        if abs(actual_increment) <= 1e-12:
-            state["last_adjustment"] = "hold"
-        else:
-            state["last_adjustment"] = adjustment
+        controller.observe(bool(success))
 
     def _refresh_spawn_y_runtime_metadata(self) -> None:
         if not self._last_spawn_info:
@@ -890,34 +811,26 @@ class SB3SingleAgentWrapper(gym.Env):
         if not isinstance(y_curriculum, dict):
             return
 
-        state = self._spawn_y_state
-        if state.get("mode") != "success_adaptive":
+        controller = self._spawn_y_controller
+        if controller is None:
             return
-        try:
-            y_upper = float(state["y_upper"])
-            y_lower = float(state["y_lower"])
-            y_lower_start = float(state["y_lower_start"])
-            y_lower_bound = float(state["y_lower_bound"])
-        except (KeyError, TypeError, ValueError):
-            return
-
-        denom = (y_lower_start - y_lower_bound)
-        if denom <= 1e-9:
-            progress = 1.0
-        else:
-            progress = float(np.clip((y_lower_start - y_lower) / denom, 0.0, 1.0))
+        y_upper = float(self._spawn_y_context.get("y_upper", y_curriculum.get("spawn_y_max", 0.0)))
+        y_lower = float(controller.value)
+        progress = controller.progress()
+        if progress is None:
+            progress = 0.0
 
         y_curriculum.update(
             {
                 "spawn_y_min": y_lower,
                 "spawn_y_max": y_upper,
                 "spawn_y_progress": progress,
-                "spawn_y_window_sr": state.get("last_window_sr"),
-                "spawn_y_last_increment": float(state.get("last_increment", 0.0)),
-                "spawn_y_completed_episodes": int(state.get("completed_episodes", 0)),
-                "spawn_y_last_adjustment": str(state.get("last_adjustment", "hold")),
-                "spawn_y_regress_low_streak": int(state.get("regress_low_streak", 0)),
-                "spawn_y_regression_enabled": bool(state.get("regress_enabled", False)),
+                "spawn_y_window_sr": controller.last_window_sr,
+                "spawn_y_last_increment": float(controller.last_delta),
+                "spawn_y_completed_episodes": int(controller.completed_events),
+                "spawn_y_last_adjustment": str(controller.last_adjustment),
+                "spawn_y_regress_low_streak": int(controller.regression_low_streak),
+                "spawn_y_regression_enabled": bool(controller.regression_enabled),
             }
         )
 
