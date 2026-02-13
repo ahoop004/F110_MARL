@@ -15,7 +15,8 @@ environment:
   action_repeat: 3
   curriculum_orchestrator:
     enabled: false
-    order: [y, x, ftg, lr, clip, ent]
+    order: [y, ftg, x,]
+    # order: [y, ftg, x,  lr, clip, ent]
     trigger_threshold: 1.0
     stable_updates_required: 2
     allow_backtrack: true
@@ -26,23 +27,23 @@ environment:
     enabled: false
     mode: success_adaptive
     # x sampled each episode from [current_lower, x_upper]
-    x_upper: 0.0
-    x_lower_start: 0.0
-    x_lower_bound: -1.0
+    x_upper: -46.769
+    x_lower_start: -46.75
+    x_lower_bound: -43.5
     # update lower bound every N episodes using rolling success
     window_episodes: 200
     update_every_episodes: 50
     # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
     sr_lower_bound: 0.85
     sr_upper_bound: 0.95
-    increment_min: -0.005
-    increment_max: -0.025
+    increment_min: 0.02
+    increment_max: 0.08
     # auto-regress when curriculum gets too hard
     regression_enabled: true
     regression_sr_trigger: 0.70
     regression_sr_floor: 0.40
-    regression_increment_min: 0.005
-    regression_increment_max: 0.025
+    regression_increment_min: 0.02
+    regression_increment_max: 0.08
     regression_patience_updates: 2
     regression_cooldown_updates: 1
   spawn_y_curriculum:
@@ -157,32 +158,39 @@ agents:
       enabled: false
       mode: success_adaptive
       # update FTG parameters every N episodes from rolling success
-      window_episodes: 100
-      update_every_episodes: 100
+      window_episodes: 200
+      update_every_episodes: 50
       # map SR in [sr_lower_bound, sr_upper_bound] -> parameter increments
-      sr_lower_bound: 0.85
-      sr_upper_bound: 0.95
+      sr_lower_bound: 0.90
+      sr_upper_bound: 0.99
       # auto-regress FTG when attacker success drops
       regression_enabled: true
-      regression_sr_trigger: 0.70
+      regression_sr_trigger: 0.85
       regression_sr_floor: 0.40
       regression_patience_updates: 2
       regression_cooldown_updates: 1
       params:
         steering_gain:
           start: 0.35
-          final: 0.60
-          increment_min: 0.005
-          increment_max: 0.03
-          regression_increment_min: 0.005
-          regression_increment_max: 0.03
+          final: 0.80
+          increment_min: 0.01
+          increment_max: 0.05
+          regression_increment_min: 0.01
+          regression_increment_max: 0.05
         bubble_radius:
           start: 3.0
-          final: 3.5
-          increment_min: 0.02
-          increment_max: 0.10
-          regression_increment_min: 0.02
-          regression_increment_max: 0.10
+          final: 4.5
+          increment_min: 0.05
+          increment_max: 0.20
+          regression_increment_min: 0.05
+          regression_increment_max: 0.20
+        max_speed:
+          start: 0.8
+          final: 0.95
+          increment_min: 0.005
+          increment_max: 0.02
+          regression_increment_min: 0.005
+          regression_increment_max: 0.02
 wandb:
   enabled: true
   project: marl-f110
