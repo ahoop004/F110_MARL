@@ -1583,32 +1583,25 @@ def main() -> None:
     console_logger.print_info("Starting SB3 on-policy training...")
     try:
         model.learn(total_timesteps=total_timesteps, callback=callback)
-        if anneal_guard_callback is None:
-            console_logger.print_warning("Skipping end-of-run model save: annealing guard callback not active.")
-        elif not anneal_guard_callback.is_post_anneal_stable():
-            threshold = anneal_guard_callback.monitor_threshold()
-            activation_episode = anneal_guard_callback.activation_episode
-            min_rate = anneal_guard_callback.post_anneal_min_rate
-            if activation_episode is None:
-                console_logger.print_warning(
-                    "Skipping end-of-run model save: annealing phase was never reached."
-                )
-            else:
-                threshold_str = f"{threshold:.1%}" if threshold is not None else "N/A"
-                min_rate_str = f"{min_rate:.1%}" if min_rate is not None else "N/A"
-                console_logger.print_warning(
-                    "Skipping end-of-run model save: post-anneal success floor not maintained "
-                    f"(threshold={threshold_str}, min_rolling={min_rate_str})."
-                )
-        else:
+        experiment_cfg = scenario.get("experiment", {})
+        save_model_at_end = bool(experiment_cfg.get("save_model_at_end", True))
+        if save_model_at_end:
             out_dir = ROOT_DIR / "outputs" / "best_sb3" / scenario["experiment"]["name"]
             out_dir.mkdir(parents=True, exist_ok=True)
-            model_path = out_dir / f"{run_id}_anneal85"
+            model_name_raw = experiment_cfg.get("save_model_name")
+            if isinstance(model_name_raw, str) and model_name_raw.strip():
+                model_name = model_name_raw.strip()
+            else:
+                model_name = f"{run_id}_final"
+            if model_name.endswith(".zip"):
+                model_name = model_name[:-4]
+            model_path = out_dir / model_name
             model.save(str(model_path))
             console_logger.print_success(
-                f"Saved gated best model: {model_path}.zip "
-                f"(anneal reached at episode {anneal_guard_callback.activation_episode})."
+                f"Saved end-of-run model: {model_path}.zip"
             )
+        else:
+            console_logger.print_info("Skipping end-of-run model save: experiment.save_model_at_end=false.")
     finally:
         if wandb_logger:
             wandb_logger.finish()

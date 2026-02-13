@@ -8,6 +8,8 @@ experiment:
   name: ppo
   episodes: 10000
   seed: 42
+  save_model_at_end: true
+  # save_model_name: ppo_final
 environment:
   max_steps: 2700
   action_repeat: 3
@@ -17,7 +19,7 @@ environment:
     # y sampled each episode from [current_lower, y_upper]
     y_upper: 0.07689
     y_lower_start: 0.0768
-    y_lower_bound: -1.0
+    y_lower_bound: -1.4
     # update lower bound every N episodes using rolling success
     window_episodes: 100
     update_every_episodes: 100
@@ -68,7 +70,7 @@ agents:
       max_grad_norm: 0.5
       vf_coef: 0.5
       normalize_advantage: true
-      ent_coef: 0.0
+      ent_coef: 0.01
       activation: relu
       hidden_dims:
       - 256
