@@ -21,19 +21,19 @@ environment:
     y_lower_start: 0.0768
     y_lower_bound: -1.4
     # update lower bound every N episodes using rolling success
-    window_episodes: 100
-    update_every_episodes: 100
+    window_episodes: 200
+    update_every_episodes: 50
     # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
     sr_lower_bound: 0.85
     sr_upper_bound: 0.95
-    increment_min: -0.001
-    increment_max: -0.01
+    increment_min: -0.005
+    increment_max: -0.025
     # auto-regress when curriculum gets too hard
     regression_enabled: true
     regression_sr_trigger: 0.70
     regression_sr_floor: 0.40
-    regression_increment_min: 0.002
-    regression_increment_max: 0.02
+    regression_increment_min: 0.005
+    regression_increment_max: 0.025
     regression_patience_updates: 2
     regression_cooldown_updates: 1
 evaluation:
