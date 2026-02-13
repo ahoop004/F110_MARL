@@ -103,6 +103,16 @@ class SB3SingleAgentWrapper(gym.Env):
         self._spawn_x_context: Dict[str, float] = {}
         self._spawn_y_controller: Optional[AdaptiveScalarController] = None
         self._spawn_y_context: Dict[str, float] = {}
+        self._spawn_x_stage_mode = (
+            "active"
+            if self.spawn_x_curriculum and bool(self.spawn_x_curriculum.get("enabled", False))
+            else "off"
+        )
+        self._spawn_y_stage_mode = (
+            "active"
+            if self.spawn_y_curriculum and bool(self.spawn_y_curriculum.get("enabled", False))
+            else "off"
+        )
         self.ftg_curriculum = (
             {
                 str(agent): dict(cfg)
@@ -111,6 +121,11 @@ class SB3SingleAgentWrapper(gym.Env):
             }
             if isinstance(ftg_curriculum, dict)
             else {}
+        )
+        self._ftg_stage_mode = (
+            "active"
+            if any(bool(cfg.get("enabled", False)) for cfg in self.ftg_curriculum.values())
+            else "off"
         )
         self._ftg_curriculum_state: Dict[str, Dict[str, Any]] = {}
 
@@ -300,6 +315,89 @@ class SB3SingleAgentWrapper(gym.Env):
         self._attach_ftg_curriculum_metadata(merged)
         return merged
 
+    @staticmethod
+    def _normalize_stage_mode(mode: str) -> str:
+        mode_key = str(mode).strip().lower()
+        if mode_key in {"active", "on"}:
+            return "active"
+        if mode_key in {"frozen", "freeze", "hold", "locked"}:
+            return "frozen"
+        return "off"
+
+    @staticmethod
+    def _normalize_stage_key(stage: str) -> str:
+        key = str(stage).strip().lower()
+        aliases = {
+            "spawn_y": "y",
+            "y_spawn": "y",
+            "spawn_x": "x",
+            "x_spawn": "x",
+            "ftg_curriculum": "ftg",
+        }
+        return aliases.get(key, key)
+
+    def has_curriculum_stage(self, stage: str) -> bool:
+        key = self._normalize_stage_key(stage)
+        if key == "x":
+            return bool(self.spawn_x_curriculum)
+        if key == "y":
+            return bool(self.spawn_y_curriculum)
+        if key == "ftg":
+            return bool(self._ftg_curriculum_state)
+        return False
+
+    def get_curriculum_stage_progress(self, stage: str) -> Optional[float]:
+        key = self._normalize_stage_key(stage)
+        if key == "x":
+            if self._spawn_x_controller is None:
+                return 0.0 if self.has_curriculum_stage("x") else None
+            return self._spawn_x_controller.progress()
+        if key == "y":
+            if self._spawn_y_controller is None:
+                return 0.0 if self.has_curriculum_stage("y") else None
+            return self._spawn_y_controller.progress()
+        if key == "ftg":
+            if not self._ftg_curriculum_state:
+                return None
+            for state in self._ftg_curriculum_state.values():
+                progress = self._compute_ftg_progress(state)
+                if progress is not None:
+                    return progress
+            return None
+        return None
+
+    def set_curriculum_stage_mode(self, stage: str, mode: str) -> None:
+        key = self._normalize_stage_key(stage)
+        normalized_mode = self._normalize_stage_mode(mode)
+        if key == "x":
+            self._spawn_x_stage_mode = normalized_mode
+            if normalized_mode == "off" and self._spawn_x_controller is not None:
+                self._spawn_x_controller.reset()
+            return
+        if key == "y":
+            self._spawn_y_stage_mode = normalized_mode
+            if normalized_mode == "off" and self._spawn_y_controller is not None:
+                self._spawn_y_controller.reset()
+            return
+        if key != "ftg":
+            return
+
+        self._ftg_stage_mode = normalized_mode
+        for agent_id, state in self._ftg_curriculum_state.items():
+            params_state = state.get("params", {})
+            if not isinstance(params_state, dict):
+                continue
+            updates: Dict[str, float] = {}
+            for param_name, controller in params_state.items():
+                if not isinstance(controller, AdaptiveScalarController):
+                    continue
+                if normalized_mode == "off":
+                    controller.reset()
+                updates[param_name] = float(controller.value)
+            agent = self.other_agents.get(agent_id) if self.other_agents else None
+            if agent is not None and updates:
+                self._apply_agent_params(agent, updates)
+
     def _apply_agent_params(self, agent: Any, params: Dict[str, float]) -> None:
         if not params:
             return
@@ -469,6 +567,8 @@ class SB3SingleAgentWrapper(gym.Env):
         return float(sum(progress_values) / len(progress_values))
 
     def _attach_ftg_curriculum_metadata(self, info: Dict[str, Any]) -> None:
+        if self._ftg_stage_mode == "off":
+            return
         if not self._ftg_curriculum_state:
             return
         for agent_id in sorted(self._ftg_curriculum_state.keys()):
@@ -499,6 +599,8 @@ class SB3SingleAgentWrapper(gym.Env):
             break
 
     def _update_success_adaptive_ftg_curriculum(self, success: bool) -> None:
+        if self._ftg_stage_mode != "active":
+            return
         if not self._ftg_curriculum_state:
             return
 
@@ -604,7 +706,9 @@ class SB3SingleAgentWrapper(gym.Env):
         base: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         cfg = self.spawn_y_curriculum
-        if not cfg or not bool(cfg.get("enabled", True)):
+        if self._spawn_y_stage_mode == "off":
+            return base
+        if not cfg:
             return base
 
         poses = None
@@ -697,7 +801,9 @@ class SB3SingleAgentWrapper(gym.Env):
         base: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         cfg = self.spawn_x_curriculum
-        if not cfg or not bool(cfg.get("enabled", True)):
+        if self._spawn_x_stage_mode == "off":
+            return base
+        if not cfg:
             return base
 
         poses = None
@@ -957,6 +1063,8 @@ class SB3SingleAgentWrapper(gym.Env):
     def _update_success_adaptive_spawn_y(self, success: bool) -> None:
         cfg = self.spawn_y_curriculum
         controller = self._spawn_y_controller
+        if self._spawn_y_stage_mode != "active":
+            return
         if not cfg or controller is None:
             return
         controller.observe(bool(success))
@@ -964,6 +1072,8 @@ class SB3SingleAgentWrapper(gym.Env):
     def _update_success_adaptive_spawn_x(self, success: bool) -> None:
         cfg = self.spawn_x_curriculum
         controller = self._spawn_x_controller
+        if self._spawn_x_stage_mode != "active":
+            return
         if not cfg or controller is None:
             return
         controller.observe(bool(success))

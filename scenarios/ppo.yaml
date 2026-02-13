@@ -13,6 +13,15 @@ experiment:
 environment:
   max_steps: 2700
   action_repeat: 3
+  curriculum_orchestrator:
+    enabled: false
+    order: [y, x, ftg, lr, clip, ent]
+    trigger_threshold: 1.0
+    stable_updates_required: 2
+    allow_backtrack: true
+    backtrack_success_threshold: 0.65
+    backtrack_window_episodes: 100
+    backtrack_patience_updates: 2
   spawn_x_curriculum:
     enabled: false
     mode: success_adaptive
@@ -125,8 +134,8 @@ agents:
         final: 0.002
         window_episodes: 200
         update_every_episodes: 50
-        sr_lower_bound: 0.85
-        sr_upper_bound: 0.95
+        sr_lower_bound: 0.90
+        sr_upper_bound: 0.99
         increment_min: 0.0002
         increment_max: 0.001
         regression_enabled: true

@@ -42,7 +42,8 @@ class AdaptiveScalarController:
     ):
         self.value_min = float(min(value_min, value_max))
         self.value_max = float(max(value_min, value_max))
-        self.value = float(np.clip(initial_value, self.value_min, self.value_max))
+        self.initial_value = float(np.clip(initial_value, self.value_min, self.value_max))
+        self.value = float(self.initial_value)
 
         self.window_size = max(1, int(window_size))
         self.update_every = max(1, int(update_every))
@@ -164,3 +165,15 @@ class AdaptiveScalarController:
 
         return True
 
+    def reset(self, value: Optional[float] = None, clear_history: bool = True) -> None:
+        """Reset controller state, optionally overriding reset value."""
+        reset_value = self.initial_value if value is None else float(value)
+        self.value = float(np.clip(reset_value, self.value_min, self.value_max))
+        self.last_delta = 0.0
+        self.last_adjustment = "hold"
+        self.last_window_sr = None
+        self.regression_low_streak = 0
+        self.regression_cooldown_left = 0
+        if clear_history:
+            self.history.clear()
+            self.completed_events = 0

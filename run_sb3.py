@@ -937,6 +937,7 @@ class EpisodeProgressCallback(BaseCallback):
         self.episode_successes: Deque[bool] = deque(maxlen=self.window_size)
         self.episode_lengths: Deque[int] = deque(maxlen=self.window_size)
         self.curriculum_callback: Optional[CurriculumCallback] = None
+        self.orchestrator_callback: Optional["OrderedCurriculumOrchestratorCallback"] = None
         self.anneal_callback: Optional["AnnealOnSuccessRateCallback"] = None
         self.adaptive_hparam_callback: Optional["AdaptiveHyperparamCallback"] = None
         self.spawn_x_curriculum_config: Optional[Dict[str, Any]] = None
@@ -960,6 +961,12 @@ class EpisodeProgressCallback(BaseCallback):
 
     def set_curriculum_callback(self, callback: Optional[CurriculumCallback]) -> None:
         self.curriculum_callback = callback
+
+    def set_orchestrator_callback(
+        self,
+        callback: Optional["OrderedCurriculumOrchestratorCallback"],
+    ) -> None:
+        self.orchestrator_callback = callback
 
     def set_anneal_callback(self, callback: Optional["AnnealOnSuccessRateCallback"]) -> None:
         self.anneal_callback = callback
@@ -1032,6 +1039,10 @@ class EpisodeProgressCallback(BaseCallback):
         return format(value, fmt)
 
     def _curriculum_status(self) -> str:
+        orchestrator = self.orchestrator_callback
+        if orchestrator is not None and orchestrator.has_order():
+            return orchestrator.status_text()
+
         callback = self.curriculum_callback
         if callback is None:
             parts: List[str] = []
@@ -1424,6 +1435,299 @@ class EpisodeProgressCallback(BaseCallback):
         return True
 
 
+class OrderedCurriculumOrchestratorCallback(BaseCallback):
+    """Gate curriculum/schedule stages by ordered completion with optional backtracking."""
+
+    STAGE_ALIASES: Dict[str, str] = {
+        "x": "x",
+        "spawn_x": "x",
+        "x_spawn": "x",
+        "y": "y",
+        "spawn_y": "y",
+        "y_spawn": "y",
+        "ftg": "ftg",
+        "learning_rate": "learning_rate",
+        "lr": "learning_rate",
+        "clip": "clip_range",
+        "clip_range": "clip_range",
+        "ent": "ent_coef",
+        "ent_coef": "ent_coef",
+    }
+
+    INFO_PROGRESS_KEYS: Dict[str, str] = {
+        "x": "spawn_x_progress",
+        "y": "spawn_y_progress",
+        "ftg": "ftg_curriculum_progress",
+    }
+    SUPPORTED_STAGES = ["x", "y", "ftg", "learning_rate", "clip_range", "ent_coef"]
+
+    def __init__(
+        self,
+        *,
+        order: List[str],
+        trigger_threshold: float = 1.0,
+        stable_updates_required: int = 2,
+        allow_backtrack: bool = False,
+        backtrack_success_threshold: float = 0.65,
+        backtrack_window_episodes: int = 100,
+        backtrack_patience_updates: int = 2,
+        console_logger: Optional[ConsoleLogger] = None,
+        adaptive_hparam_callback: Optional["AdaptiveHyperparamCallback"] = None,
+    ):
+        super().__init__()
+        self.requested_order = [str(item) for item in order]
+        self.order: List[str] = []
+        self.trigger_threshold = float(trigger_threshold)
+        self.stable_updates_required = max(1, int(stable_updates_required))
+        self.allow_backtrack = bool(allow_backtrack)
+        self.backtrack_success_threshold = float(backtrack_success_threshold)
+        self.backtrack_window_episodes = max(1, int(backtrack_window_episodes))
+        self.backtrack_patience_updates = max(1, int(backtrack_patience_updates))
+        self.console_logger = console_logger
+        self.adaptive_hparam_callback = adaptive_hparam_callback
+
+        self.active_index = 0
+        self.stable_counter = 0
+        self.backtrack_low_streak = 0
+        self.episode_count = 0
+        self.success_history: Deque[bool] = deque(maxlen=self.backtrack_window_episodes)
+
+    def has_order(self) -> bool:
+        return bool(self.order)
+
+    def _normalize_stage(self, stage: str) -> Optional[str]:
+        key = str(stage).strip().lower()
+        normalized = self.STAGE_ALIASES.get(key)
+        if normalized in {"x", "y", "ftg", "learning_rate", "clip_range", "ent_coef"}:
+            return normalized
+        return None
+
+    def _collect_done_flags(self):
+        dones = self.locals.get("dones")
+        if dones is None:
+            terminated = self.locals.get("terminateds")
+            truncated = self.locals.get("truncateds")
+            if terminated is None or truncated is None:
+                return []
+            terminated_arr = np.array(terminated, dtype=bool).reshape(-1)
+            truncated_arr = np.array(truncated, dtype=bool).reshape(-1)
+            return np.logical_or(terminated_arr, truncated_arr).tolist()
+        return np.array(dones, dtype=bool).reshape(-1).tolist()
+
+    def _collect_infos(self):
+        infos = self.locals.get("infos")
+        if infos is None:
+            return []
+        if isinstance(infos, list):
+            return infos
+        if isinstance(infos, tuple):
+            return list(infos)
+        if isinstance(infos, dict):
+            return [infos]
+        return []
+
+    def _env_method_first(self, method: str, *args):
+        try:
+            result = self.training_env.env_method(method, *args)
+        except Exception:
+            return None
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result
+
+    def _stage_available(self, stage: str) -> bool:
+        if stage in {"learning_rate", "clip_range", "ent_coef"}:
+            callback = self.adaptive_hparam_callback
+            return bool(callback and callback.has_stage(stage))
+        available = self._env_method_first("has_curriculum_stage", stage)
+        return bool(available)
+
+    def _set_stage_mode(self, stage: str, mode: str) -> None:
+        if stage in {"learning_rate", "clip_range", "ent_coef"}:
+            callback = self.adaptive_hparam_callback
+            if callback is not None:
+                callback.set_stage_mode(stage, mode)
+            return
+        _ = self._env_method_first("set_curriculum_stage_mode", stage, mode)
+
+    def _apply_stage_modes(self) -> None:
+        stage_mode: Dict[str, str] = {}
+        for stage in self.SUPPORTED_STAGES:
+            if not self._stage_available(stage):
+                continue
+            stage_mode[stage] = "off"
+        for idx, stage in enumerate(self.order):
+            if stage not in stage_mode:
+                continue
+            if idx < self.active_index:
+                mode = "frozen"
+            elif idx == self.active_index:
+                mode = "active"
+            else:
+                mode = "off"
+            stage_mode[stage] = mode
+        for stage, mode in stage_mode.items():
+            self._set_stage_mode(stage, mode)
+
+    def _stage_progress(self, stage: str, info: Optional[Dict[str, Any]]) -> Optional[float]:
+        if stage in self.INFO_PROGRESS_KEYS and isinstance(info, dict):
+            raw = info.get(self.INFO_PROGRESS_KEYS[stage])
+            if raw is not None:
+                try:
+                    return float(np.clip(float(raw), 0.0, 1.0))
+                except (TypeError, ValueError):
+                    pass
+
+        if stage in {"learning_rate", "clip_range", "ent_coef"}:
+            callback = self.adaptive_hparam_callback
+            if callback is None:
+                return None
+            progress = callback.stage_progress(stage)
+            if progress is None:
+                return None
+            return float(np.clip(float(progress), 0.0, 1.0))
+
+        progress = self._env_method_first("get_curriculum_stage_progress", stage)
+        if progress is None:
+            return None
+        try:
+            return float(np.clip(float(progress), 0.0, 1.0))
+        except (TypeError, ValueError):
+            return None
+
+    def _current_stage(self) -> Optional[str]:
+        if not self.order:
+            return None
+        if self.active_index < 0 or self.active_index >= len(self.order):
+            return None
+        return self.order[self.active_index]
+
+    def _try_backtrack(self) -> bool:
+        if not self.allow_backtrack:
+            return False
+        if self.active_index <= 0:
+            return False
+        if len(self.success_history) < self.backtrack_window_episodes:
+            return False
+        if self.episode_count % self.backtrack_window_episodes != 0:
+            return False
+
+        rolling_sr = float(sum(self.success_history) / len(self.success_history))
+        if rolling_sr < self.backtrack_success_threshold:
+            self.backtrack_low_streak += 1
+        else:
+            self.backtrack_low_streak = 0
+
+        if self.backtrack_low_streak < self.backtrack_patience_updates:
+            return False
+
+        prev_stage = self._current_stage()
+        self.active_index = max(0, self.active_index - 1)
+        self.stable_counter = 0
+        self.backtrack_low_streak = 0
+        self._apply_stage_modes()
+        if self.console_logger:
+            self.console_logger.print_warning(
+                f"Orchestrator backtrack: {prev_stage} -> {self._current_stage()} "
+                f"(rolling_sr={rolling_sr:.1%})"
+            )
+        return True
+
+    def _try_advance(self, info: Optional[Dict[str, Any]]) -> bool:
+        stage = self._current_stage()
+        if stage is None:
+            return False
+
+        progress = self._stage_progress(stage, info)
+        if progress is None:
+            return False
+        if progress >= self.trigger_threshold:
+            self.stable_counter += 1
+        else:
+            self.stable_counter = 0
+
+        if self.stable_counter < self.stable_updates_required:
+            return False
+        if self.active_index >= len(self.order) - 1:
+            return False
+
+        prev_stage = stage
+        self.active_index += 1
+        self.stable_counter = 0
+        self.backtrack_low_streak = 0
+        self._apply_stage_modes()
+        if self.console_logger:
+            self.console_logger.print_success(
+                f"Orchestrator advance: {prev_stage} -> {self._current_stage()} "
+                f"(progress={progress:.1%})"
+            )
+        return True
+
+    def _on_training_start(self) -> None:
+        seen = set()
+        resolved: List[str] = []
+        for raw_stage in self.requested_order:
+            stage = self._normalize_stage(raw_stage)
+            if stage is None or stage in seen:
+                continue
+            if not self._stage_available(stage):
+                if self.console_logger:
+                    self.console_logger.print_warning(
+                        f"Orchestrator skipping unavailable stage '{raw_stage}'."
+                    )
+                continue
+            seen.add(stage)
+            resolved.append(stage)
+
+        self.order = resolved
+        if not self.order:
+            return
+
+        self.active_index = 0
+        self.stable_counter = 0
+        self.backtrack_low_streak = 0
+        self.episode_count = 0
+        self.success_history.clear()
+        self._apply_stage_modes()
+        if self.console_logger:
+            chain = " > ".join(self.order)
+            self.console_logger.print_info(f"Orchestrator order: {chain}")
+
+    def _on_step(self) -> bool:
+        done_flags = self._collect_done_flags()
+        if not done_flags or not self.order:
+            return True
+
+        infos = self._collect_infos()
+        for idx, done in enumerate(done_flags):
+            if not done:
+                continue
+            info = infos[idx] if idx < len(infos) and isinstance(infos[idx], dict) else {}
+            success = bool(info.get("is_success", False))
+            self.episode_count += 1
+            self.success_history.append(success)
+            if self._try_backtrack():
+                continue
+            self._try_advance(info)
+        return True
+
+    def status_text(self) -> str:
+        if not self.order:
+            return "off"
+        stage = self._current_stage()
+        if stage is None:
+            return "off"
+        pos = self.active_index + 1
+        total = len(self.order)
+        stage_progress = self._stage_progress(stage, None)
+        progress_txt = f"{stage_progress:.0%}" if stage_progress is not None else "n/a"
+        suffix = ""
+        if self.allow_backtrack and self.success_history:
+            rolling_sr = float(sum(self.success_history) / len(self.success_history))
+            suffix = f",bk_sr={rolling_sr:.0%}"
+        return f"order {pos}/{total}:{stage} p={progress_txt}{suffix}"
+
+
 class RenderCallback(BaseCallback):
     """Render the environment during training."""
 
@@ -1468,6 +1772,11 @@ class AdaptiveHyperparamCallback(BaseCallback):
         self.episode_count = 0
         self._lr_schedule: Optional[_MutableScalarSchedule] = None
         self._clip_schedule: Optional[_MutableScalarSchedule] = None
+        self._spec_by_key: Dict[str, AdaptiveHyperparamSpec] = {spec.key: spec for spec in specs}
+        self._stage_mode: Dict[str, str] = {spec.key: "active" for spec in specs}
+        self._initial_value: Dict[str, float] = {
+            spec.key: float(spec.controller.value) for spec in specs
+        }
 
     def _collect_done_flags(self):
         dones = self.locals.get("dones")
@@ -1525,6 +1834,9 @@ class AdaptiveHyperparamCallback(BaseCallback):
 
     def _on_training_start(self) -> None:
         for spec in self.specs:
+            mode = self._stage_mode.get(spec.key, "active")
+            if mode == "off":
+                spec.controller.reset(value=self._initial_value.get(spec.key))
             self._apply_value(spec.key, spec.controller.value)
 
     def _on_step(self) -> bool:
@@ -1540,6 +1852,9 @@ class AdaptiveHyperparamCallback(BaseCallback):
             success = bool(info.get("is_success", False))
             self.episode_count += 1
             for spec in self.specs:
+                mode = self._stage_mode.get(spec.key, "active")
+                if mode != "active":
+                    continue
                 updated_cycle = spec.controller.observe(success)
                 if not updated_cycle:
                     continue
@@ -1553,6 +1868,27 @@ class AdaptiveHyperparamCallback(BaseCallback):
                     )
         return True
 
+    def has_stage(self, stage: str) -> bool:
+        return stage in self._spec_by_key
+
+    def stage_progress(self, stage: str) -> Optional[float]:
+        spec = self._spec_by_key.get(stage)
+        if spec is None:
+            return None
+        return spec.controller.progress()
+
+    def set_stage_mode(self, stage: str, mode: str) -> None:
+        spec = self._spec_by_key.get(stage)
+        if spec is None:
+            return
+        mode_key = str(mode).strip().lower()
+        if mode_key not in {"active", "frozen", "off"}:
+            mode_key = "off"
+        self._stage_mode[stage] = mode_key
+        if mode_key == "off":
+            spec.controller.reset(value=self._initial_value.get(stage))
+        self._apply_value(stage, spec.controller.value)
+
     def status_text(self) -> str:
         if not self.specs:
             return "off"
@@ -1561,14 +1897,15 @@ class AdaptiveHyperparamCallback(BaseCallback):
             key = spec.key
             short = "lr" if key == "learning_rate" else ("clip" if key == "clip_range" else "ent")
             value = spec.controller.value
+            mode = self._stage_mode.get(key, "active")
             if key == "learning_rate":
                 value_txt = f"{value:.2e}"
             else:
                 value_txt = f"{value:.4f}"
             sr = spec.controller.last_window_sr
             sr_txt = f",sr={sr:.0%}" if sr is not None else ""
-            adj_txt = f",adj={spec.controller.last_adjustment}"
-            parts.append(f"{short}={value_txt}{sr_txt}{adj_txt}")
+            adj_txt = f",adj={spec.controller.last_adjustment}" if mode == "active" else ""
+            parts.append(f"{short}={value_txt}[{mode}]{sr_txt}{adj_txt}")
         return " | ".join(parts)
 
 
@@ -1830,10 +2167,36 @@ def main() -> None:
     total_timesteps = decision_steps * episodes
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
+    orchestrator_callback: Optional[OrderedCurriculumOrchestratorCallback] = None
     adaptive_hparam_callback: Optional[AdaptiveHyperparamCallback] = None
     if adaptive_hparam_specs:
         adaptive_hparam_callback = AdaptiveHyperparamCallback(adaptive_hparam_specs, console_logger)
+
+    orchestrator_cfg = env_config.get("curriculum_orchestrator", {})
+    if isinstance(orchestrator_cfg, dict) and bool(orchestrator_cfg.get("enabled", False)):
+        order_cfg = orchestrator_cfg.get("order", [])
+        if isinstance(order_cfg, list):
+            order = [str(item) for item in order_cfg]
+        else:
+            order = []
+        orchestrator_callback = OrderedCurriculumOrchestratorCallback(
+            order=order,
+            trigger_threshold=float(orchestrator_cfg.get("trigger_threshold", 1.0)),
+            stable_updates_required=int(orchestrator_cfg.get("stable_updates_required", 2)),
+            allow_backtrack=bool(orchestrator_cfg.get("allow_backtrack", False)),
+            backtrack_success_threshold=float(
+                orchestrator_cfg.get("backtrack_success_threshold", 0.65)
+            ),
+            backtrack_window_episodes=int(orchestrator_cfg.get("backtrack_window_episodes", 100)),
+            backtrack_patience_updates=int(orchestrator_cfg.get("backtrack_patience_updates", 2)),
+            console_logger=console_logger,
+            adaptive_hparam_callback=adaptive_hparam_callback,
+        )
+        callbacks.append(orchestrator_callback)
+
+    if adaptive_hparam_callback is not None:
         callbacks.append(adaptive_hparam_callback)
+
     anneal_guard_callback: Optional[AnnealOnSuccessRateCallback] = None
     if gated_schedules:
         anneal_guard_callback = AnnealOnSuccessRateCallback(gated_schedules, console_logger)
@@ -1850,6 +2213,8 @@ def main() -> None:
             log_every = 25
     if log_every > 0:
         progress_callback = EpisodeProgressCallback(log_every, console_logger)
+        if orchestrator_callback is not None:
+            progress_callback.set_orchestrator_callback(orchestrator_callback)
         progress_callback.set_spawn_x_curriculum_config(env_config.get("spawn_x_curriculum"))
         progress_callback.set_spawn_y_curriculum_config(env_config.get("spawn_y_curriculum"))
         if adaptive_hparam_callback is not None:
