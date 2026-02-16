@@ -16,7 +16,7 @@ environment:
   action_repeat: 3
   curriculum_orchestrator:
     enabled: true
-    order: [y, ftg, x,]
+    order: [y, ftg, x,ty,tx]
     # order: [y, ty, ftg, x, tx, lr, clip, ent]
     trigger_threshold: 1.0
     stable_updates_required: 2
