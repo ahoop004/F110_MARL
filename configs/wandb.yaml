@@ -21,6 +21,11 @@ wandb:
       train/episode_steps: true
       train/success_rate: true
       train/reward_mean: true
+      train/spawn_y: true
+      train/reward_shaping: true
+      train/reward_gaplock_pressure_centerline: true
+      train/reward_gaplock_pressure_wall: true
+      train/reward_gaplock_pressure_terminal: true
       # train/steps_mean: true
       # train/spawn_point: true
       # train/spawn_stage: true

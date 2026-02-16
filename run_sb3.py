@@ -791,8 +791,28 @@ def maybe_apply_warm_start(
     Copying only policy weights intentionally resets optimizer/LR schedule state
     while preserving the learned policy/value function parameters.
     """
-    warm_path = _resolve_model_path(train_params.get("warm_start_model_path"))
+    warm_start_cfg = train_params.get("warm_start")
+    if isinstance(warm_start_cfg, dict):
+        raw_enabled = warm_start_cfg.get("enabled", False)
+        path_value = warm_start_cfg.get("path", train_params.get("warm_start_model_path"))
+        reset_lr = bool(warm_start_cfg.get("reset_lr", train_params.get("warm_start_reset_lr", True)))
+    else:
+        raw_enabled = train_params.get("warm_start_enabled")
+        path_value = train_params.get("warm_start_model_path")
+        reset_lr = bool(train_params.get("warm_start_reset_lr", True))
+
+    warm_path = _resolve_model_path(path_value)
+    enabled = bool(raw_enabled) if raw_enabled is not None else (warm_path is not None)
+
+    if not enabled:
+        if warm_path is not None:
+            console_logger.print_info("Warm-start path provided but loading is disabled (warm_start_enabled=false).")
+        return
     if warm_path is None:
+        console_logger.print_warning(
+            "Warm-start enabled but no valid model path found "
+            "(set warm_start_model_path or warm_start.path)."
+        )
         return
 
     algo_key = algorithm.lower()
@@ -808,7 +828,6 @@ def maybe_apply_warm_start(
     model.policy.load_state_dict(source_model.policy.state_dict(), strict=True)
 
     # Optional compatibility mode: restore optimizer states too (not recommended).
-    reset_lr = bool(train_params.get("warm_start_reset_lr", True))
     if not reset_lr:
         try:
             model.policy.optimizer.load_state_dict(source_model.policy.optimizer.state_dict())
@@ -974,6 +993,8 @@ class EpisodeProgressCallback(BaseCallback):
         self.adaptive_hparam_callback: Optional["AdaptiveHyperparamCallback"] = None
         self.spawn_x_curriculum_config: Optional[Dict[str, Any]] = None
         self.spawn_y_curriculum_config: Optional[Dict[str, Any]] = None
+        self.target_spawn_x_curriculum_config: Optional[Dict[str, Any]] = None
+        self.target_spawn_y_curriculum_config: Optional[Dict[str, Any]] = None
         self.last_spawn_x_min: Optional[float] = None
         self.last_spawn_x_max: Optional[float] = None
         self.last_spawn_x_progress: Optional[float] = None
@@ -984,6 +1005,16 @@ class EpisodeProgressCallback(BaseCallback):
         self.last_spawn_y_progress: Optional[float] = None
         self.last_spawn_y_window_sr: Optional[float] = None
         self.last_spawn_y_adjustment: Optional[str] = None
+        self.last_target_spawn_x_min: Optional[float] = None
+        self.last_target_spawn_x_max: Optional[float] = None
+        self.last_target_spawn_x_progress: Optional[float] = None
+        self.last_target_spawn_x_window_sr: Optional[float] = None
+        self.last_target_spawn_x_adjustment: Optional[str] = None
+        self.last_target_spawn_y_min: Optional[float] = None
+        self.last_target_spawn_y_max: Optional[float] = None
+        self.last_target_spawn_y_progress: Optional[float] = None
+        self.last_target_spawn_y_window_sr: Optional[float] = None
+        self.last_target_spawn_y_adjustment: Optional[str] = None
         self.last_ftg_curriculum_agent: Optional[str] = None
         self.last_ftg_curriculum_mode: Optional[str] = None
         self.last_ftg_curriculum_progress: Optional[float] = None
@@ -1011,6 +1042,12 @@ class EpisodeProgressCallback(BaseCallback):
 
     def set_spawn_y_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
         self.spawn_y_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
+
+    def set_target_spawn_x_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
+        self.target_spawn_x_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
+
+    def set_target_spawn_y_curriculum_config(self, cfg: Optional[Dict[str, Any]]) -> None:
+        self.target_spawn_y_curriculum_config = dict(cfg) if isinstance(cfg, dict) else None
 
     def _count_episode_ends(self) -> int:
         dones = self.locals.get("dones")
@@ -1094,6 +1131,22 @@ class EpisodeProgressCallback(BaseCallback):
                     parts.append(f"spawn_y:{mode_y}")
                 else:
                     parts.append(f"spawn_y:{mode_y} {pct_y:.1f}%")
+            cfg_tx = self.target_spawn_x_curriculum_config
+            if cfg_tx and bool(cfg_tx.get("enabled", False)):
+                mode_tx = str(cfg_tx.get("mode", "linear"))
+                pct_tx = self._target_spawn_x_curriculum_percent()
+                if pct_tx is None:
+                    parts.append(f"target_spawn_x:{mode_tx}")
+                else:
+                    parts.append(f"target_spawn_x:{mode_tx} {pct_tx:.1f}%")
+            cfg_ty = self.target_spawn_y_curriculum_config
+            if cfg_ty and bool(cfg_ty.get("enabled", False)):
+                mode_ty = str(cfg_ty.get("mode", "linear"))
+                pct_ty = self._target_spawn_y_curriculum_percent()
+                if pct_ty is None:
+                    parts.append(f"target_spawn_y:{mode_ty}")
+                else:
+                    parts.append(f"target_spawn_y:{mode_ty} {pct_ty:.1f}%")
             if not parts:
                 return "off"
             return " | ".join(parts)
@@ -1231,6 +1284,122 @@ class EpisodeProgressCallback(BaseCallback):
         )
         return f"{pct_txt} y=[{self.last_spawn_y_min:.3f},{self.last_spawn_y_max:.3f}]{sr_txt}{adj_txt}"
 
+    def _target_spawn_x_curriculum_percent(self) -> Optional[float]:
+        cfg = self.target_spawn_x_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return None
+
+        if self.last_target_spawn_x_progress is not None:
+            try:
+                progress = float(self.last_target_spawn_x_progress)
+                return float(np.clip(progress, 0.0, 1.0) * 100.0)
+            except (TypeError, ValueError):
+                pass
+
+        if self.last_target_spawn_x_min is None:
+            return None
+
+        mode = str(cfg.get("mode", "linear")).strip().lower()
+        try:
+            if mode == "success_adaptive":
+                x_start = float(
+                    cfg.get("x_lower_start", cfg.get("x_start", self.last_target_spawn_x_min))
+                )
+                x_bound = float(cfg.get("x_lower_bound", cfg.get("x_final", x_start)))
+            else:
+                x_start = float(cfg.get("x_start", self.last_target_spawn_x_min))
+                x_bound = float(cfg.get("x_final", x_start))
+        except (TypeError, ValueError):
+            return None
+
+        denom = x_start - x_bound
+        if abs(denom) <= 1e-9:
+            return 100.0
+
+        progress = (x_start - float(self.last_target_spawn_x_min)) / denom
+        return float(np.clip(progress, 0.0, 1.0) * 100.0)
+
+    def _target_spawn_x_status(self) -> str:
+        cfg = self.target_spawn_x_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return "n/a"
+        progress_pct = self._target_spawn_x_curriculum_percent()
+        pct_txt = f"{progress_pct:.1f}%" if progress_pct is not None else "n/a"
+        if self.last_target_spawn_x_min is None or self.last_target_spawn_x_max is None:
+            return f"{pct_txt} (warming)"
+        sr_txt = (
+            f",sr={self.last_target_spawn_x_window_sr:.1%}"
+            if self.last_target_spawn_x_window_sr is not None
+            else ""
+        )
+        adj_txt = (
+            f",adj={self.last_target_spawn_x_adjustment}"
+            if self.last_target_spawn_x_adjustment
+            else ""
+        )
+        return (
+            f"{pct_txt} x=[{self.last_target_spawn_x_min:.3f},{self.last_target_spawn_x_max:.3f}]"
+            f"{sr_txt}{adj_txt}"
+        )
+
+    def _target_spawn_y_curriculum_percent(self) -> Optional[float]:
+        cfg = self.target_spawn_y_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return None
+
+        if self.last_target_spawn_y_progress is not None:
+            try:
+                progress = float(self.last_target_spawn_y_progress)
+                return float(np.clip(progress, 0.0, 1.0) * 100.0)
+            except (TypeError, ValueError):
+                pass
+
+        if self.last_target_spawn_y_min is None:
+            return None
+
+        mode = str(cfg.get("mode", "linear")).strip().lower()
+        try:
+            if mode == "success_adaptive":
+                y_start = float(
+                    cfg.get("y_lower_start", cfg.get("y_start", self.last_target_spawn_y_min))
+                )
+                y_bound = float(cfg.get("y_lower_bound", cfg.get("y_final", y_start)))
+            else:
+                y_start = float(cfg.get("y_start", self.last_target_spawn_y_min))
+                y_bound = float(cfg.get("y_final", y_start))
+        except (TypeError, ValueError):
+            return None
+
+        denom = y_start - y_bound
+        if abs(denom) <= 1e-9:
+            return 100.0
+
+        progress = (y_start - float(self.last_target_spawn_y_min)) / denom
+        return float(np.clip(progress, 0.0, 1.0) * 100.0)
+
+    def _target_spawn_y_status(self) -> str:
+        cfg = self.target_spawn_y_curriculum_config
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return "n/a"
+        progress_pct = self._target_spawn_y_curriculum_percent()
+        pct_txt = f"{progress_pct:.1f}%" if progress_pct is not None else "n/a"
+        if self.last_target_spawn_y_min is None or self.last_target_spawn_y_max is None:
+            return f"{pct_txt} (warming)"
+        sr_txt = (
+            f",sr={self.last_target_spawn_y_window_sr:.1%}"
+            if self.last_target_spawn_y_window_sr is not None
+            else ""
+        )
+        adj_txt = (
+            f",adj={self.last_target_spawn_y_adjustment}"
+            if self.last_target_spawn_y_adjustment
+            else ""
+        )
+        return (
+            f"{pct_txt} y=[{self.last_target_spawn_y_min:.3f},{self.last_target_spawn_y_max:.3f}]"
+            f"{sr_txt}{adj_txt}"
+        )
+
     def _ftg_curriculum_status(self) -> str:
         if self.last_ftg_curriculum_agent is None:
             return "n/a"
@@ -1296,6 +1465,16 @@ class EpisodeProgressCallback(BaseCallback):
             y_prog = info.get("spawn_y_progress")
             y_sr = info.get("spawn_y_window_sr")
             y_adj = info.get("spawn_y_last_adjustment")
+            tx_min = info.get("target_spawn_x_min")
+            tx_max = info.get("target_spawn_x_max")
+            tx_prog = info.get("target_spawn_x_progress")
+            tx_sr = info.get("target_spawn_x_window_sr")
+            tx_adj = info.get("target_spawn_x_last_adjustment")
+            ty_min = info.get("target_spawn_y_min")
+            ty_max = info.get("target_spawn_y_max")
+            ty_prog = info.get("target_spawn_y_progress")
+            ty_sr = info.get("target_spawn_y_window_sr")
+            ty_adj = info.get("target_spawn_y_last_adjustment")
             ftg_agent = info.get("ftg_curriculum_agent")
             ftg_mode = info.get("ftg_curriculum_mode")
             ftg_prog = info.get("ftg_curriculum_progress")
@@ -1345,6 +1524,50 @@ class EpisodeProgressCallback(BaseCallback):
                     pass
             if y_adj is not None:
                 self.last_spawn_y_adjustment = str(y_adj)
+            if tx_min is not None:
+                try:
+                    self.last_target_spawn_x_min = float(tx_min)
+                except (TypeError, ValueError):
+                    pass
+            if tx_max is not None:
+                try:
+                    self.last_target_spawn_x_max = float(tx_max)
+                except (TypeError, ValueError):
+                    pass
+            if tx_prog is not None:
+                try:
+                    self.last_target_spawn_x_progress = float(tx_prog)
+                except (TypeError, ValueError):
+                    pass
+            if tx_sr is not None:
+                try:
+                    self.last_target_spawn_x_window_sr = float(tx_sr)
+                except (TypeError, ValueError):
+                    pass
+            if tx_adj is not None:
+                self.last_target_spawn_x_adjustment = str(tx_adj)
+            if ty_min is not None:
+                try:
+                    self.last_target_spawn_y_min = float(ty_min)
+                except (TypeError, ValueError):
+                    pass
+            if ty_max is not None:
+                try:
+                    self.last_target_spawn_y_max = float(ty_max)
+                except (TypeError, ValueError):
+                    pass
+            if ty_prog is not None:
+                try:
+                    self.last_target_spawn_y_progress = float(ty_prog)
+                except (TypeError, ValueError):
+                    pass
+            if ty_sr is not None:
+                try:
+                    self.last_target_spawn_y_window_sr = float(ty_sr)
+                except (TypeError, ValueError):
+                    pass
+            if ty_adj is not None:
+                self.last_target_spawn_y_adjustment = str(ty_adj)
             if ftg_agent is not None:
                 self.last_ftg_curriculum_agent = str(ftg_agent)
             if ftg_mode is not None:
@@ -1407,6 +1630,8 @@ class EpisodeProgressCallback(BaseCallback):
                 f"Curr {self._curriculum_status()} | "
                 f"SpawnX {self._spawn_x_status()} | "
                 f"SpawnY {self._spawn_y_status()} | "
+                f"TSpawnX {self._target_spawn_x_status()} | "
+                f"TSpawnY {self._target_spawn_y_status()} | "
                 f"FTG {self._ftg_curriculum_status()} | "
                 f"Sched {self._schedule_status()}"
             )
@@ -1431,6 +1656,11 @@ class EpisodeProgressCallback(BaseCallback):
                         f"[bold cyan]SpawnX[/bold cyan] {self._spawn_x_status()}",
                         f"[bold cyan]SpawnY[/bold cyan] {self._spawn_y_status()}",
                         f"[bold cyan]FTG[/bold cyan] {self._ftg_curriculum_status()}",
+                    )
+                    progress_table.add_row(
+                        f"[bold cyan]TargetSpawnX[/bold cyan] {self._target_spawn_x_status()}",
+                        f"[bold cyan]TargetSpawnY[/bold cyan] {self._target_spawn_y_status()}",
+                        "",
                     )
 
                     ppo_table = Table.grid(expand=True)
@@ -1477,6 +1707,16 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
         "y": "y",
         "spawn_y": "y",
         "y_spawn": "y",
+        "tx": "tx",
+        "target_x": "tx",
+        "x_target": "tx",
+        "target_spawn_x": "tx",
+        "spawn_target_x": "tx",
+        "ty": "ty",
+        "target_y": "ty",
+        "y_target": "ty",
+        "target_spawn_y": "ty",
+        "spawn_target_y": "ty",
         "ftg": "ftg",
         "learning_rate": "learning_rate",
         "lr": "learning_rate",
@@ -1489,9 +1729,20 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
     INFO_PROGRESS_KEYS: Dict[str, str] = {
         "x": "spawn_x_progress",
         "y": "spawn_y_progress",
+        "tx": "target_spawn_x_progress",
+        "ty": "target_spawn_y_progress",
         "ftg": "ftg_curriculum_progress",
     }
-    SUPPORTED_STAGES = ["x", "y", "ftg", "learning_rate", "clip_range", "ent_coef"]
+    SUPPORTED_STAGES = [
+        "x",
+        "y",
+        "tx",
+        "ty",
+        "ftg",
+        "learning_rate",
+        "clip_range",
+        "ent_coef",
+    ]
 
     def __init__(
         self,
@@ -1530,7 +1781,7 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
     def _normalize_stage(self, stage: str) -> Optional[str]:
         key = str(stage).strip().lower()
         normalized = self.STAGE_ALIASES.get(key)
-        if normalized in {"x", "y", "ftg", "learning_rate", "clip_range", "ent_coef"}:
+        if normalized in {"x", "y", "tx", "ty", "ftg", "learning_rate", "clip_range", "ent_coef"}:
             return normalized
         return None
 
@@ -2162,6 +2413,8 @@ def main() -> None:
         action_constraints=action_constraints,
         spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
         spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
+        target_spawn_x_curriculum=env_config.get("target_spawn_x_curriculum"),
+        target_spawn_y_curriculum=env_config.get("target_spawn_y_curriculum"),
         ftg_curriculum=ftg_curricula,
     )
 
@@ -2258,6 +2511,12 @@ def main() -> None:
             progress_callback.set_orchestrator_callback(orchestrator_callback)
         progress_callback.set_spawn_x_curriculum_config(env_config.get("spawn_x_curriculum"))
         progress_callback.set_spawn_y_curriculum_config(env_config.get("spawn_y_curriculum"))
+        progress_callback.set_target_spawn_x_curriculum_config(
+            env_config.get("target_spawn_x_curriculum")
+        )
+        progress_callback.set_target_spawn_y_curriculum_config(
+            env_config.get("target_spawn_y_curriculum")
+        )
         if adaptive_hparam_callback is not None:
             progress_callback.set_adaptive_hparam_callback(adaptive_hparam_callback)
         if anneal_guard_callback is not None:
@@ -2344,6 +2603,8 @@ def main() -> None:
             action_repeat=action_repeat,
             spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
             spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
+            target_spawn_x_curriculum=env_config.get("target_spawn_x_curriculum"),
+            target_spawn_y_curriculum=env_config.get("target_spawn_y_curriculum"),
         )
         eval_env.set_other_agents(eval_other_agents)
 

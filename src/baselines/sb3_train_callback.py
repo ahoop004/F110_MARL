@@ -107,6 +107,7 @@ class SB3TrainLoggingCallback(BaseCallback):
                 length=self.current_episode_length,
                 success=bool(info.get("is_success", False)),
                 outcome=info.get("outcome"),
+                info=info,
             )
             processed_direct = True
 
@@ -125,6 +126,7 @@ class SB3TrainLoggingCallback(BaseCallback):
                                 length=ep_info["l"],
                                 success=bool(ep_info.get("is_success", False)),
                                 outcome=ep_info.get("outcome"),
+                                info=None,
                             )
             self.model.ep_info_buffer.clear()
 
@@ -139,6 +141,7 @@ class SB3TrainLoggingCallback(BaseCallback):
         length: int,
         success: bool,
         outcome: Optional[str] = None,
+        info: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.episode_count += 1
         self.episode_rewards.append(float(reward))
@@ -164,6 +167,42 @@ class SB3TrainLoggingCallback(BaseCallback):
         }
         if outcome is not None:
             log_dict["train/outcome"] = outcome
+
+        info = info if isinstance(info, dict) else {}
+        spawn_y = info.get("spawn_y")
+        if spawn_y is not None:
+            try:
+                log_dict["train/spawn_y"] = float(spawn_y)
+            except (TypeError, ValueError):
+                pass
+
+        reward_components = info.get("reward_components")
+        if isinstance(reward_components, dict):
+            centerline = reward_components.get("gaplock_pressure/centerline")
+            wall = reward_components.get("gaplock_pressure/wall")
+            terminal = reward_components.get("gaplock_pressure/terminal")
+
+            if centerline is not None:
+                try:
+                    log_dict["train/reward_gaplock_pressure_centerline"] = float(centerline)
+                except (TypeError, ValueError):
+                    pass
+            if wall is not None:
+                try:
+                    log_dict["train/reward_gaplock_pressure_wall"] = float(wall)
+                except (TypeError, ValueError):
+                    pass
+            if terminal is not None:
+                try:
+                    log_dict["train/reward_gaplock_pressure_terminal"] = float(terminal)
+                except (TypeError, ValueError):
+                    pass
+
+            try:
+                shaping = float(centerline or 0.0) + float(wall or 0.0)
+                log_dict["train/reward_shaping"] = shaping
+            except (TypeError, ValueError):
+                pass
 
         log_dict = self._filter_metrics(log_dict)
         if not log_dict:

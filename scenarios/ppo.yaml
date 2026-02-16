@@ -17,7 +17,7 @@ environment:
   curriculum_orchestrator:
     enabled: true
     order: [y, ftg, x,]
-    # order: [y, ftg, x,  lr, clip, ent]
+    # order: [y, ty, ftg, x, tx, lr, clip, ent]
     trigger_threshold: 1.0
     stable_updates_required: 2
     allow_backtrack: true
@@ -70,6 +70,46 @@ environment:
     regression_increment_max: 0.025
     regression_patience_updates: 2
     regression_cooldown_updates: 1
+  target_spawn_x_curriculum:
+    enabled: false
+    mode: success_adaptive
+    # target x sampled each episode from [current_lower, x_upper]
+    x_upper: -46.700
+    x_lower_start: -46.900
+    x_lower_bound: -47.400
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: -0.003
+    increment_max: -0.015
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.003
+    regression_increment_max: 0.015
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
+  target_spawn_y_curriculum:
+    enabled: false
+    mode: success_adaptive
+    # target y sampled each episode from [current_lower, y_upper]
+    y_upper: -0.550
+    y_lower_start: -0.800
+    y_lower_bound: -1.250
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: -0.003
+    increment_max: -0.012
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.003
+    regression_increment_max: 0.012
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
 evaluation:
   enabled: false
   frequency: 0
@@ -81,6 +121,11 @@ agents:
     algorithm: sb3_ppo
     target_id: car_1
     params:
+      # Warm-start / model loading toggle (policy weights only).
+      warm_start_enabled: false
+      warm_start_model_path: ""
+      warm_start_reset_lr: true
+
       learning_rate: 0.0003
       learning_rate_curriculum:
         enabled: false
