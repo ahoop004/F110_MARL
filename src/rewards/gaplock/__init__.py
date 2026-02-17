@@ -14,6 +14,8 @@ from rewards.gaplock.speed import SpeedReward
 from rewards.gaplock.forcing import ForcingReward
 from rewards.gaplock.penalties import BehaviorPenalties
 from rewards.gaplock.step_penalty import StepPenalty
+from rewards.gaplock.centerline_deviation import CenterlineDeviationReward
+from rewards.gaplock.wall_closeness import WallClosenessReward
 
 __all__ = [
     'GaplockReward',
@@ -25,4 +27,6 @@ __all__ = [
     'ForcingReward',
     'BehaviorPenalties',
     'StepPenalty',
+    'CenterlineDeviationReward',
+    'WallClosenessReward',
 ]

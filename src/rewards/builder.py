@@ -1,15 +1,35 @@
 """Reward strategy builder - creates reward strategies from configuration.
 
-This module provides factory functions to build reward strategies from
-scenario configuration dictionaries.
+This module provides a registry-based factory for building reward strategies
+from scenario configuration dictionaries.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional, Type
+
 from rewards.base import RewardStrategy
 from rewards.presets import load_preset, merge_config
 from rewards.gaplock import GaplockReward
 from rewards.centerline import CenterlineReward
 from rewards.gaplock_centerline_pressure import GaplockCenterlinePressureReward
+
+
+# Registry mapping reward type names to strategy classes.
+# To add a new reward type, register it here.
+REWARD_REGISTRY: Dict[str, Type[RewardStrategy]] = {
+    'gaplock': GaplockReward,
+    'gaplock_centerline_pressure': GaplockCenterlinePressureReward,
+    'centerline': CenterlineReward,
+}
+
+
+def register_reward(name: str, cls: Type[RewardStrategy]) -> None:
+    """Register a reward strategy class under the given name.
+
+    Args:
+        name: Type name used in scenario configs
+        cls: RewardStrategy class to register
+    """
+    REWARD_REGISTRY[name] = cls
 
 
 def build_reward_strategy(
@@ -21,62 +41,36 @@ def build_reward_strategy(
 
     Args:
         config: Reward configuration dict with:
-            - preset: (optional) Preset name ('gaplock_full', 'gaplock_simple')
+            - type: Reward type name (default: 'gaplock')
+            - preset: (optional) Preset name to load defaults from
             - overrides: (optional) Override values for preset
-            - type: (optional) Reward type ('gaplock'). Default: 'gaplock'
-            - direct config keys: terminal, pressure, distance, etc.
+            - direct config keys: component-level dicts
         agent_id: Agent ID this reward is for
         target_id: Target agent ID (for adversarial tasks)
 
     Returns:
         RewardStrategy instance
 
-    Example with preset:
-        >>> config = {'preset': 'gaplock_full'}
-        >>> reward = build_reward_strategy(config, 'car_0', 'car_1')
-
-    Example with preset + overrides:
-        >>> config = {
-        ...     'preset': 'gaplock_full',
-        ...     'overrides': {
-        ...         'terminal': {'target_crash': 100.0},  # Increase success reward
-        ...     }
-        ... }
-        >>> reward = build_reward_strategy(config, 'car_0', 'car_1')
-
-    Example with direct config:
-        >>> config = {
-        ...     'terminal': {'target_crash': 60.0, 'self_crash': -90.0},
-        ...     'pressure': {'enabled': True, 'distance_threshold': 1.30},
-        ... }
-        >>> reward = build_reward_strategy(config, 'car_0', 'car_1')
+    Raises:
+        ValueError: If reward type is not registered
     """
-    # Determine reward type
     reward_type = config.get('type', 'gaplock')
 
-    # Build final config
-    if 'preset' in config:
-        # Load preset and apply overrides
-        preset_name = config['preset']
-        reward_config = load_preset(preset_name)
+    if reward_type not in REWARD_REGISTRY:
+        available = ', '.join(sorted(REWARD_REGISTRY.keys()))
+        raise ValueError(
+            f"Unknown reward type: {reward_type}. Available: {available}"
+        )
 
+    # Build final config from preset + overrides (or use config directly)
+    if 'preset' in config:
+        reward_config = load_preset(config['preset'])
         if 'overrides' in config:
             reward_config = merge_config(reward_config, config['overrides'])
     else:
-        # Use config directly
         reward_config = {k: v for k, v in config.items() if k not in ['type']}
 
-    # Create reward strategy based on type
-    if reward_type == 'gaplock':
-        return GaplockReward(reward_config)
-    if reward_type == 'gaplock_centerline_pressure':
-        return GaplockCenterlinePressureReward(reward_config)
-    if reward_type == 'centerline':
-        return CenterlineReward(reward_config)
-    raise ValueError(
-        f"Unknown reward type: {reward_type}. "
-        f"Available types: gaplock, gaplock_centerline_pressure, centerline"
-    )
+    return REWARD_REGISTRY[reward_type](reward_config)
 
 
-__all__ = ['build_reward_strategy']
+__all__ = ['REWARD_REGISTRY', 'register_reward', 'build_reward_strategy']

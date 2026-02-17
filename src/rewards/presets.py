@@ -147,16 +147,22 @@ PRESETS['centerline_racing'] = CENTERLINE_RACING
 
 # Gaplock centerline pressure preset
 GAPLOCK_CENTERLINE_PRESSURE: Dict[str, Any] = {
-    'gaplock_centerline_pressure': {
-        'centerline_weight': 1.0,
-        'centerline_scale': 1.0,
-        'wall_weight': 1.0,
-        'wall_distance_scale': 1.0,
-        'success_reward': 200.0,
-        'self_crash_penalty': -100.0,
-        'collision_penalty': -100.0,
-        'timeout_penalty': -50.0,
-        'target_finish_penalty': -50.0,
+    'terminal': {
+        'target_crash': 200.0,
+        'self_crash': -100.0,
+        'collision': -100.0,
+        'timeout': -50.0,
+        'target_finish': -50.0,
+    },
+    'centerline_deviation': {
+        'enabled': True,
+        'weight': 1.0,
+        'scale': 1.0,
+    },
+    'wall_closeness': {
+        'enabled': True,
+        'weight': 1.0,
+        'distance_scale': 1.0,
     },
 }
 

@@ -22,7 +22,7 @@ from rewards.presets import (
 )
 from rewards.centerline import CenterlineReward
 from rewards.gaplock_centerline_pressure import GaplockCenterlinePressureReward
-from rewards.builder import build_reward_strategy
+from rewards.builder import REWARD_REGISTRY, register_reward, build_reward_strategy
 
 __all__ = [
     'RewardComponent',
@@ -34,6 +34,8 @@ __all__ = [
     'PRESETS',
     'load_preset',
     'merge_config',
+    'REWARD_REGISTRY',
+    'register_reward',
     'build_reward_strategy',
     'CenterlineReward',
     'GaplockCenterlinePressureReward',
