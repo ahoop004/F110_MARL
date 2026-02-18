@@ -130,9 +130,15 @@ def expand_reward_preset(config: Dict[str, Any]) -> Dict[str, Any]:
 
     # Apply overrides if present
     if 'overrides' in config:
-        return merge_reward_config(preset, config['overrides'])
+        expanded = merge_reward_config(preset, config['overrides'])
+    else:
+        expanded = preset
 
-    return preset
+    # Preserve the type key so the builder knows which strategy to create
+    if 'type' in config:
+        expanded['type'] = config['type']
+
+    return expanded
 
 
 def expand_observation_preset(config: Dict[str, Any]) -> Dict[str, Any]:
