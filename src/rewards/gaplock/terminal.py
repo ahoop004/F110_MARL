@@ -117,8 +117,8 @@ class TerminalReward:
         if step_info.get('truncated', False) or info.get('truncated', False):
             return {'terminal/timeout': self.timeout}
 
-        # Episode done but no clear outcome - treat as timeout
-        return {'terminal/timeout': self.timeout}
+        # Episode done but no clear outcome - no penalty
+        return {}
 
 
 __all__ = ['TerminalReward']

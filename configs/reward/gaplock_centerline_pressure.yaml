@@ -10,6 +10,7 @@ agents:
           self_crash: -100.0
           collision: -100.0
           timeout: -50.0
+          idle_stop: -50.0
           target_finish: -50.0
 
         # Centerline deviation shaping.

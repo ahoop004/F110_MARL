@@ -152,6 +152,7 @@ GAPLOCK_CENTERLINE_PRESSURE: Dict[str, Any] = {
         'self_crash': -100.0,
         'collision': -100.0,
         'timeout': -50.0,
+        'idle_stop': -50.0,
         'target_finish': -50.0,
     },
     'centerline_deviation': {
