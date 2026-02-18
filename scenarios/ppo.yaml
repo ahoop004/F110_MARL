@@ -25,7 +25,7 @@ environment:
     backtrack_window_episodes: 100
     backtrack_patience_updates: 2
   spawn_x_curriculum:
-    enabled: false
+    enabled: true
     mode: success_adaptive
     # x sampled each episode from [current_lower, x_upper]
     x_upper: -46.769
@@ -71,7 +71,7 @@ environment:
     regression_patience_updates: 2
     regression_cooldown_updates: 1
   target_spawn_x_curriculum:
-    enabled: false
+    enabled: true
     mode: success_adaptive
     # target x sampled each episode from [current_lower, x_upper]
     x_upper: -46.700
@@ -91,7 +91,7 @@ environment:
     regression_patience_updates: 2
     regression_cooldown_updates: 1
   target_spawn_y_curriculum:
-    enabled: false
+    enabled: true
     mode: success_adaptive
     # target y sampled each episode from [current_lower, y_upper]
     y_upper: -0.550

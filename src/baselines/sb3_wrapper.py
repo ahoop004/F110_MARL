@@ -423,15 +423,20 @@ class SB3SingleAgentWrapper(gym.Env):
         return self.target_id in possible_agents
 
     def has_curriculum_stage(self, stage: str) -> bool:
+        def _enabled(cfg: Optional[Dict[str, Any]]) -> bool:
+            if not isinstance(cfg, dict):
+                return False
+            return bool(cfg.get("enabled", True))
+
         key = self._normalize_stage_key(stage)
         if key == "x":
-            return bool(self.spawn_x_curriculum)
+            return _enabled(self.spawn_x_curriculum)
         if key == "y":
-            return bool(self.spawn_y_curriculum)
+            return _enabled(self.spawn_y_curriculum)
         if key == "tx":
-            return bool(self.target_spawn_x_curriculum) and self._target_stage_available()
+            return _enabled(self.target_spawn_x_curriculum) and self._target_stage_available()
         if key == "ty":
-            return bool(self.target_spawn_y_curriculum) and self._target_stage_available()
+            return _enabled(self.target_spawn_y_curriculum) and self._target_stage_available()
         if key == "ftg":
             return bool(self._ftg_curriculum_state)
         return False
