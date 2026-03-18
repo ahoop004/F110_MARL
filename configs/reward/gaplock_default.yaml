@@ -1,54 +1,12 @@
-# Gaplock reward with class-level defaults.
-# This is what previous "gaplock_centerline_pressure" runs were actually using
-# due to the type-key expansion bug (type was silently lost, builder defaulted
-# to 'gaplock' with empty component configs).
+# Default gaplock reward for the adversarial attacker.
+# Based on gaplock_simple (terminal + pressure + distance + heading + speed + penalties,
+# forcing disabled) with slightly higher distance shaping weights.
 agents:
   car_0:
     reward:
       type: gaplock
-      terminal:
-        target_crash: 60.0
-        self_crash: -90.0
-        collision: -90.0
-        timeout: -20.0
-        idle_stop: -5.0
-        target_finish: -20.0
-      pressure:
-        enabled: true
-        distance_threshold: 1.30
-        min_speed: 0.30
-        heading_tolerance: 1.57
-        bonus: 0.12
-        bonus_interval: 5
-        streak_bonus: 0.10
-        streak_cap: 40
-      distance:
-        enabled: true
-        reward_near: 0.12
-        near_distance: 1.00
-        far_distance: 2.50
-        penalty_far: 0.08
-        gradient:
-          enabled: false
-      heading:
-        enabled: true
-        coefficient: 0.08
-      speed:
-        enabled: true
-        bonus_coef: 0.05
-        target_speed: 0.60
-      forcing:
-        enabled: false
-      penalties:
-        enabled: true
-        idle:
-          penalty: 0.05
-          speed_threshold: 0.12
-          patience_steps: 25
-        reverse:
-          penalty: 0.10
-          speed_threshold: 0.02
-        brake:
-          penalty: 0.05
-          speed_threshold: 0.40
-          drop_threshold: 0.25
+      preset: gaplock_simple
+      overrides:
+        distance:
+          reward_near: 0.12
+          penalty_far: 0.08

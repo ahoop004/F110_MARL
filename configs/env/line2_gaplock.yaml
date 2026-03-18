@@ -1,78 +1,14 @@
 environment:
   map: maps/line2/line2.yaml
   num_agents: 2
-  max_steps: 1500
-  lidar_beams: 54
+  max_steps: 2500
+  lidar_beams: 108
   spawn_points:
   - spawn_2
   - spawn_1
   timestep: 0.01
   render: false
-  spawn_configs:
-    spawn_pinch_right:
-      car_0:
-      - -45.569
-      - -1.0
-      - 0.2
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-    spawn_pinch_left:
-      car_0:
-      - -45.569
-      - -0.4
-      - -0.2
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-    spawn_pinch_ahead:
-      car_0:
-      - -45.569
-      - -0.7
-      - 0.0
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-    spawn_approach_0.0C:
-      car_0:
-      - -45.569
-      - -0.7
-      - 0.0
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-    spawn_approach_0.3L:
-      car_0:
-      - -45.569
-      - -0.4
-      - 0.0
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-    spawn_approach_0.3R:
-      car_0:
-      - -45.569
-      - -1.0
-      - 0.0
-      car_1:
-      - -46.769
-      - -0.7
-      - 0.0
-  visualization:
-    reward_ring:
-      enabled: false
-      preferred_radius: 1.5
-    heatmap:
-      enabled: false
-      extent_m: 6.0
-      cell_size_m: 0.25
-      alpha: 0.22
-      update_frequency: 5
+  
   vehicle_params:
     mu: 1.0489
     C_Sf: 4.718

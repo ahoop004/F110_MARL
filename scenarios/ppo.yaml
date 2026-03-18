@@ -2,119 +2,21 @@ includes:
 - ../configs/env/line2_gaplock.yaml
 - ../configs/reward/gaplock_default.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/agents/action_constraints.yaml
 - ../configs/observation/gaplock_attacker.yaml
+- ../configs/curriculum/gaplock_adaptive.yaml
 - ../configs/wandb.yaml
+
 experiment:
   name: ppo
   episodes: 20000
   seed: 42
   save_model_at_end: true
   # save_model_name: ppo_final
+
 environment:
   max_steps: 2700
   action_repeat: 3
-  curriculum_orchestrator:
-    enabled: true
-    order: [y, ftg, x,ty,tx]
-    # order: [y, ty, ftg, x, tx, lr, clip, ent]
-    trigger_threshold: 1.0
-    stable_updates_required: 2
-    allow_backtrack: true
-    backtrack_success_threshold: 0.65
-    backtrack_window_episodes: 100
-    backtrack_patience_updates: 2
-  spawn_x_curriculum:
-    enabled: true
-    mode: success_adaptive
-    # x sampled each episode from [current_lower, x_upper]
-    x_upper: -46.769
-    x_lower_start: -46.75
-    x_lower_bound: -43.5
-    # update lower bound every N episodes using rolling success
-    window_episodes: 200
-    update_every_episodes: 50
-    # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
-    sr_lower_bound: 0.90
-    sr_upper_bound: 0.99
-    increment_min: 0.02
-    increment_max: 0.08
-    # auto-regress when curriculum gets too hard
-    regression_enabled: true
-    regression_sr_trigger: 0.70
-    regression_sr_floor: 0.40
-    regression_increment_min: 0.02
-    regression_increment_max: 0.08
-    regression_patience_updates: 2
-    regression_cooldown_updates: 1
-  spawn_y_curriculum:
-    enabled: true
-    mode: success_adaptive
-    # y sampled each episode from [current_lower, y_upper]
-    y_upper: 0.07689
-    y_lower_start: 0.0768
-    y_lower_bound: -1.4
-    # update lower bound every N episodes using rolling success
-    window_episodes: 200
-    update_every_episodes: 50
-    # map SR in [sr_lower_bound, sr_upper_bound] -> increment in [increment_min, increment_max]
-    sr_lower_bound: 0.90
-    sr_upper_bound: 0.99
-    increment_min: -0.005
-    increment_max: -0.025
-    # auto-regress when curriculum gets too hard
-    regression_enabled: true
-    regression_sr_trigger: 0.70
-    regression_sr_floor: 0.40
-    regression_increment_min: 0.005
-    regression_increment_max: 0.025
-    regression_patience_updates: 2
-    regression_cooldown_updates: 1
-  target_spawn_x_curriculum:
-    enabled: true
-    mode: success_adaptive
-    # target x sampled each episode from [current_lower, x_upper]
-    x_upper: -46.700
-    x_lower_start: -46.900
-    x_lower_bound: -47.400
-    window_episodes: 200
-    update_every_episodes: 50
-    sr_lower_bound: 0.90
-    sr_upper_bound: 0.99
-    increment_min: -0.003
-    increment_max: -0.015
-    regression_enabled: true
-    regression_sr_trigger: 0.70
-    regression_sr_floor: 0.40
-    regression_increment_min: 0.003
-    regression_increment_max: 0.015
-    regression_patience_updates: 2
-    regression_cooldown_updates: 1
-  target_spawn_y_curriculum:
-    enabled: true
-    mode: success_adaptive
-    # target y sampled each episode from [current_lower, y_upper]
-    y_upper: -0.550
-    y_lower_start: -0.800
-    y_lower_bound: -1.250
-    window_episodes: 200
-    update_every_episodes: 50
-    sr_lower_bound: 0.90
-    sr_upper_bound: 0.99
-    increment_min: -0.003
-    increment_max: -0.012
-    regression_enabled: true
-    regression_sr_trigger: 0.70
-    regression_sr_floor: 0.40
-    regression_increment_min: 0.003
-    regression_increment_max: 0.012
-    regression_patience_updates: 2
-    regression_cooldown_updates: 1
-evaluation:
-  enabled: false
-  frequency: 0
-  gate_eval_schedule: false
-  gate_phase_advancement: false
+
 agents:
   car_0:
     role: attacker
@@ -197,44 +99,7 @@ agents:
       - 256
       - 256
       batch_size: 64
-  car_1:
-    ftg_curriculum:
-      enabled: true
-      mode: success_adaptive
-      # update FTG parameters every N episodes from rolling success
-      window_episodes: 200
-      update_every_episodes: 50
-      # map SR in [sr_lower_bound, sr_upper_bound] -> parameter increments
-      sr_lower_bound: 0.90
-      sr_upper_bound: 0.99
-      # auto-regress FTG when attacker success drops
-      regression_enabled: true
-      regression_sr_trigger: 0.85
-      regression_sr_floor: 0.40
-      regression_patience_updates: 2
-      regression_cooldown_updates: 1
-      params:
-        steering_gain:
-          start: 0.35
-          final: 0.80
-          increment_min: 0.01
-          increment_max: 0.05
-          regression_increment_min: 0.01
-          regression_increment_max: 0.05
-        bubble_radius:
-          start: 3.0
-          final: 4.5
-          increment_min: 0.05
-          increment_max: 0.20
-          regression_increment_min: 0.05
-          regression_increment_max: 0.20
-        max_speed:
-          start: 0.8
-          final: 0.95
-          increment_min: 0.005
-          increment_max: 0.02
-          regression_increment_min: 0.005
-          regression_increment_max: 0.02
+
 wandb:
   enabled: true
   project: marl-f110

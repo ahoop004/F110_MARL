@@ -1,5 +1,11 @@
 agents:
   car_0:
+    # Action constraints for the trainable attacker.
+    action_constraints:
+      max_v: null
+      prevent_reverse: true
+      speed_index: 1
+
     # Observation configuration for the trainable attacker.
     observation:
       preset: gaplock

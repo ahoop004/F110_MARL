@@ -1,0 +1,144 @@
+# Success-adaptive curriculum for the gaplock adversarial task on line2.
+#
+# The curriculum_orchestrator sequences the individual curricula below,
+# advancing each one when the rolling success rate is high enough and
+# optionally backtracking when it drops.  The spawn curricula gradually
+# widen the attacker's and target's starting positions; the ftg_curriculum
+# progressively increases the FTG defender's difficulty.
+#
+# Include order: comes after configs/env/line2_gaplock.yaml and
+# configs/agents/ftg_defender.yaml so the merge adds these keys on top
+# of the base environment and defender configs.
+
+environment:
+  curriculum_orchestrator:
+    enabled: true
+    # Advancement order: y-spawn → ftg → x-spawn → target-y → target-x
+    order: [y, ftg, x, ty, tx]
+    trigger_threshold: 1.0
+    stable_updates_required: 2
+    allow_backtrack: true
+    backtrack_success_threshold: 0.65
+    backtrack_window_episodes: 100
+    backtrack_patience_updates: 2
+
+  # Attacker spawn x: starts near the target, expands further back
+  spawn_x_curriculum:
+    enabled: true
+    mode: success_adaptive
+    x_upper: -46.769
+    x_lower_start: -46.75
+    x_lower_bound: -43.5
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: 0.02
+    increment_max: 0.08
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.02
+    regression_increment_max: 0.08
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
+
+  # Attacker spawn y: starts tightly aligned, expands laterally
+  spawn_y_curriculum:
+    enabled: true
+    mode: success_adaptive
+    y_upper: 0.07689
+    y_lower_start: 0.0768
+    y_lower_bound: -1.4
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: -0.005
+    increment_max: -0.025
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.005
+    regression_increment_max: 0.025
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
+
+  # Target spawn x: starts just ahead of default, expands further ahead
+  target_spawn_x_curriculum:
+    enabled: true
+    mode: success_adaptive
+    x_upper: -46.700
+    x_lower_start: -46.900
+    x_lower_bound: -47.400
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: -0.003
+    increment_max: -0.015
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.003
+    regression_increment_max: 0.015
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
+
+  # Target spawn y: starts near center, expands laterally
+  target_spawn_y_curriculum:
+    enabled: true
+    mode: success_adaptive
+    y_upper: -0.550
+    y_lower_start: -0.800
+    y_lower_bound: -1.250
+    window_episodes: 200
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: -0.003
+    increment_max: -0.012
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.003
+    regression_increment_max: 0.012
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
+
+agents:
+  car_1:
+    ftg_curriculum:
+      enabled: true
+      mode: success_adaptive
+      window_episodes: 200
+      update_every_episodes: 50
+      sr_lower_bound: 0.90
+      sr_upper_bound: 0.99
+      regression_enabled: true
+      regression_sr_trigger: 0.85
+      regression_sr_floor: 0.40
+      regression_patience_updates: 2
+      regression_cooldown_updates: 1
+      params:
+        steering_gain:
+          start: 0.35
+          final: 0.80
+          increment_min: 0.01
+          increment_max: 0.05
+          regression_increment_min: 0.01
+          regression_increment_max: 0.05
+        bubble_radius:
+          start: 3.0
+          final: 4.5
+          increment_min: 0.05
+          increment_max: 0.20
+          regression_increment_min: 0.05
+          regression_increment_max: 0.20
+        max_speed:
+          start: 0.80
+          final: 0.95
+          increment_min: 0.005
+          increment_max: 0.02
+          regression_increment_min: 0.005
+          regression_increment_max: 0.02
