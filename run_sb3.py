@@ -5,6 +5,7 @@ import argparse
 import math
 import os
 import sys
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -720,27 +721,29 @@ def build_model(
             )
             if clip_gate is not None:
                 gated_specs.append(clip_gate)
-        model = PPO(
-            policy="MlpPolicy",
-            env=env,
-            learning_rate=learning_rate,
-            n_steps=params.get("n_steps", 2048),
-            batch_size=params.get("batch_size", 256),
-            n_epochs=params.get("n_epochs", 10),
-            gamma=gamma,
-            gae_lambda=params.get("gae_lambda", 0.95),
-            clip_range=clip_range,
-            clip_range_vf=params.get("clip_range_vf", None),
-            ent_coef=float(params.get("ent_coef", 0.02)),
-            vf_coef=params.get("vf_coef", 0.5),
-            max_grad_norm=params.get("max_grad_norm", 0.5),
-            target_kl=params.get("target_kl", None),
-            normalize_advantage=params.get("normalize_advantage", True),
-            policy_kwargs=policy_kwargs,
-            device=device,
-            verbose=0,
-            seed=seed,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*primarily intended to run on the CPU.*", category=UserWarning)
+            model = PPO(
+                policy="MlpPolicy",
+                env=env,
+                learning_rate=learning_rate,
+                n_steps=params.get("n_steps", 2048),
+                batch_size=params.get("batch_size", 256),
+                n_epochs=params.get("n_epochs", 10),
+                gamma=gamma,
+                gae_lambda=params.get("gae_lambda", 0.95),
+                clip_range=clip_range,
+                clip_range_vf=params.get("clip_range_vf", None),
+                ent_coef=float(params.get("ent_coef", 0.02)),
+                vf_coef=params.get("vf_coef", 0.5),
+                max_grad_norm=params.get("max_grad_norm", 0.5),
+                target_kl=params.get("target_kl", None),
+                normalize_advantage=params.get("normalize_advantage", True),
+                policy_kwargs=policy_kwargs,
+                device=device,
+                verbose=0,
+                seed=seed,
+            )
     elif algorithm in {"sb3_a2c", "a2c"}:
         model = A2C(
             policy="MlpPolicy",
