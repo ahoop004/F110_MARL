@@ -3,7 +3,7 @@ agents:
     # Action constraints for the trainable attacker.
     action_constraints:
       max_v: null
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
     # Observation configuration for the trainable attacker.
