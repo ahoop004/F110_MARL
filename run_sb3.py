@@ -38,6 +38,10 @@ try:
     from stable_baselines3 import A2C, PPO
     from stable_baselines3.common.callbacks import BaseCallback, CallbackList
     from stable_baselines3.common.monitor import Monitor
+    try:
+        from wandb.integration.sb3 import WandbCallback as _WandbCallback
+    except ImportError:
+        _WandbCallback = None
 except ImportError as exc:
     print(
         "stable-baselines3 is required for on-policy runs. "
@@ -2633,6 +2637,10 @@ def main() -> None:
                 wandb_logging=scenario.get("wandb", {}).get("logging"),
             )
         )
+
+    if wandb_logger and wandb_logger.run and _WandbCallback is not None:
+        if wandb_logger.should_log("sb3_callbacks"):
+            callbacks.append(_WandbCallback(verbose=0))
 
     callback = CallbackList(callbacks) if callbacks else None
 

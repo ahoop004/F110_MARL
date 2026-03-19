@@ -30,6 +30,19 @@ wandb:
       # train/steps_mean: true
       # train/spawn_point: true
       # train/spawn_stage: true
+      # SB3 internal metrics (logged via WandbCallback when sb3_callbacks: true;
+      # not filtered by metrics config — toggle the group above to enable/disable):
+      #   rollout/ep_rew_mean     rolling mean episode reward (last 100 eps)
+      #   rollout/ep_len_mean     rolling mean episode length
+      #   train/policy_gradient_loss
+      #   train/value_loss
+      #   train/entropy_loss
+      #   train/approx_kl
+      #   train/clip_fraction
+      #   train/clip_range
+      #   train/explained_variance
+      #   train/n_updates
+      #   train/learning_rate
       # target/success: true
       # target/crash: true
       # curriculum/stage: true
