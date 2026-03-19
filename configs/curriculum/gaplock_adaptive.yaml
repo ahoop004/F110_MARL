@@ -43,10 +43,13 @@ environment:
     regression_patience_updates: 2
     regression_cooldown_updates: 1
 
-  # Attacker spawn y: starts tightly aligned, expands laterally
+  # Attacker spawn y: starts tightly aligned, expands laterally.
+  # mirror_prob: each episode, this probability the attacker's y is reflected
+  # about the target's y so both lateral sides are trained equally.
   spawn_y_curriculum:
     enabled: true
     mode: success_adaptive
+    mirror_prob: 0.5
     y_upper: 0.07689
     y_lower_start: 0.0768
     y_lower_bound: -1.4

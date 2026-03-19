@@ -824,6 +824,45 @@ class SB3SingleAgentWrapper(gym.Env):
             sampled = self._sample_target_spawn_y_curriculum(episode=episode, base=sampled)
         if self.target_spawn_x_curriculum:
             sampled = self._sample_target_spawn_x_curriculum(episode=episode, base=sampled)
+
+        # Mirror the attacker's y about the target's y with configurable probability.
+        # This ensures the attacker trains from both lateral sides regardless of the
+        # curriculum's expansion direction, preventing quadrant overfitting.
+        if sampled is not None and self.spawn_y_curriculum:
+            mirror_prob = float(self.spawn_y_curriculum.get("mirror_prob", 0.0))
+            if mirror_prob > 0.0 and self.target_id:
+                options = sampled.get("options")
+                if isinstance(options, dict):
+                    poses = options.get("poses")
+                    if poses is not None:
+                        poses = np.asarray(poses, dtype=np.float32)
+                        possible_agents = list(getattr(self.env, "possible_agents", []))
+                        try:
+                            agent_idx = possible_agents.index(self.agent_id)
+                            target_idx = possible_agents.index(self.target_id)
+                        except ValueError:
+                            agent_idx = target_idx = -1
+                        if (
+                            agent_idx >= 0
+                            and target_idx >= 0
+                            and poses.ndim == 2
+                            and poses.shape[0] > max(agent_idx, target_idx)
+                        ):
+                            rng = getattr(self.env, "rng", None)
+                            if rng is None:
+                                if self._local_rng is None:
+                                    self._local_rng = np.random.default_rng()
+                                rng = self._local_rng
+                            if float(rng.uniform(0.0, 1.0)) < mirror_prob:
+                                target_y = float(poses[target_idx, 1])
+                                poses[agent_idx, 1] = 2.0 * target_y - poses[agent_idx, 1]
+                                options["poses"] = poses
+                                # Update logged spawn_y to reflect the mirror
+                                y_meta = sampled.get("spawn_y_curriculum")
+                                if isinstance(y_meta, dict):
+                                    y_meta["spawn_y"] = float(poses[agent_idx, 1])
+                                    y_meta["spawn_y_mirrored"] = True
+
         return sampled
 
     def _sample_spawn_y_curriculum(
