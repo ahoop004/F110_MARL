@@ -91,7 +91,7 @@ agents:
 
         # ── Penalties: discourage idle, reverse, and hard braking ────────────
         penalties:
-          enabled: false
+          enabled: true
           idle:
             penalty: 0.05
             speed_threshold: 0.12
