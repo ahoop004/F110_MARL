@@ -428,6 +428,7 @@ def create_training_setup(
         # Add algorithm hyperparameters
         if 'params' in agent_config:
             agent_kwargs.update(agent_config['params'])
+            agent_kwargs['params'] = agent_config['params']  # also pass nested for sb3_agents.py
 
         # Add observation and action space info
         # Access observation_spaces directly as dict (PettingZoo compatibility)

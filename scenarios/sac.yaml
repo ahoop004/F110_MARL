@@ -1,0 +1,51 @@
+includes:
+- ../configs/env/line2_gaplock.yaml
+- ../configs/reward/gaplock_attacker.yaml
+- ../configs/agents/ftg_defender.yaml
+- ../configs/observation/gaplock_attacker.yaml
+- ../configs/curriculum/gaplock_adaptive.yaml
+- ../configs/wandb.yaml
+
+experiment:
+  name: sac
+  episodes: 20000
+  seed: 42
+  save_model_at_end: true
+
+environment:
+  max_steps: 2700
+  action_repeat: 3
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: sb3_sac
+    target_id: car_1
+    params:
+      device: cuda
+      learning_rate: 0.0003
+      gamma: 0.99
+      tau: 0.005
+      buffer_size: 1000000
+      batch_size: 256
+      learning_starts: 1000
+      ent_coef: auto        # auto-tune entropy coefficient
+      target_entropy: auto  # -dim(action_space) ≈ -2 for F110
+      hidden_dims:
+      - 256
+      - 256
+      activation: relu
+
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
+  tags:
+  - sac
+  - comparison
+  - gaplock
+  notes: "SAC baseline for gaplock adversarial task (use run_v2.py)"
+  mode: online

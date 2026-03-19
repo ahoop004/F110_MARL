@@ -1,0 +1,53 @@
+includes:
+- ../configs/env/line2_gaplock.yaml
+- ../configs/reward/gaplock_attacker.yaml
+- ../configs/agents/ftg_defender.yaml
+- ../configs/observation/gaplock_attacker.yaml
+- ../configs/curriculum/gaplock_adaptive.yaml
+- ../configs/wandb.yaml
+
+experiment:
+  name: td3
+  episodes: 20000
+  seed: 42
+  save_model_at_end: true
+
+environment:
+  max_steps: 2700
+  action_repeat: 3
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: sb3_td3
+    target_id: car_1
+    params:
+      device: cuda
+      learning_rate: 0.001        # TD3 default (higher than SAC's 3e-4)
+      gamma: 0.99
+      tau: 0.005
+      buffer_size: 1000000
+      batch_size: 100             # TD3 default
+      learning_starts: 1000
+      policy_delay: 2             # Update actor every 2 critic updates
+      target_policy_noise: 0.2    # Std of noise added to target actions
+      target_noise_clip: 0.5      # Clip target noise to [-0.5, 0.5]
+      action_noise_sigma: 0.1     # Exploration noise during training
+      hidden_dims:
+      - 256
+      - 256
+      activation: relu
+
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
+  tags:
+  - td3
+  - comparison
+  - gaplock
+  notes: "TD3 baseline for gaplock adversarial task (use run_v2.py)"
+  mode: online

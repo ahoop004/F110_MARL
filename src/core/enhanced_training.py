@@ -19,6 +19,7 @@ from src.core.protocol import Agent, is_on_policy_agent
 from src.core.obs_flatten import flatten_observation
 from src.core.spawn_curriculum import SpawnCurriculumManager
 from src.core.checkpoint_manager import CheckpointManager
+from src.curriculum.coordinate_spawn import CoordinateSpawnCurriculum
 from src.core.best_model_tracker import BestModelTracker
 from src.core.evaluator import Evaluator, EvaluationConfig
 from src.metrics import MetricsTracker, determine_outcome, EpisodeOutcome
@@ -58,6 +59,7 @@ class EnhancedTrainingLoop:
         target_ids: Optional[Dict[str, Optional[str]]] = None,
         agent_algorithms: Optional[Dict[str, str]] = None,
         spawn_curriculum: Optional[SpawnCurriculumManager] = None,
+        coordinate_spawn_curriculum: Optional[CoordinateSpawnCurriculum] = None,
         ftg_schedules: Optional[Dict[str, Dict[str, Any]]] = None,
         wandb_logger: Optional[WandbLogger] = None,
         console_logger: Optional[ConsoleLogger] = None,
@@ -132,6 +134,7 @@ class EnhancedTrainingLoop:
         self.target_ids = target_ids or {}
         self.agent_algorithms = agent_algorithms or {}
         self.spawn_curriculum = spawn_curriculum
+        self.coordinate_spawn_curriculum = coordinate_spawn_curriculum
         self.ftg_schedules = ftg_schedules or {}
         self.wandb_logger = wandb_logger
         self.console_logger = console_logger
@@ -444,15 +447,26 @@ class EnhancedTrainingLoop:
         # Curriculum controls: spawn positions, initial velocities, speed lock duration
         if self.spawn_curriculum:
             spawn_info = self.spawn_curriculum.sample_spawn(episode=episode_num)
-            # Reset environment with curriculum-specified configuration
-            obs, info = self.env.reset(options={
-                'poses': spawn_info['poses'],              # Agent starting positions [x, y, theta]
-                'velocities': spawn_info['velocities'],    # Agent initial velocities
-                'lock_speed_steps': spawn_info['lock_speed_steps']  # Steps to freeze defender speed
-            })
-            # Store spawn metadata for logging/analysis
+            reset_options = {
+                'poses': spawn_info['poses'],
+                'velocities': spawn_info['velocities'],
+                'lock_speed_steps': spawn_info['lock_speed_steps'],
+            }
+            # Coordinate curriculum overrides poses if active (takes precedence over
+            # SpawnCurriculumManager's named-point poses for specific x/y placement)
+            if self.coordinate_spawn_curriculum:
+                coord_options = self.coordinate_spawn_curriculum.sample(self.env, episode=episode_num)
+                if coord_options is not None and "poses" in coord_options:
+                    reset_options["poses"] = coord_options["poses"]
+            obs, info = self.env.reset(options=reset_options)
             self._current_spawn_stage = spawn_info['stage']
             self._current_spawn_mapping = dict(spawn_info.get('spawn_points', {}))
+        elif self.coordinate_spawn_curriculum:
+            # Coordinate-only curriculum (no named spawn points)
+            coord_options = self.coordinate_spawn_curriculum.sample(self.env, episode=episode_num)
+            obs, info = self.env.reset(options=coord_options)
+            self._current_spawn_stage = None
+            self._current_spawn_mapping = {}
         else:
             # Standard reset without curriculum (random spawns)
             obs, info = self.env.reset()
@@ -895,6 +909,10 @@ class EnhancedTrainingLoop:
             )
             success = primary_outcome.is_success()
 
+            # Update coordinate spawn curriculum controllers
+            if self.coordinate_spawn_curriculum:
+                self.coordinate_spawn_curriculum.observe(success)
+
             # Observe episode outcome
             curriculum_state = self.spawn_curriculum.observe(episode_num, success)
             spawn_curriculum_state = curriculum_state
@@ -920,6 +938,15 @@ class EnhancedTrainingLoop:
                     'curriculum/stage': curriculum_state['stage'],
                     'curriculum/stage_success_rate': curriculum_state['stage_success_rate'] or 0.0,
                 }, step=episode_num)
+
+        # Update coordinate spawn curriculum when SpawnCurriculumManager is absent
+        if self.coordinate_spawn_curriculum and not self.spawn_curriculum:
+            primary_agent_id = self.primary_agent_id or list(self.agents.keys())[0]
+            primary_outcome = determine_outcome(
+                final_info.get(primary_agent_id, {}),
+                truncations.get(primary_agent_id, False)
+            )
+            self.coordinate_spawn_curriculum.observe(primary_outcome.is_success())
 
         # Update Rich console once per episode (use primary agent metrics)
         if self.rich_console:

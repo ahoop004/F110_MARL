@@ -85,7 +85,7 @@ agents:
 
         # ── Speed: reward for maintaining speed near target ──────────────────
         speed:
-          enabled: false
+          enabled: true
           bonus_coef: 0.0005
           target_speed: 0.60
 

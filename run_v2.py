@@ -692,6 +692,38 @@ def main():
                 console_logger.print_warning(f"Failed to create spawn sampler: {e}")
                 spawn_curriculum = None
 
+        # Create coordinate-based spawn curriculum (spawn_x/y + target_spawn_x/y + mirror_prob)
+        coordinate_spawn_curriculum = None
+        _coord_cfgs = {
+            k: env_config.get(k)
+            for k in ("spawn_x_curriculum", "spawn_y_curriculum",
+                      "target_spawn_x_curriculum", "target_spawn_y_curriculum")
+        }
+        if any(isinstance(v, dict) and v.get("enabled", False) for v in _coord_cfgs.values()):
+            from curriculum.coordinate_spawn import CoordinateSpawnCurriculum
+            _coord_agent_id = next(
+                (aid for aid, cfg in scenario.get("agents", {}).items()
+                 if str(cfg.get("role", "")).lower() == "attacker"),
+                next(iter(scenario.get("agents", {})), "car_0"),
+            )
+            _coord_target_id = target_ids.get(_coord_agent_id)
+            try:
+                coordinate_spawn_curriculum = CoordinateSpawnCurriculum(
+                    spawn_x_curriculum=_coord_cfgs["spawn_x_curriculum"],
+                    spawn_y_curriculum=_coord_cfgs["spawn_y_curriculum"],
+                    target_spawn_x_curriculum=_coord_cfgs["target_spawn_x_curriculum"],
+                    target_spawn_y_curriculum=_coord_cfgs["target_spawn_y_curriculum"],
+                    agent_id=_coord_agent_id,
+                    target_id=_coord_target_id,
+                )
+                console_logger.print_success(
+                    f"Coordinate spawn curriculum active for {_coord_agent_id}"
+                    + (f" → target {_coord_target_id}" if _coord_target_id else "")
+                )
+            except Exception as _e:
+                console_logger.print_warning(f"Failed to create coordinate spawn curriculum: {_e}")
+                coordinate_spawn_curriculum = None
+
         # Initialize checkpoint system
         checkpoint_manager = None
         best_model_tracker = None
@@ -849,6 +881,7 @@ def main():
             target_ids=target_ids,
             agent_algorithms=agent_algorithms,
             spawn_curriculum=spawn_curriculum,
+            coordinate_spawn_curriculum=coordinate_spawn_curriculum,
             ftg_schedules=ftg_schedules,
             wandb_logger=wandb_logger,
             console_logger=console_logger,
