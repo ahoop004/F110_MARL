@@ -38,16 +38,16 @@ agents:
         # ── Wall closeness: reward target being near walls ────────────────────
         # Requires walls_autoload: true in env config.
         wall_closeness:
-          enabled: false
-          weight: 0.5
+          enabled: true
+          weight: 0.05
           distance_scale: 1.0
 
         # ── Forcing: geometric shaping toward attack positions ───────────────
         forcing:
-          enabled: false
+          enabled: true
           # Gaussian potential wells at (anchor_forward, ±anchor_lateral) in target frame.
           pinch_pockets:
-            enabled: false
+            enabled: true
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.55
@@ -57,7 +57,7 @@ agents:
             power: 2.0
           # Reward for reducing target's minimum wall clearance.
           clearance:
-            enabled: false
+            enabled: true
             weight: 0.003
             band_min: 0.30
             band_max: 3.20
@@ -65,7 +65,7 @@ agents:
             time_scaled: true
           # Reward for target turning (indicator of applied pressure).
           turn:
-            enabled: false
+            enabled: true
             weight: 0.006
             clip: 0.015
             time_scaled: true
