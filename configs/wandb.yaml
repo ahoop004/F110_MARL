@@ -4,13 +4,12 @@ wandb:
     groups:
       define_metrics: true
       train: true
-      spawn_scatter: true   # scatter plot of spawn (x,y) coloured by success
       # target: true
-      # spawn: true
+      spawn: true
       # curriculum: true
       # curriculum_phase: true
-      eval: true
-      eval_agg: true
+      # eval: true
+      # eval_agg: true
       sb3_callbacks: true
     # Comment out any metric to disable it.
     metrics:
@@ -22,8 +21,9 @@ wandb:
       train/episode_steps: true
       train/success_rate: true
       train/reward_mean: true
+      train/spawn_x: true
       train/spawn_y: true
-      train/reward_shaping: true
+      # train/reward_shaping: true
       train/reward_gaplock_pressure_centerline: true
       train/reward_gaplock_pressure_wall: true
       train/reward_gaplock_pressure_terminal: true
@@ -34,25 +34,25 @@ wandb:
       # target/crash: true
       # curriculum/stage: true
       # curriculum/stage_success_rate: true
-      curriculum/phase_idx: true
+      # curriculum/phase_idx: true
       # curriculum/phase_name: true
       # curriculum/phase_success_rate: true
-      curriculum/eval_success_streak: true
-      curriculum/eval_window_success_rate: true
-      curriculum/eval_window_count: true
-      curriculum/eval_window_size: true
-      curriculum/criteria_eval_success_rate: true
-      curriculum/criteria_eval_required_runs: true
-      eval/episode: true
+      # curriculum/eval_success_streak: true
+      # curriculum/eval_window_success_rate: true
+      # curriculum/eval_window_count: true
+      # curriculum/eval_window_size: true
+      # curriculum/criteria_eval_success_rate: true
+      # curriculum/criteria_eval_required_runs: true
+      # eval/episode: true
       # eval/episode_reward: true
       # eval/episode_steps: true
-      eval/episode_success: true
-      eval/episode_success_rate: true
-      eval/rolling_success_rate: true
-      eval/run: true
+      # eval/episode_success: true
+      # eval/episode_success_rate: true
+      # eval/rolling_success_rate: true
+      # eval/run: true
       # eval/spawn_point: true
       # eval/training_episode: true
-      eval_agg/success_rate: true
+      # eval_agg/success_rate: true
       # eval_agg/avg_reward: true
       # eval_agg/avg_episode_length: true
       # eval_agg/std_reward: true

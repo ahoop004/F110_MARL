@@ -1,33 +1,10 @@
 """SB3 training callback for W&B logging."""
 
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
-
-# Vega-Lite spec for spawn scatter plot: x=spawn_x, y=spawn_y, color=success (0=red, 1=green)
-_SPAWN_SCATTER_SPEC = {
-    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-    "description": "Attacker spawn positions coloured by episode outcome",
-    "mark": {"type": "point", "opacity": 0.5, "size": 30},
-    "encoding": {
-        "x": {"field": "spawn_x", "type": "quantitative", "title": "Spawn X"},
-        "y": {"field": "spawn_y", "type": "quantitative", "title": "Spawn Y"},
-        "color": {
-            "field": "success",
-            "type": "quantitative",
-            "scale": {"domain": [0, 1], "range": ["red", "green"]},
-            "legend": {"title": "Success"},
-        },
-        "tooltip": [
-            {"field": "spawn_x", "type": "quantitative"},
-            {"field": "spawn_y", "type": "quantitative"},
-            {"field": "success", "type": "quantitative"},
-            {"field": "episode", "type": "quantitative"},
-        ],
-    },
-}
 
 
 class SB3TrainLoggingCallback(BaseCallback):
@@ -39,7 +16,6 @@ class SB3TrainLoggingCallback(BaseCallback):
         wandb_logging: Optional[Dict[str, Any]] = None,
         window_size: int = 100,
         verbose: int = 0,
-        spawn_scatter_interval: int = 200,
     ):
         super().__init__(verbose)
         self.wandb_run = wandb_run
@@ -52,8 +28,6 @@ class SB3TrainLoggingCallback(BaseCallback):
         self.current_episode_reward = 0.0
         self.current_episode_length = 0
         self.processed_episodes = set()
-        self.spawn_scatter_interval = max(1, int(spawn_scatter_interval))
-        self._spawn_scatter_rows: List[Dict[str, Any]] = []
 
     def _should_log(self, key: str) -> bool:
         if not self.wandb_run:
@@ -202,46 +176,12 @@ class SB3TrainLoggingCallback(BaseCallback):
             except (TypeError, ValueError):
                 pass
 
-        # Accumulate spawn scatter data and log periodically.
-        if self._should_log("spawn_scatter"):
-            spawn_x = info.get("spawn_x")
-            if spawn_x is not None and spawn_y is not None:
-                try:
-                    self._spawn_scatter_rows.append({
-                        "episode": int(self.episode_count),
-                        "spawn_x": float(spawn_x),
-                        "spawn_y": float(spawn_y),
-                        "success": 1 if success else 0,
-                    })
-                except (TypeError, ValueError):
-                    pass
-
-            if (
-                self._spawn_scatter_rows
-                and self.episode_count % self.spawn_scatter_interval == 0
-            ):
-                try:
-                    import wandb
-                    table = wandb.Table(
-                        columns=["episode", "spawn_x", "spawn_y", "success"],
-                        data=[
-                            [r["episode"], r["spawn_x"], r["spawn_y"], r["success"]]
-                            for r in self._spawn_scatter_rows
-                        ],
-                    )
-                    # Custom Vega-Lite scatter: position = spawn (x,y), color red→green = fail→success
-                    chart = wandb.plot_table(
-                        vega_spec_name="wandb/scatter/v0",
-                        data_table=table,
-                        fields={"x": "spawn_x", "y": "spawn_y", "color": "success"},
-                        string_fields={"title": "Spawn Position vs Outcome (0=fail 1=success)"},
-                    )
-                    self.wandb_run.log(
-                        {"train/spawn_scatter": chart},
-                        step=self.episode_count,
-                    )
-                except Exception:
-                    pass
+        spawn_x = info.get("spawn_x")
+        if spawn_x is not None:
+            try:
+                log_dict["train/spawn_x"] = float(spawn_x)
+            except (TypeError, ValueError):
+                pass
 
         reward_components = info.get("reward_components")
         if isinstance(reward_components, dict):
