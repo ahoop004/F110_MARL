@@ -1724,6 +1724,10 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
         "y_target": "ty",
         "target_spawn_y": "ty",
         "spawn_target_y": "ty",
+        "my": "my",
+        "mirrored_y": "my",
+        "mirrored_y_curriculum": "my",
+        "mirror_y": "my",
         "ftg": "ftg",
         "learning_rate": "learning_rate",
         "lr": "learning_rate",
@@ -1743,6 +1747,7 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
     SUPPORTED_STAGES = [
         "x",
         "y",
+        "my",
         "tx",
         "ty",
         "ftg",
@@ -1788,7 +1793,7 @@ class OrderedCurriculumOrchestratorCallback(BaseCallback):
     def _normalize_stage(self, stage: str) -> Optional[str]:
         key = str(stage).strip().lower()
         normalized = self.STAGE_ALIASES.get(key)
-        if normalized in {"x", "y", "tx", "ty", "ftg", "learning_rate", "clip_range", "ent_coef"}:
+        if normalized in {"x", "y", "my", "tx", "ty", "ftg", "learning_rate", "clip_range", "ent_coef"}:
             return normalized
         return None
 
@@ -2420,6 +2425,7 @@ def main() -> None:
         action_constraints=action_constraints,
         spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
         spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
+        mirrored_y_curriculum=env_config.get("mirrored_y_curriculum"),
         target_spawn_x_curriculum=env_config.get("target_spawn_x_curriculum"),
         target_spawn_y_curriculum=env_config.get("target_spawn_y_curriculum"),
         ftg_curriculum=ftg_curricula,

@@ -64,6 +64,7 @@ class SB3SingleAgentWrapper(gym.Env):
         action_constraints: Optional[Dict[str, Any]] = None,
         spawn_x_curriculum: Optional[Dict[str, Any]] = None,
         spawn_y_curriculum: Optional[Dict[str, Any]] = None,
+        mirrored_y_curriculum: Optional[Dict[str, Any]] = None,
         target_spawn_x_curriculum: Optional[Dict[str, Any]] = None,
         target_spawn_y_curriculum: Optional[Dict[str, Any]] = None,
         ftg_curriculum: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -106,6 +107,11 @@ class SB3SingleAgentWrapper(gym.Env):
             if isinstance(spawn_y_curriculum, dict)
             else None
         )
+        self.mirrored_y_curriculum = (
+            dict(mirrored_y_curriculum)
+            if isinstance(mirrored_y_curriculum, dict)
+            else None
+        )
         self.target_spawn_x_curriculum = (
             dict(target_spawn_x_curriculum)
             if isinstance(target_spawn_x_curriculum, dict)
@@ -135,6 +141,16 @@ class SB3SingleAgentWrapper(gym.Env):
             if self.spawn_y_curriculum and bool(self.spawn_y_curriculum.get("enabled", False))
             else "off"
         )
+        self._mirrored_y_stage_mode = (
+            "active"
+            if self.mirrored_y_curriculum and bool(self.mirrored_y_curriculum.get("enabled", False))
+            else "off"
+        )
+        _my_cfg = self.mirrored_y_curriculum or {}
+        _my_window = max(1, int(_my_cfg.get("window_episodes", 200)))
+        self._mirrored_y_window: int = _my_window
+        self._mirrored_y_sr_upper: float = float(_my_cfg.get("sr_upper_bound", 0.90))
+        self._mirrored_y_successes: deque = deque(maxlen=_my_window)
         self._target_spawn_x_stage_mode = (
             "active"
             if self.target_spawn_x_curriculum
@@ -411,6 +427,10 @@ class SB3SingleAgentWrapper(gym.Env):
             "x_target": "tx",
             "tx": "tx",
             "ftg_curriculum": "ftg",
+            "mirrored_y": "my",
+            "mirrored_y_curriculum": "my",
+            "mirror_y": "my",
+            "my": "my",
         }
         return aliases.get(key, key)
 
@@ -433,6 +453,8 @@ class SB3SingleAgentWrapper(gym.Env):
             return _enabled(self.spawn_x_curriculum)
         if key == "y":
             return _enabled(self.spawn_y_curriculum)
+        if key == "my":
+            return _enabled(self.mirrored_y_curriculum)
         if key == "tx":
             return _enabled(self.target_spawn_x_curriculum) and self._target_stage_available()
         if key == "ty":
@@ -451,6 +473,13 @@ class SB3SingleAgentWrapper(gym.Env):
             if self._spawn_y_controller is None:
                 return 0.0 if self.has_curriculum_stage("y") else None
             return self._spawn_y_controller.progress()
+        if key == "my":
+            if not self.has_curriculum_stage("my"):
+                return None
+            if not self._mirrored_y_successes:
+                return 0.0
+            sr = float(sum(self._mirrored_y_successes) / len(self._mirrored_y_successes))
+            return min(sr / max(self._mirrored_y_sr_upper, 1e-9), 1.0)
         if key == "tx":
             if self._target_spawn_x_controller is None:
                 return 0.0 if self.has_curriculum_stage("tx") else None
@@ -481,6 +510,9 @@ class SB3SingleAgentWrapper(gym.Env):
             self._spawn_y_stage_mode = normalized_mode
             if normalized_mode == "off" and self._spawn_y_controller is not None:
                 self._spawn_y_controller.reset()
+            return
+        if key == "my":
+            self._mirrored_y_stage_mode = normalized_mode
             return
         if key == "tx":
             self._target_spawn_x_stage_mode = normalized_mode
@@ -825,43 +857,37 @@ class SB3SingleAgentWrapper(gym.Env):
         if self.target_spawn_x_curriculum:
             sampled = self._sample_target_spawn_x_curriculum(episode=episode, base=sampled)
 
-        # Mirror the attacker's y about the target's y with configurable probability.
-        # This ensures the attacker trains from both lateral sides regardless of the
-        # curriculum's expansion direction, preventing quadrant overfitting.
-        if sampled is not None and self.spawn_y_curriculum:
-            mirror_prob = float(self.spawn_y_curriculum.get("mirror_prob", 0.0))
-            if mirror_prob > 0.0 and self.target_id:
-                options = sampled.get("options")
-                if isinstance(options, dict):
-                    poses = options.get("poses")
-                    if poses is not None:
-                        poses = np.asarray(poses, dtype=np.float32)
-                        possible_agents = list(getattr(self.env, "possible_agents", []))
-                        try:
-                            agent_idx = possible_agents.index(self.agent_id)
-                            target_idx = possible_agents.index(self.target_id)
-                        except ValueError:
-                            agent_idx = target_idx = -1
-                        if (
-                            agent_idx >= 0
-                            and target_idx >= 0
-                            and poses.ndim == 2
-                            and poses.shape[0] > max(agent_idx, target_idx)
-                        ):
-                            rng = getattr(self.env, "rng", None)
-                            if rng is None:
-                                if self._local_rng is None:
-                                    self._local_rng = np.random.default_rng()
-                                rng = self._local_rng
-                            if float(rng.uniform(0.0, 1.0)) < mirror_prob:
-                                target_y = float(poses[target_idx, 1])
-                                poses[agent_idx, 1] = 2.0 * target_y - poses[agent_idx, 1]
-                                options["poses"] = poses
-                                # Update logged spawn_y to reflect the mirror
-                                y_meta = sampled.get("spawn_y_curriculum")
-                                if isinstance(y_meta, dict):
-                                    y_meta["spawn_y"] = float(poses[agent_idx, 1])
-                                    y_meta["spawn_y_mirrored"] = True
+        # Mirrored-y stage: deterministically reflect attacker y about target y.
+        # Active when the orchestrator has advanced to/past the "my" stage.
+        if (
+            sampled is not None
+            and self._mirrored_y_stage_mode in {"active", "frozen"}
+            and self.target_id
+        ):
+            options = sampled.get("options")
+            if isinstance(options, dict):
+                poses = options.get("poses")
+                if poses is not None:
+                    poses = np.asarray(poses, dtype=np.float32)
+                    possible_agents = list(getattr(self.env, "possible_agents", []))
+                    try:
+                        agent_idx = possible_agents.index(self.agent_id)
+                        target_idx = possible_agents.index(self.target_id)
+                    except ValueError:
+                        agent_idx = target_idx = -1
+                    if (
+                        agent_idx >= 0
+                        and target_idx >= 0
+                        and poses.ndim == 2
+                        and poses.shape[0] > max(agent_idx, target_idx)
+                    ):
+                        target_y = float(poses[target_idx, 1])
+                        poses[agent_idx, 1] = 2.0 * target_y - poses[agent_idx, 1]
+                        options["poses"] = poses
+                        y_meta = sampled.get("spawn_y_curriculum")
+                        if isinstance(y_meta, dict):
+                            y_meta["spawn_y"] = float(poses[agent_idx, 1])
+                            y_meta["spawn_y_mirrored"] = True
 
         return sampled
 
@@ -1887,11 +1913,14 @@ class SB3SingleAgentWrapper(gym.Env):
                 outcome = determine_outcome(info, truncated=truncated)
                 info["outcome"] = outcome.value
                 info['is_success'] = outcome.is_success()
-            self._update_success_adaptive_spawn_x(bool(info.get("is_success", False)))
-            self._update_success_adaptive_spawn_y(bool(info.get("is_success", False)))
-            self._update_success_adaptive_target_spawn_x(bool(info.get("is_success", False)))
-            self._update_success_adaptive_target_spawn_y(bool(info.get("is_success", False)))
-            self._update_success_adaptive_ftg_curriculum(bool(info.get("is_success", False)))
+            _ep_success = bool(info.get("is_success", False))
+            self._update_success_adaptive_spawn_x(_ep_success)
+            self._update_success_adaptive_spawn_y(_ep_success)
+            self._update_success_adaptive_target_spawn_x(_ep_success)
+            self._update_success_adaptive_target_spawn_y(_ep_success)
+            self._update_success_adaptive_ftg_curriculum(_ep_success)
+            if self._mirrored_y_stage_mode == "active":
+                self._mirrored_y_successes.append(1 if _ep_success else 0)
             self._refresh_spawn_x_runtime_metadata()
             self._refresh_spawn_y_runtime_metadata()
             self._refresh_target_spawn_x_runtime_metadata()

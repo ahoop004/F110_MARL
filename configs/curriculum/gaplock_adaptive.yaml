@@ -13,8 +13,8 @@
 environment:
   curriculum_orchestrator:
     enabled: true
-    # Advancement order: y-spawn → ftg → x-spawn → target-y → target-x
-    order: [y, ftg, x, ty, tx]
+    # Advancement order: y-spawn → mirrored-y → ftg → x-spawn → target-y → target-x
+    order: [y, my, ftg, x, ty, tx]
     trigger_threshold: 1.0
     stable_updates_required: 2
     allow_backtrack: true
@@ -44,12 +44,9 @@ environment:
     regression_cooldown_updates: 1
 
   # Attacker spawn y: starts tightly aligned, expands laterally.
-  # mirror_prob: each episode, this probability the attacker's y is reflected
-  # about the target's y so both lateral sides are trained equally.
   spawn_y_curriculum:
     enabled: true
     mode: success_adaptive
-    mirror_prob: 0.0
     y_upper: 0.6093
     y_lower_start: 0.6093
     y_lower_bound: -0.5490
@@ -66,6 +63,16 @@ environment:
     regression_increment_max: 0.025
     regression_patience_updates: 2
     regression_cooldown_updates: 1
+
+  # Mirrored-y stage: after y phase completes, the attacker spawns on the
+  # opposite lateral side of the target (y reflected about target y).
+  # Graded by rolling success rate — the orchestrator advances past this
+  # stage once SR sustains above sr_upper_bound; the flip stays active
+  # (frozen) for all subsequent stages.
+  mirrored_y_curriculum:
+    enabled: false
+    window_episodes: 200
+    sr_upper_bound: 0.90
 
   # Target spawn x: starts just ahead of default, expands further ahead
   target_spawn_x_curriculum:

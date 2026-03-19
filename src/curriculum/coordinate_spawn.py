@@ -3,21 +3,29 @@
 Provides progressive difficulty by expanding the attacker's (and target's)
 allowed spawn region over training, driven by rolling success rate.
 
-Four independent axes:
+Five independent axes:
   spawn_x_curriculum        — attacker x position
-  spawn_y_curriculum        — attacker y position  (+ mirror_prob)
+  spawn_y_curriculum        — attacker y position
+  mirrored_y_curriculum     — reflects attacker y about target y (sequenced after y phase)
   target_spawn_x_curriculum — target x position
   target_spawn_y_curriculum — target y position
 
-Each axis supports two modes:
+Each positional axis supports two modes:
   linear         — expands proportionally to episode count
   success_adaptive — expands/contracts based on rolling success rate via
                      AdaptiveScalarController (same as SB3SingleAgentWrapper)
+
+mirrored_y_curriculum is stateless — it deterministically reflects whatever
+y was sampled by spawn_y_curriculum about the target's y coordinate.  It has
+no controller and does not call observe().  Use set_stage_mode("mirrored_y",
+"active"/"off") or the curriculum orchestrator's order list to sequence it
+after the y phase completes.
 
 Usage in EnhancedTrainingLoop:
     curriculum = CoordinateSpawnCurriculum(
         spawn_x_curriculum=env_config.get("spawn_x_curriculum"),
         spawn_y_curriculum=env_config.get("spawn_y_curriculum"),
+        mirrored_y_curriculum=env_config.get("mirrored_y_curriculum"),
         target_spawn_x_curriculum=env_config.get("target_spawn_x_curriculum"),
         target_spawn_y_curriculum=env_config.get("target_spawn_y_curriculum"),
         agent_id="car_0",
@@ -34,7 +42,8 @@ Usage in EnhancedTrainingLoop:
     meta = curriculum.get_metadata()
 """
 
-from typing import Any, Dict, Optional, Tuple
+from collections import deque
+from typing import Any, Deque, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -54,6 +63,7 @@ class CoordinateSpawnCurriculum:
         self,
         spawn_x_curriculum: Optional[Dict[str, Any]] = None,
         spawn_y_curriculum: Optional[Dict[str, Any]] = None,
+        mirrored_y_curriculum: Optional[Dict[str, Any]] = None,
         target_spawn_x_curriculum: Optional[Dict[str, Any]] = None,
         target_spawn_y_curriculum: Optional[Dict[str, Any]] = None,
         agent_id: str = "car_0",
@@ -64,6 +74,7 @@ class CoordinateSpawnCurriculum:
 
         self.spawn_x_curriculum = dict(spawn_x_curriculum) if isinstance(spawn_x_curriculum, dict) else None
         self.spawn_y_curriculum = dict(spawn_y_curriculum) if isinstance(spawn_y_curriculum, dict) else None
+        self.mirrored_y_curriculum = dict(mirrored_y_curriculum) if isinstance(mirrored_y_curriculum, dict) else None
         self.target_spawn_x_curriculum = dict(target_spawn_x_curriculum) if isinstance(target_spawn_x_curriculum, dict) else None
         self.target_spawn_y_curriculum = dict(target_spawn_y_curriculum) if isinstance(target_spawn_y_curriculum, dict) else None
 
@@ -79,9 +90,17 @@ class CoordinateSpawnCurriculum:
         self._target_spawn_y_controller: Optional[AdaptiveScalarController] = None
         self._target_spawn_y_context: Dict[str, float] = {}
 
+        # Mirrored-y rolling success tracker (graded stage)
+        _my_cfg = self.mirrored_y_curriculum or {}
+        _my_window = max(1, int(_my_cfg.get("window_episodes", 200)))
+        self._mirrored_y_window: int = _my_window
+        self._mirrored_y_sr_upper: float = float(_my_cfg.get("sr_upper_bound", 0.90))
+        self._mirrored_y_successes: Deque[int] = deque(maxlen=_my_window)
+
         # Stage modes: "active" or "off"
         self._spawn_x_stage_mode = "active" if self.spawn_x_curriculum and self.spawn_x_curriculum.get("enabled", False) else "off"
         self._spawn_y_stage_mode = "active" if self.spawn_y_curriculum and self.spawn_y_curriculum.get("enabled", False) else "off"
+        self._mirrored_y_stage_mode = "active" if self.mirrored_y_curriculum and self.mirrored_y_curriculum.get("enabled", False) else "off"
         self._target_spawn_x_stage_mode = "active" if self.target_spawn_x_curriculum and self.target_spawn_x_curriculum.get("enabled", False) else "off"
         self._target_spawn_y_stage_mode = "active" if self.target_spawn_y_curriculum and self.target_spawn_y_curriculum.get("enabled", False) else "off"
 
@@ -89,10 +108,11 @@ class CoordinateSpawnCurriculum:
         self._last_meta: Dict[str, Any] = {}
 
     def is_active(self) -> bool:
-        """Return True if at least one axis is enabled."""
-        return any(m == "active" for m in [
+        """Return True if at least one axis is active or frozen."""
+        return any(m in {"active", "frozen"} for m in [
             self._spawn_x_stage_mode,
             self._spawn_y_stage_mode,
+            self._mirrored_y_stage_mode,
             self._target_spawn_x_stage_mode,
             self._target_spawn_y_stage_mode,
         ])
@@ -123,9 +143,10 @@ class CoordinateSpawnCurriculum:
         if self.target_spawn_x_curriculum:
             sampled = self._sample_target_spawn_x(env, episode, base=sampled)
 
-        # Mirror attacker y about target y with configurable probability
-        if sampled is not None and self.spawn_y_curriculum:
-            sampled = self._apply_mirror(env, sampled)
+        # Mirrored-y stage: reflect attacker y about target y (applied after all other axes).
+        # Stays active when frozen so the flip persists through later stages.
+        if self._mirrored_y_stage_mode in {"active", "frozen"} and sampled is not None:
+            sampled = self._apply_mirrored_y(env, sampled)
 
         if sampled is not None:
             self._last_meta = {k: v for k, v in sampled.items() if k != "options"}
@@ -144,22 +165,47 @@ class CoordinateSpawnCurriculum:
             self._target_spawn_y_controller.observe(bool(success))
         if self._target_spawn_x_stage_mode == "active" and self._target_spawn_x_controller is not None:
             self._target_spawn_x_controller.observe(bool(success))
+        if self._mirrored_y_stage_mode == "active":
+            self._mirrored_y_successes.append(1 if success else 0)
+
+    def mirrored_y_progress(self) -> Optional[float]:
+        """Rolling SR progress for the mirrored-y stage (0.0 → 1.0).
+
+        Returns None if the stage is not configured, 0.0 if the window
+        is not yet full, and sr / sr_upper_bound (clamped to 1.0) once
+        the window has enough data.
+        """
+        if not self.mirrored_y_curriculum:
+            return None
+        if not self._mirrored_y_successes:
+            return 0.0
+        sr = float(sum(self._mirrored_y_successes) / len(self._mirrored_y_successes))
+        return min(sr / max(self._mirrored_y_sr_upper, 1e-9), 1.0)
 
     def get_metadata(self) -> Dict[str, Any]:
         """Return last spawn sampling metadata (spawn_x, spawn_y, etc.)."""
-        return dict(self._last_meta)
+        meta = dict(self._last_meta)
+        if self._mirrored_y_stage_mode in {"active", "frozen"} and self._mirrored_y_successes:
+            sr = float(sum(self._mirrored_y_successes) / len(self._mirrored_y_successes))
+            meta.setdefault("mirrored_y_curriculum", {})
+            meta["mirrored_y_curriculum"]["mirrored_y_window_sr"] = sr
+            meta["mirrored_y_curriculum"]["mirrored_y_progress"] = self.mirrored_y_progress()
+        return meta
 
     def set_stage_mode(self, axis: str, mode: str) -> None:
         """Allow external orchestrator to freeze/unfreeze an axis.
 
         Args:
-            axis: One of "spawn_x", "spawn_y", "target_spawn_x", "target_spawn_y".
+            axis: One of "spawn_x", "spawn_y", "mirrored_y",
+                  "target_spawn_x", "target_spawn_y".
             mode: "active" or "off".
         """
         if axis == "spawn_x":
             self._spawn_x_stage_mode = mode
         elif axis == "spawn_y":
             self._spawn_y_stage_mode = mode
+        elif axis == "mirrored_y":
+            self._mirrored_y_stage_mode = mode
         elif axis == "target_spawn_x":
             self._target_spawn_x_stage_mode = mode
         elif axis == "target_spawn_y":
@@ -471,15 +517,16 @@ class CoordinateSpawnCurriculum:
         }
         return x_lower, x_upper, progress, extra
 
-    # ── Mirror ───────────────────────────────────────────────────────────────
+    # ── Mirrored-Y stage ─────────────────────────────────────────────────────
 
-    def _apply_mirror(self, env: Any, sampled: Dict[str, Any]) -> Dict[str, Any]:
-        """Reflect attacker y about target y with mirror_prob probability."""
-        cfg = self.spawn_y_curriculum
-        if not cfg or not self.target_id:
-            return sampled
-        mirror_prob = float(cfg.get("mirror_prob", 0.0))
-        if mirror_prob <= 0.0:
+    def _apply_mirrored_y(self, env: Any, sampled: Dict[str, Any]) -> Dict[str, Any]:
+        """Reflect attacker y about target y (deterministic, no probability).
+
+        This is a dedicated curriculum stage sequenced after the y phase.
+        It takes whatever y was already set (by spawn_y_curriculum or the
+        default pose) and flips it to the opposite side of the target.
+        """
+        if not self.target_id:
             return sampled
         options = sampled.get("options")
         if not isinstance(options, dict):
@@ -492,14 +539,14 @@ class CoordinateSpawnCurriculum:
         t_idx = self._agent_index(env, self.target_id)
         if a_idx < 0 or t_idx < 0 or poses.ndim != 2 or poses.shape[0] <= max(a_idx, t_idx):
             return sampled
-        if float(self._rng(env).uniform(0.0, 1.0)) < mirror_prob:
-            target_y = float(poses[t_idx, 1])
-            poses[a_idx, 1] = 2.0 * target_y - poses[a_idx, 1]
-            options["poses"] = poses
-            y_meta = sampled.get("spawn_y_curriculum")
-            if isinstance(y_meta, dict):
-                y_meta["spawn_y"] = float(poses[a_idx, 1])
-                y_meta["spawn_y_mirrored"] = True
+        target_y = float(poses[t_idx, 1])
+        poses[a_idx, 1] = 2.0 * target_y - poses[a_idx, 1]
+        options["poses"] = poses
+        y_meta = sampled.get("spawn_y_curriculum")
+        if isinstance(y_meta, dict):
+            y_meta["spawn_y"] = float(poses[a_idx, 1])
+            y_meta["spawn_y_mirrored"] = True
+        sampled["mirrored_y_curriculum"] = {"mirrored_y_active": True, "target_y": target_y}
         return sampled
 
 

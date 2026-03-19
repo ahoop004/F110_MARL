@@ -692,11 +692,12 @@ def main():
                 console_logger.print_warning(f"Failed to create spawn sampler: {e}")
                 spawn_curriculum = None
 
-        # Create coordinate-based spawn curriculum (spawn_x/y + target_spawn_x/y + mirror_prob)
+        # Create coordinate-based spawn curriculum (spawn_x/y + mirrored_y + target_spawn_x/y)
         coordinate_spawn_curriculum = None
         _coord_cfgs = {
             k: env_config.get(k)
             for k in ("spawn_x_curriculum", "spawn_y_curriculum",
+                      "mirrored_y_curriculum",
                       "target_spawn_x_curriculum", "target_spawn_y_curriculum")
         }
         if any(isinstance(v, dict) and v.get("enabled", False) for v in _coord_cfgs.values()):
@@ -711,6 +712,7 @@ def main():
                 coordinate_spawn_curriculum = CoordinateSpawnCurriculum(
                     spawn_x_curriculum=_coord_cfgs["spawn_x_curriculum"],
                     spawn_y_curriculum=_coord_cfgs["spawn_y_curriculum"],
+                    mirrored_y_curriculum=_coord_cfgs["mirrored_y_curriculum"],
                     target_spawn_x_curriculum=_coord_cfgs["target_spawn_x_curriculum"],
                     target_spawn_y_curriculum=_coord_cfgs["target_spawn_y_curriculum"],
                     agent_id=_coord_agent_id,
