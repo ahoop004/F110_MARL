@@ -3,13 +3,13 @@ agents:
     role: defender
     algorithm: ftg
     params:
-      max_distance: 10.0
+      max_distance: 8.0
       window_size: 4
       bubble_radius: 3
-      max_steer: 0.42
+      max_steer: 0.69
       min_speed: 0.2
       max_speed: 0.8
-      steering_gain: 0.35
+      steering_gain: 0.69
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.6

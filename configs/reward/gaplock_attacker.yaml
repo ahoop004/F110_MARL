@@ -4,7 +4,7 @@ agents:
       preset: gaplock_full
       overrides:
         forcing:
-          enabled: true
+          enabled: false
           pinch_pockets:
             enabled: true
             anchor_forward: 1.2
@@ -33,14 +33,26 @@ agents:
           reward_near: 0.004
           penalty_far: 0.002
         heading:
-          enabled: true
+          enabled: false
           coefficient: 0.001
         speed:
-          enabled: true
+          enabled: false
           bonus_coef: 0.0005
         step_reward: -0.001
+        # Centerline deviation: reward for pushing target off the racing line.
+        # Requires centerline to be loaded (centerline_autoload: true in env config).
+        centerline_deviation:
+          enabled: true
+          weight: 0.5
+          scale: 1.0
+        # Wall closeness: reward for forcing target near walls.
+        # Requires walls to be loaded (walls_autoload: true in env config).
+        wall_closeness:
+          enabled: true
+          weight: 0.5
+          distance_scale: 1.0
         terminal:
           target_crash: 200.0
           self_crash: -20.0
           timeout: -100.0
-          collision: 0.0
+          collision: -10.0

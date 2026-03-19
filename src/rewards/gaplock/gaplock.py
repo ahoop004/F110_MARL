@@ -14,6 +14,8 @@ from rewards.gaplock.speed import SpeedReward
 from rewards.gaplock.forcing import ForcingReward
 from rewards.gaplock.penalties import BehaviorPenalties
 from rewards.gaplock.step_penalty import StepPenalty
+from rewards.gaplock.centerline_deviation import CenterlineDeviationReward
+from rewards.gaplock.wall_closeness import WallClosenessReward
 
 
 class GaplockReward(RewardStrategy):
@@ -27,6 +29,8 @@ class GaplockReward(RewardStrategy):
     - Speed: Movement bonuses
     - Forcing: Advanced forcing mechanics (pinch, clearance, turn)
     - Penalties: Discouraging bad behaviors
+    - CenterlineDeviation: Rewards pushing target off the racing line (optional)
+    - WallCloseness: Rewards forcing target near walls (optional)
 
     Example:
         >>> from rewards import load_preset
@@ -104,6 +108,14 @@ class GaplockReward(RewardStrategy):
         # Step penalty (constant per-step reward/penalty)
         if 'step_reward' in config and config['step_reward'] != 0.0:
             components.append(StepPenalty(config))
+
+        # Centerline deviation shaping (optional, disabled by default)
+        if config.get('centerline_deviation', {}).get('enabled', False):
+            components.append(CenterlineDeviationReward(config.get('centerline_deviation', {})))
+
+        # Wall closeness shaping (optional, disabled by default)
+        if config.get('wall_closeness', {}).get('enabled', False):
+            components.append(WallClosenessReward(config.get('wall_closeness', {})))
 
         # Compose all components
         self.composer = ComposedReward(components)

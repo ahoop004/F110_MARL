@@ -1,6 +1,6 @@
 includes:
 - ../configs/env/line2_gaplock.yaml
-- ../configs/reward/gaplock_default.yaml
+- ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
 - ../configs/observation/gaplock_attacker.yaml
 - ../configs/curriculum/gaplock_adaptive.yaml

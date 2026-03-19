@@ -122,12 +122,12 @@ agents:
       regression_cooldown_updates: 1
       params:
         steering_gain:
-          start: 0.35
-          final: 0.80
-          increment_min: 0.01
-          increment_max: 0.05
-          regression_increment_min: 0.01
-          regression_increment_max: 0.05
+          start: 0.69
+          final: 0.69
+          increment_min: 0.0
+          increment_max: 0.0
+          regression_increment_min: 0.0
+          regression_increment_max: 0.0
         bubble_radius:
           start: 3.0
           final: 4.5

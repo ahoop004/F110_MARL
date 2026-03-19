@@ -10,11 +10,10 @@ agents:
     observation:
       preset: gaplock
       overrides:
-        # LiDAR features.
+        # LiDAR features. Beam count is set by environment.lidar_beams in the env config.
         lidar:
           enabled: true
-          beams: 108
-          max_range: 12.0
+          max_range: 8.0
           normalize: true
 
         # Ego features.

@@ -2,7 +2,8 @@ environment:
   map: maps/line2/line2.yaml
   num_agents: 2
   max_steps: 2500
-  lidar_beams: 108
+  lidar_beams: 375   # 270° FOV / 0.72° per beam (YDLIDAR X2L @ 6Hz default: 6×360/3000)
+  lidar_range: 8.0   # sensor max range (metres)
   spawn_points:
   - spawn_2
   - spawn_1
@@ -20,8 +21,8 @@ environment:
     width: 0.225
     m: 3.74
     I: 0.04712
-    s_min: -0.46
-    s_max: 0.46
+    s_min: -0.69   # arctan(L / 0.4m) = 0.69 rad → 0.4m min turning radius
+    s_max: 0.69
     sv_min: -3.2
     sv_max: 3.2
     v_switch: 0.8
