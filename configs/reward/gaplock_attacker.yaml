@@ -43,12 +43,12 @@ agents:
         # Requires centerline to be loaded (centerline_autoload: true in env config).
         centerline_deviation:
           enabled: true
-          weight: 0.5
+          weight: 0.05
           scale: 1.0
         # Wall closeness: reward for forcing target near walls.
         # Requires walls to be loaded (walls_autoload: true in env config).
         wall_closeness:
-          enabled: true
+          enabled: false
           weight: 0.5
           distance_scale: 1.0
         terminal:

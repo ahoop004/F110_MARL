@@ -10,7 +10,7 @@ environment:
   timestep: 0.01
   render: false
   centerline_autoload: true   # required by centerline_deviation reward
-  walls_autoload: true        # required by wall_closeness reward
+  walls_autoload: false       # required by wall_closeness reward
   
   vehicle_params:
     mu: 1.0489
