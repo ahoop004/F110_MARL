@@ -22,13 +22,13 @@ environment:
     backtrack_window_episodes: 100
     backtrack_patience_updates: 2
 
-  # Attacker spawn x: starts near the target, expands further back
+  # Attacker spawn x: starts near the target, expands further ahead
   spawn_x_curriculum:
     enabled: true
     mode: success_adaptive
-    x_upper: -46.769
-    x_lower_start: -46.75
-    x_lower_bound: -43.5
+    x_upper: 3.0243
+    x_lower_start: 3.0392
+    x_lower_bound: 5.5882
     window_episodes: 200
     update_every_episodes: 50
     sr_lower_bound: 0.90
@@ -50,9 +50,9 @@ environment:
     enabled: true
     mode: success_adaptive
     mirror_prob: 0.5
-    y_upper: 0.07689
-    y_lower_start: 0.0768
-    y_lower_bound: -1.4
+    y_upper: 0.6093
+    y_lower_start: 0.6093
+    y_lower_bound: -0.5490
     window_episodes: 200
     update_every_episodes: 50
     sr_lower_bound: 0.90
@@ -71,9 +71,9 @@ environment:
   target_spawn_x_curriculum:
     enabled: true
     mode: success_adaptive
-    x_upper: -46.700
-    x_lower_start: -46.900
-    x_lower_bound: -47.400
+    x_upper: 3.0784
+    x_lower_start: 2.9216
+    x_lower_bound: 2.5294
     window_episodes: 200
     update_every_episodes: 50
     sr_lower_bound: 0.90
@@ -92,9 +92,9 @@ environment:
   target_spawn_y_curriculum:
     enabled: true
     mode: success_adaptive
-    y_upper: -0.550
-    y_lower_start: -0.800
-    y_lower_bound: -1.250
+    y_upper: 0.1176
+    y_lower_start: -0.0784
+    y_lower_bound: -0.4314
     window_episodes: 200
     update_every_episodes: 50
     sr_lower_bound: 0.90
