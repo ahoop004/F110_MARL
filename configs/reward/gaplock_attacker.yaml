@@ -44,10 +44,10 @@ agents:
 
         # ── Forcing: geometric shaping toward attack positions ───────────────
         forcing:
-          enabled: true
+          enabled: false
           # Gaussian potential wells at (anchor_forward, ±anchor_lateral) in target frame.
           pinch_pockets:
-            enabled: true
+            enabled: false
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.55
