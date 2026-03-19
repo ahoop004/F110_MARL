@@ -32,6 +32,7 @@ class SB3TrainLoggingCallback(BaseCallback):
         self._outcome_deques: Dict[str, deque] = {
             name: deque(maxlen=self.window_size) for name in self._outcome_names
         }
+        self._spawn_rows: list = []
         self.current_episode_reward = 0.0
         self.current_episode_length = 0
         self.processed_episodes = set()
@@ -187,12 +188,29 @@ class SB3TrainLoggingCallback(BaseCallback):
             try:
                 log_dict["train/spawn_y"] = float(spawn_y)
             except (TypeError, ValueError):
-                pass
+                spawn_y = None
 
         spawn_x = info.get("spawn_x")
         if spawn_x is not None:
             try:
                 log_dict["train/spawn_x"] = float(spawn_x)
+            except (TypeError, ValueError):
+                spawn_x = None
+
+        metrics_config = self._get_metrics_config()
+        scatter_enabled = metrics_config is None or bool(metrics_config.get("train/spawn_scatter", False))
+        if scatter_enabled and spawn_x is not None and spawn_y is not None:
+            try:
+                self._spawn_rows.append([float(spawn_x), float(spawn_y), int(success), int(self.episode_count)])
+                import wandb as _wandb
+                table = _wandb.Table(
+                    columns=["spawn_x", "spawn_y", "success", "episode"],
+                    data=self._spawn_rows,
+                )
+                self.wandb_run.log(
+                    {"train/spawn_scatter": _wandb.plot.scatter(table, "spawn_x", "spawn_y", title="Spawn positions")},
+                    step=self.episode_count,
+                )
             except (TypeError, ValueError):
                 pass
 
