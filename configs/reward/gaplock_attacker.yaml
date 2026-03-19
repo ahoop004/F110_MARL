@@ -19,7 +19,7 @@ agents:
         # Fires every bonus_interval steps while: dist < threshold, speed > min,
         # heading within tolerance. Streak bonus scales with consecutive pressure steps.
         pressure:
-          enabled: true
+          enabled: false
           distance_threshold: 1.30
           min_speed: 0.30
           heading_tolerance: 1.57  # ~90 deg
@@ -91,7 +91,7 @@ agents:
 
         # ── Penalties: discourage idle, reverse, and hard braking ────────────
         penalties:
-          enabled: true
+          enabled: false
           idle:
             penalty: 0.05
             speed_threshold: 0.12
