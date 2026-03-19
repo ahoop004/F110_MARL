@@ -27,6 +27,12 @@ wandb:
       train/reward_gaplock_pressure_centerline: true
       train/reward_gaplock_pressure_wall: true
       train/reward_gaplock_pressure_terminal: true
+      train/outcome_rate_target_crash: true
+      train/outcome_rate_self_crash: true
+      train/outcome_rate_collision: true
+      train/outcome_rate_timeout: true
+      train/outcome_rate_idle_stop: true
+      train/outcome_rate_target_finish: true
       # train/steps_mean: true
       # train/spawn_point: true
       # train/spawn_stage: true

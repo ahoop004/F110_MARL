@@ -25,6 +25,13 @@ class SB3TrainLoggingCallback(BaseCallback):
         self.episode_rewards = deque(maxlen=self.window_size)
         self.episode_successes = deque(maxlen=self.window_size)
         self.episode_lengths = deque(maxlen=self.window_size)
+        self._outcome_names = [
+            "target_crash", "self_crash", "collision",
+            "timeout", "idle_stop", "target_finish",
+        ]
+        self._outcome_deques: Dict[str, deque] = {
+            name: deque(maxlen=self.window_size) for name in self._outcome_names
+        }
         self.current_episode_reward = 0.0
         self.current_episode_length = 0
         self.processed_episodes = set()
@@ -147,6 +154,8 @@ class SB3TrainLoggingCallback(BaseCallback):
         self.episode_rewards.append(float(reward))
         self.episode_successes.append(bool(success))
         self.episode_lengths.append(int(length))
+        for name in self._outcome_names:
+            self._outcome_deques[name].append(1 if outcome == name else 0)
 
         if not self._should_log("train"):
             return
@@ -167,6 +176,10 @@ class SB3TrainLoggingCallback(BaseCallback):
         }
         if outcome is not None:
             log_dict["train/outcome"] = outcome
+
+        for name, dq in self._outcome_deques.items():
+            if dq:
+                log_dict[f"train/outcome_rate_{name}"] = float(sum(dq) / len(dq))
 
         info = info if isinstance(info, dict) else {}
         spawn_y = info.get("spawn_y")
