@@ -4,9 +4,9 @@ agents:
       preset: gaplock_full
       overrides:
         forcing:
-          enabled: false
+          enabled: true
           pinch_pockets:
-            enabled: false
+            enabled: true
             anchor_forward: 1.2
             anchor_lateral: 0.35
             sigma: 0.55
@@ -43,7 +43,7 @@ agents:
         # Requires centerline to be loaded (centerline_autoload: true in env config).
         centerline_deviation:
           enabled: true
-          weight: 0.167
+          weight: 0.05
           scale: 1.0
         # Wall closeness: reward for forcing target near walls.
         # Requires walls to be loaded (walls_autoload: true in env config).
