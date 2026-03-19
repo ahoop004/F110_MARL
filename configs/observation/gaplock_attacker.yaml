@@ -19,24 +19,24 @@ agents:
         # Ego features.
         ego_state:
           pose: false
-          velocity: true
+          velocity: false
 
         # Target features (adversarial setup).
         target_state:
-          enabled: true
+          enabled: false
           pose: false
-          velocity: true
+          velocity: false
 
         # Relative target pose features.
         relative_pose:
-          enabled: true
+          enabled: false
           dim: 5
 
         # Optional features used by some presets/flatteners.
         speed:
           enabled: false
         prev_action:
-          enabled: false
+          enabled: true
           dim: 2
         # Append previous normalized actions to each flattened observation.
         # When enabled, adds `size * action_dim` features.
