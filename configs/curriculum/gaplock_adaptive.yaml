@@ -49,7 +49,7 @@ environment:
   spawn_y_curriculum:
     enabled: true
     mode: success_adaptive
-    mirror_prob: 0.5
+    mirror_prob: 0.0
     y_upper: 0.6093
     y_lower_start: 0.6093
     y_lower_bound: -0.5490
