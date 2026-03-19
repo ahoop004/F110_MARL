@@ -139,7 +139,7 @@ agents:
           regression_increment_min: 0.05
           regression_increment_max: 0.20
         max_speed:
-          start: 0.80
+          start: 0.60
           final: 0.95
           increment_min: 0.005
           increment_max: 0.02
