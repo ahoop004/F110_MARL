@@ -4,6 +4,7 @@ wandb:
     groups:
       define_metrics: true
       train: true
+      spawn_scatter: true   # scatter plot of spawn (x,y) coloured by success
       # target: true
       # spawn: true
       # curriculum: true
