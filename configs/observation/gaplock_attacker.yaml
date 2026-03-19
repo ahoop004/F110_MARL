@@ -41,7 +41,7 @@ agents:
         # Append previous normalized actions to each flattened observation.
         # When enabled, adds `size * action_dim` features.
         action_stack:
-          enabled: true
+          enabled: false
           size: 3
 
         # Observation normalization metadata.
