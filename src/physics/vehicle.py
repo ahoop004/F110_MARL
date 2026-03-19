@@ -135,8 +135,9 @@ class RaceCar(object):
                         RaceCar.side_distances[i] = min(to_side, to_fr)
                 else:
                     if angle > -np.pi/2:
-                        # between 0 and -pi/2
-                        to_side = dist_sides / np.sin(-angle)
+                        # between 0 and -pi/2 (angle==0 beam points straight ahead)
+                        sin_neg = np.sin(-angle)
+                        to_side = dist_sides / sin_neg if sin_neg > 0.0 else np.inf
                         to_fr = dist_fr / np.cos(-angle)
                         RaceCar.side_distances[i] = min(to_side, to_fr)
                     else:

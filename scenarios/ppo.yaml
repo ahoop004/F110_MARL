@@ -28,6 +28,7 @@ agents:
       warm_start_model_path: ""
       warm_start_reset_lr: true
 
+      device: cpu
       learning_rate: 0.0003
       learning_rate_curriculum:
         enabled: false

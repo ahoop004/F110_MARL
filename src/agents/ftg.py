@@ -229,7 +229,13 @@ class FollowTheGapPolicy:
             elif "fov_deg" in params:
                 kwargs["fov"] = np.deg2rad(float(params["fov_deg"]))
 
-        unexpected = set(params) - set(kwargs) - {"fov_deg", "fov_rad"}
+        # Keys injected by the agent builder for all agent types — not FTG params.
+        _BUILDER_KEYS = {
+            "fov_deg", "fov_rad",
+            "act_dim", "action_dim", "action_high", "action_low",
+            "agent_id", "frame_stack", "obs_dim", "observation_space",
+        }
+        unexpected = set(params) - set(kwargs) - _BUILDER_KEYS
         if unexpected:
             print(f"[FollowTheGapPolicy] Ignoring unsupported config keys: {sorted(unexpected)}")
 
