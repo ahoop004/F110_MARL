@@ -1,0 +1,53 @@
+includes:
+- ../configs/env/line2_gaplock.yaml
+- ../configs/reward/gaplock_attacker.yaml
+- ../configs/agents/ftg_defender.yaml
+- ../configs/observation/gaplock_attacker.yaml
+- ../configs/curriculum/gaplock_adaptive.yaml
+- ../configs/wandb.yaml
+
+experiment:
+  name: a2c
+  episodes: 20000
+  seed: 42
+  save_model_at_end: true
+
+environment:
+  max_steps: 2700
+  action_repeat: 3
+
+agents:
+  car_0:
+    role: attacker
+    algorithm: sb3_a2c
+    target_id: car_1
+    params:
+      warm_start_enabled: false
+      warm_start_model_path: ""
+      warm_start_reset_lr: true
+
+      device: cuda
+      learning_rate: 0.0007      # A2C default (7e-4); higher than PPO's 3e-4
+      gamma: 0.99
+      n_steps: 5                 # A2C default; updates every 5 decision steps
+      gae_lambda: 1.0            # 1.0 = pure n-step returns (A2C default); 0.95 = GAE
+      ent_coef: 0.0              # A2C default; increase (e.g. 0.01) to encourage exploration
+      vf_coef: 0.5
+      activation: relu
+      hidden_dims:
+      - 256
+      - 256
+
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: null
+  job_type: null
+  tags:
+  - a2c
+  - comparison
+  - gaplock
+  notes: "A2C baseline for gaplock adversarial task (use run_sb3.py)"
+  mode: online
