@@ -8,13 +8,13 @@ includes:
 
 experiment:
   name: ppo
-  episodes: 20000
+  episodes: 2000
   seed: 42
   save_model_at_end: true
   # save_model_name: ppo_final
 
 environment:
-  max_steps: 2700
+  max_steps: 1200
   action_repeat: 2
 
 agents:
@@ -105,7 +105,7 @@ wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
-  name: null
+  name: ppo-b
   group: null
   job_type: null
   tags:
