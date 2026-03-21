@@ -7,6 +7,61 @@ environment:
   spawn_points:
   - spawn_2
   - spawn_1
+  spawn_configs:
+    spawn_pinch_right:
+      car_0:
+      - -45.569
+      - -1.0
+      - 0.2
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
+    spawn_pinch_left:
+      car_0:
+      - -45.569
+      - -0.4
+      - -0.2
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
+    spawn_pinch_ahead:
+      car_0:
+      - -45.569
+      - -0.7
+      - 0.0
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
+    spawn_approach_0.0C:
+      car_0:
+      - -45.569
+      - -0.7
+      - 0.0
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
+    spawn_approach_0.3L:
+      car_0:
+      - -45.569
+      - -0.4
+      - 0.0
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
+    spawn_approach_0.3R:
+      car_0:
+      - -45.569
+      - -1.0
+      - 0.0
+      car_1:
+      - -46.769
+      - -0.7
+      - 0.0
   timestep: 0.01
   render: false
   centerline_autoload: true   # required by centerline_deviation reward
