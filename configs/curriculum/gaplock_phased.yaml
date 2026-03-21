@@ -21,7 +21,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 800
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     eval_overrides:
@@ -46,7 +46,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 600
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.1
@@ -68,7 +68,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 400
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.1
@@ -91,7 +91,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 200
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.12
@@ -114,7 +114,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 100
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.12
@@ -137,7 +137,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 50
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.15
@@ -160,7 +160,7 @@ curriculum:
       - 0.44
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.15
@@ -183,7 +183,7 @@ curriculum:
       - 0.35
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.15
@@ -206,7 +206,7 @@ curriculum:
       - 0.25
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.18
@@ -229,7 +229,7 @@ curriculum:
       - 0.15
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.18
@@ -252,7 +252,7 @@ curriculum:
       - 0.05
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.2
@@ -275,7 +275,7 @@ curriculum:
       - 0.1
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.2
@@ -298,7 +298,7 @@ curriculum:
       - 0.0
     lock_speed_steps: 0
     ftg:
-      steering_gain: 0.25
+      steering_gain: 0.45
       bubble_radius: 2.0
       max_speed: 0.8
     keep_foundation: 0.2
