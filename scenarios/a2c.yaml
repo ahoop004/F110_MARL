@@ -20,8 +20,8 @@ agents:
     params:
       learning_rate: 0.0004
       gamma: 0.99
-      n_steps: 5
-      gae_lambda: 1.0
+      n_steps: 600
+      gae_lambda: 0.95
       ent_coef: 0.0
       vf_coef: 0.5
       activation: relu
@@ -34,7 +34,7 @@ wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
-  name: null
+  name: a2c
   group: algo_comparison
   job_type: a2c
   tags:

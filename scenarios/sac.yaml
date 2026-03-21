@@ -21,8 +21,8 @@ agents:
       learning_rate: 0.0003
       gamma: 0.99
       tau: 0.005
-      ent_coef: auto
-      target_entropy: auto
+      ent_coef: 0.01
+      target_entropy: null
       activation: relu
       hidden_dims:
       - 256

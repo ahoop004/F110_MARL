@@ -18,35 +18,38 @@ agents:
     algorithm: sb3_dqn
     target_id: car_1
     params:
-      # 25 discrete primitives: 5 throttle levels x 5 steering levels
+      # 21 discrete primitives biased toward aggressive interception
       # Values are raw env actions: [steering, throttle]
       # Steering range: -0.46..+0.46 rad, throttle range: 0..1.0 (no reverse)
+      # Full-speed options cover the whole steering range for active pursuit.
+      # Medium-speed options allow tighter turning to cut across the target's path.
+      # A creep action prevents complete stalls during epsilon-greedy exploration.
       action_set:
+      # Full throttle — primary pursuit actions
       - [0.0,  1.0]
-      - [0.0,  0.7]
-      - [0.0,  0.4]
-      - [0.2,  1.0]
-      - [0.2,  0.7]
-      - [0.2,  0.4]
-      - [-0.2, 1.0]
-      - [-0.2, 0.7]
-      - [-0.2, 0.4]
-      - [0.4,  1.0]
-      - [0.4,  0.7]
-      - [0.4,  0.4]
-      - [-0.4, 1.0]
-      - [-0.4, 0.7]
-      - [-0.4, 0.4]
       - [0.1,  1.0]
-      - [0.1,  0.7]
       - [-0.1, 1.0]
-      - [-0.1, 0.7]
+      - [0.2,  1.0]
+      - [-0.2, 1.0]
       - [0.3,  1.0]
-      - [0.3,  0.7]
       - [-0.3, 1.0]
-      - [-0.3, 0.7]
-      - [0.0,  0.15]
-      - [0.0,  0.0]
+      - [0.4,  1.0]
+      - [-0.4, 1.0]
+      - [0.46, 1.0]
+      - [-0.46,1.0]
+      # Medium throttle — tighter arcs to cut across target
+      - [0.0,  0.7]
+      - [0.2,  0.7]
+      - [-0.2, 0.7]
+      - [0.4,  0.7]
+      - [-0.4, 0.7]
+      - [0.46, 0.7]
+      - [-0.46,0.7]
+      # Low throttle — sharp turns in place to reorient
+      - [0.46, 0.3]
+      - [-0.46,0.3]
+      # Creep — avoids complete stall during random exploration
+      - [0.0,  0.2]
       learning_rate: 0.0003
       gamma: 0.99
       tau: 0.005
@@ -58,7 +61,7 @@ agents:
       learning_starts: 1000
       train_freq: 4
       gradient_steps: 1
-      exploration_fraction: 0.15
+      exploration_fraction: 0.25
       exploration_initial_eps: 1.0
       exploration_final_eps: 0.05
     observation:
