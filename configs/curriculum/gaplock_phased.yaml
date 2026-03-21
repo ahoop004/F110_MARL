@@ -23,6 +23,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     eval_overrides:
       frequency: 2
       num_episodes: 1
@@ -47,6 +48,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.1
   - name: 1_lock400
     description: Lock 400 steps
@@ -68,6 +70,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.1
     keep_previous: 0.15
   - name: 1_lock200
@@ -90,6 +93,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.12
     keep_previous: 0.18
   - name: 1_lock100
@@ -112,6 +116,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.12
     keep_previous: 0.2
   - name: 1_lock50
@@ -134,6 +139,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.15
     keep_previous: 0.2
   - name: 1_lock0
@@ -156,6 +162,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.15
     keep_previous: 0.22
   - name: 2_speed035
@@ -178,6 +185,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.15
     keep_previous: 0.22
   - name: 2_speed025
@@ -200,6 +208,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.18
     keep_previous: 0.22
   - name: 2_speed015
@@ -222,6 +231,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.18
     keep_previous: 0.25
   - name: 2_speed005
@@ -244,6 +254,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.2
     keep_previous: 0.25
   - name: 2_speed_var_low
@@ -266,6 +277,7 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.2
     keep_previous: 0.25
   - name: 2_speed000
@@ -288,5 +300,6 @@ curriculum:
     ftg:
       steering_gain: 0.25
       bubble_radius: 2.0
+      max_speed: 0.8
     keep_foundation: 0.2
     keep_previous: 0.25
