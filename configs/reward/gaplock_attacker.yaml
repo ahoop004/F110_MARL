@@ -9,7 +9,7 @@ agents:
           self_crash: -100.0     # attacker crashed alone
           collision: -100.0      # mutual crash
           timeout: -50.0         # max steps reached
-          idle_stop: -5.0        # attacker was idle-stopped by env
+          idle_stop: -50.0        # attacker was idle-stopped by env
           target_finish: -50.0   # target crossed finish line
 
         # ── Per-step cost ────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ agents:
 
         # ── Pressure: reward for sustained close pursuit ─────────────────────
         pressure:
-          enabled: false
+          enabled: true
           distance_threshold: 1.30
           min_speed: 0.30
           heading_tolerance: 1.57
@@ -29,7 +29,7 @@ agents:
         # ── Centerline deviation: reward target being off the racing line ─────
         # Dominant per-step signal. Requires centerline_autoload: true in env config.
         centerline_deviation:
-          enabled: true
+          enabled: false
           weight: 0.05
           scale: 1.5
 
@@ -67,26 +67,26 @@ agents:
 
         # ── Distance: reward/penalty based on attacker-target range ──────────
         distance:
-          enabled: false
+          enabled: true
           near_distance: 1.00
           far_distance: 2.50
-          reward_near: 0.004
-          penalty_far: 0.002
+          reward_near: 0.12
+          penalty_far: 0.08
 
         # ── Heading: reward for pointing toward target ───────────────────────
         heading:
-          enabled: false
-          coefficient: 0.001
+          enabled: true
+          coefficient: 0.08
 
         # ── Speed: reward for maintaining speed near target ──────────────────
         speed:
-          enabled: false
+          enabled: true
           bonus_coef: 0.0005
           target_speed: 0.60
 
         # ── Penalties: discourage idle, reverse, and hard braking ────────────
         penalties:
-          enabled: false
+          enabled: true
           idle:
             penalty: 0.05
             speed_threshold: 0.12

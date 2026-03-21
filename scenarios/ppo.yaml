@@ -3,7 +3,7 @@ includes:
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
 - ../configs/observation/gaplock_attacker.yaml
-- ../configs/curriculum/gaplock_adaptive.yaml
+- ../configs/curriculum/gaplock_phased.yaml
 - ../configs/wandb.yaml
 
 experiment:
@@ -15,7 +15,7 @@ experiment:
 
 environment:
   max_steps: 2700
-  action_repeat: 3
+  action_repeat: 2
 
 agents:
   car_0:
