@@ -14,7 +14,8 @@ environment:
   curriculum_orchestrator:
     enabled: true
     # Advancement order: y-spawn → mirrored-y → ftg → x-spawn → target-y → target-x
-    order: [y, my, ftg, x, ty, tx]
+    order: [y, ftg, x, ty, tx]
+    # order: [y, my, ftg, x, ty, tx]
     trigger_threshold: 1.0
     stable_updates_required: 2
     allow_backtrack: true
