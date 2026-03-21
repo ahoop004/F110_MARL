@@ -3,12 +3,12 @@ includes:
 - ../configs/reward/gaplock_attacker.yaml
 - ../configs/agents/ftg_defender.yaml
 - ../configs/observation/gaplock_attacker.yaml
-- ../configs/curriculum/gaplock_phased.yaml
+- ../configs/curriculum/gaplock_adaptive.yaml
 - ../configs/wandb.yaml
 
 experiment:
   name: ppo
-  episodes: 2000
+  episodes: 20000
   seed: 42
   save_model_at_end: true
   # save_model_name: ppo_final
