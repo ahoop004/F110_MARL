@@ -42,8 +42,7 @@ Usage in EnhancedTrainingLoop:
     meta = curriculum.get_metadata()
 """
 
-from collections import deque
-from typing import Any, Deque, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -90,12 +89,13 @@ class CoordinateSpawnCurriculum:
         self._target_spawn_y_controller: Optional[AdaptiveScalarController] = None
         self._target_spawn_y_context: Dict[str, float] = {}
 
-        # Mirrored-y rolling success tracker (graded stage)
-        _my_cfg = self.mirrored_y_curriculum or {}
-        _my_window = max(1, int(_my_cfg.get("window_episodes", 200)))
-        self._mirrored_y_window: int = _my_window
-        self._mirrored_y_sr_upper: float = float(_my_cfg.get("sr_upper_bound", 0.90))
-        self._mirrored_y_successes: Deque[int] = deque(maxlen=_my_window)
+        # Mirrored-y: AdaptiveScalarController with dummy scalar 0→1
+        # Created eagerly (not lazily) since there are no bounds to resolve.
+        self._mirrored_y_controller: Optional[AdaptiveScalarController] = (
+            self._make_mirrored_y_controller(self.mirrored_y_curriculum)
+            if self.mirrored_y_curriculum
+            else None
+        )
 
         # Stage modes: "active" or "off"
         self._spawn_x_stage_mode = "active" if self.spawn_x_curriculum and self.spawn_x_curriculum.get("enabled", False) else "off"
@@ -165,31 +165,26 @@ class CoordinateSpawnCurriculum:
             self._target_spawn_y_controller.observe(bool(success))
         if self._target_spawn_x_stage_mode == "active" and self._target_spawn_x_controller is not None:
             self._target_spawn_x_controller.observe(bool(success))
-        if self._mirrored_y_stage_mode == "active":
-            self._mirrored_y_successes.append(1 if success else 0)
+        if self._mirrored_y_stage_mode == "active" and self._mirrored_y_controller is not None:
+            self._mirrored_y_controller.observe(bool(success))
 
     def mirrored_y_progress(self) -> Optional[float]:
-        """Rolling SR progress for the mirrored-y stage (0.0 → 1.0).
-
-        Returns None if the stage is not configured, 0.0 if the window
-        is not yet full, and sr / sr_upper_bound (clamped to 1.0) once
-        the window has enough data.
-        """
-        if not self.mirrored_y_curriculum:
+        """Controller progress for the mirrored-y stage (0.0 → 1.0)."""
+        if self._mirrored_y_controller is None:
             return None
-        if not self._mirrored_y_successes:
-            return 0.0
-        sr = float(sum(self._mirrored_y_successes) / len(self._mirrored_y_successes))
-        return min(sr / max(self._mirrored_y_sr_upper, 1e-9), 1.0)
+        return self._mirrored_y_controller.progress()
 
     def get_metadata(self) -> Dict[str, Any]:
         """Return last spawn sampling metadata (spawn_x, spawn_y, etc.)."""
         meta = dict(self._last_meta)
-        if self._mirrored_y_stage_mode in {"active", "frozen"} and self._mirrored_y_successes:
-            sr = float(sum(self._mirrored_y_successes) / len(self._mirrored_y_successes))
+        ctrl = self._mirrored_y_controller
+        if self._mirrored_y_stage_mode in {"active", "frozen"} and ctrl is not None:
             meta.setdefault("mirrored_y_curriculum", {})
-            meta["mirrored_y_curriculum"]["mirrored_y_window_sr"] = sr
-            meta["mirrored_y_curriculum"]["mirrored_y_progress"] = self.mirrored_y_progress()
+            meta["mirrored_y_curriculum"]["mirrored_y_progress"] = ctrl.progress()
+            if ctrl.last_window_sr is not None:
+                meta["mirrored_y_curriculum"]["mirrored_y_window_sr"] = ctrl.last_window_sr
+            meta["mirrored_y_curriculum"]["mirrored_y_last_increment"] = float(ctrl.last_delta)
+            meta["mirrored_y_curriculum"]["mirrored_y_last_adjustment"] = str(ctrl.last_adjustment)
         return meta
 
     def set_stage_mode(self, axis: str, mode: str) -> None:
@@ -287,6 +282,46 @@ class CoordinateSpawnCurriculum:
             regression_cooldown_updates=regress_cooldown,
             progress_start=initial,
             progress_end=bound,
+        )
+
+    def _make_mirrored_y_controller(self, cfg: Dict[str, Any]) -> AdaptiveScalarController:
+        """Build a controller with dummy scalar 0→1 for the mirrored-y stage."""
+        window = max(1, int(cfg.get("window_episodes", 200)))
+        update_every = max(1, int(cfg.get("update_every_episodes", window)))
+        sr_low = float(cfg.get("sr_lower_bound", 0.85))
+        sr_high = float(cfg.get("sr_upper_bound", 0.95))
+        inc_min = abs(float(cfg.get("increment_min", 0.10)))
+        inc_max = abs(float(cfg.get("increment_max", 0.20)))
+        if inc_max < inc_min:
+            inc_min, inc_max = inc_max, inc_min
+        regress_enabled = bool(cfg.get("regression_enabled", False))
+        regress_trigger = float(cfg.get("regression_sr_trigger", max(0.0, sr_low - 0.20)))
+        regress_floor = float(cfg.get("regression_sr_floor", max(0.0, regress_trigger - 0.20)))
+        regress_patience = max(1, int(cfg.get("regression_patience_updates", 1)))
+        regress_cooldown = max(0, int(cfg.get("regression_cooldown_updates", 0)))
+        ri_min = abs(float(cfg.get("regression_increment_min", inc_min)))
+        ri_max = abs(float(cfg.get("regression_increment_max", inc_max)))
+        if ri_max < ri_min:
+            ri_min, ri_max = ri_max, ri_min
+        return AdaptiveScalarController(
+            initial_value=0.0,
+            value_min=0.0,
+            value_max=1.0,
+            window_size=window,
+            update_every=update_every,
+            advance_sr_low=sr_low,
+            advance_sr_high=sr_high,
+            advance_step_min=inc_min,
+            advance_step_max=inc_max,
+            regression_enabled=regress_enabled,
+            regression_sr_trigger=regress_trigger,
+            regression_sr_floor=regress_floor,
+            regression_step_min=ri_min,
+            regression_step_max=ri_max,
+            regression_patience_updates=regress_patience,
+            regression_cooldown_updates=regress_cooldown,
+            progress_start=0.0,
+            progress_end=1.0,
         )
 
     # ── Y axis ───────────────────────────────────────────────────────────────

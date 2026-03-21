@@ -73,7 +73,18 @@ environment:
   mirrored_y_curriculum:
     enabled: false
     window_episodes: 200
-    sr_upper_bound: 0.90
+    update_every_episodes: 50
+    sr_lower_bound: 0.90
+    sr_upper_bound: 0.99
+    increment_min: 0.10
+    increment_max: 0.20
+    regression_enabled: true
+    regression_sr_trigger: 0.70
+    regression_sr_floor: 0.40
+    regression_increment_min: 0.10
+    regression_increment_max: 0.20
+    regression_patience_updates: 2
+    regression_cooldown_updates: 1
 
   # Target spawn x: starts just ahead of default, expands further ahead
   target_spawn_x_curriculum:
