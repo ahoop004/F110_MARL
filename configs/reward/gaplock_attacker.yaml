@@ -30,7 +30,7 @@ agents:
         # Dominant per-step signal. Requires centerline_autoload: true in env config.
         centerline_deviation:
           enabled: true
-          weight: 1.0
+          weight: 0.05
           scale: 1.5
 
         # ── Wall closeness: reward target being near walls ────────────────────

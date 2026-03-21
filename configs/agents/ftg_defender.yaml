@@ -5,11 +5,11 @@ agents:
     params:
       max_distance: 8.0
       window_size: 4
-      bubble_radius: 3
-      max_steer: 0.69
+      bubble_radius: 2
+      max_steer: 0.42
       min_speed: 0.2
-      max_speed: 0.8
-      steering_gain: 0.69
+      max_speed: 0.60
+      steering_gain: 0.35
       fov: 4.71238898
       normalized: false
       steer_smooth: 0.6
