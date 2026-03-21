@@ -3,7 +3,7 @@ agents:
     # Action constraints for the trainable attacker.
     action_constraints:
       max_v: null
-      prevent_reverse: false
+      prevent_reverse: true
       speed_index: 1
 
     # Observation configuration for the trainable attacker.
@@ -18,13 +18,13 @@ agents:
 
         # Ego features.
         ego_state:
-          pose: true
+          pose: false
           velocity: true
 
         # Target features (adversarial setup).
         target_state:
           enabled: true
-          pose: true
+          pose: false
           velocity: true
 
         # Relative target pose features.
@@ -34,7 +34,7 @@ agents:
 
         # Optional features used by some presets/flatteners.
         speed:
-          enabled: true
+          enabled: false
         prev_action:
           enabled: false
           dim: 2

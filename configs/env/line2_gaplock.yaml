@@ -2,7 +2,7 @@ environment:
   map: maps/line2/line2.yaml
   num_agents: 2
   max_steps: 2500
-  lidar_beams: 375   # 270° FOV / 0.72° per beam (YDLIDAR X2L @ 6Hz default: 6×360/3000)
+  lidar_beams: 54   # 270° FOV / 0.72° per beam (YDLIDAR X2L @ 6Hz default: 6×360/3000)
   lidar_range: 8.0   # sensor max range (metres)
   spawn_points:
   - spawn_2

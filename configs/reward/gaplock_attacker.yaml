@@ -6,48 +6,45 @@ agents:
         # ── Terminal rewards (fire once at episode end) ──────────────────────
         terminal:
           target_crash: 200.0    # attacker caused target to crash (success)
-          self_crash: -20.0      # attacker crashed alone
-          collision: -10.0       # mutual crash
-          timeout: -100.0        # max steps reached (heavy: discourages stalling)
+          self_crash: -100.0     # attacker crashed alone
+          collision: -100.0      # mutual crash
+          timeout: -50.0         # max steps reached
           idle_stop: -5.0        # attacker was idle-stopped by env
-          target_finish: -20.0   # target crossed finish line
+          target_finish: -50.0   # target crossed finish line
 
         # ── Per-step cost ────────────────────────────────────────────────────
-        step_reward: -0.001      # constant penalty per timestep (encourages speed)
+        step_reward: 0.0
 
         # ── Pressure: reward for sustained close pursuit ─────────────────────
-        # Fires every bonus_interval steps while: dist < threshold, speed > min,
-        # heading within tolerance. Streak bonus scales with consecutive pressure steps.
         pressure:
-          enabled: true
+          enabled: false
           distance_threshold: 1.30
           min_speed: 0.30
-          heading_tolerance: 1.57  # ~90 deg
+          heading_tolerance: 1.57
           bonus: 0.12
           bonus_interval: 5
           streak_bonus: 0.10
           streak_cap: 40
 
         # ── Centerline deviation: reward target being off the racing line ─────
-        # Requires centerline_autoload: true in env config.
+        # Dominant per-step signal. Requires centerline_autoload: true in env config.
         centerline_deviation:
           enabled: true
-          weight: 0.05
-          scale: 1.0
+          weight: 1.0
+          scale: 1.5
 
         # ── Wall closeness: reward target being near walls ────────────────────
         # Requires walls_autoload: true in env config.
         wall_closeness:
-          enabled: true
-          weight: 0.05
-          distance_scale: 1.0
+          enabled: false
+          weight: 1.0
+          distance_scale: 2.0
 
         # ── Forcing: geometric shaping toward attack positions ───────────────
         forcing:
-          enabled: true
-          # Gaussian potential wells at (anchor_forward, ±anchor_lateral) in target frame.
+          enabled: false
           pinch_pockets:
-            enabled: true
+            enabled: false
             anchor_forward: 1.20
             anchor_lateral: 0.35
             sigma: 0.55
@@ -55,24 +52,22 @@ agents:
             peak: 1.0
             floor: -0.5
             power: 2.0
-          # Reward for reducing target's minimum wall clearance.
           clearance:
-            enabled: true
+            enabled: false
             weight: 0.003
             band_min: 0.30
             band_max: 3.20
             clip: 0.015
             time_scaled: true
-          # Reward for target turning (indicator of applied pressure).
           turn:
-            enabled: true
+            enabled: false
             weight: 0.006
             clip: 0.015
             time_scaled: true
 
         # ── Distance: reward/penalty based on attacker-target range ──────────
         distance:
-          enabled: true
+          enabled: false
           near_distance: 1.00
           far_distance: 2.50
           reward_near: 0.004
@@ -80,18 +75,18 @@ agents:
 
         # ── Heading: reward for pointing toward target ───────────────────────
         heading:
-          enabled: true
+          enabled: false
           coefficient: 0.001
 
         # ── Speed: reward for maintaining speed near target ──────────────────
         speed:
-          enabled: true
+          enabled: false
           bonus_coef: 0.0005
           target_speed: 0.60
 
         # ── Penalties: discourage idle, reverse, and hard braking ────────────
         penalties:
-          enabled: true
+          enabled: false
           idle:
             penalty: 0.05
             speed_threshold: 0.12
