@@ -435,6 +435,11 @@ class SB3SingleAgentWrapper(gym.Env):
         if reward_components:
             info['reward_components'] = reward_components
 
+        # DEBUG: per-step reward trace — remove once verified
+        # _done = terminated or truncated
+        # _comp_str = " ".join(f"{k}={v:+.3f}" for k, v in reward_components.items()) if reward_components else "no_components"
+        # print(f"[reward_debug] step={self.episode_steps:4d} reward={total_reward:+8.4f} done={str(_done):5s} | {_comp_str}")
+
         return obs, total_reward, terminated, truncated, info
 
     def _build_reward_info(
