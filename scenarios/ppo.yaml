@@ -37,8 +37,8 @@ wandb:
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: null
-  job_type: null
+  group: algo_comparison
+  job_type: ppo
   tags:
   - improved
   - curriculum_v2

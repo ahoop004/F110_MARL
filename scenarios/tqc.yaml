@@ -1,15 +1,16 @@
 includes:
 - ../configs/env/line2_gaplock.yaml
-- ../configs/reward/gaplock_attacker.yaml
+- ../configs/reward/gaplock_centerline_pressure.yaml
 - ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased.yaml
-- ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
+- ../configs/agents/action_constraints.yaml
+- ../configs/evaluation/line2_gaplock_eval_standard.yaml
 - ../configs/wandb.yaml
 experiment:
   name: tqc
-  episodes: 10000
+  episodes: 2000
   seed: 42
 environment:
+  max_steps: 1200
   action_repeat: 2
 agents:
   car_0:
@@ -23,46 +24,27 @@ agents:
       ent_coef: auto
       target_entropy: auto
       top_quantiles_to_drop_per_net: 2
-      hidden_dims:
-      - 512
-      - 512
       activation: relu
+      hidden_dims:
+      - 256
+      - 256
       buffer_size: 1000000
       batch_size: 256
-      learning_starts: 100
-      per:
-        enabled: true
-        alpha: 0.6
-        beta: 0.4
-        beta_final: 1.0
-        beta_anneal_steps: 200000
-        epsilon: 1.0e-6
-        max_priority: 1.0
-        normalize_weights: true
-      her:
-        enabled: true
-        reward_mode: replace
-        success_mode: distance
-        distance_threshold: 1.0
-        success_reward: 0.0
-        failure_reward: -1.0
-        done_on_success: true
-        probability: 1.0
+      learning_starts: 1000
+      train_freq: 1
+      gradient_steps: 1
     observation:
       preset: gaplock
-    frame_stack: 4
 wandb:
   enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: null
-  job_type: null
+  group: algo_comparison
+  job_type: tqc
   tags:
-  - improved
-  - curriculum_v2
-  - tqc
   - comparison
+  - tqc
   - gaplock
-  notes: gaplock
+  notes: "TQC vs PPO comparison — same reward, env, budget (use run_sb3_offpolicy.py)"
   mode: online
