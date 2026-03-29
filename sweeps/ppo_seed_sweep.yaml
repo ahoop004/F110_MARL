@@ -1,0 +1,38 @@
+program: run_sb3.py
+method: grid
+project: marl-f110
+entity: ahoop004-old-dominion-university
+metric:
+  name: eval_agg/success_rate
+  goal: maximize
+parameters:
+  seed:
+    values:
+    - 42
+    - 123
+    - 456
+    - 789
+    - 1337
+    - 2024
+    - 3141
+    - 5678
+    - 9999
+    - 11111
+    - 22222
+    - 33333
+    - 44444
+    - 55555
+    - 66666
+    - 77777
+    - 88888
+    - 99999
+    - 111111
+    - 222222
+command:
+- ${env}
+- python3
+- ${program}
+- --scenario
+- scenarios/ppo.yaml
+- --wandb
+name: PPO_seed_sweep_20
