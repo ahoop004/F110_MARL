@@ -1,0 +1,14 @@
+# Attacker racing reward — centerline speed with aggressive tuning.
+# Attackers prioritise raw speed over perfect line; collision is still
+# penalised but less harshly than defenders to allow close racing.
+# Blocking behaviour emerges because attackers occupy the racing line
+# while opponents try to find a gap.
+agents:
+  car_3:
+    reward:
+      type: centerline
+      vs_weight: 1.2          # speed along centerline (primary signal)
+      vd_weight: 0.005        # small penalty for lateral velocity (allow cutting)
+      d_weight: 0.01          # small penalty for lateral distance off-line
+      steer_weight: 0.03      # mild steer smoothing; aggressive turns OK
+      collision_penalty: -500.0  # penalise all collisions; lighter than defender

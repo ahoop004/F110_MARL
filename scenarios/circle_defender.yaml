@@ -1,0 +1,166 @@
+# Phase 1: Train defender policy on circle map.
+# 3 defenders (car_0..2) share one PPO policy — focal agent cycles each episode.
+# 3 attackers (car_3..5) run FTG as fixed opponents to create traffic.
+# Run with: python run_marl_roles.py --scenario scenarios/circle_defender.yaml
+includes:
+  - ../configs/env/circle_6car.yaml
+  - ../configs/reward/centerline_racing.yaml   # defines car_0 reward (template)
+
+experiment:
+  name: circle_defender
+  episodes: 10000
+  seed: 42
+
+environment:
+  action_repeat: 2   # 3000 decision steps per episode at 6000 env steps
+
+agents:
+  # --- Defenders (training role) ---
+  car_0:
+    role: defender
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.005
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    role: defender
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.005
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_2:
+    role: defender
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.005
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  # --- Attackers (fixed FTG opponents) ---
+  # FTG tuned for circle map: wide fov, longer lookahead, higher speed.
+  car_3:
+    role: attacker
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898        # 270 deg
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  car_4:
+    role: attacker
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  car_5:
+    role: attacker
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: circle_marl
+  job_type: defender_ppo
+  tags:
+    - circle
+    - marl
+    - phase1
+    - defender
+  notes: "Phase 1: train shared defender policy vs FTG attackers on circle map"
+  mode: online

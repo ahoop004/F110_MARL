@@ -402,6 +402,8 @@ def create_training_setup(
         map_path = env_config['map']
         start_poses = load_spawn_points_from_map(map_path, spawn_names)
         env_kwargs['start_poses'] = start_poses
+    elif 'start_poses' in env_config and 'start_poses' not in env_kwargs:
+        env_kwargs['start_poses'] = np.array(env_config['start_poses'], dtype=np.float64)
 
     # Create environment
     env = F110ParallelEnv(**env_kwargs)

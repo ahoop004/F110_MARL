@@ -1,0 +1,167 @@
+# Phase 2: Train attacker policy on circle map.
+# 3 attackers (car_3..5) share one PPO policy — focal agent cycles each episode.
+# 3 defenders (car_0..2) run FTG as fixed opponents to act as targets/obstacles.
+# For best results, replace defender FTG with the frozen Phase 1 checkpoint once
+# that checkpoint loading is wired up (see run_marl_roles.py load_checkpoint flag).
+# Run with: python run_marl_roles.py --scenario scenarios/circle_attacker.yaml
+includes:
+  - ../configs/env/circle_6car.yaml
+  - ../configs/reward/attacker_racing.yaml   # defines car_3 reward (template)
+
+experiment:
+  name: circle_attacker
+  episodes: 3000
+  seed: 42
+
+environment:
+  action_repeat: 2
+
+agents:
+  # --- Defenders (fixed FTG opponents — stand-in for trained Phase 1 policy) ---
+  car_0:
+    role: defender
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  car_1:
+    role: defender
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  car_2:
+    role: defender
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.40
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  # --- Attackers (training role) ---
+  car_3:
+    role: attacker
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.01
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_4:
+    role: attacker
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.01
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_5:
+    role: attacker
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline
+    params:
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.01
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: circle_marl
+  job_type: attacker_ppo
+  tags:
+    - circle
+    - marl
+    - phase2
+    - attacker
+  notes: "Phase 2: train shared attacker policy vs FTG defenders on circle map"
+  mode: online
