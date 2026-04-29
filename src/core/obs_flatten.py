@@ -333,6 +333,84 @@ def flatten_centerline_obs(
     )
 
 
+def flatten_centerline_racing_obs(
+    obs_dict: Dict[str, Any],
+    scales: Optional[Dict[str, float]] = None,
+) -> np.ndarray:
+    """Flatten observation for multi-agent racing with lap-progress awareness.
+
+    Extends the base centerline preset with two additional features:
+    - ``progress``: normalized lap progress [0, 1] injected by the wrapper via
+      centerline projection.  Falls back to 0 if absent.
+    - ``angular_velocity``: yaw rate, clipped to [-1, 1] at ±5 rad/s.
+
+    Output layout (N_beams = lidar_beams, default 54):
+        [0 : N_beams]       lidar scans, normalized to [0, 1]
+        [N_beams]           speed magnitude, normalized to [0, 1]
+        [N_beams+1]         angular_velocity, normalized to [-1, 1]
+        [N_beams+2]         lap progress [0, 1]
+        [N_beams+3 : +5]    prev_action (steer, speed), clipped to [-1, 1]
+
+    Total dims: N_beams + 5  (59 for the default 54-beam config)
+    """
+    scales = scales or {}
+
+    lidar_range = float(scales.get("lidar_range", 10.0))
+    if lidar_range <= 0.0:
+        lidar_range = 10.0
+
+    scan = obs_dict.get("scans") if obs_dict.get("scans") is not None else obs_dict.get("lidar")
+    if scan is None:
+        lidar = np.zeros(108, dtype=np.float32)
+    else:
+        lidar = np.asarray(scan, dtype=np.float32).reshape(-1)
+    lidar_norm = np.clip(lidar, 0.0, lidar_range) / lidar_range
+
+    velocity = obs_dict.get("velocity")
+    if velocity is None:
+        vx, vy = 0.0, 0.0
+    else:
+        vel_arr = np.asarray(velocity, dtype=np.float32).reshape(-1)
+        vx = float(vel_arr[0]) if vel_arr.size > 0 else 0.0
+        vy = float(vel_arr[1]) if vel_arr.size > 1 else 0.0
+    speed = float(np.sqrt(vx * vx + vy * vy))
+    speed_scale = float(scales.get("speed", 1.0))
+    if speed_scale <= 0.0:
+        speed_scale = 1.0
+    speed_norm = float(np.clip(speed / speed_scale, 0.0, 1.0))
+
+    ang_vel_raw = obs_dict.get("angular_velocity")
+    if ang_vel_raw is None:
+        ang_vel_norm = 0.0
+    else:
+        ang_scale = float(scales.get("ang_vel", 5.0))
+        if ang_scale <= 0.0:
+            ang_scale = 5.0
+        ang_vel_norm = float(np.clip(float(ang_vel_raw) / ang_scale, -1.0, 1.0))
+
+    progress_raw = obs_dict.get("progress")
+    progress = float(np.clip(float(progress_raw), 0.0, 1.0)) if progress_raw is not None else 0.0
+
+    prev_action = obs_dict.get("prev_action")
+    if prev_action is None:
+        prev_arr = np.zeros(2, dtype=np.float32)
+    else:
+        prev_arr = np.asarray(prev_action, dtype=np.float32).reshape(-1)
+        if prev_arr.size < 2:
+            padded = np.zeros(2, dtype=np.float32)
+            padded[: prev_arr.size] = prev_arr
+            prev_arr = padded
+        else:
+            prev_arr = prev_arr[:2]
+    prev_norm = np.clip(prev_arr, -1.0, 1.0)
+
+    return np.concatenate([
+        lidar_norm.astype(np.float32),
+        np.array([speed_norm, ang_vel_norm, progress], dtype=np.float32),
+        prev_norm.astype(np.float32),
+    ], axis=0)
+
+
 def flatten_observation(
     obs_dict: Dict[str, Any],
     preset: str = 'gaplock',
@@ -357,10 +435,12 @@ def flatten_observation(
         return flatten_gaplock_obs(obs_dict, target_id, scales=scales)
     elif preset == 'centerline':
         return flatten_centerline_obs(obs_dict, scales=scales)
+    elif preset == 'centerline_racing':
+        return flatten_centerline_racing_obs(obs_dict, scales=scales)
     else:
         raise ValueError(
             f"Unsupported observation preset: {preset}. "
-            f"Supported: gaplock, centerline"
+            f"Supported: gaplock, centerline, centerline_racing"
         )
 
 __all__ = ['flatten_observation', 'flatten_gaplock_obs', 'flatten_centerline_obs']

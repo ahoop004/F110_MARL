@@ -7,3 +7,15 @@ origin:
 occupied_thresh: 0.45
 free_thresh: 0.196
 negate: 0
+annotations:
+  spawn_points:
+    - {name: spawn_1,  pose: [-25.0362,  89.2307, -1.5708]}
+    - {name: spawn_2,  pose: [-31.5220,  62.1935, -2.9222]}
+    - {name: spawn_3,  pose: [-37.5920,  35.9847, -1.5708]}
+    - {name: spawn_4,  pose: [-27.7471,  13.7300, -1.5708]}
+    - {name: spawn_5,  pose: [-16.9664, -10.4847, -1.8241]}
+    - {name: spawn_6,  pose: [  3.3634, -18.3179,  2.3562]}
+    - {name: spawn_7,  pose: [ -1.8025,   8.0379,  1.8447]}
+    - {name: spawn_8,  pose: [ -5.7866,  35.3334,  1.8004]}
+    - {name: spawn_9,  pose: [-12.0982,  63.0120,  1.8048]}
+    - {name: spawn_10, pose: [-21.3531,  89.9765,  2.0233]}

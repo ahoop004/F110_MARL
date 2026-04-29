@@ -55,6 +55,7 @@ def build_reward_strategy(
     reward_type = config.get('type', 'gaplock')
 
     # Build final config
+    _meta_keys = {'type', 'preset', 'overrides'}
     if 'preset' in config:
         # Load preset and apply overrides
         preset_name = config['preset']
@@ -62,9 +63,21 @@ def build_reward_strategy(
 
         if 'overrides' in config:
             reward_config = merge_config(reward_config, config['overrides'])
+
+        # Merge any extra top-level keys from the reward config into the inner
+        # preset dict (e.g. normalize_by_track_length: true alongside preset: …).
+        # They are injected into the first nested dict found, matching how
+        # CenterlineReward reads config.get("centerline", config).
+        extra = {k: v for k, v in config.items() if k not in _meta_keys}
+        if extra:
+            inner_key = next((k for k in reward_config if isinstance(reward_config[k], dict)), None)
+            if inner_key is not None:
+                reward_config[inner_key] = {**reward_config[inner_key], **extra}
+            else:
+                reward_config.update(extra)
     else:
         # Use config directly
-        reward_config = {k: v for k, v in config.items() if k not in ['type']}
+        reward_config = {k: v for k, v in config.items() if k not in _meta_keys}
 
     # Create reward strategy based on type
     if reward_type == 'gaplock':

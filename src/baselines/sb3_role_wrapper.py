@@ -37,6 +37,7 @@ from gymnasium import spaces
 from src.core.obs_flatten import flatten_observation
 from src.rewards.base import RewardStrategy
 from src.metrics.outcomes import determine_outcome
+from src.utils.centerline import project_to_centerline
 
 
 class SB3RoleWrapper(gym.Env):
@@ -131,6 +132,15 @@ class SB3RoleWrapper(gym.Env):
             aid: np.zeros(self._action_low.shape, dtype=np.float32)
             for aid in self._role_ids
         }
+        # Cached centerline projection indices for fast windowed search
+        self._progress_indices: Dict[str, int] = {aid: -1 for aid in self._role_ids}
+        # Cached track length (computed once per map load; reset on env.reset)
+        self._track_length: Optional[float] = None
+        # Cached valid grid-spawn indices for current map; None = needs recompute
+        self._spawn_candidates: Optional[np.ndarray] = None
+        self._spawn_candidates_cl_id: int = -1  # id() of the centerline used to build cache
+        # RNG for grid spawn selection (seeded independently of the env)
+        self._spawn_rng = np.random.default_rng()
 
         # Observation scales resolved from underlying env
         self._obs_scales = self._resolve_obs_scales()
@@ -167,13 +177,30 @@ class SB3RoleWrapper(gym.Env):
         self._focal_episode += 1
         focal = self.focal_id
 
-        obs_dict, info_dict = self.env.reset(seed=seed, options=options)
+        # Seed the spawn RNG if a seed is provided (first reset only)
+        if seed is not None:
+            self._spawn_rng = np.random.default_rng(seed)
+
+        # Compute a 2×3 grid of start poses around a random straight section
+        # of the *current* map's centerline.  We do this before env.reset() so
+        # that if the env cycles to a new map we build the grid from the new
+        # centerline after the cycle.  env.reset() accepts options["poses"] as
+        # an explicit override (Case 1 in F110ParallelEnv.reset).
+        grid_poses = self._sample_grid_poses()
+        env_options: Dict[str, Any] = dict(options or {})
+        if grid_poses is not None and "poses" not in env_options:
+            env_options["poses"] = grid_poses
+
+        obs_dict, info_dict = self.env.reset(seed=seed, options=env_options if env_options else None)
         self._current_obs_dict = obs_dict
         self._episode_steps = 0
 
-        # Reset prev_actions for all role agents
+        # Reset per-agent state
+        self._track_length = None  # recompute after map may have changed
+        self._spawn_candidates = None  # invalidate; map may have cycled
         for aid in self._role_ids:
             self._prev_actions[aid] = np.zeros(self._action_low.shape, dtype=np.float32)
+            self._progress_indices[aid] = -1  # force full centerline search on first step
 
         obs = self._get_obs(focal)
         return obs, info_dict.get(focal, {})
@@ -232,6 +259,16 @@ class SB3RoleWrapper(gym.Env):
 
         obs = self._get_obs(focal)
         info = dict(info_dict.get(focal, {}))
+
+        # --- Collision fix: only the focal agent's OWN collision counts as
+        # terminated.  If another car crashed and the env ended the episode
+        # for everyone, that's a truncation from focal's perspective — no
+        # terminal penalty fires, and the trajectory is still useful.
+        focal_collided = bool(info.get("collision", False))
+        if terminated and not focal_collided:
+            # Env terminated focal due to another car's collision → reclassify
+            terminated = False
+            truncated = True
 
         if terminated or truncated:
             outcome = determine_outcome(info, truncated=truncated)
@@ -300,12 +337,15 @@ class SB3RoleWrapper(gym.Env):
             return raw_obs.astype(np.float32)
 
         if isinstance(raw_obs, dict) and self.observation_preset:
-            obs_with_prev = dict(raw_obs)
-            obs_with_prev["prev_action"] = self._prev_actions.get(
+            obs_with_extras = dict(raw_obs)
+            obs_with_extras["prev_action"] = self._prev_actions.get(
                 agent_id, np.zeros(self._action_low.shape, dtype=np.float32)
             )
+            # Inject centerline progress for presets that use it
+            if self.observation_preset == "centerline_racing":
+                obs_with_extras["progress"] = self._compute_progress(agent_id, raw_obs)
             return flatten_observation(
-                obs_with_prev,
+                obs_with_extras,
                 preset=self.observation_preset,
                 scales=self._obs_scales,
             )
@@ -314,6 +354,153 @@ class SB3RoleWrapper(gym.Env):
             return np.asarray(raw_obs, dtype=np.float32)
         except Exception:
             return np.zeros(self.observation_space.shape, dtype=np.float32)
+
+    # Grid layout constants — 2 columns × 3 rows, matching original circle grid
+    _GRID_ROW_SPACING = 1.6    # metres between rows (along track, backward)
+    _GRID_COL_OFFSET  = 0.35   # metres lateral from centreline (±)
+    _GRID_MIN_HALF_WIDTH = 0.6 # min wall half-distance required at spawn point
+    _GRID_CURVATURE_MAX  = 0.5 # max |Δθ| per metre — filters out tight corners
+
+    def _sample_grid_poses(self) -> Optional[np.ndarray]:
+        """Pick a random straight, wide section and return 6 poses in a 2×3 grid."""
+        centerline = getattr(self.env, "centerline_points", None)
+        if centerline is None or centerline.shape[0] < 10:
+            return None
+
+        n = centerline.shape[0]
+        candidates = self._get_spawn_candidates(centerline, n)
+        if candidates is None or len(candidates) == 0:
+            # Fallback: any point in 5–95 % of the lap
+            candidates = np.arange(int(0.05 * n), int(0.95 * n))
+
+        idx = int(self._spawn_rng.choice(candidates))
+        return self._build_grid_poses(centerline, idx, n)
+
+    def _get_spawn_candidates(
+        self, centerline: np.ndarray, n: int
+    ) -> Optional[np.ndarray]:
+        """Return cached array of valid spawn indices for the current map."""
+        cl_id = id(centerline)
+        if self._spawn_candidates is not None and self._spawn_candidates_cl_id == cl_id:
+            return self._spawn_candidates
+
+        pts = centerline[:, :2].astype(np.float32)
+
+        # --- curvature filter -------------------------------------------------
+        # Smooth angular rate of change over a 10-point window; reject sharp bends.
+        thetas = np.arctan2(np.gradient(pts[:, 1]), np.gradient(pts[:, 0]))
+        seg_len = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        avg_seg = float(seg_len.mean()) if len(seg_len) > 0 else 0.2
+        dtheta = np.abs(np.gradient(thetas))
+        # Convert to curvature (rad/m)
+        curvature = dtheta / max(avg_seg, 1e-6)
+        # Smooth over ±5 points
+        kernel = np.ones(11) / 11
+        curvature_smooth = np.convolve(curvature, kernel, mode="same")
+        straight = curvature_smooth < self._GRID_CURVATURE_MAX
+
+        # --- width filter via walls ------------------------------------------
+        walls = getattr(self.env, "walls", None)
+        if walls is not None:
+            try:
+                all_wall_pts = np.vstack([
+                    np.asarray(v, dtype=np.float32)
+                    for v in (walls.values() if isinstance(walls, dict) else walls)
+                    if len(v) > 0
+                ])
+                # Sample width at every 10th centerline point, interpolate
+                sample_idxs = np.arange(0, n, 10)
+                half_widths = np.full(n, np.inf, dtype=np.float32)
+                for si in sample_idxs:
+                    dists = np.linalg.norm(all_wall_pts - pts[si], axis=1)
+                    half_widths[si] = dists.min()
+                # Fill gaps with nearest sampled value
+                for i in range(n):
+                    if half_widths[i] == np.inf:
+                        nearest = sample_idxs[np.argmin(np.abs(sample_idxs - i))]
+                        half_widths[i] = half_widths[nearest]
+                wide_enough = half_widths >= self._GRID_MIN_HALF_WIDTH
+            except Exception:
+                wide_enough = np.ones(n, dtype=bool)
+        else:
+            wide_enough = np.ones(n, dtype=bool)
+
+        # --- lap position filter (avoid finish line) --------------------------
+        lo = int(0.05 * n)
+        hi = int(0.95 * n)
+        lap_ok = np.zeros(n, dtype=bool)
+        lap_ok[lo:hi] = True
+
+        valid = np.where(straight & wide_enough & lap_ok)[0]
+
+        self._spawn_candidates = valid if len(valid) > 0 else None
+        self._spawn_candidates_cl_id = cl_id
+        return self._spawn_candidates
+
+    def _build_grid_poses(
+        self, centerline: np.ndarray, idx: int, n: int
+    ) -> np.ndarray:
+        """Compute 6 poses in a 2-column × 3-row racing grid at centerline[idx]."""
+        pt = centerline[idx]
+        x, y = float(pt[0]), float(pt[1])
+
+        # Heading: use stored theta column if available, else estimate from neighbours
+        if centerline.shape[1] >= 3 and np.isfinite(pt[2]):
+            theta = float(pt[2])
+        else:
+            prev_idx = max(0, idx - 1)
+            next_idx = min(n - 1, idx + 1)
+            delta = centerline[next_idx, :2] - centerline[prev_idx, :2]
+            theta = float(np.arctan2(delta[1], delta[0]))
+
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        tangent = np.array([cos_t,  sin_t])  # forward along track
+        normal  = np.array([-sin_t, cos_t])  # left of track
+
+        poses = np.zeros((6, 3), dtype=np.float32)
+        k = 0
+        for row in range(3):            # row 0 = front, rows go backward
+            for col_sign in (-1, +1):   # -1 = right, +1 = left (matches original grid)
+                d_along   = -row * self._GRID_ROW_SPACING
+                d_lateral =  col_sign * self._GRID_COL_OFFSET
+                pos = np.array([x, y]) + d_along * tangent + d_lateral * normal
+                poses[k] = [pos[0], pos[1], theta]
+                k += 1
+        return poses
+
+    def _get_track_length(self) -> Optional[float]:
+        """Return centerline arc length in metres, cached per episode."""
+        if self._track_length is not None:
+            return self._track_length
+        centerline = getattr(self.env, "centerline_points", None)
+        if centerline is None or centerline.shape[0] < 2:
+            return None
+        cl = np.asarray(centerline, dtype=np.float32)
+        self._track_length = float(np.linalg.norm(np.diff(cl[:, :2], axis=0), axis=1).sum())
+        return self._track_length
+
+    def _compute_progress(self, agent_id: str, obs: Dict[str, Any]) -> float:
+        """Return normalized lap progress [0, 1] via centerline projection."""
+        centerline = getattr(self.env, "centerline_points", None)
+        if centerline is None or centerline.shape[0] == 0:
+            return 0.0
+        pose = obs.get("pose")
+        if pose is None:
+            return 0.0
+        pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
+        if pose_arr.size < 2:
+            return 0.0
+        position = pose_arr[:2]
+        heading = float(pose_arr[2]) if pose_arr.size >= 3 else 0.0
+        last_idx = self._progress_indices.get(agent_id, -1)
+        try:
+            proj = project_to_centerline(
+                centerline, position, heading, last_index=last_idx if last_idx >= 0 else None
+            )
+            self._progress_indices[agent_id] = proj.index
+            return float(proj.progress)
+        except Exception:
+            return 0.0
 
     def _denormalize(self, norm_action: np.ndarray) -> np.ndarray:
         """Map normalized action [-1,1] → physical action space."""
@@ -348,6 +535,7 @@ class SB3RoleWrapper(gym.Env):
             "timestep": getattr(self.env, "timestep", 0.01),
             "action": self._prev_actions.get(focal, np.zeros(2, dtype=np.float32)),
             "centerline": getattr(self.env, "centerline_points", None),
+            "track_length": self._get_track_length(),
             "walls": getattr(self.env, "walls", None),
             # Expose all agents' info so reward can read cross-agent state
             "all_info": info,

@@ -137,7 +137,7 @@ CENTERLINE_RACING: Dict[str, Any] = {
         'vd_weight': 0.01,
         'd_weight': 0.02,
         'steer_weight': 0.1,
-        'collision_penalty': -1000.0,
+        'collision_penalty': -100.0,
         'steer_index': 0,
     },
 }

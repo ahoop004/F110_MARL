@@ -1,18 +1,19 @@
-# Phase 1: Train defender policy on circle map.
+# Phase 1: Train defender policy across all MARL maps.
 # 3 defenders (car_0..2) share one PPO policy — focal agent cycles each episode.
-# 3 attackers (car_3..5) run FTG as fixed opponents to create traffic.
-# Run with: python run_marl_roles.py --scenario scenarios/circle_defender.yaml
+# 3 attackers (car_3..5) run FTG as fixed opponents.
+# Map is randomized each episode; spawn points are drawn randomly from each map's annotations.
+# Run with: python run_marl_roles.py --scenario scenarios/marl_defender.yaml
 includes:
-  - ../configs/env/circle_6car.yaml
-  - ../configs/reward/centerline_racing.yaml   # defines car_0 reward (template)
+  - ../configs/env/marl_6car.yaml
+  - ../configs/reward/centerline_racing.yaml
 
 experiment:
-  name: circle_defender
-  episodes: 10000
+  name: marl_defender
+  episodes: 20000
   seed: 42
 
 environment:
-  action_repeat: 2   # 3000 decision steps per episode at 6000 env steps
+  action_repeat: 2   # 15000 decision steps per episode at 30000 env steps
 
 agents:
   # --- Defenders (training role) ---
@@ -80,7 +81,6 @@ agents:
       speed_index: 1
 
   # --- Attackers (fixed FTG opponents) ---
-  # FTG tuned for circle map: wide fov, longer lookahead, higher speed.
   car_3:
     role: attacker
     algorithm: ftg
@@ -92,7 +92,7 @@ agents:
       min_speed: 0.5
       max_speed: 3.0
       steering_gain: 0.30
-      fov: 4.71238898        # 270 deg
+      fov: 4.71238898
       normalized: false
       steer_smooth: 0.5
       mode: lidar
@@ -155,12 +155,12 @@ wandb:
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: circle_marl
+  group: marl_multitracks
   job_type: defender_ppo
   tags:
-    - circle
     - marl
+    - multi-map
     - phase1
     - defender
-  notes: "Phase 1: train shared defender policy vs FTG attackers on circle map"
+  notes: "Phase 1: train shared defender policy vs FTG attackers across all MARL maps"
   mode: online

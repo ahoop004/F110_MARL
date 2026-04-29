@@ -3,3 +3,5 @@ agents:
     reward:
       type: centerline
       preset: centerline_racing
+      normalize_by_track_length: true
+      reference_length: 400.0   # reward magnitude anchored to a 400m reference lap

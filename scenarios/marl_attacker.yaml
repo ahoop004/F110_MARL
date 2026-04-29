@@ -1,23 +1,22 @@
-# Phase 2: Train attacker policy on circle map.
+# Phase 2: Train attacker policy across all MARL maps.
 # 3 attackers (car_3..5) share one PPO policy — focal agent cycles each episode.
-# 3 defenders (car_0..2) run FTG as fixed opponents to act as targets/obstacles.
-# For best results, replace defender FTG with the frozen Phase 1 checkpoint once
-# that checkpoint loading is wired up (see run_marl_roles.py load_checkpoint flag).
-# Run with: python run_marl_roles.py --scenario scenarios/circle_attacker.yaml
+# 3 defenders (car_0..2) run FTG as fixed opponents (replace with Phase 1 checkpoint when available).
+# Map is randomized each episode; spawn points are drawn randomly from each map's annotations.
+# Run with: python run_marl_roles.py --scenario scenarios/marl_attacker.yaml
 includes:
-  - ../configs/env/circle_6car.yaml
-  - ../configs/reward/attacker_racing.yaml   # defines car_3 reward (template)
+  - ../configs/env/marl_6car.yaml
+  - ../configs/reward/attacker_racing.yaml
 
 experiment:
-  name: circle_attacker
-  episodes: 3000
+  name: marl_attacker
+  episodes: 20000
   seed: 42
 
 environment:
   action_repeat: 2
 
 agents:
-  # --- Defenders (fixed FTG opponents — stand-in for trained Phase 1 policy) ---
+  # --- Defenders (fixed FTG opponents) ---
   car_0:
     role: defender
     algorithm: ftg
@@ -152,16 +151,16 @@ agents:
       speed_index: 1
 
 wandb:
-  enabled: false
+  enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: circle_marl
+  group: marl_multitracks
   job_type: attacker_ppo
   tags:
-    - circle
     - marl
+    - multi-map
     - phase2
     - attacker
-  notes: "Phase 2: train shared attacker policy vs FTG defenders on circle map"
+  notes: "Phase 2: train shared attacker policy vs FTG defenders across all MARL maps"
   mode: online

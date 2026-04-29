@@ -11,7 +11,14 @@ from utils.centerline import project_to_centerline
 
 
 class CenterlineReward(RewardStrategy):
-    """Reward strategy encouraging speed along the centerline with smooth steering."""
+    """Reward strategy encouraging speed along the centerline with smooth steering.
+
+    When ``normalize_by_track_length`` is True the ``vs`` term is scaled by
+    ``reference_length / track_length`` so the total reward per lap is
+    approximately ``vs_weight * reference_length`` regardless of which map is
+    loaded.  This keeps value-function targets consistent across tracks of
+    different sizes.
+    """
 
     def __init__(self, config: Dict[str, Any]) -> None:
         center_cfg = config.get("centerline", config) if isinstance(config, dict) else {}
@@ -21,10 +28,14 @@ class CenterlineReward(RewardStrategy):
         self.steer_weight = float(center_cfg.get("steer_weight", 0.1))
         self.collision_penalty = float(center_cfg.get("collision_penalty", -1000.0))
         self.steer_index = int(center_cfg.get("steer_index", 0))
+        self.normalize_by_track_length = bool(center_cfg.get("normalize_by_track_length", False))
+        self.reference_length = float(center_cfg.get("reference_length", 400.0))
         self._last_centerline_index: Optional[int] = None
+        self._cached_track_length: Optional[float] = None
 
     def reset(self) -> None:
         self._last_centerline_index = None
+        self._cached_track_length = None
 
     def compute(self, step_info: dict) -> Tuple[float, Dict[str, float]]:
         obs = step_info.get("next_obs") or step_info.get("obs") or {}
@@ -47,10 +58,29 @@ class CenterlineReward(RewardStrategy):
 
             vs, vd, d = self._compute_centerline_terms(obs, centerline)
 
+        # Normalize vs by track length so reward per lap is independent of map size.
+        # scale = reference_length / track_length, cached after first computation.
+        if self.normalize_by_track_length:
+            track_length = step_info.get("track_length")
+            if track_length is None and centerline is not None:
+                if self._cached_track_length is None:
+                    cl = np.asarray(centerline, dtype=np.float32)
+                    self._cached_track_length = float(
+                        np.linalg.norm(np.diff(cl[:, :2], axis=0), axis=1).sum()
+                    )
+                track_length = self._cached_track_length
+            if track_length and track_length > 0.0:
+                vs_effective = float(vs) * self.reference_length / track_length
+            else:
+                vs_effective = float(vs)
+        else:
+            vs_effective = float(vs)
+            track_length = None
+
         steer = self._extract_steer(step_info, obs)
 
         total = (
-            self.vs_weight * float(vs)
+            self.vs_weight * vs_effective
             - self.vd_weight * abs(float(vd))
             - self.d_weight * abs(float(d))
             - self.steer_weight * abs(float(steer))
@@ -62,11 +92,14 @@ class CenterlineReward(RewardStrategy):
 
         components = {
             "centerline/vs": float(vs),
+            "centerline/vs_effective": vs_effective,
             "centerline/vd": float(vd),
             "centerline/d": float(d),
             "centerline/steer": float(steer),
             "centerline/collision": float(self.collision_penalty if collision else 0.0),
         }
+        if track_length is not None:
+            components["centerline/track_length"] = float(track_length)
         return float(total), components
 
     def _compute_centerline_terms(

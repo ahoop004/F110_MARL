@@ -202,6 +202,42 @@ CENTERLINE_OBS: Dict[str, Any] = {
     },
 }
 
+CENTERLINE_RACING_OBS: Dict[str, Any] = {
+    'lidar': {
+        'enabled': True,
+        'beams': 1080,
+        'max_range': 10.0,
+        'normalize': True,
+    },
+    'ego_state': {
+        'pose': False,
+        'velocity': False,
+    },
+    'target_state': {
+        'enabled': False,
+    },
+    'relative_pose': {
+        'enabled': False,
+    },
+    'speed': {
+        'enabled': True,
+    },
+    'angular_velocity': {
+        'enabled': True,
+    },
+    'progress': {
+        'enabled': True,
+    },
+    'prev_action': {
+        'enabled': True,
+        'dim': 2,
+    },
+    'normalization': {
+        'enabled': True,
+        'trainable_only': True,
+    },
+}
+
 
 # Registry of all presets
 OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -209,6 +245,7 @@ OBSERVATION_PRESETS: Dict[str, Dict[str, Any]] = {
     'minimal': MINIMAL_OBS,
     'full': FULL_OBS,
     'centerline': CENTERLINE_OBS,
+    'centerline_racing': CENTERLINE_RACING_OBS,
 }
 
 
@@ -330,4 +367,5 @@ __all__ = [
     'MINIMAL_OBS',
     'FULL_OBS',
     'CENTERLINE_OBS',
+    'CENTERLINE_RACING_OBS',
 ]

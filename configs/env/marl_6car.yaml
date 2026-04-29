@@ -1,0 +1,53 @@
+environment:
+  # Initial map (used before first episode map cycle)
+  map: circle_map/circle_map.yaml
+  map_dir: maps
+  num_agents: 6
+  max_steps: 30000         # 300s at 0.01 timestep; covers 3-5 laps on most tracks
+  lidar_beams: 54
+  lidar_range: 10.0
+  timestep: 0.01
+  render: false
+
+  # Multi-map randomization — cycle to a new random map each episode.
+  # Excludes Hockenheim (no centerline) and line2 (linear, not suitable for lapping).
+  map_bundles:
+    - Budapest_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+    - circle_map
+  map_cycle: per_episode    # pick a new map on every env.reset()
+  map_pick: random          # uniform random selection
+
+  centerline_autoload: true
+  centerline_features: true
+  centerline_render: false
+  walls_autoload: true
+
+  # Spawning is handled by SB3RoleWrapper: 6 agents are placed in a 2×3
+  # racing grid at a randomly selected straight section each episode.
+
+  # Racing vehicle params — same as circle_6car.yaml
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    length: 0.32
+    width: 0.225
+    m: 3.74
+    I: 0.04712
+    s_min: -0.46
+    s_max: 0.46
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 2.5
+    a_max: 3.0
+    v_min: -1.0
+    v_max: 4.0
