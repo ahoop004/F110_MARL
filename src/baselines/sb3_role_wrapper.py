@@ -136,14 +136,13 @@ class SB3RoleWrapper(gym.Env):
         self._progress_indices: Dict[str, int] = {aid: -1 for aid in self._role_ids}
         # Cached track length (computed once per map load; reset on env.reset)
         self._track_length: Optional[float] = None
-        # Cached valid grid-spawn indices for current map; None = needs recompute
-        self._spawn_candidates: Optional[np.ndarray] = None
-        self._spawn_candidates_cl_id: int = -1  # id() of the centerline used to build cache
         # RNG for grid spawn selection (seeded independently of the env)
         self._spawn_rng = np.random.default_rng()
 
         # Observation scales resolved from underlying env
         self._obs_scales = self._resolve_obs_scales()
+        # Spawn candidate cache keyed by map name — survives across episodes on same map
+        self._spawn_cache: Dict[str, Optional[np.ndarray]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,23 +180,34 @@ class SB3RoleWrapper(gym.Env):
         if seed is not None:
             self._spawn_rng = np.random.default_rng(seed)
 
-        # Compute a 2×3 grid of start poses around a random straight section
-        # of the *current* map's centerline.  We do this before env.reset() so
-        # that if the env cycles to a new map we build the grid from the new
-        # centerline after the cycle.  env.reset() accepts options["poses"] as
-        # an explicit override (Case 1 in F110ParallelEnv.reset).
-        grid_poses = self._sample_grid_poses()
-        env_options: Dict[str, Any] = dict(options or {})
-        if grid_poses is not None and "poses" not in env_options:
-            env_options["poses"] = grid_poses
+        # Phase 1: reset with no custom poses so the env can cycle the map.
+        # _maybe_cycle_map() fires inside env.reset() and updates centerline_points
+        # to the new map's geometry before returning.
+        base_options: Dict[str, Any] = dict(options or {})
+        obs_dict, info_dict = self.env.reset(
+            seed=seed, options=base_options if base_options else None
+        )
 
-        obs_dict, info_dict = self.env.reset(seed=seed, options=env_options if env_options else None)
+        # Phase 2: now env.centerline_points belongs to the NEW map.
+        # Compute a 2×3 start grid from its geometry, then re-place the agents
+        # without triggering another map cycle.
+        if "poses" not in base_options:
+            grid_poses = self._sample_grid_poses()
+            if grid_poses is not None:
+                old_cycle = getattr(self.env, "_map_cycle_mode", "")
+                try:
+                    self.env._map_cycle_mode = ""   # suppress cycle on second reset
+                    obs_dict, info_dict = self.env.reset(
+                        seed=None, options={"poses": grid_poses}
+                    )
+                finally:
+                    self.env._map_cycle_mode = old_cycle
+
         self._current_obs_dict = obs_dict
         self._episode_steps = 0
 
         # Reset per-agent state
         self._track_length = None  # recompute after map may have changed
-        self._spawn_candidates = None  # invalidate; map may have cycled
         for aid in self._role_ids:
             self._prev_actions[aid] = np.zeros(self._action_low.shape, dtype=np.float32)
             self._progress_indices[aid] = -1  # force full centerline search on first step
@@ -359,7 +369,7 @@ class SB3RoleWrapper(gym.Env):
     _GRID_ROW_SPACING = 1.6    # metres between rows (along track, backward)
     _GRID_COL_OFFSET  = 0.35   # metres lateral from centreline (±)
     _GRID_MIN_HALF_WIDTH = 0.6 # min wall half-distance required at spawn point
-    _GRID_CURVATURE_MAX  = 0.5 # max |Δθ| per metre — filters out tight corners
+    _GRID_CURVATURE_MAX  = 0.5 # max curvature (rad/m) over grid footprint — rejects corners
 
     def _sample_grid_poses(self) -> Optional[np.ndarray]:
         """Pick a random straight, wide section and return 6 poses in a 2×3 grid."""
@@ -379,46 +389,58 @@ class SB3RoleWrapper(gym.Env):
     def _get_spawn_candidates(
         self, centerline: np.ndarray, n: int
     ) -> Optional[np.ndarray]:
-        """Return cached array of valid spawn indices for the current map."""
-        cl_id = id(centerline)
-        if self._spawn_candidates is not None and self._spawn_candidates_cl_id == cl_id:
-            return self._spawn_candidates
+        """Return cached array of valid spawn indices for the current map.
+
+        Cache is keyed by map name so the expensive computation runs once per
+        unique map, not once per episode.
+        """
+        map_key = getattr(self.env, "map_name", None) or str(id(centerline))
+        if map_key in self._spawn_cache:
+            return self._spawn_cache[map_key]
+
+        from scipy.ndimage import maximum_filter1d
 
         pts = centerline[:, :2].astype(np.float32)
 
         # --- curvature filter -------------------------------------------------
-        # Smooth angular rate of change over a 10-point window; reject sharp bends.
-        thetas = np.arctan2(np.gradient(pts[:, 1]), np.gradient(pts[:, 0]))
         seg_len = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         avg_seg = float(seg_len.mean()) if len(seg_len) > 0 else 0.2
-        dtheta = np.abs(np.gradient(thetas))
-        # Convert to curvature (rad/m)
-        curvature = dtheta / max(avg_seg, 1e-6)
-        # Smooth over ±5 points
-        kernel = np.ones(11) / 11
-        curvature_smooth = np.convolve(curvature, kernel, mode="same")
-        straight = curvature_smooth < self._GRID_CURVATURE_MAX
+
+        dx = np.diff(pts[:, 0].astype(np.float64))
+        dy = np.diff(pts[:, 1].astype(np.float64))
+        heading_seg = np.arctan2(dy, dx)
+        thetas_raw = np.concatenate([heading_seg, [heading_seg[-1]]])
+
+        thetas_unwrap = np.unwrap(thetas_raw)
+        dtheta = np.abs(np.diff(thetas_unwrap))
+        curv_seg = dtheta / np.maximum(seg_len, 1e-6)
+
+        # Vectorized rolling max over grid footprint (3 rows × row_spacing + margin)
+        footprint_m = 3.0 * self._GRID_ROW_SPACING + 1.0
+        window = max(3, int(footprint_m / avg_seg))
+        rolling_max = maximum_filter1d(curv_seg, size=window, mode="nearest")
+        rolling_max_n = np.append(rolling_max, rolling_max[-1])
+        straight = rolling_max_n < self._GRID_CURVATURE_MAX
 
         # --- width filter via walls ------------------------------------------
         walls = getattr(self.env, "walls", None)
         if walls is not None:
             try:
+                from scipy.spatial import cKDTree
                 all_wall_pts = np.vstack([
                     np.asarray(v, dtype=np.float32)
                     for v in (walls.values() if isinstance(walls, dict) else walls)
                     if len(v) > 0
                 ])
-                # Sample width at every 10th centerline point, interpolate
+                wall_tree = cKDTree(all_wall_pts)
+                # KD-tree query at every 10th centerline point, then interpolate
                 sample_idxs = np.arange(0, n, 10)
-                half_widths = np.full(n, np.inf, dtype=np.float32)
-                for si in sample_idxs:
-                    dists = np.linalg.norm(all_wall_pts - pts[si], axis=1)
-                    half_widths[si] = dists.min()
-                # Fill gaps with nearest sampled value
-                for i in range(n):
-                    if half_widths[i] == np.inf:
-                        nearest = sample_idxs[np.argmin(np.abs(sample_idxs - i))]
-                        half_widths[i] = half_widths[nearest]
+                sampled_pts = pts[sample_idxs]
+                dists, _ = wall_tree.query(sampled_pts, k=1)
+                nearest_sample_idx = np.argmin(
+                    np.abs(np.arange(n)[:, None] - sample_idxs[None, :]), axis=1
+                )
+                half_widths = dists[nearest_sample_idx]
                 wide_enough = half_widths >= self._GRID_MIN_HALF_WIDTH
             except Exception:
                 wide_enough = np.ones(n, dtype=bool)
@@ -433,38 +455,52 @@ class SB3RoleWrapper(gym.Env):
 
         valid = np.where(straight & wide_enough & lap_ok)[0]
 
-        self._spawn_candidates = valid if len(valid) > 0 else None
-        self._spawn_candidates_cl_id = cl_id
-        return self._spawn_candidates
+        # Adaptive fallback: if the hard curvature threshold leaves fewer than
+        # 10 % of lap points valid (e.g. uniformly circular tracks), relax to
+        # the straightest 20 % of points that are at least wide enough.
+        lap_indices = np.where(wide_enough & lap_ok)[0]
+        if len(valid) < max(5, int(0.10 * len(lap_indices))) and len(lap_indices) > 0:
+            curv_lap = rolling_max_n[lap_indices]
+            threshold = np.percentile(curv_lap, 20)
+            valid = lap_indices[curv_lap <= threshold]
+
+        result = valid if len(valid) > 0 else None
+        self._spawn_cache[map_key] = result
+        return result
 
     def _build_grid_poses(
         self, centerline: np.ndarray, idx: int, n: int
     ) -> np.ndarray:
-        """Compute 6 poses in a 2-column × 3-row racing grid at centerline[idx]."""
-        pt = centerline[idx]
-        x, y = float(pt[0]), float(pt[1])
+        """Compute 6 poses in a 2-column × 3-row racing grid at centerline[idx].
 
-        # Heading: use stored theta column if available, else estimate from neighbours
-        if centerline.shape[1] >= 3 and np.isfinite(pt[2]):
-            theta = float(pt[2])
-        else:
-            prev_idx = max(0, idx - 1)
-            next_idx = min(n - 1, idx + 1)
-            delta = centerline[next_idx, :2] - centerline[prev_idx, :2]
-            theta = float(np.arctan2(delta[1], delta[0]))
-
-        cos_t, sin_t = np.cos(theta), np.sin(theta)
-        tangent = np.array([cos_t,  sin_t])  # forward along track
-        normal  = np.array([-sin_t, cos_t])  # left of track
+        Each row is anchored to the ACTUAL centerline point at that row's
+        arc-length offset, so the grid correctly follows track curvature rather
+        than projecting all rows from a single tangent.
+        """
+        pts = centerline[:, :2].astype(np.float32)
+        seg_len = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        avg_seg = float(seg_len.mean()) if len(seg_len) > 0 else 0.2
+        steps_per_row = max(1, int(round(self._GRID_ROW_SPACING / avg_seg)))
 
         poses = np.zeros((6, 3), dtype=np.float32)
         k = 0
-        for row in range(3):            # row 0 = front, rows go backward
-            for col_sign in (-1, +1):   # -1 = right, +1 = left (matches original grid)
-                d_along   = -row * self._GRID_ROW_SPACING
-                d_lateral =  col_sign * self._GRID_COL_OFFSET
-                pos = np.array([x, y]) + d_along * tangent + d_lateral * normal
-                poses[k] = [pos[0], pos[1], theta]
+        for row in range(3):
+            row_idx = max(0, idx - row * steps_per_row)
+            pt = pts[row_idx]
+
+            # Position-derived heading at this row's centerline point
+            prev_i = max(0, row_idx - 1)
+            next_i = min(n - 1, row_idx + 1)
+            delta = pts[next_i] - pts[prev_i]
+            row_theta = float(np.arctan2(delta[1], delta[0]))
+
+            cos_t, sin_t = np.cos(row_theta), np.sin(row_theta)
+            tangent = np.array([cos_t,  sin_t])
+            normal  = np.array([-sin_t, cos_t])
+
+            for col_sign in (-1, +1):   # -1 = right, +1 = left
+                pos = pt + col_sign * self._GRID_COL_OFFSET * normal
+                poses[k] = [pos[0], pos[1], row_theta]
                 k += 1
         return poses
 

@@ -1,21 +1,61 @@
+annotations:
+  spawn_points:
+  - name: spawn_1
+    pose:
+    - 43.5393
+    - 115.5324
+    - -2.7886
+  - name: spawn_2
+    pose:
+    - 16.267
+    - 94.6149
+    - -2.1629
+  - name: spawn_3
+    pose:
+    - 6.5
+    - 61.6647
+    - -1.5708
+  - name: spawn_4
+    pose:
+    - 17.9646
+    - 29.266
+    - -0.8925
+  - name: spawn_5
+    pose:
+    - 46.2896
+    - 9.7964
+    - -0.2972
+  - name: spawn_6
+    pose:
+    - 80.7093
+    - 10.7115
+    - 0.3753
+  - name: spawn_7
+    pose:
+    - 107.9546
+    - 31.6646
+    - 0.8983
+  - name: spawn_8
+    pose:
+    - 117.6724
+    - 64.628
+    - 1.662
+  - name: spawn_9
+    pose:
+    - 106.1701
+    - 97.011
+    - 2.2316
+  - name: spawn_10
+    pose:
+    - 77.8226
+    - 116.4467
+    - 2.8473
+free_thresh: 0.196
 image: circle_map.png
-resolution: 0.02
+negate: 0
+occupied_thresh: 0.65
 origin:
 - -0.4
 - 0.6
 - 0.0
-occupied_thresh: 0.65
-free_thresh: 0.196
-negate: 0
-annotations:
-  spawn_points:
-    - {name: spawn_1,  pose: [ 43.5393, 115.5324, -2.7886]}
-    - {name: spawn_2,  pose: [ 16.2670,  94.6149, -2.1629]}
-    - {name: spawn_3,  pose: [  6.5000,  61.6647, -1.5708]}
-    - {name: spawn_4,  pose: [ 17.9646,  29.2660, -0.8925]}
-    - {name: spawn_5,  pose: [ 46.2896,   9.7964, -0.2972]}
-    - {name: spawn_6,  pose: [ 80.7093,  10.7115,  0.3753]}
-    - {name: spawn_7,  pose: [107.9546,  31.6646,  0.8983]}
-    - {name: spawn_8,  pose: [117.6724,  64.6280,  1.6620]}
-    - {name: spawn_9,  pose: [106.1701,  97.0110,  2.2316]}
-    - {name: spawn_10, pose: [ 77.8226, 116.4467,  2.8473]}
+resolution: 0.0625

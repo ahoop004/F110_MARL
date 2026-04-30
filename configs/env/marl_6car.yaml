@@ -28,8 +28,12 @@ environment:
   centerline_render: false
   walls_autoload: true
 
-  # Spawning is handled by SB3RoleWrapper: 6 agents are placed in a 2×3
-  # racing grid at a randomly selected straight section each episode.
+  # Phase-1 fallback: env places each agent at a random annotated spawn
+  # point so sim.reset() always gets valid poses.  SB3RoleWrapper then
+  # immediately overrides with a 2×3 racing grid (phase 2 of its reset).
+  random_spawn:
+    enabled: true
+    allow_reuse: true
 
   # Racing vehicle params — same as circle_6car.yaml
   vehicle_params:
