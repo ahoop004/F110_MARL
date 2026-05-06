@@ -106,6 +106,14 @@ def register_builtin_agents():
     except ImportError:
         pass
 
+    try:
+        from agents.waypoint import PurePursuitAgent, StanleyAgent, HybridPPFTGAgent
+        AgentFactory.register("pure_pursuit", PurePursuitAgent)
+        AgentFactory.register("stanley", StanleyAgent)
+        AgentFactory.register("hybrid_pp_ftg", HybridPPFTGAgent)
+    except ImportError:
+        pass
+
     # Stable-Baselines3 agents
     try:
         from agents.sb3_agents import (

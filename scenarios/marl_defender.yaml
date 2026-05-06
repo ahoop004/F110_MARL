@@ -83,7 +83,7 @@ agents:
   # --- Attackers (fixed FTG opponents) ---
   car_3:
     role: attacker
-    algorithm: ftg
+    algorithm: hybrid_pp_ftg
     params:
       max_distance: 10.0
       window_size: 4
@@ -106,7 +106,7 @@ agents:
 
   car_4:
     role: attacker
-    algorithm: ftg
+    algorithm: hybrid_pp_ftg
     params:
       max_distance: 10.0
       window_size: 4
@@ -129,7 +129,7 @@ agents:
 
   car_5:
     role: attacker
-    algorithm: ftg
+    algorithm: hybrid_pp_ftg
     params:
       max_distance: 10.0
       window_size: 4

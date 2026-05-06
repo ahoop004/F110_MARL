@@ -54,11 +54,35 @@ def _rgba255(r: float, g: float, b: float, a: float = 255.0) -> tuple[float, flo
     return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
 
 
-CAR_LEARNER = _rgba255(183, 193, 222)
-CAR_OTHER = _rgba255(99, 52, 94)
 MAP_COLOR = _rgba255(255, 193, 50)
 LIDAR_COLOR_HIT = (1.0, 0.0, 0.0, 1.0)
 LIDAR_COLOR_MAX = _rgba255(180, 180, 180)
+
+# Per-agent color palette — 8 visually distinct colors.
+# Indices 0-2 are cool (defenders), 3-5 are warm (attackers) by convention.
+# Wraps modulo for >8 agents.
+CAR_PALETTE: List[tuple] = [
+    _rgba255( 72, 167, 232),  # 0 — sky blue      (defender)
+    _rgba255( 60, 200, 160),  # 1 — teal           (defender)
+    _rgba255(120, 210,  70),  # 2 — lime green     (defender)
+    _rgba255(232,  80,  60),  # 3 — red-orange     (attacker)
+    _rgba255(210,  70, 200),  # 4 — magenta        (attacker)
+    _rgba255(232, 165,  40),  # 5 — amber          (attacker)
+    _rgba255(160, 100, 240),  # 6 — violet
+    _rgba255( 50, 220, 220),  # 7 — cyan
+]
+
+
+def _agent_default_color(aid: str) -> tuple:
+    """Map an agent ID to its default palette color.
+
+    Parses the trailing integer from IDs like 'car_0', 'agent_3'.
+    Falls back to index 0 if no number is found.
+    """
+    import re
+    m = re.search(r"(\d+)$", str(aid))
+    idx = int(m.group(1)) if m else 0
+    return CAR_PALETTE[idx % len(CAR_PALETTE)]
 
 
 if not _PYGLET_AVAILABLE:
@@ -128,6 +152,8 @@ else:
             self.scan_hits_vlist = {}  # aid -> vertex_list (GL_POINTS)
             self.agent_infos = {}  # aid -> last render_obs snapshot
             self.agent_ids = []  # sorted agent IDs updated this frame
+            # Per-agent color overrides (set via set_agent_color / set_agent_colors)
+            self._agent_colors: Dict[str, tuple] = {}
             self._camera_target = None
             self._user_camera_target = None
             self._follow_padding_m = 16.0
@@ -293,6 +319,37 @@ else:
             # Centerline rendering (stub for now - can be implemented as extension)
             if centerline_points is not None:
                 self.update_centerline(centerline_points, connect=centerline_connect)
+
+        def set_agent_color(self, agent_id: str, color: tuple) -> None:
+            """Override the color for one agent.
+
+            Args:
+                agent_id: Agent ID string (e.g. 'car_3')
+                color: RGBA tuple in [0, 1] range, e.g. (1.0, 0.3, 0.0, 1.0).
+                       Pass a 3-tuple for RGB (alpha defaults to 1.0).
+            """
+            if len(color) == 3:
+                color = (*color, 1.0)
+            self._agent_colors[agent_id] = tuple(float(c) for c in color)
+            # Live-update vertex color if the car is already drawn
+            vlist = self.cars_vlist.get(agent_id)
+            if vlist is not None:
+                vlist.color[:] = list(self._agent_colors[agent_id]) * 4
+
+        def set_agent_colors(self, color_map: Dict[str, tuple]) -> None:
+            """Bulk-set colors for multiple agents.
+
+            Args:
+                color_map: Dict mapping agent_id -> RGBA or RGB tuple in [0, 1].
+
+            Example::
+                renderer.set_agent_colors({
+                    'car_0': (0.28, 0.65, 0.91, 1.0),   # blue
+                    'car_3': (0.91, 0.31, 0.23, 1.0),   # red
+                })
+            """
+            for aid, color in color_map.items():
+                self.set_agent_color(aid, color)
 
         def reset_state(self):
             """Clean up all agent state."""
@@ -554,8 +611,7 @@ else:
 
                 car_vlist = self.cars_vlist.get(aid)
                 if car_vlist is None:
-                    # Color: first agent = blue, others = purple
-                    color = CAR_LEARNER if len(self.cars_vlist) == 0 else CAR_OTHER
+                    color = self._agent_colors.get(aid) or _agent_default_color(aid)
                     color_array = list(color) * 4
                     self.cars_vlist[aid] = self.shader.vertex_list(
                         4, pyglet.gl.GL_QUADS, batch=self.batch, group=self.shader_group,
@@ -628,11 +684,13 @@ else:
                 positions_flat[0::2] = cos_vals
                 positions_flat[1::2] = sin_vals
 
-                # Color: red for hits, gray for max range
+                # Color: car color (70% alpha) for hits, faint gray for max range
+                car_color = self._agent_colors.get(aid) or _agent_default_color(aid)
+                lidar_hit_color = (car_color[0], car_color[1], car_color[2], 0.70)
                 colors_matrix[:] = LIDAR_COLOR_MAX
                 hit_mask = scans < self.max_range * 0.99
                 if np.any(hit_mask):
-                    colors_matrix[hit_mask] = LIDAR_COLOR_HIT
+                    colors_matrix[hit_mask] = lidar_hit_color
 
                 # Update/create vertex list
                 scan_vlist = self.scan_hits_vlist.get(aid)

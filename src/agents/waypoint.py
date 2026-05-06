@@ -422,7 +422,9 @@ class HybridPPFTGPolicy:
     ) -> np.ndarray:
         pp_action = self._pp.act(obs, deterministic=deterministic, aid=aid)
 
-        scan = obs.get("scans") or obs.get("lidar")
+        scan = obs.get("scans")
+        if scan is None:
+            scan = obs.get("lidar")
         if scan is None:
             return pp_action
 
@@ -448,6 +450,217 @@ class HybridPPFTGPolicy:
         if self.action_space is not None:
             action = np.clip(action, self.action_space.low, self.action_space.high)
         return action.astype(np.float32)
+
+    def store(self, *args, **kwargs) -> None:
+        return None
+
+    def finish_path(self, **kwargs) -> None:
+        return None
+
+    def update(self) -> Optional[Dict[str, float]]:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# AgentFactory-compatible adapters
+#
+# These wrap the policy classes above to match the FTGAgent pattern:
+#   - Constructor takes a single config dict (from YAML params)
+#   - set_env(env) injects the live env reference after factory creation
+#   - Falls back to straight/slow action until set_env() is called
+# ---------------------------------------------------------------------------
+
+_DEFAULTS_PP = {
+    "lookahead": 1.5,
+    "min_speed": 1.0,
+    "max_speed": 3.5,
+    "max_steer": 0.46,
+    "wheelbase": 0.33020,
+    "curvature_slowdown_threshold": 0.3,
+    "speed_horizon": 3.0,
+    "search_window": 60,
+}
+
+_DEFAULTS_STANLEY = {
+    "k": 1.0,
+    "k_s": 0.5,
+    "min_speed": 1.0,
+    "max_speed": 3.5,
+    "max_steer": 0.46,
+    "curvature_slowdown_threshold": 0.3,
+    "speed_horizon": 3.0,
+    "search_window": 60,
+}
+
+_DEFAULTS_HYBRID = {
+    "lookahead": 1.5,
+    "min_speed": 1.0,
+    "max_speed": 3.5,
+    "max_steer": 0.46,
+    "wheelbase": 0.33020,
+    "curvature_slowdown_threshold": 0.3,
+    "speed_horizon": 3.0,
+    "blend_distance": 3.0,
+    "full_ftg_distance": 1.5,
+}
+
+
+def _extract(cfg: dict, defaults: dict) -> dict:
+    """Pull known keys from cfg, coercing to the default's type."""
+    out = {}
+    for key, default in defaults.items():
+        if key in cfg:
+            try:
+                out[key] = type(default)(cfg[key])
+            except (TypeError, ValueError):
+                out[key] = default
+        else:
+            out[key] = default
+    return out
+
+
+class PurePursuitAgent:
+    """AgentFactory-compatible Pure Pursuit agent.
+
+    YAML usage::
+
+        algorithm: pure_pursuit
+        params:
+          lookahead: 1.5
+          min_speed: 1.0
+          max_speed: 3.5
+          max_steer: 0.46
+          curvature_slowdown_threshold: 0.3
+          speed_horizon: 3.0
+    """
+
+    def __init__(self, config: dict) -> None:
+        params = dict(config.get("params", config))
+        kw = _extract(params, _DEFAULTS_PP)
+        self._policy: Optional[PurePursuitPolicy] = None
+        self._kw = kw
+        self._fallback_speed = float(kw["min_speed"])
+
+    def set_env(self, env) -> None:
+        """Inject live env reference so centerline updates on map cycle."""
+        self._policy = PurePursuitPolicy(
+            lambda: getattr(env, "centerline_points", None),
+            **self._kw,
+        )
+
+    def act(self, obs: Dict[str, Any], deterministic: bool = False, aid=None) -> np.ndarray:
+        if self._policy is None:
+            return np.array([0.0, self._fallback_speed], dtype=np.float32)
+        return self._policy.act(obs, deterministic=deterministic, aid=aid)
+
+    def reset(self) -> None:
+        if self._policy is not None:
+            self._policy.reset()
+
+    def store(self, *args, **kwargs) -> None:
+        return None
+
+    def finish_path(self, **kwargs) -> None:
+        return None
+
+    def update(self) -> Optional[Dict[str, float]]:
+        return None
+
+
+class StanleyAgent:
+    """AgentFactory-compatible Stanley controller agent.
+
+    YAML usage::
+
+        algorithm: stanley
+        params:
+          k: 1.0
+          k_s: 0.5
+          min_speed: 1.0
+          max_speed: 3.5
+          max_steer: 0.46
+          curvature_slowdown_threshold: 0.3
+          speed_horizon: 3.0
+    """
+
+    def __init__(self, config: dict) -> None:
+        params = dict(config.get("params", config))
+        kw = _extract(params, _DEFAULTS_STANLEY)
+        self._policy: Optional[StanleyPolicy] = None
+        self._kw = kw
+        self._fallback_speed = float(kw["min_speed"])
+
+    def set_env(self, env) -> None:
+        self._policy = StanleyPolicy(
+            lambda: getattr(env, "centerline_points", None),
+            **self._kw,
+        )
+
+    def act(self, obs: Dict[str, Any], deterministic: bool = False, aid=None) -> np.ndarray:
+        if self._policy is None:
+            return np.array([0.0, self._fallback_speed], dtype=np.float32)
+        return self._policy.act(obs, deterministic=deterministic, aid=aid)
+
+    def reset(self) -> None:
+        if self._policy is not None:
+            self._policy.reset()
+
+    def store(self, *args, **kwargs) -> None:
+        return None
+
+    def finish_path(self, **kwargs) -> None:
+        return None
+
+    def update(self) -> Optional[Dict[str, float]]:
+        return None
+
+
+class HybridPPFTGAgent:
+    """AgentFactory-compatible Hybrid Pure-Pursuit + FTG agent.
+
+    Pure pursuit drives on-track; FTG blends in when LiDAR detects obstacles.
+
+    YAML usage::
+
+        algorithm: hybrid_pp_ftg
+        params:
+          lookahead: 1.5
+          min_speed: 1.0
+          max_speed: 3.5
+          blend_distance: 3.0
+          full_ftg_distance: 1.5
+          ftg:                      # nested FTG params (optional)
+            max_distance: 10.0
+            bubble_radius: 2.5
+            steering_gain: 0.30
+            steer_smooth: 0.5
+    """
+
+    def __init__(self, config: dict) -> None:
+        from agents.ftg import FollowTheGapPolicy
+        params = dict(config.get("params", config))
+        kw = _extract(params, _DEFAULTS_HYBRID)
+        ftg_params = params.get("ftg", {})
+        self._ftg = FollowTheGapPolicy.from_config(ftg_params) if ftg_params else FollowTheGapPolicy()
+        self._policy: Optional[HybridPPFTGPolicy] = None
+        self._kw = kw
+        self._fallback_speed = float(kw["min_speed"])
+
+    def set_env(self, env) -> None:
+        self._policy = HybridPPFTGPolicy(
+            lambda: getattr(env, "centerline_points", None),
+            self._ftg,
+            **self._kw,
+        )
+
+    def act(self, obs: Dict[str, Any], deterministic: bool = False, aid=None) -> np.ndarray:
+        if self._policy is None:
+            return np.array([0.0, self._fallback_speed], dtype=np.float32)
+        return self._policy.act(obs, deterministic=deterministic, aid=aid)
+
+    def reset(self) -> None:
+        if self._policy is not None:
+            self._policy.reset()
 
     def store(self, *args, **kwargs) -> None:
         return None

@@ -1,5 +1,6 @@
 """Enhanced telemetry HUD for detailed training visualization."""
 import pyglet
+import pyglet.shapes
 import numpy as np
 from .base import RenderExtension
 
@@ -83,6 +84,15 @@ class TelemetryHUD(RenderExtension):
             anchor_x='left', anchor_y='bottom',
             color=(150, 150, 150, 255)
         )
+
+        # Colored agent legend swatches (one rectangle per agent)
+        # Built and positioned dynamically in _rebuild_swatches()
+        self._swatches: list = []           # pyglet.shapes.Rectangle objects
+        self._swatch_batch = pyglet.graphics.Batch()
+        self._SWATCH_W = 10
+        self._SWATCH_H = 10
+        self._SWATCH_X = 10                 # left edge of swatch column
+        self._LINE_H = 14                   # px per text line (font_size=12 → ~14px)
 
     def configure(self, enabled: bool = True, mode: int = MODE_BASIC, **kwargs):
         """Configure telemetry display.
@@ -199,11 +209,21 @@ class TelemetryHUD(RenderExtension):
         focus = f" (Focus: {self._focused_agent})" if self._focused_agent else " (All)"
         self.mode_label.text = f"[T] Telemetry: {mode_name}{focus}"
 
+    def _agent_color_rgba255(self, agent_id: str) -> tuple:
+        """Return (R, G, B, A) in 0-255 range for agent_id from renderer palette."""
+        from render.renderer import _agent_default_color
+        renderer = self.renderer
+        color_f = getattr(renderer, "_agent_colors", {}).get(agent_id)
+        if color_f is None:
+            color_f = _agent_default_color(agent_id)
+        return tuple(int(c * 255) for c in color_f)
+
     def _update_labels(self):
         """Update all HUD labels based on current mode."""
         if self._mode == self.MODE_OFF:
             self.hud_label.text = ""
             self.agent_label.text = ""
+            self._swatches.clear()
             return
 
         # Build main HUD text
@@ -213,70 +233,93 @@ class TelemetryHUD(RenderExtension):
         lines.append(f"Episode: {self._episode}")
         lines.append(f"Step: {self._step}")
 
+        # Track which lines correspond to agent names (for swatch positions)
+        agent_line_indices: list = []  # list of (line_index, agent_id)
+
         if self._mode >= self.MODE_BASIC:
             # Reward summary
             if self._rewards:
                 lines.append("")
-                lines.append("=== Rewards ===")
+                lines.append("Rewards")
                 for agent_id in sorted(self._rewards.keys()):
                     if self._focused_agent and agent_id != self._focused_agent:
                         continue
-
                     current = self._rewards.get(agent_id, 0.0)
                     cumulative = self._episode_rewards.get(agent_id, 0.0)
                     collision = self._collisions.get(agent_id, False)
-
-                    collision_marker = " [COLLISION]" if collision else ""
-                    lines.append(f"{agent_id}: {current:+.3f} (Σ {cumulative:+.1f}){collision_marker}")
+                    collision_marker = " !" if collision else ""
+                    agent_line_indices.append((len(lines), agent_id))
+                    lines.append(f"  {agent_id}: {current:+.3f} (Σ{cumulative:+.1f}){collision_marker}")
 
         if self._mode >= self.MODE_DETAILED:
-            # Reward components
             if self._reward_components:
                 lines.append("")
-                lines.append("=== Reward Components ===")
+                lines.append("Components")
                 for agent_id in sorted(self._reward_components.keys()):
                     if self._focused_agent and agent_id != self._focused_agent:
                         continue
-
-                    lines.append(f"{agent_id}:")
+                    agent_line_indices.append((len(lines), agent_id))
+                    lines.append(f"  {agent_id}:")
                     components = self._reward_components[agent_id]
                     for comp_name, comp_value in sorted(components.items()):
-                        lines.append(f"  {comp_name}: {comp_value:+.3f}")
+                        lines.append(f"    {comp_name}: {comp_value:+.3f}")
 
         self.hud_label.text = "\n".join(lines)
 
         # Build agent-specific panel (only in FULL mode)
         if self._mode >= self.MODE_FULL and self._obs_snapshot:
-            agent_lines = []
-            agent_lines.append("=== Observation Snapshot ===")
-
+            agent_lines = ["Obs Snapshot"]
             for agent_id in sorted(self._obs_snapshot.keys()):
                 if self._focused_agent and agent_id != self._focused_agent:
                     continue
-
                 snapshot = self._obs_snapshot[agent_id]
                 agent_lines.append(f"{agent_id}:")
-                agent_lines.append(f"  Pos: ({snapshot.get('x', 0):.2f}, {snapshot.get('y', 0):.2f})")
-                agent_lines.append(f"  Theta: {snapshot.get('theta', 0):.2f} rad")
-                agent_lines.append(f"  Vel: ({snapshot.get('vx', 0):.2f}, {snapshot.get('vy', 0):.2f})")
-
+                agent_lines.append(f"  ({snapshot.get('x', 0):.1f}, {snapshot.get('y', 0):.1f})")
+                agent_lines.append(f"  θ={snapshot.get('theta', 0):.2f}  v=({snapshot.get('vx', 0):.1f},{snapshot.get('vy', 0):.1f})")
                 if 'lidar_min' in snapshot:
-                    agent_lines.append(f"  LiDAR: min={snapshot['lidar_min']:.2f}m, mean={snapshot['lidar_mean']:.2f}m")
-
+                    agent_lines.append(f"  lidar min={snapshot['lidar_min']:.2f}m")
             self.agent_label.text = "\n".join(agent_lines)
         else:
             self.agent_label.text = ""
 
-    def draw_geometry(self, batch, shader_group):
-        """Draw telemetry labels.
+        # Rebuild colored swatches next to each agent name line
+        self._rebuild_swatches(agent_line_indices, len(lines))
 
-        Args:
-            batch: Rendering batch (unused, labels draw directly)
-            shader_group: Shader group (unused)
-        """
+    def _rebuild_swatches(self, agent_line_indices: list, total_lines: int) -> None:
+        """Draw small colored rectangles next to agent-name lines in the HUD."""
+        self._swatches.clear()
+        if not agent_line_indices:
+            return
+
+        h = self.renderer.height
+        # Top of HUD text in window coords (label anchor is top-left at y=h-10)
+        text_top_y = h - 10
+        sw = self._SWATCH_W
+        sh = self._SWATCH_H
+        lh = self._LINE_H
+        x = self._SWATCH_X
+
+        for line_idx, agent_id in agent_line_indices:
+            # Y of the top of this line (lines counted from top, 0-indexed)
+            line_y = text_top_y - line_idx * lh
+            swatch_y = line_y - sh  # bottom-left of the swatch square
+
+            r, g, b, a = self._agent_color_rgba255(agent_id)
+            rect = pyglet.shapes.Rectangle(
+                x=x, y=swatch_y,
+                width=sw, height=sh,
+                color=(r, g, b),
+                batch=self._swatch_batch,
+            )
+            rect.opacity = a
+            self._swatches.append(rect)
+
+    def draw_geometry(self, batch, shader_group):
+        """Draw telemetry labels and colored agent swatches."""
         if not self._enabled:
             return
 
+        self._swatch_batch.draw()
         self.hud_label.draw()
         self.agent_label.draw()
         self.fps_display.draw()
@@ -289,3 +332,4 @@ class TelemetryHUD(RenderExtension):
         self._reward_components.clear()
         self._collisions.clear()
         self._obs_snapshot.clear()
+        self._swatches.clear()

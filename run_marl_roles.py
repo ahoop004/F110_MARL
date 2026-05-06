@@ -37,6 +37,7 @@ if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
 
 from baselines.sb3_role_wrapper import SB3RoleWrapper
 from baselines.sb3_train_callback import SB3TrainLoggingCallback
+from baselines.sb3_console_callback import SB3ConsoleCallback
 from core.obs_flatten import flatten_observation
 from core.run_id import resolve_run_id, set_run_id_env
 from core.scenario import ScenarioError, load_and_expand_scenario
@@ -448,6 +449,13 @@ def main() -> None:
         aid: agent for aid, agent in agents.items()
         if aid not in role_agent_ids
     }
+
+    # Inject env into waypoint agents (pure_pursuit / stanley / hybrid_pp_ftg)
+    # so their centerline_fn can access env.centerline_points on map cycle.
+    for aid, agent in other_agents.items():
+        if hasattr(agent, "set_env"):
+            agent.set_env(env)
+
     console_logger.print_info(
         f"Fixed-policy agents: {list(other_agents.keys())}"
     )
@@ -496,13 +504,26 @@ def main() -> None:
 
     callbacks = [StopOnEpisodeCallback(episodes, console_logger)]
 
+    # Per-episode console output
     log_every_str = os.environ.get("F110_LOG_EVERY_EPISODES")
     try:
-        log_every = int(log_every_str) if log_every_str else 25
+        log_every = int(log_every_str) if log_every_str else 1
     except ValueError:
-        log_every = 25
-    if log_every > 0:
-        callbacks.append(EpisodeProgressCallback(log_every, console_logger))
+        log_every = 1
+    summary_every_str = os.environ.get("F110_SUMMARY_EVERY_EPISODES")
+    try:
+        summary_every = int(summary_every_str) if summary_every_str else 25
+    except ValueError:
+        summary_every = 25
+    if not args.quiet:
+        callbacks.append(
+            SB3ConsoleCallback(
+                log_every=log_every,
+                summary_every=summary_every,
+                show_reward_components=False,
+                quiet=args.quiet,
+            )
+        )
 
     if env_config.get("render"):
         render_every = 1
