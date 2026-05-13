@@ -23,8 +23,8 @@ from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
 from training.hooks import CheckpointHook, ConsoleHook, WandbHook
 
-ON_POLICY_ALGOS = {"ppo", "a2c", "sb3_ppo", "sb3_a2c"}
-OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn", "qrdqn", "sb3_sac", "sb3_td3", "sb3_dqn"}
+ON_POLICY_ALGOS = {"ppo", "a2c"}
+OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn", "qrdqn"}
 
 
 def parse_args() -> argparse.Namespace:
