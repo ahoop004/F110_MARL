@@ -1,11 +1,10 @@
 # Phase 2: Train attacker policy across all MARL maps.
-# 3 attackers (car_3..5) share one PPO policy — focal agent cycles each episode.
-# 3 defenders (car_0..2) run FTG as fixed opponents (replace with Phase 1 checkpoint when available).
-# Map is randomized each episode; spawn points are drawn randomly from each map's annotations.
+# Car count = number of agents defined here. IDs must be car_0..car_{N-1}.
+# Current: 1 defender + 2 attackers = 3 cars.
+# To add cars, append car_3, car_4, … in the agents block.
 # Run with: python run_marl_roles.py --scenario scenarios/marl_attacker.yaml
 includes:
   - ../configs/env/marl_6car.yaml
-  - ../configs/reward/attacker_racing.yaml
 
 experiment:
   name: marl_attacker
@@ -16,80 +15,80 @@ environment:
   action_repeat: 2
 
 agents:
-  # --- Defenders (fixed FTG opponents) ---
+  # --- Defenders (fixed opponents) ---
   car_0:
     role: defender
-    algorithm: ftg
+    algorithm: hybrid_pp_ftg
     params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
+      lookahead: 1.5
       min_speed: 0.5
       max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
+      max_steer: 0.42
+      blend_distance: 3.0
+      full_ftg_distance: 1.5
+      ftg:
+        max_distance: 10.0
+        window_size: 4
+        bubble_radius: 2.5
+        max_steer: 0.42
+        min_speed: 0.5
+        max_speed: 3.0
+        steering_gain: 0.30
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.5
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.02
+        use_disparity_extender: true
+        disparity_threshold: 0.40
+        vehicle_width: 0.225
+        safety_margin: 0.10
 
+  # --- Attackers (training role — shared PPO policy) ---
   car_1:
-    role: defender
-    algorithm: ftg
+    role: attacker
+    algorithm: sb3_ppo
+    observation:
+      preset: centerline_racing
+    reward:
+      type: centerline
+      vs_weight: 1.2
+      vd_weight: 0.005
+      d_weight: 0.01
+      steer_weight: 0.03
+      collision_penalty: -500.0
+      normalize_by_track_length: true
+      reference_length: 400.0
     params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
-      min_speed: 0.5
-      max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
+      learning_rate: 0.0001
+      gamma: 0.998
+      n_steps: 2048
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.01
+      batch_size: 256
+      activation: tanh
+      pi_hidden_dims: [64, 64]
+      vf_hidden_dims: [128, 128]
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
 
   car_2:
-    role: defender
-    algorithm: ftg
-    params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
-      min_speed: 0.5
-      max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
-
-  # --- Attackers (training role) ---
-  car_3:
     role: attacker
     algorithm: sb3_ppo
+    reward:
+      type: centerline
+      vs_weight: 1.2
+      vd_weight: 0.005
+      d_weight: 0.01
+      steer_weight: 0.03
+      collision_penalty: -500.0
+      normalize_by_track_length: true
+      reference_length: 400.0
     observation:
       preset: centerline_racing
     params:
@@ -108,50 +107,10 @@ agents:
       prevent_reverse: true
       speed_index: 1
 
-  car_4:
-    role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
-    params:
-      learning_rate: 0.0001
-      gamma: 0.998
-      n_steps: 2048
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.01
-      batch_size: 256
-      activation: tanh
-      pi_hidden_dims: [64, 64]
-      vf_hidden_dims: [128, 128]
-    action_constraints:
-      prevent_reverse: true
-      speed_index: 1
-
-  car_5:
-    role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
-    params:
-      learning_rate: 0.0001
-      gamma: 0.998
-      n_steps: 2048
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.01
-      batch_size: 256
-      activation: tanh
-      pi_hidden_dims: [64, 64]
-      vf_hidden_dims: [128, 128]
-    action_constraints:
-      prevent_reverse: true
-      speed_index: 1
+  # To add more attackers, append car_3, car_4 … here (copy car_2 block).
 
 wandb:
-  enabled: true
+  enabled: false
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
@@ -162,5 +121,5 @@ wandb:
     - multi-map
     - phase2
     - attacker
-  notes: "Phase 2: train shared attacker policy vs FTG defenders across all MARL maps"
+  notes: "Phase 2: train shared attacker policy vs hybrid PP+FTG defender"
   mode: online

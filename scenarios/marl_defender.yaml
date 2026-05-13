@@ -5,7 +5,6 @@
 # Run with: python run_marl_roles.py --scenario scenarios/marl_defender.yaml
 includes:
   - ../configs/env/marl_6car.yaml
-  - ../configs/reward/centerline_racing.yaml
 
 experiment:
   name: marl_defender
@@ -20,6 +19,11 @@ agents:
   car_0:
     role: defender
     algorithm: sb3_ppo
+    reward:
+      type: centerline
+      preset: centerline_racing
+      normalize_by_track_length: true
+      reference_length: 400.0
     observation:
       preset: centerline_racing
     params:
@@ -38,117 +42,124 @@ agents:
       prevent_reverse: true
       speed_index: 1
 
-  car_1:
-    role: defender
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
-    params:
-      learning_rate: 0.0001
-      gamma: 0.998
-      n_steps: 2048
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.005
-      batch_size: 256
-      activation: tanh
-      pi_hidden_dims: [64, 64]
-      vf_hidden_dims: [128, 128]
-    action_constraints:
-      prevent_reverse: true
-      speed_index: 1
+  # car_1:
+  #   role: defender
+  #   algorithm: sb3_ppo
+  #   observation:
+  #     preset: centerline_racing
+  #   params:
+  #     learning_rate: 0.0001
+  #     gamma: 0.998
+  #     n_steps: 2048
+  #     n_epochs: 10
+  #     gae_lambda: 0.95
+  #     clip_range: 0.2
+  #     ent_coef: 0.005
+  #     batch_size: 256
+  #     activation: tanh
+  #     pi_hidden_dims: [64, 64]
+  #     vf_hidden_dims: [128, 128]
+  #   action_constraints:
+  #     prevent_reverse: true
+  #     speed_index: 1
 
-  car_2:
-    role: defender
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
-    params:
-      learning_rate: 0.0001
-      gamma: 0.998
-      n_steps: 2048
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.005
-      batch_size: 256
-      activation: tanh
-      pi_hidden_dims: [64, 64]
-      vf_hidden_dims: [128, 128]
-    action_constraints:
-      prevent_reverse: true
-      speed_index: 1
+  # car_2:
+  #   role: defender
+  #   algorithm: sb3_ppo
+  #   observation:
+  #     preset: centerline_racing
+  #   params:
+  #     learning_rate: 0.0001
+  #     gamma: 0.998
+  #     n_steps: 2048
+  #     n_epochs: 10
+  #     gae_lambda: 0.95
+  #     clip_range: 0.2
+  #     ent_coef: 0.005
+  #     batch_size: 256
+  #     activation: tanh
+  #     pi_hidden_dims: [64, 64]
+  #     vf_hidden_dims: [128, 128]
+  #   action_constraints:
+  #     prevent_reverse: true
+  #     speed_index: 1
 
   # --- Attackers (fixed FTG opponents) ---
   car_3:
     role: attacker
     algorithm: hybrid_pp_ftg
     params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
+      lookahead: 1.5
       min_speed: 0.5
       max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
+      max_steer: 0.42
+      blend_distance: 3.0
+      full_ftg_distance: 1.5
+      ftg:
+        max_distance: 10.0
+        window_size: 4
+        bubble_radius: 2.5
+        max_steer: 0.42
+        min_speed: 0.5
+        max_speed: 3.0
+        steering_gain: 0.30
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.5
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.02
+        use_disparity_extender: true
+        disparity_threshold: 0.40
+        vehicle_width: 0.225
+        safety_margin: 0.10
 
-  car_4:
-    role: attacker
-    algorithm: hybrid_pp_ftg
-    params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
-      min_speed: 0.5
-      max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
+  # car_4:
+  #   role: attacker
+  #   algorithm: hybrid_pp_ftg
+  #   params:
+  #     max_distance: 10.0
+  #     window_size: 4
+  #     bubble_radius: 2.5
+  #     max_steer: 0.42
+  #     min_speed: 0.5
+  #     max_speed: 3.0
+  #     steering_gain: 0.30
+  #     fov: 4.71238898
+  #     normalized: false
+  #     steer_smooth: 0.5
+  #     mode: lidar
+  #     gap_min_range: 0.5
+  #     target_mode: center
+  #     wall_avoid_kick: 0.02
+  #     use_disparity_extender: true
+  #     disparity_threshold: 0.40
+  #     vehicle_width: 0.225
+  #     safety_margin: 0.10
 
-  car_5:
-    role: attacker
-    algorithm: hybrid_pp_ftg
-    params:
-      max_distance: 10.0
-      window_size: 4
-      bubble_radius: 2.5
-      max_steer: 0.42
-      min_speed: 0.5
-      max_speed: 3.0
-      steering_gain: 0.30
-      fov: 4.71238898
-      normalized: false
-      steer_smooth: 0.5
-      mode: lidar
-      gap_min_range: 0.5
-      target_mode: center
-      wall_avoid_kick: 0.02
-      use_disparity_extender: true
-      disparity_threshold: 0.40
-      vehicle_width: 0.225
-      safety_margin: 0.10
+  # car_5:
+  #   role: attacker
+  #   algorithm: hybrid_pp_ftg
+  #   params:
+  #     max_distance: 10.0
+  #     window_size: 4
+  #     bubble_radius: 2.5
+  #     max_steer: 0.42
+  #     min_speed: 0.5
+  #     max_speed: 3.0
+  #     steering_gain: 0.30
+  #     fov: 4.71238898
+  #     normalized: false
+  #     steer_smooth: 0.5
+  #     mode: lidar
+  #     gap_min_range: 0.5
+  #     target_mode: center
+  #     wall_avoid_kick: 0.02
+  #     use_disparity_extender: true
+  #     disparity_threshold: 0.40
+  #     vehicle_width: 0.225
+  #     safety_margin: 0.10
 
 wandb:
   enabled: true

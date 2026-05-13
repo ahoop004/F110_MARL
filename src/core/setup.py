@@ -300,8 +300,21 @@ def create_training_setup(
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
-    # Build environment configuration
-    num_agents = env_config.get('num_agents', env_config.get('n_agents', 1))
+    # Build environment configuration.
+    # n_agents is always derived from the agents dict (max car index + 1) so
+    # that commenting out agents in the scenario YAML reduces the car count.
+    # The env requires contiguous IDs car_0..car_{n-1}, so car_3 and car_4
+    # in a scenario mean n_agents=5 (car_0..car_4 all exist; gaps sit still).
+    # To get exactly N cars, use car_0..car_{N-1} in the scenario agents block.
+    import re as _re
+    _indices = []
+    for _aid in (agent_configs or {}):
+        _m = _re.search(r'(\d+)$', str(_aid))
+        if _m:
+            _indices.append(int(_m.group(1)))
+    num_agents = max(_indices) + 1 if _indices else int(
+        env_config.get('num_agents', env_config.get('n_agents', 1))
+    )
     env_seed = env_config.get('seed', seed)
     env_kwargs = {
         'map': env_config['map'],

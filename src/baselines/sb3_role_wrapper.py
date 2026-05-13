@@ -27,6 +27,7 @@ Usage
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -372,7 +373,7 @@ class SB3RoleWrapper(gym.Env):
     _GRID_CURVATURE_MAX  = 0.5 # max curvature (rad/m) over grid footprint — rejects corners
 
     def _sample_grid_poses(self) -> Optional[np.ndarray]:
-        """Pick a random straight, wide section and return 6 poses in a 2×3 grid."""
+        """Pick a random straight, wide section and return poses in a 2-col grid."""
         centerline = getattr(self.env, "centerline_points", None)
         if centerline is None or centerline.shape[0] < 10:
             return None
@@ -471,20 +472,24 @@ class SB3RoleWrapper(gym.Env):
     def _build_grid_poses(
         self, centerline: np.ndarray, idx: int, n: int
     ) -> np.ndarray:
-        """Compute 6 poses in a 2-column × 3-row racing grid at centerline[idx].
+        """Compute poses in a 2-column racing grid at centerline[idx].
 
-        Each row is anchored to the ACTUAL centerline point at that row's
-        arc-length offset, so the grid correctly follows track curvature rather
-        than projecting all rows from a single tangent.
+        Rows and total pose count scale with the actual agent count so this
+        works for any scenario (3-car, 6-car, etc.).  Each row is anchored to
+        the ACTUAL centerline point at that row's arc-length offset so the grid
+        follows track curvature rather than projecting all rows from one tangent.
         """
+        n_agents = getattr(self.env, "n_agents", 6)
+        n_rows = math.ceil(n_agents / 2)
+
         pts = centerline[:, :2].astype(np.float32)
         seg_len = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         avg_seg = float(seg_len.mean()) if len(seg_len) > 0 else 0.2
         steps_per_row = max(1, int(round(self._GRID_ROW_SPACING / avg_seg)))
 
-        poses = np.zeros((6, 3), dtype=np.float32)
+        all_poses = np.zeros((n_rows * 2, 3), dtype=np.float32)
         k = 0
-        for row in range(3):
+        for row in range(n_rows):
             row_idx = max(0, idx - row * steps_per_row)
             pt = pts[row_idx]
 
@@ -495,14 +500,13 @@ class SB3RoleWrapper(gym.Env):
             row_theta = float(np.arctan2(delta[1], delta[0]))
 
             cos_t, sin_t = np.cos(row_theta), np.sin(row_theta)
-            tangent = np.array([cos_t,  sin_t])
-            normal  = np.array([-sin_t, cos_t])
+            normal = np.array([-sin_t, cos_t])
 
             for col_sign in (-1, +1):   # -1 = right, +1 = left
                 pos = pt + col_sign * self._GRID_COL_OFFSET * normal
-                poses[k] = [pos[0], pos[1], row_theta]
+                all_poses[k] = [pos[0], pos[1], row_theta]
                 k += 1
-        return poses
+        return all_poses[:n_agents]
 
     def _get_track_length(self) -> Optional[float]:
         """Return centerline arc length in metres, cached per episode."""
