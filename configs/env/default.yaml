@@ -1,0 +1,7 @@
+environment:
+  timestep: 0.01
+  lidar_beams: 108
+  lidar_range: 10.0
+  render: false
+  centerline_autoload: false
+  walls_autoload: false

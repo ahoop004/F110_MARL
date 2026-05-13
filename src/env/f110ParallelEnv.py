@@ -1,12 +1,9 @@
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
-import gymnasium as gym
-from gymnasium import spaces
 import yaml
 from PIL import Image
 
-from pettingzoo import ParallelEnv
 
 # base classes
 from src.physics import Simulator, Integrator
@@ -103,7 +100,7 @@ DEFAULT_AGENT_SENSORS = (
     "collision",
 )
 
-class F110ParallelEnv(ParallelEnv):
+class F110ParallelEnv:
 
     metadata = {"name": "F110ParallelEnv", "render_modes": ["human", "rgb_array"]}
 
@@ -381,10 +378,11 @@ class F110ParallelEnv(ParallelEnv):
         self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
         self._render_callbacks: List[Callable[["EnvRenderer"], None]] = []
 
-        self._single_action_space = spaces.Box(
+        from env.spaces import SpaceSpec, DictSpaceSpec  # local import avoids circular
+        self._single_action_space = SpaceSpec(
+            shape=(2,),
             low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
             high=np.array([self.params["s_max"], self.params["v_max"]], dtype=np.float32),
-            dtype=np.float32,
         )
         self.action_spaces = {
             aid: self._single_action_space for aid in self.possible_agents
@@ -2053,63 +2051,63 @@ class F110ParallelEnv(ParallelEnv):
         lap_low = np.array([0.0, 0.0], dtype=np.float32)
         lap_high = np.array([lap_cap, 1e5], dtype=np.float32)
 
-        obs_spaces: Dict[str, gym.Space] = {}
+        from env.spaces import SpaceSpec, DictSpaceSpec  # local import avoids circular
+        obs_spaces: Dict[str, DictSpaceSpec] = {}
         for aid in self.possible_agents:
             sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
-            components: Dict[str, gym.Space] = {}
+            components: Dict[str, SpaceSpec] = {}
+            n_beams = self._lidar_beam_count
 
             if "lidar" in sensors:
-                components["lidar"] = spaces.Box(
-                    low=0.0,
-                    high=self.lidar_range,
-                    shape=(self._lidar_beam_count,),
-                    dtype=np.float32,
+                components["lidar"] = SpaceSpec(
+                    shape=(n_beams,),
+                    low=np.zeros(n_beams, dtype=np.float32),
+                    high=np.full(n_beams, self.lidar_range, dtype=np.float32),
                 )
             if "pose" in sensors:
-                components["pose"] = spaces.Box(pose_low, pose_high, dtype=np.float32)
+                components["pose"] = SpaceSpec(shape=(3,), low=pose_low, high=pose_high)
             if "velocity" in sensors:
-                components["velocity"] = spaces.Box(vel_low, vel_high, dtype=np.float32)
+                components["velocity"] = SpaceSpec(shape=(2,), low=vel_low, high=vel_high)
             if "acceleration" in sensors:
-                components["acceleration"] = spaces.Box(accel_low, accel_high, dtype=np.float32)
+                components["acceleration"] = SpaceSpec(shape=(2,), low=accel_low, high=accel_high)
             if "angular_velocity" in sensors:
-                components["angular_velocity"] = spaces.Box(
-                    low=-ang_cap,
-                    high=ang_cap,
-                    shape=(),
-                    dtype=np.float32,
+                components["angular_velocity"] = SpaceSpec(
+                    shape=(1,),
+                    low=np.array([-ang_cap], dtype=np.float32),
+                    high=np.array([ang_cap], dtype=np.float32),
                 )
             if "target_pose" in sensors:
-                components["target_pose"] = spaces.Box(pose_low, pose_high, dtype=np.float32)
+                components["target_pose"] = SpaceSpec(shape=(3,), low=pose_low, high=pose_high)
             if "target_collision" in sensors:
-                components["target_collision"] = spaces.Box(0.0, 1.0, shape=(), dtype=np.float32)
+                components["target_collision"] = SpaceSpec(
+                    shape=(1,), low=np.zeros(1, dtype=np.float32), high=np.ones(1, dtype=np.float32)
+                )
             if "lap" in sensors:
-                components["lap"] = spaces.Box(lap_low, lap_high, dtype=np.float32)
+                components["lap"] = SpaceSpec(shape=(2,), low=lap_low, high=lap_high)
             if "collision" in sensors:
-                components["collision"] = spaces.Box(0.0, 1.0, shape=(), dtype=np.float32)
+                components["collision"] = SpaceSpec(
+                    shape=(1,), low=np.zeros(1, dtype=np.float32), high=np.ones(1, dtype=np.float32)
+                )
 
-            components["state"] = spaces.Box(
-                -np.inf,
-                np.inf,
+            components["state"] = SpaceSpec(
                 shape=(self._central_state_dim,),
-                dtype=np.float32,
+                low=np.full(self._central_state_dim, -np.inf, dtype=np.float32),
+                high=np.full(self._central_state_dim, np.inf, dtype=np.float32),
             )
 
-            obs_spaces[aid] = spaces.Dict(components)
+            obs_spaces[aid] = DictSpaceSpec(spaces=components)
 
         if obs_spaces:
             self.observation_spaces = obs_spaces
         else:
             self.observation_spaces = {
-                aid: spaces.Dict(
-                    {
-                        "state": spaces.Box(
-                            -np.inf,
-                            np.inf,
-                            shape=(self._central_state_dim,),
-                            dtype=np.float32,
-                        )
-                    }
-                )
+                aid: DictSpaceSpec(spaces={
+                    "state": SpaceSpec(
+                        shape=(self._central_state_dim,),
+                        low=np.full(self._central_state_dim, -np.inf, dtype=np.float32),
+                        high=np.full(self._central_state_dim, np.inf, dtype=np.float32),
+                    )
+                })
                 for aid in self.possible_agents
             }
 

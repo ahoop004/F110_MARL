@@ -1,0 +1,7 @@
+observation:
+  centerline:
+    enabled: true
+  ego_state:
+    enabled: true
+    include_pose: true
+    include_velocity: false

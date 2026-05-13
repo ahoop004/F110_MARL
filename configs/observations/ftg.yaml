@@ -1,0 +1,4 @@
+observation:
+  lidar:
+    enabled: true
+    normalize: false

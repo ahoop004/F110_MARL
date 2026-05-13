@@ -465,54 +465,11 @@ def create_training_setup(
         agent_kwargs['observation_space'] = obs_space
         agent_kwargs['action_space'] = action_space
 
-        # Extract dimensions for agents that need them
-        # For Dict spaces, compute total dimension
-        from gymnasium import spaces
-        import numpy as np
+        # Extract dimensions using SpaceSpec
+        from src.env.spaces import SpaceSpec, DictSpaceSpec
 
-        def get_space_dim(space):
-            """Get total dimension of a gym space."""
-            if isinstance(space, spaces.Dict):
-                return sum(get_space_dim(s) for s in space.spaces.values())
-            elif isinstance(space, spaces.Box):
-                return int(np.prod(space.shape))
-            elif isinstance(space, spaces.Discrete):
-                return 1
-            elif isinstance(space, spaces.MultiDiscrete):
-                return len(space.nvec)
-            else:
-                return 1
-
-        # Calculate observation dimension
-        # If observation preset specified, use flattened dimension
-        if 'observation' in agent_config and isinstance(agent_config['observation'], dict):
-            obs_config = agent_config['observation']
-            if 'preset' in obs_config:
-                preset_name = obs_config['preset']
-            elif len(obs_config) > 0:
-                # Expanded preset - default to gaplock
-                preset_name = 'gaplock'
-            else:
-                preset_name = None
-
-            if preset_name:
-                # Create a dummy observation and flatten it to get dimension
-                from core.obs_flatten import flatten_observation
-                dummy_obs = obs_space.sample()
-                # Get target_id if specified
-                target_id = agent_config.get('target_id')
-                # Add dummy central_state if target exists
-                if target_id:
-                    # Create dummy central state (same structure as ego obs)
-                    dummy_obs['central_state'] = obs_space.sample()
-                flat_dummy = flatten_observation(dummy_obs, preset=preset_name, target_id=target_id)
-                obs_dim = flat_dummy.shape[0]
-            else:
-                obs_dim = get_space_dim(obs_space)
-        else:
-            obs_dim = get_space_dim(obs_space)
-
-        action_dim = get_space_dim(action_space)
+        obs_dim = obs_space.n if hasattr(obs_space, 'n') else int(np.prod(obs_space.shape))
+        action_dim = action_space.n if hasattr(action_space, 'n') else int(np.prod(action_space.shape))
 
         frame_stack = agent_config.get('frame_stack', 1)
         if frame_stack is None:
@@ -527,14 +484,14 @@ def create_training_setup(
         if frame_stack > 1:
             obs_dim *= frame_stack
 
-        # Add dimension parameters (support both naming conventions)
+        # Add dimension parameters
         agent_kwargs['obs_dim'] = obs_dim
         agent_kwargs['action_dim'] = action_dim
-        agent_kwargs['act_dim'] = action_dim  # Alias for PPO
+        agent_kwargs['act_dim'] = action_dim
         agent_kwargs['frame_stack'] = frame_stack
 
-        # Extract action bounds for continuous action spaces (SAC, TD3, etc.)
-        if isinstance(action_space, spaces.Box):
+        # Extract action bounds for continuous action spaces
+        if isinstance(action_space, SpaceSpec):
             agent_kwargs['action_low'] = action_space.low
             agent_kwargs['action_high'] = action_space.high
 

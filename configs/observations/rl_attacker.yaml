@@ -1,0 +1,14 @@
+observation:
+  lidar:
+    enabled: true
+    normalize: true
+  ego_state:
+    enabled: true
+    include_velocity: true
+    include_pose: false
+  target_state:
+    enabled: true
+  relative_pose:
+    enabled: true
+  prev_action:
+    enabled: true

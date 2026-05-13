@@ -1,0 +1,21 @@
+reward:
+  gaplock:
+    enabled: true
+    pressure:
+      enabled: true
+      weight: 1.0
+    forcing:
+      enabled: true
+      weight: 0.5
+  centerline:
+    enabled: true
+    vs_weight: 0.5
+    vd_weight: 0.005
+  collision:
+    enabled: true
+    penalty: -200.0
+  terminal:
+    enabled: true
+    success: 200.0
+    timeout: -100.0
+    self_crash: -20.0
