@@ -1,12 +1,12 @@
 reward:
-  gaplock:
+  gaplock_pressure:
     enabled: true
-    pressure:
-      enabled: true
-      weight: 1.0
-    forcing:
-      enabled: true
-      weight: 0.5
+    weight: 1.0
+    preferred_distance: 1.5
+    distance_tolerance: 0.5
+  gaplock_forcing:
+    enabled: true
+    weight: 0.5
   centerline:
     enabled: true
     vs_weight: 0.5
@@ -14,8 +14,12 @@ reward:
   collision:
     enabled: true
     penalty: -200.0
-  terminal:
+  terminal_success:
     enabled: true
-    success: 200.0
-    timeout: -100.0
-    self_crash: -20.0
+    bonus: 200.0
+  terminal_timeout:
+    enabled: true
+    penalty: -100.0
+  terminal_self_crash:
+    enabled: true
+    penalty: -20.0

@@ -21,6 +21,7 @@ from loggers.console import ConsoleLogger
 from loggers.wandb_logger import WandbLogger
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
+from wrappers.actions.composer import ActionComposer
 from training.hooks import CheckpointHook, ConsoleHook, WandbHook
 
 ON_POLICY_ALGOS = {"ppo", "a2c"}
@@ -191,6 +192,7 @@ def main() -> None:
         hooks.append(WandbHook(wandb_logger))
 
     action_constraints = agent_cfg.get("action_constraints", {})
+    action_composer = ActionComposer.from_config(action_low, action_high, action_constraints)
 
     try:
         if algorithm in ON_POLICY_ALGOS:
@@ -198,8 +200,7 @@ def main() -> None:
             render = bool(scenario.get("environment", {}).get("render", False))
             _run_on_policy(
                 env, rl_agent_id, agent_cfg, other_agents,
-                obs_composer, reward_composer, params,
-                action_low, action_high, action_constraints,
+                obs_composer, reward_composer, action_composer, params,
                 action_repeat, render, hooks, exp_cfg, output_dir, console,
             )
         elif algorithm in OFF_POLICY_ALGOS:
@@ -215,8 +216,7 @@ def main() -> None:
 
 def _run_on_policy(
     env, rl_agent_id, agent_cfg, other_agents,
-    obs_composer, reward_composer, params,
-    action_low, action_high, action_constraints,
+    obs_composer, reward_composer, action_composer, params,
     action_repeat, render, hooks, exp_cfg, output_dir, console,
 ) -> None:
     from agents.ppo import PPOAgent
@@ -224,10 +224,11 @@ def _run_on_policy(
 
     n_episodes = int(exp_cfg.get("episodes", 1000))
 
+    action_space = env.action_spaces.get(rl_agent_id)
     agent = PPOAgent(
         obs_dim=obs_composer.obs_dim,
-        action_low=action_low,
-        action_high=action_high,
+        action_low=action_space.low,
+        action_high=action_space.high,
         params=params,
     )
 
@@ -243,8 +244,8 @@ def _run_on_policy(
         other_agents=other_agents,
         obs_composer=obs_composer,
         reward_composer=reward_composer,
+        action_composer=action_composer,
         action_repeat=action_repeat,
-        action_constraints=action_constraints,
         hooks=hooks,
         render=render,
     )

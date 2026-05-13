@@ -10,8 +10,6 @@ import copy
 import yaml
 from pathlib import Path
 
-from src.rewards import load_preset as load_reward_preset, merge_config as merge_reward_config
-from src.core.observations import load_observation_preset, merge_observation_config
 
 
 class ScenarioError(Exception):
@@ -103,72 +101,13 @@ def load_scenario(path: str) -> Dict[str, Any]:
 
 
 def expand_reward_preset(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Expand reward preset with optional overrides.
-
-    Args:
-        config: Reward config with 'preset' and optional 'overrides'
-
-    Returns:
-        Expanded reward configuration
-
-    Example:
-        >>> config = {'preset': 'gaplock_full', 'overrides': {'terminal': {'target_crash': 100.0}}}
-        >>> expanded = expand_reward_preset(config)
-        >>> expanded['terminal']['target_crash']
-        100.0
-    """
-    if 'preset' not in config:
-        # No preset, return config as-is
-        return copy.deepcopy(config)
-
-    # Load preset
-    preset_name = config['preset']
-    try:
-        preset = load_reward_preset(preset_name)
-    except ValueError as e:
-        raise ScenarioError(f"Reward preset error: {e}")
-
-    # Apply overrides if present
-    if 'overrides' in config:
-        return merge_reward_config(preset, config['overrides'])
-
-    return preset
+    """Pass-through: reward configs are file paths or explicit dicts (no presets)."""
+    return copy.deepcopy(config)
 
 
 def expand_observation_preset(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Expand observation preset with optional overrides.
-
-    Args:
-        config: Observation config with 'preset' and optional 'overrides'
-
-    Returns:
-        Expanded observation configuration
-
-    Example:
-        >>> config = {'preset': 'gaplock', 'overrides': {'lidar': {'beams': 360}}}
-        >>> expanded = expand_observation_preset(config)
-        >>> expanded['lidar']['beams']
-        360
-    """
-    if 'preset' not in config:
-        # No preset, return config as-is
-        return copy.deepcopy(config)
-
-    # Load preset
-    preset_name = config['preset']
-    try:
-        preset = load_observation_preset(preset_name)
-    except ValueError as e:
-        raise ScenarioError(f"Observation preset error: {e}")
-
-    preset = copy.deepcopy(preset)
-    preset["_preset"] = preset_name
-
-    # Apply overrides if present
-    if 'overrides' in config:
-        return merge_observation_config(preset, config['overrides'])
-
-    return preset
+    """Pass-through: observation configs are file paths or explicit dicts (no presets)."""
+    return copy.deepcopy(config)
 
 
 def expand_agent_config(agent_config: Dict[str, Any]) -> Dict[str, Any]:

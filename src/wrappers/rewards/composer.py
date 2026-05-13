@@ -2,24 +2,30 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import yaml
 
 from wrappers.rewards.base import RewardComponent
 from wrappers.rewards.centerline import CenterlineRewardComponent
 from wrappers.rewards.collision import CollisionRewardComponent
-from wrappers.rewards.terminal import TerminalRewardComponent
 from wrappers.rewards.speed import SpeedRewardComponent
-from wrappers.rewards.gaplock import GaplockRewardComponent
+from wrappers.rewards.gaplock_pressure import GaplockPressureComponent
+from wrappers.rewards.gaplock_forcing import GaplockForcingComponent
+from wrappers.rewards.terminal_success import TerminalSuccessComponent
+from wrappers.rewards.terminal_timeout import TerminalTimeoutComponent
+from wrappers.rewards.terminal_self_crash import TerminalSelfCrashComponent
 
 
 _COMPONENT_MAP = {
     "centerline": CenterlineRewardComponent,
     "collision": CollisionRewardComponent,
-    "terminal": TerminalRewardComponent,
     "speed": SpeedRewardComponent,
-    "gaplock": GaplockRewardComponent,
+    "gaplock_pressure": GaplockPressureComponent,
+    "gaplock_forcing": GaplockForcingComponent,
+    "terminal_success": TerminalSuccessComponent,
+    "terminal_timeout": TerminalTimeoutComponent,
+    "terminal_self_crash": TerminalSelfCrashComponent,
 }
 
 
@@ -45,10 +51,7 @@ class RewardComposer:
 
     @classmethod
     def from_config(cls, reward_config: Dict) -> "RewardComposer":
-        """Build from a parsed reward config dict.
-
-        reward_config: the 'reward:' block from the YAML file
-        """
+        """Build from a parsed reward config dict."""
         cfg = reward_config.get("reward", reward_config)
         components: List[RewardComponent] = []
 

@@ -81,7 +81,7 @@ def _ensure_pyglet():
         return False
 
 # constants
-from wrappers.observation import _sector_from_angle, _radial_gain, _SECTOR_NAMES
+from wrappers.common import _sector_from_angle, _radial_gain, _SECTOR_NAMES
 
 # rendering
 # VIDEO_W = 600

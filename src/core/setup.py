@@ -7,7 +7,6 @@ import numpy as np
 
 from src.env import F110ParallelEnv
 from src.core.config import AgentFactory, register_builtin_agents
-from src.rewards import RewardStrategy, build_reward_strategy
 from src.utils.map_loader import MapLoader
 
 
@@ -292,7 +291,7 @@ def create_training_setup(
     scenario: Dict[str, Any],
     *,
     mode: str = "train",
-) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict[str, RewardStrategy]]:
+) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict]:
     """Create training setup from scenario configuration.
 
     Args:
@@ -466,113 +465,23 @@ def create_training_setup(
     # setup.py only creates heuristic / fixed-policy agents.
     _PYTORCH_RL_ALGOS = {"ppo", "a2c", "sac", "td3", "ddpg", "dqn", "qrdqn", "mappo"}
 
-    # Create agents
+    # Create agents (heuristic/fixed-policy only — RL agents are created by run.py)
+    _HEURISTIC_ALGOS = {"ftg", "follow_gap", "gap_follow", "followthegap",
+                        "pure_pursuit", "stanley", "hybrid_pp_ftg"}
     agents = {}
-    reward_strategies = {}
-    target_mapping = {}  # Track agent -> target relationships
 
     for agent_id, agent_config in agent_configs.items():
-        algorithm = agent_config['algorithm']
+        algorithm = agent_config['algorithm'].lower()
 
-        # Skip pure PyTorch RL agents — run.py creates them directly
-        if algorithm.lower() in _PYTORCH_RL_ALGOS:
+        if algorithm in _PYTORCH_RL_ALGOS:
             continue
 
-        # Build agent-specific configuration
-        agent_kwargs = {
-            'agent_id': agent_id,
-        }
-
-        # Add algorithm hyperparameters
-        if 'params' in agent_config:
-            agent_kwargs.update(agent_config['params'])
-
-        # Add observation and action space info
-        # Access observation_spaces directly as dict (PettingZoo compatibility)
-        obs_space = env.observation_spaces.get(agent_id)
-        action_space = env.action_spaces.get(agent_id)
-
-        if obs_space is None or action_space is None:
-            # Debug: print available spaces
-            print(f"DEBUG: observation_spaces = {env.observation_spaces}")
-            print(f"DEBUG: action_spaces = {env.action_spaces}")
-            print(f"DEBUG: possible_agents = {env.possible_agents}")
-            print(f"DEBUG: agent_id = {agent_id}")
-            raise ValueError(
-                f"Agent '{agent_id}' not found in environment spaces. "
-                f"Available agents: {list(env.possible_agents)}"
-            )
-
-        # Heuristic agents only need their params — pass a minimal config
-        _HEURISTIC_ALGOS = {"ftg", "follow_gap", "gap_follow", "followthegap",
-                            "pure_pursuit", "stanley", "hybrid_pp_ftg"}
-        if algorithm.lower() in _HEURISTIC_ALGOS:
+        if algorithm in _HEURISTIC_ALGOS:
             heuristic_kwargs = dict(agent_config.get('params', {}))
-            agent = AgentFactory.create(algorithm, heuristic_kwargs)
-            agents[agent_id] = agent
+            agents[agent_id] = AgentFactory.create(algorithm, heuristic_kwargs)
             continue
 
-        agent_kwargs['observation_space'] = obs_space
-        agent_kwargs['action_space'] = action_space
-
-        # Extract dimensions using SpaceSpec
-        obs_dim = obs_space.n if hasattr(obs_space, 'n') else int(np.prod(obs_space.shape))
-        action_dim = action_space.n if hasattr(action_space, 'n') else int(np.prod(action_space.shape))
-
-        frame_stack = agent_config.get('frame_stack', 1)
-        if frame_stack is None:
-            frame_stack = 1
-        try:
-            frame_stack = int(frame_stack)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"frame_stack must be an integer >= 1 (agent {agent_id})") from exc
-        if frame_stack < 1:
-            raise ValueError(f"frame_stack must be >= 1 (agent {agent_id})")
-
-        if frame_stack > 1:
-            obs_dim *= frame_stack
-
-        # Add dimension parameters
-        agent_kwargs['obs_dim'] = obs_dim
-        agent_kwargs['action_dim'] = action_dim
-        agent_kwargs['act_dim'] = action_dim
-        agent_kwargs['frame_stack'] = frame_stack
-
-        # Extract action bounds for continuous action spaces
-        if isinstance(action_space, SpaceSpec):
-            agent_kwargs['action_low'] = action_space.low
-            agent_kwargs['action_high'] = action_space.high
-
-        # Create agent
-        agent = AgentFactory.create(algorithm, agent_kwargs)
-        agents[agent_id] = agent
-
-        # Build reward strategy if configured
-        # Only trainable agents will have reward configs; FTG and other
-        # non-trainable agents won't have reward configs in scenarios
-        if 'reward' in agent_config:
-            reward_config = agent_config['reward']
-
-            # Get target agent ID if specified
-            target_id = agent_config.get('target_id')
-
-            # Store target mapping for environment configuration
-            if target_id is not None:
-                target_mapping[agent_id] = target_id
-
-            # Build reward strategy
-            reward_strategy = build_reward_strategy(
-                reward_config,
-                agent_id=agent_id,
-                target_id=target_id,
-            )
-            reward_strategies[agent_id] = reward_strategy
-
-    # Configure environment with agent target relationships
-    if target_mapping:
-        env.configure_agent_targets(target_mapping)
-
-    return env, agents, reward_strategies
+    return env, agents, {}
 
 
 def get_experiment_config(scenario: Dict[str, Any]) -> Dict[str, Any]:

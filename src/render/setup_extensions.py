@@ -127,32 +127,8 @@ def setup_gaplock_extensions(env, heatmap: bool = False):
         env: F110ParallelEnv instance
         heatmap: Enable expensive heatmap (default: False)
     """
-    from src.rewards.presets import load_preset
-
-    # Load gaplock reward config for proper parameters
-    try:
-        reward_config = load_preset('gaplock_full')
-        dist_config = reward_config['distance']
-
-        ring_config = {
-            'target_agent': 'car_1',
-            'inner_radius': dist_config['near_distance'],
-            'outer_radius': dist_config['far_distance'],
-            'preferred_radius': 1.5,
-        }
-
-        heatmap_config = {
-            'target_agent': 'car_1',
-            'attacker_agent': 'car_0',
-            'near_distance': dist_config['near_distance'],
-            'far_distance': dist_config['far_distance'],
-            'reward_near': dist_config['reward_near'],
-            'penalty_far': dist_config['penalty_far'],
-        }
-    except Exception:
-        # Fallback to defaults
-        ring_config = None
-        heatmap_config = None
+    ring_config = None
+    heatmap_config = None
 
     setup_default_extensions(
         env,

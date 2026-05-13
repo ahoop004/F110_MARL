@@ -72,3 +72,66 @@ def downsample_lidar(
     padded = np.full((target,), pad_value, dtype=dtype)
     padded[:size] = scan_array
     return padded
+
+
+# ---------------------------------------------------------------------------
+# Sector / radial geometry helpers (used by f110ParallelEnv for forcing reward)
+# ---------------------------------------------------------------------------
+
+_SECTOR_DEGREES = (
+    ("front",       -22.5,   22.5),
+    ("front_right",  22.5,   67.5),
+    ("right",        67.5,  112.5),
+    ("back_right",  112.5,  157.5),
+    ("back",        157.5, -157.5),
+    ("back_left",  -157.5, -112.5),
+    ("left",       -112.5,  -67.5),
+    ("front_left",  -67.5,  -22.5),
+)
+_SECTOR_NAMES = tuple(name for name, *_ in _SECTOR_DEGREES)
+
+
+def _wrap_degrees(angle: float) -> float:
+    return (angle + 180.0) % 360.0 - 180.0
+
+
+def _sector_from_angle(angle_deg: float) -> str:
+    angle_deg = _wrap_degrees(angle_deg)
+    for name, start, end in _SECTOR_DEGREES:
+        if name == "back":
+            if angle_deg >= 157.5 or angle_deg < -157.5:
+                return name
+        elif start <= end and start <= angle_deg < end:
+            return name
+        elif start > end and (angle_deg >= start or angle_deg < end):
+            return name
+    return "front"
+
+
+def _radial_gain(
+    distance: float,
+    preferred: float,
+    inner_tol: float,
+    outer_tol: float,
+    falloff: str,
+) -> float:
+    preferred = max(float(preferred), 0.0)
+    inner_tol = max(float(inner_tol), 0.0)
+    outer_tol = max(float(outer_tol), 0.0)
+    lower = max(0.0, preferred - inner_tol)
+    upper = preferred + outer_tol
+
+    if falloff == "binary":
+        return 1.0 if lower <= distance <= upper else 0.0
+
+    if distance < lower:
+        return 1.0 if inner_tol > 0.0 else 0.0
+    if distance > upper:
+        if outer_tol == 0.0:
+            return 0.0
+        ratio = (upper - distance) / outer_tol
+        return max(0.0, min(1.0, ratio))
+    if falloff == "gaussian":
+        sigma = (inner_tol + outer_tol) / 2.0 or 1.0
+        return float(np.exp(-((distance - preferred) ** 2) / (2.0 * sigma ** 2)))
+    return 1.0

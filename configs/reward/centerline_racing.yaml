@@ -10,7 +10,9 @@ reward:
   collision:
     enabled: true
     penalty: -200.0
-  terminal:
+  terminal_success:
     enabled: true
-    success: 100.0
-    timeout: -50.0
+    bonus: 100.0
+  terminal_timeout:
+    enabled: true
+    penalty: -50.0

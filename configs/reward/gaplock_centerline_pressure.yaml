@@ -1,5 +1,24 @@
-agents:
-  car_0:
-    reward:
-      type: gaplock_centerline_pressure
-      preset: gaplock_centerline_pressure
+reward:
+  gaplock_pressure:
+    enabled: true
+    weight: 1.0
+    preferred_distance: 1.5
+    distance_tolerance: 0.5
+  centerline:
+    enabled: true
+    vs_weight: 0.5
+    vd_weight: 0.005
+    d_weight: 0.01
+    steer_weight: 0.03
+  collision:
+    enabled: true
+    penalty: -200.0
+  terminal_success:
+    enabled: true
+    bonus: 200.0
+  terminal_timeout:
+    enabled: true
+    penalty: -100.0
+  terminal_self_crash:
+    enabled: true
+    penalty: -20.0

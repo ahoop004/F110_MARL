@@ -99,8 +99,8 @@ SB3/Gymnasium/PettingZoo fully removed ✅ (10,452 lines deleted)
 - [ ] Remove `stable-baselines3`, `sb3-contrib`, `gymnasium`, `pettingzoo` from `requirements.txt`
 
 Remaining migrations:
-- [ ] Extract sector/radial helpers from `src/wrappers/observation.py` → `src/wrappers/common.py`; then delete `observation.py`
-- [ ] Migrate `src/rewards/` → `src/wrappers/rewards/` (consolidate duplicate reward systems)
+- [x] Extract sector/radial helpers from `src/wrappers/observation.py` → `src/wrappers/common.py`; deleted `observation.py`
+- [x] Deleted `src/rewards/` — consolidated into `src/wrappers/rewards/`
 - [ ] Update `sweeps/*.yaml` — `program: run_sb3.py` → `program: run.py`
 
 ---

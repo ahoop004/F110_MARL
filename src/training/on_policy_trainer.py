@@ -9,6 +9,7 @@ import numpy as np
 from agents.ppo import PPOAgent
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
+from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
 
@@ -21,6 +22,7 @@ class OnPolicyTrainer:
     - Action repeat (step env K times per decision)
     - Obs composition via ObservationComposer
     - Reward computation via RewardComposer
+    - Action processing via ActionComposer (denormalize + constraints)
     - Rollout buffer fill → PPO update
     - Hook callbacks at episode/update boundaries
     """
@@ -33,8 +35,8 @@ class OnPolicyTrainer:
         other_agents: Dict[str, Any],
         obs_composer: ObservationComposer,
         reward_composer: RewardComposer,
+        action_composer: ActionComposer,
         action_repeat: int = 1,
-        action_constraints: Optional[Dict] = None,
         hooks: Optional[List[TrainingHook]] = None,
         render: bool = False,
     ) -> None:
@@ -44,22 +46,10 @@ class OnPolicyTrainer:
         self.other_agents = other_agents
         self.obs_composer = obs_composer
         self.reward_composer = reward_composer
+        self.action_composer = action_composer
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
         self.render = render
-
-        constraints = action_constraints or {}
-        self._prevent_reverse = bool(constraints.get("prevent_reverse", False))
-        self._speed_index = int(constraints.get("speed_index", 1))
-
-    def _apply_constraints(self, action: np.ndarray) -> np.ndarray:
-        a = action.copy()
-        if self._prevent_reverse and len(a) > self._speed_index:
-            a[self._speed_index] = max(0.0, a[self._speed_index])
-        return a
-
-    def _denormalize(self, action_norm: np.ndarray) -> np.ndarray:
-        return self.agent._denormalize(action_norm)
 
     def _build_actions(
         self,
@@ -69,9 +59,8 @@ class OnPolicyTrainer:
         actions: Dict[str, np.ndarray] = {self.rl_agent_id: rl_action_phys}
         for aid, other_agent in self.other_agents.items():
             if aid in obs_dict:
-                raw = obs_dict[aid]
                 try:
-                    act = other_agent.act(raw)
+                    act = other_agent.act(obs_dict[aid])
                 except Exception:
                     act = np.zeros(2, dtype=np.float32)
                 actions[aid] = np.asarray(act, dtype=np.float32)
@@ -93,11 +82,9 @@ class OnPolicyTrainer:
 
             while not done:
                 action_norm, log_prob, value = self.agent.act(obs)
-                action_phys = self._apply_constraints(self._denormalize(action_norm))
+                action_phys = self.action_composer.process(action_norm)
                 actions = self._build_actions(action_phys, obs_dict)
 
-                # Action repeat — accumulate reward over K physics steps
-                step_reward = 0.0
                 for _ in range(self.action_repeat):
                     obs_dict, rew_dict, term_dict, trunc_dict, info_dict = self.env.step(actions)
                     if self.render:
@@ -117,15 +104,14 @@ class OnPolicyTrainer:
                     "obs": obs,
                     "next_obs": obs_dict.get(self.rl_agent_id, {}),
                     "info": last_info,
-                    "done": done,           # True for termination OR truncation
+                    "done": done,
                     "terminated": rl_term if done else False,
                     "truncated": rl_trunc if done else False,
                     "action": action_norm,
                     "timestep": 0.01,
                 }
                 reward, breakdown = self.reward_composer.compute(step_info)
-                step_reward = reward
-                episode_reward += step_reward
+                episode_reward += reward
 
                 next_obs = self.obs_composer.wrap(
                     obs_dict.get(self.rl_agent_id, {}),
@@ -133,7 +119,7 @@ class OnPolicyTrainer:
                 )
                 self.obs_composer.update_prev_action(action_norm)
 
-                self.agent.buffer.add(obs, action_norm, step_reward, log_prob, value, done)
+                self.agent.buffer.add(obs, action_norm, reward, log_prob, value, done)
 
                 if self.agent.buffer.is_full() or done:
                     if not done:
