@@ -1,4 +1,4 @@
-program: run_v2.py
+program: run.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
@@ -44,4 +44,4 @@ command:
 - --scenario
 - scenarios/qrdqn.yaml
 - --wandb
-name: QRDQN_sweep
+name: DQN_QRDQN_compat_sweep

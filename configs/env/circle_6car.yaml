@@ -1,0 +1,10 @@
+environment:
+  maps: [circle_map]
+  max_steps: 6000
+  action_repeat: 2
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true

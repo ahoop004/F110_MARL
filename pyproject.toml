@@ -5,18 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "f110x"
 version = "0.1.0"
-description = "Multi-agent F1TENTH PettingZoo environment"
-authors = [{ name = "Your Name", email = "you@example.com" }]
+description = "Pure PyTorch reinforcement learning experiments for F1TENTH racing"
+authors = [{ name = "F110_MARL contributors" }]
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 dependencies = [
-    "pettingzoo",
-    "gymnasium",
     "numpy",
+    "torch",
     "pyglet",
     "pillow",
-    "pyyaml"
+    "pyyaml",
+    "numba",
+    "pandas",
+    "scipy",
+    "tensorboard",
+    "wandb",
+    "rich"
 ]
 
 [project.optional-dependencies]

@@ -1,5 +1,3 @@
-pettingzoo
-gymnasium
 numpy
 pyglet
 Pillow
@@ -11,11 +9,7 @@ wandb
 pytest
 scipy
 
-stable-baselines3
-sb3-contrib
-
 tensorboard
 
 # Optional but recommended
-wandb
 rich

@@ -2,11 +2,10 @@
 # 3 attackers (car_3..5) share one PPO policy — focal agent cycles each episode.
 # 3 defenders (car_0..2) run FTG as fixed opponents to act as targets/obstacles.
 # For best results, replace defender FTG with the frozen Phase 1 checkpoint once
-# that checkpoint loading is wired up (see run_marl_roles.py load_checkpoint flag).
-# Run with: python run_marl_roles.py --scenario scenarios/circle_attacker.yaml
+# that checkpoint loading is wired up.
+# MAPPO trainer pending; this scenario is kept as a MAPPO planning template.
 includes:
   - ../configs/env/circle_6car.yaml
-  - ../configs/reward/attacker_racing.yaml   # defines car_3 reward (template)
 
 experiment:
   name: circle_attacker
@@ -90,9 +89,9 @@ agents:
   # --- Attackers (training role) ---
   car_3:
     role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -111,9 +110,9 @@ agents:
 
   car_4:
     role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -132,9 +131,9 @@ agents:
 
   car_5:
     role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998

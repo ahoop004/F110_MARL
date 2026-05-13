@@ -463,7 +463,7 @@ def create_training_setup(
 
     # Pure PyTorch RL algorithms are instantiated by run.py, not here.
     # setup.py only creates heuristic / fixed-policy agents.
-    _PYTORCH_RL_ALGOS = {"ppo", "a2c", "sac", "td3", "ddpg", "dqn", "qrdqn", "mappo"}
+    _PYTORCH_RL_ALGOS = {"ppo", "a2c", "sac", "td3", "ddpg", "dqn", "mappo"}
 
     # Create agents (heuristic/fixed-policy only — RL agents are created by run.py)
     _HEURISTIC_ALGOS = {"ftg", "follow_gap", "gap_follow", "followthegap",

@@ -1,8 +1,7 @@
-"""Simple configuration system - replaces complex config_models.py and builders.py."""
-from typing import Any, Dict, Optional, Tuple
+"""Small config helpers and heuristic-agent factory for the active training path."""
+from typing import Any, Dict
 import yaml
 from pathlib import Path
-import numpy as np
 
 
 def load_yaml(path: str) -> Dict[str, Any]:
@@ -49,7 +48,11 @@ def resolve_paths(config: Dict[str, Any], base_dir: str = ".") -> Dict[str, Any]
 
 
 class AgentFactory:
-    """Simple agent factory - replaces builders.py (1,586 lines -> ~100 lines)."""
+    """Factory for fixed-policy agents used by ``core.setup``.
+
+    Pure PyTorch RL agents are instantiated directly in ``run.py`` because their
+    constructors need dimensions and bounds resolved from the composed scenario.
+    """
 
     # Agent class registry
     _registry = {}
@@ -96,7 +99,7 @@ class AgentFactory:
 
 # Auto-register agents
 def register_builtin_agents():
-    """Register all built-in agents."""
+    """Register built-in fixed-policy agents."""
     try:
         from agents.ftg import FTGAgent
         AgentFactory.register("ftg", FTGAgent)
@@ -113,34 +116,6 @@ def register_builtin_agents():
         AgentFactory.register("hybrid_pp_ftg", HybridPPFTGAgent)
     except ImportError:
         pass
-
-    # Pure PyTorch agents
-    try:
-        from agents.ppo import PPOAgent
-        AgentFactory.register("ppo", PPOAgent)
-        AgentFactory.register("a2c", PPOAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.sac import SACAgent
-        AgentFactory.register("sac", SACAgent)
-        AgentFactory.register("ddpg", SACAgent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.td3 import TD3Agent
-        AgentFactory.register("td3", TD3Agent)
-    except ImportError:
-        pass
-
-    try:
-        from agents.dqn import DQNAgent
-        AgentFactory.register("dqn", DQNAgent)
-    except ImportError:
-        pass
-
 
 
 # Register agents on import
@@ -178,51 +153,3 @@ class EnvironmentFactory:
                 env_config[key] = config[key]
 
         return F110ParallelEnv(**env_config)
-
-
-
-
-def create_training_setup(config_path: str) -> Dict[str, Any]:
-    """Create complete training setup from YAML config.
-
-    This is the main entry point that ties everything together.
-
-    Args:
-        config_path: Path to YAML configuration file
-
-    Returns:
-        setup: Dictionary containing:
-            - env: F110ParallelEnv
-            - agents: Dict[str, Agent]
-            - config: Parsed configuration
-    """
-    # Load and resolve config
-    config = load_yaml(config_path)
-    config = resolve_paths(config, base_dir=str(Path(config_path).parent))
-
-    # Create environment
-    env_config = config.get('environment', {})
-    env = EnvironmentFactory.create(env_config)
-
-    # Apply wrappers if configured
-    wrapper_configs = config.get('wrappers', {})
-    if wrapper_configs:
-        env = WrapperFactory.wrap_all(env, wrapper_configs)
-
-    # Create agents
-    agents = {}
-    agents_config = config.get('agents', {})
-
-    for agent_id, agent_cfg in agents_config.items():
-        agent_type = agent_cfg.get('type', 'ppo')
-        agent_params = agent_cfg.get('params', {})
-
-        # Create agent
-        agent = AgentFactory.create(agent_type, agent_params)
-        agents[agent_id] = agent
-
-    return {
-        'env': env,
-        'agents': agents,
-        'config': config,
-    }

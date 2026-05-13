@@ -1,71 +1,79 @@
 includes:
-- ../configs/env/line2_gaplock.yaml
-- ../configs/reward/gaplock_attacker.yaml
-- ../configs/agents/ftg_defender.yaml
-- ../configs/curriculum/line2_gaplock_phased_full.yaml
-- ../configs/evaluation/line2_gaplock_eval_curriculum.yaml
-- ../configs/wandb.yaml
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/off_policy.yaml
+  - ../configs/wandb.yaml
+
 experiment:
-  name: td3
-  episodes: 2000
+  name: td3_gaplock_small
+  total_steps: 500000
   seed: 42
+
 environment:
+  maps: [line2]
+  max_steps: 1500
   action_repeat: 2
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+
 agents:
   car_0:
+    algorithm: td3
     role: attacker
-    algorithm: sb3_td3
     target_id: car_1
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attacker.yaml
     params:
       learning_rate: 0.001
+      hidden_dims: [64, 64]
+      activation: relu
       gamma: 0.99
       tau: 0.005
-      hidden_dims:
-      - 64
-      - 64
-      activation: relu
-      pi_hidden_dims: null
-      qf_hidden_dims: null
-      buffer_size: 1000000
-      batch_size: 256
-      learning_starts: 100
-      per:
-        enabled: true
-        alpha: 0.6
-        beta: 0.4
-        beta_final: 1.0
-        beta_anneal_steps: 200000
-        epsilon: 1.0e-6
-        max_priority: 1.0
-        normalize_weights: true
       policy_delay: 2
+      action_noise_sigma: 0.0
       target_policy_noise: 0.2
       target_noise_clip: 0.5
-      action_noise_sigma: 0.0
-      her:
-        enabled: true
-        reward_mode: replace
-        success_mode: distance
-        distance_threshold: 1.0
-        success_reward: 0.0
-        failure_reward: -1.0
-        done_on_success: true
-        probability: 1.0
-    observation:
-      preset: gaplock
-    frame_stack: 1
+      buffer_size: 1000000
+      batch_size: 256
+      learning_starts: 10000
+      train_freq: 1
+      gradient_steps: 1
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: ftg
+    role: defender
+    observation: ../configs/observations/ftg.yaml
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 3
+      max_steer: 0.42
+      min_speed: 0.2
+      max_speed: 0.8
+      steering_gain: 0.35
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.6
+      mode: lidar
+      gap_min_range: 0.4
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+
 wandb:
-  enabled: true
+  enabled: false
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: null
-  job_type: null
-  tags:
-  - improved
-  - curriculum_v2
-  - td3
-  - comparison
-  - gaplock
-  notes: SAC curriculum for gaplock adversarial task
+  group: algo_comparison
+  job_type: td3
+  tags: [td3, gaplock]
+  notes: "Small-network TD3 gaplock attacker vs FTG defender."
   mode: online

@@ -25,7 +25,7 @@ from wrappers.actions.composer import ActionComposer
 from training.hooks import CheckpointHook, ConsoleHook, WandbHook
 
 ON_POLICY_ALGOS = {"ppo", "a2c"}
-OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn", "qrdqn"}
+OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn"}
 
 
 def parse_args() -> argparse.Namespace:

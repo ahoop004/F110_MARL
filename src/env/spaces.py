@@ -1,4 +1,4 @@
-"""SpaceSpec — lightweight replacement for gymnasium.spaces."""
+"""Lightweight space specifications for the local training path."""
 from __future__ import annotations
 
 from dataclasses import dataclass

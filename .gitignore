@@ -210,4 +210,6 @@ __marimo__/
 wandb/
 runs/
 outputs/
+sb3_models/
+*.bak
 .claude

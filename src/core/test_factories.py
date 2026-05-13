@@ -1,276 +1,74 @@
-"""Test unified factory system."""
+"""Smoke checks for the active setup/factory path."""
+from __future__ import annotations
+
 import sys
-import numpy as np
-from typing import Dict, Any
+from typing import Dict
 
-# Add project root to path
-sys.path.insert(0, '.')
+sys.path.insert(0, ".")
+sys.path.insert(0, "src")
 
-from src.core.config import AgentFactory, EnvironmentFactory, WrapperFactory, create_training_setup
+from src.core.config import AgentFactory, register_builtin_agents
+from src.core.scenario import load_and_expand_scenario
+from src.core.setup import create_training_setup
 
 
 class FactoryTester:
-    """Tests factory system."""
+    """Small smoke-test runner for setup helpers."""
 
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
-        self.results = {}
+        self.results: Dict[str, bool] = {}
 
     def test_agent_factory(self) -> bool:
-        """Test AgentFactory."""
-        if self.verbose:
-            print("\n" + "="*60)
-            print("Testing AgentFactory")
-            print("="*60)
-
         try:
-            # Test PPO creation
-            ppo_config = {
-                'obs_dim': 370,
-                'act_dim': 2,
-                'device': 'cpu',
-                'lr': 3e-4,
-                'gamma': 0.99,
-            }
-            ppo_agent = AgentFactory.create('ppo', ppo_config)
-
+            register_builtin_agents()
+            available = set(AgentFactory.available_agents())
+            expected = {"ftg", "pure_pursuit", "stanley", "hybrid_pp_ftg"}
+            missing = expected - available
+            if missing:
+                raise AssertionError(f"missing fixed-policy agents: {sorted(missing)}")
             if self.verbose:
-                print(f"✓ Created PPO agent: {type(ppo_agent).__name__}")
-
-            # Test TD3 creation
-            td3_config = {
-                'obs_dim': 370,
-                'act_dim': 2,
-                'action_low': np.array([-1.0, -1.0]),
-                'action_high': np.array([1.0, 1.0]),
-                'device': 'cpu',
-                'lr': 3e-4,
-                'gamma': 0.99,
-            }
-            td3_agent = AgentFactory.create('td3', td3_config)
-
-            if self.verbose:
-                print(f"✓ Created TD3 agent: {type(td3_agent).__name__}")
-
-            # Test available agents
-            available = AgentFactory.available_agents()
-            if self.verbose:
-                print(f"✓ Available agents: {available}")
-
+                print(f"AgentFactory fixed-policy agents: {sorted(available)}")
             return True
-
-        except Exception as e:
+        except Exception as exc:
             if self.verbose:
-                print(f"✗ AgentFactory test failed: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"AgentFactory smoke check failed: {exc}")
             return False
 
-    def test_environment_factory(self) -> bool:
-        """Test EnvironmentFactory."""
-        if self.verbose:
-            print("\n" + "="*60)
-            print("Testing EnvironmentFactory")
-            print("="*60)
-
+    def test_create_training_setup(self) -> bool:
         try:
-            # Test with minimal config
-            env_config = {
-                'map': 'maps/line_map.yaml',  # Use actual map from repo
-                'num_agents': 2,
-                'timestep': 0.01,
-                'integrator': 'rk4',
-            }
-
-            env = EnvironmentFactory.create(env_config)
-
+            scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+            env, agents, reward_strategies = create_training_setup(scenario, mode="train")
+            if "car_1" not in agents:
+                raise AssertionError("expected FTG defender car_1 to be created")
+            if reward_strategies != {}:
+                raise AssertionError("reward strategies should be owned by run.py composers")
             if self.verbose:
-                print(f"✓ Created environment: {type(env).__name__}")
-                print(f"  - Num agents: {env_config['num_agents']}")
-                print(f"  - Timestep: {env_config['timestep']}")
-
-            # Test reset (may fail without proper poses config, which is OK)
-            try:
-                obs, info = env.reset()
-                if self.verbose:
-                    print(f"✓ Environment reset successful")
-                    print(f"  - Obs keys: {list(obs.keys())}")
-            except (ValueError, TypeError) as e:
-                if self.verbose:
-                    print(f"⚠ Environment reset skipped (needs pose config): {e}")
-                # This is expected for minimal config - factory still works
-
+                print(f"Created {type(env).__name__} with fixed agents: {sorted(agents)}")
             return True
-
-        except Exception as e:
+        except Exception as exc:
             if self.verbose:
-                print(f"✗ EnvironmentFactory test failed: {e}")
-                import traceback
-                traceback.print_exc()
-            return False
-
-    def test_wrapper_factory(self) -> bool:
-        """Test WrapperFactory."""
-        if self.verbose:
-            print("\n" + "="*60)
-            print("Testing WrapperFactory")
-            print("="*60)
-
-        try:
-            # Create base environment
-            env_config = {
-                'map': 'maps/line_map.yaml',
-                'num_agents': 1,
-                'timestep': 0.01,
-            }
-            env = EnvironmentFactory.create(env_config)
-
-            # Test observation wrapper (disabled)
-            obs_wrapper_config = {
-                'enabled': False,
-                'config': {}
-            }
-            wrapped_env = WrapperFactory.wrap_observation(env, obs_wrapper_config)
-
-            if self.verbose:
-                print(f"✓ Observation wrapper (disabled) - env unchanged")
-
-            # Test wrap_all with no wrappers
-            wrapper_configs = {}
-            wrapped_env = WrapperFactory.wrap_all(env, wrapper_configs)
-
-            if self.verbose:
-                print(f"✓ wrap_all with empty config - env unchanged")
-
-            return True
-
-        except Exception as e:
-            if self.verbose:
-                print(f"✗ WrapperFactory test failed: {e}")
-                import traceback
-                traceback.print_exc()
-            return False
-
-    def test_create_training_setup_minimal(self) -> bool:
-        """Test create_training_setup with minimal inline config."""
-        if self.verbose:
-            print("\n" + "="*60)
-            print("Testing create_training_setup (minimal)")
-            print("="*60)
-
-        try:
-            # Create a minimal config dict (no file needed)
-            import tempfile
-            import yaml
-            import os
-
-            # Use absolute path for map
-            map_path = os.path.abspath('maps/line_map.yaml')
-
-            config = {
-                'environment': {
-                    'map': map_path,
-                    'num_agents': 2,
-                    'timestep': 0.01,
-                },
-                'agents': {
-                    'agent_0': {
-                        'type': 'ppo',
-                        'params': {
-                            'obs_dim': 370,
-                            'act_dim': 2,
-                            'device': 'cpu',
-                            'lr': 3e-4,
-                            'gamma': 0.99,
-                        }
-                    }
-                }
-            }
-
-            # Write to temp file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(config, f)
-                config_path = f.name
-
-            # Create training setup
-            setup = create_training_setup(config_path)
-
-            if self.verbose:
-                print(f"✓ Created training setup")
-                print(f"  - Environment: {type(setup['env']).__name__}")
-                print(f"  - Agents: {list(setup['agents'].keys())}")
-                print(f"  - Agent types: {[type(a).__name__ for a in setup['agents'].values()]}")
-
-            # Cleanup
-            import os
-            os.unlink(config_path)
-
-            # Verify components
-            assert 'env' in setup
-            assert 'agents' in setup
-            assert 'config' in setup
-            assert 'agent_0' in setup['agents']
-
-            if self.verbose:
-                print(f"✓ All components present and valid")
-
-            return True
-
-        except Exception as e:
-            if self.verbose:
-                print(f"✗ create_training_setup test failed: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"create_training_setup smoke check failed: {exc}")
             return False
 
     def run_all_tests(self) -> Dict[str, bool]:
-        """Run all factory tests."""
-        print("\n" + "="*60)
-        print("FACTORY SYSTEM TEST SUITE")
-        print("="*60)
-
         tests = {
-            'AgentFactory': self.test_agent_factory,
-            'EnvironmentFactory': self.test_environment_factory,
-            'WrapperFactory': self.test_wrapper_factory,
-            'create_training_setup': self.test_create_training_setup_minimal,
+            "AgentFactory": self.test_agent_factory,
+            "create_training_setup": self.test_create_training_setup,
         }
+        self.results = {name: fn() for name, fn in tests.items()}
+        return self.results
 
-        results = {}
-        for test_name, test_func in tests.items():
-            results[test_name] = test_func()
-
-        self.results = results
-        return results
-
-    def print_summary(self):
-        """Print summary of test results."""
-        print("\n" + "="*60)
-        print("FACTORY TEST SUMMARY")
-        print("="*60)
-
-        if not self.results:
-            print("No test results available")
-            return
-
-        for test_name, passed in self.results.items():
-            status = "✓ PASS" if passed else "✗ FAIL"
-            print(f"{test_name:30} {status}")
-
-        # Overall
-        passed_count = sum(1 for p in self.results.values() if p)
-        total_count = len(self.results)
-        overall_pct = (passed_count / total_count * 100) if total_count > 0 else 0
-
-        print(f"\n{'OVERALL':30} {passed_count}/{total_count} ({overall_pct:.1f}%)")
-        print("="*60)
+    def print_summary(self) -> None:
+        passed = sum(1 for result in self.results.values() if result)
+        total = len(self.results)
+        for name, result in self.results.items():
+            print(f"{name:24} {'PASS' if result else 'FAIL'}")
+        print(f"OVERALL                  {passed}/{total}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     tester = FactoryTester(verbose=True)
     results = tester.run_all_tests()
     tester.print_summary()
-
-    # Exit with error code if not all tests passed
-    all_passed = all(results.values())
-    sys.exit(0 if all_passed else 1)
+    sys.exit(0 if all(results.values()) else 1)

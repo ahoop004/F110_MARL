@@ -457,10 +457,10 @@ class RichConsole:
         if not algo_name:
             return "n/a"
         name = str(algo_name).strip()
-        if name.startswith("sb3_"):
-            name = name[4:]
-        elif name.startswith("sb3-"):
-            name = name[4:]
+        if name.startswith("legacy_"):
+            name = name[7:]
+        elif name.startswith("legacy-"):
+            name = name[7:]
         return name.upper()
 
     def _format_stage_label(self) -> str:

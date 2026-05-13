@@ -91,7 +91,7 @@ def load_scenario(path: str) -> Dict[str, Any]:
         ScenarioError: If file not found or invalid YAML
 
     Example:
-        >>> scenario = load_scenario('scenarios/v2/gaplock_ppo.yaml')
+        >>> scenario = load_scenario('scenarios/ppo.yaml')
         >>> scenario['experiment']['name']
         'gaplock_ppo'
     """
@@ -154,7 +154,7 @@ def expand_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
         Scenario with all presets expanded
 
     Example:
-        >>> scenario = load_scenario('scenarios/v2/gaplock_ppo.yaml')
+        >>> scenario = load_scenario('scenarios/ppo.yaml')
         >>> expanded = expand_scenario(scenario)
     """
     expanded = copy.deepcopy(scenario)
@@ -177,7 +177,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         ScenarioError: If scenario is invalid
 
     Example:
-        >>> scenario = load_scenario('scenarios/v2/gaplock_ppo.yaml')
+        >>> scenario = load_scenario('scenarios/ppo.yaml')
         >>> validate_scenario(scenario)  # Raises if invalid
     """
     # Check required top-level keys
@@ -288,7 +288,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
         ScenarioError: If scenario is invalid
 
     Example:
-        >>> scenario = load_and_expand_scenario('scenarios/v2/gaplock_ppo.yaml')
+        >>> scenario = load_and_expand_scenario('scenarios/ppo.yaml')
         >>> # Ready to use for training
     """
     # Load raw scenario

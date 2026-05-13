@@ -2,7 +2,7 @@
 # Car count = number of agents defined here. IDs must be car_0..car_{N-1}.
 # Current: 1 defender + 2 attackers = 3 cars.
 # To add cars, append car_3, car_4, … in the agents block.
-# Run with: python run_marl_roles.py --scenario scenarios/marl_attacker.yaml
+# MAPPO trainer pending; this scenario is kept as a MAPPO planning template.
 includes:
   - ../configs/env/marl_6car.yaml
 
@@ -49,18 +49,9 @@ agents:
   # --- Attackers (training role — shared PPO policy) ---
   car_1:
     role: attacker
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
-    reward:
-      type: centerline
-      vs_weight: 1.2
-      vd_weight: 0.005
-      d_weight: 0.01
-      steer_weight: 0.03
-      collision_penalty: -500.0
-      normalize_by_track_length: true
-      reference_length: 400.0
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -79,18 +70,9 @@ agents:
 
   car_2:
     role: attacker
-    algorithm: sb3_ppo
-    reward:
-      type: centerline
-      vs_weight: 1.2
-      vd_weight: 0.005
-      d_weight: 0.01
-      steer_weight: 0.03
-      collision_penalty: -500.0
-      normalize_by_track_length: true
-      reference_length: 400.0
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    reward: ../configs/reward/attacker_racing.yaml
+    observation: ../configs/observations/rl_racer.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998

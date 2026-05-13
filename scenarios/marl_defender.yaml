@@ -2,7 +2,7 @@
 # 3 defenders (car_0..2) share one PPO policy — focal agent cycles each episode.
 # 3 attackers (car_3..5) run FTG as fixed opponents.
 # Map is randomized each episode; spawn points are drawn randomly from each map's annotations.
-# Run with: python run_marl_roles.py --scenario scenarios/marl_defender.yaml
+# MAPPO trainer pending; this scenario is kept as a MAPPO planning template.
 includes:
   - ../configs/env/marl_6car.yaml
 
@@ -18,14 +18,9 @@ agents:
   # --- Defenders (training role) ---
   car_0:
     role: defender
-    algorithm: sb3_ppo
-    reward:
-      type: centerline
-      preset: centerline_racing
-      normalize_by_track_length: true
-      reference_length: 400.0
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    reward: ../configs/reward/centerline_racing.yaml
+    observation: ../configs/observations/rl_racer.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -44,9 +39,8 @@ agents:
 
   # car_1:
   #   role: defender
-  #   algorithm: sb3_ppo
-  #   observation:
-  #     preset: centerline_racing
+  #   algorithm: ppo
+  #   observation: ../configs/observations/rl_racer.yaml
   #   params:
   #     learning_rate: 0.0001
   #     gamma: 0.998
@@ -65,9 +59,8 @@ agents:
 
   # car_2:
   #   role: defender
-  #   algorithm: sb3_ppo
-  #   observation:
-  #     preset: centerline_racing
+  #   algorithm: ppo
+  #   observation: ../configs/observations/rl_racer.yaml
   #   params:
   #     learning_rate: 0.0001
   #     gamma: 0.998

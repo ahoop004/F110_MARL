@@ -1,10 +1,9 @@
 # Phase 1: Train defender policy on circle map.
 # 3 defenders (car_0..2) share one PPO policy — focal agent cycles each episode.
 # 3 attackers (car_3..5) run FTG as fixed opponents to create traffic.
-# Run with: python run_marl_roles.py --scenario scenarios/circle_defender.yaml
+# MAPPO trainer pending; this scenario is kept as a MAPPO planning template.
 includes:
   - ../configs/env/circle_6car.yaml
-  - ../configs/reward/centerline_racing.yaml   # defines car_0 reward (template)
 
 experiment:
   name: circle_defender
@@ -18,9 +17,9 @@ agents:
   # --- Defenders (training role) ---
   car_0:
     role: defender
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -39,9 +38,9 @@ agents:
 
   car_1:
     role: defender
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -60,9 +59,9 @@ agents:
 
   car_2:
     role: defender
-    algorithm: sb3_ppo
-    observation:
-      preset: centerline_racing
+    algorithm: ppo
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998

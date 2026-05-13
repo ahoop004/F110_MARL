@@ -1,4 +1,4 @@
-program: run_v2.py
+program: run.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
@@ -12,12 +12,11 @@ parameters:
     - scenarios/sac.yaml       # Off-policy continuous (entropy-based)
     - scenarios/td3.yaml       # Off-policy continuous (deterministic)
     - scenarios/ddpg.yaml      # Off-policy continuous (simpler baseline)
-    - scenarios/tqc.yaml       # Off-policy continuous (distributional)
     - scenarios/ppo.yaml       # On-policy continuous (policy gradient)
     - scenarios/a2c.yaml       # On-policy continuous (advantage actor-critic)
     # Discrete algorithms require different action space - comment out if needed:
     # - scenarios/dqn.yaml     # Off-policy discrete
-    # - scenarios/qrdqn.yaml   # Off-policy discrete (distributional)
+    # - scenarios/qrdqn.yaml   # DQN compatibility scenario for old QR-DQN sweeps
 
   # Baseline learning rate (same for all algorithms for fair comparison)
   learning_rate:
