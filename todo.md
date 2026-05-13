@@ -36,11 +36,7 @@ configs/reward/                         # per-task reward configs
 scenarios/ppo.yaml                      # refactored; uses new config hierarchy
 ```
 
-**Legacy code still present (SB3-dependent, not on the run.py path):**
-- `src/baselines/sb3_*.py` — SB3 wrappers/callbacks
-- `src/agents/sb3_agents.py` — SB3 agent wrappers
-- `src/replay/sb3_distributed_buffer.py`, `prioritized_replay.py`
-- `run_sb3.py`, `run_sb3_offpolicy.py`, `run_marl_roles.py`
+**Legacy code still present (no SB3/gym dependency, low priority):**
 - `src/rewards/` — old reward system (coexists; new code uses `src/wrappers/rewards/`)
 - `src/wrappers/observation.py` — legacy obs wrapper (env still imports sector/radial helpers from it)
 
@@ -99,13 +95,7 @@ for step in 0..total_steps:
 
 ## Cleanup (Phase 2 completion)
 
-When off-policy algorithms are working, delete the SB3 path:
-- [ ] `src/baselines/sb3_*.py` (all 5 files)
-- [ ] `src/agents/sb3_agents.py`
-- [ ] `src/replay/sb3_distributed_buffer.py`, `prioritized_replay.py`
-- [ ] `run_sb3.py`, `run_sb3_offpolicy.py`, `run_marl_roles.py`
-- [ ] `configs/agents/` directory
-- [ ] Old env configs: `line2_gaplock.yaml`, `circle_6car.yaml`, `gaplock_multi.yaml`, `centerline_multi.yaml`, `marl_6car.yaml`
+SB3/Gymnasium/PettingZoo fully removed ✅ (10,452 lines deleted)
 - [ ] Remove `stable-baselines3`, `sb3-contrib`, `gymnasium`, `pettingzoo` from `requirements.txt`
 
 Remaining migrations:
