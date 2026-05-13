@@ -503,12 +503,19 @@ def create_training_setup(
                 f"Available agents: {list(env.possible_agents)}"
             )
 
+        # Heuristic agents only need their params — pass a minimal config
+        _HEURISTIC_ALGOS = {"ftg", "follow_gap", "gap_follow", "followthegap",
+                            "pure_pursuit", "stanley", "hybrid_pp_ftg"}
+        if algorithm.lower() in _HEURISTIC_ALGOS:
+            heuristic_kwargs = dict(agent_config.get('params', {}))
+            agent = AgentFactory.create(algorithm, heuristic_kwargs)
+            agents[agent_id] = agent
+            continue
+
         agent_kwargs['observation_space'] = obs_space
         agent_kwargs['action_space'] = action_space
 
         # Extract dimensions using SpaceSpec
-        from src.env.spaces import SpaceSpec, DictSpaceSpec
-
         obs_dim = obs_space.n if hasattr(obs_space, 'n') else int(np.prod(obs_space.shape))
         action_dim = action_space.n if hasattr(action_space, 'n') else int(np.prod(action_space.shape))
 

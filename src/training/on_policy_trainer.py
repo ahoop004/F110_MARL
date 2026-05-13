@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from agents.ppo import PPOAgent
+from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
@@ -86,6 +87,7 @@ class OnPolicyTrainer:
             obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), info_dict.get(self.rl_agent_id, {}))
             done = False
             episode_reward = 0.0
+            episode_truncated = False
             update_metrics: Dict = {}
             last_info: Dict = {}
 
@@ -107,6 +109,7 @@ class OnPolicyTrainer:
                     rl_trunc = trunc_dict.get(self.rl_agent_id, False)
                     if rl_term or rl_trunc:
                         done = True
+                        episode_truncated = bool(rl_trunc)
                         break
 
                 last_info = info_dict.get(self.rl_agent_id, {})
@@ -143,6 +146,9 @@ class OnPolicyTrainer:
                         hook.on_update(update_metrics)
 
                 obs = next_obs
+
+            outcome = determine_outcome(last_info, truncated=episode_truncated)
+            last_info["outcome"] = outcome.value
 
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
