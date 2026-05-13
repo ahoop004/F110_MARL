@@ -178,15 +178,19 @@ class PPOAgent:
     def update(self, next_value: float, done: bool) -> Dict[str, float]:
         """Compute GAE and run PPO update epochs.
 
-        Returns dict of training metrics.
+        Returns dict of training metrics (empty dict if buffer too small to update).
         """
+        if self.buffer.size() < 2:
+            return {}
+
         advantages, returns = self.buffer.compute_gae(
             next_value if not done else 0.0,
             self.gamma,
             self.gae_lambda,
         )
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # Normalize advantages — use correction=0 so std is always valid for n>=1
+        adv_std = advantages.std(correction=0)
+        advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
 
         n = self.buffer.size()
         total_pi_loss = total_vf_loss = total_ent = total_kl = 0.0

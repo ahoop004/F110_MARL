@@ -195,11 +195,12 @@ def main() -> None:
     try:
         if algorithm in ON_POLICY_ALGOS:
             action_repeat = int(scenario.get("environment", {}).get("action_repeat", 1))
+            render = bool(scenario.get("environment", {}).get("render", False))
             _run_on_policy(
                 env, rl_agent_id, agent_cfg, other_agents,
                 obs_composer, reward_composer, params,
                 action_low, action_high, action_constraints,
-                action_repeat, hooks, exp_cfg, output_dir, console,
+                action_repeat, render, hooks, exp_cfg, output_dir, console,
             )
         elif algorithm in OFF_POLICY_ALGOS:
             console.print_error(f"Off-policy algorithm '{algorithm}' not yet implemented. Coming in Phase 2.")
@@ -216,7 +217,7 @@ def _run_on_policy(
     env, rl_agent_id, agent_cfg, other_agents,
     obs_composer, reward_composer, params,
     action_low, action_high, action_constraints,
-    action_repeat, hooks, exp_cfg, output_dir, console,
+    action_repeat, render, hooks, exp_cfg, output_dir, console,
 ) -> None:
     from agents.ppo import PPOAgent
     from training.on_policy_trainer import OnPolicyTrainer
@@ -245,6 +246,7 @@ def _run_on_policy(
         action_repeat=action_repeat,
         action_constraints=action_constraints,
         hooks=hooks,
+        render=render,
     )
 
     console.print_info(f"Starting PPO training for {n_episodes} episodes...")

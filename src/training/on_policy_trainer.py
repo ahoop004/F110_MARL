@@ -35,6 +35,7 @@ class OnPolicyTrainer:
         action_repeat: int = 1,
         action_constraints: Optional[Dict] = None,
         hooks: Optional[List[TrainingHook]] = None,
+        render: bool = False,
     ) -> None:
         self.env = env
         self.rl_agent_id = rl_agent_id
@@ -44,6 +45,7 @@ class OnPolicyTrainer:
         self.reward_composer = reward_composer
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
+        self.render = render
 
         constraints = action_constraints or {}
         self._prevent_reverse = bool(constraints.get("prevent_reverse", False))
@@ -96,6 +98,11 @@ class OnPolicyTrainer:
                 step_reward = 0.0
                 for _ in range(self.action_repeat):
                     obs_dict, rew_dict, term_dict, trunc_dict, info_dict = self.env.step(actions)
+                    if self.render:
+                        try:
+                            self.env.render()
+                        except Exception:
+                            pass
                     rl_term = term_dict.get(self.rl_agent_id, False)
                     rl_trunc = trunc_dict.get(self.rl_agent_id, False)
                     if rl_term or rl_trunc:
