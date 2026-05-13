@@ -122,6 +122,25 @@ def register_builtin_agents():
     except ImportError:
         pass
 
+    try:
+        from agents.sac import SACAgent
+        AgentFactory.register("sac", SACAgent)
+        AgentFactory.register("ddpg", SACAgent)
+    except ImportError:
+        pass
+
+    try:
+        from agents.td3 import TD3Agent
+        AgentFactory.register("td3", TD3Agent)
+    except ImportError:
+        pass
+
+    try:
+        from agents.dqn import DQNAgent
+        AgentFactory.register("dqn", DQNAgent)
+    except ImportError:
+        pass
+
 
 
 # Register agents on import

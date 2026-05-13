@@ -192,20 +192,30 @@ def main() -> None:
         hooks.append(WandbHook(wandb_logger))
 
     action_constraints = agent_cfg.get("action_constraints", {})
-    action_composer = ActionComposer.from_config(action_low, action_high, action_constraints)
+    action_repeat = int(scenario.get("environment", {}).get("action_repeat", 1))
+    render = bool(scenario.get("environment", {}).get("render", False))
+
+    # DQN uses a discrete action set; all others use continuous denormalization.
+    action_set = params.get("action_set") if algorithm == "dqn" else None
+    action_composer = ActionComposer.from_config(
+        action_low, action_high, action_constraints,
+        action_set=np.asarray(action_set) if action_set is not None else None,
+    )
 
     try:
         if algorithm in ON_POLICY_ALGOS:
-            action_repeat = int(scenario.get("environment", {}).get("action_repeat", 1))
-            render = bool(scenario.get("environment", {}).get("render", False))
             _run_on_policy(
                 env, rl_agent_id, agent_cfg, other_agents,
                 obs_composer, reward_composer, action_composer, params,
                 action_repeat, render, hooks, exp_cfg, output_dir, console,
             )
         elif algorithm in OFF_POLICY_ALGOS:
-            console.print_error(f"Off-policy algorithm '{algorithm}' not yet implemented. Coming in Phase 2.")
-            sys.exit(1)
+            _run_off_policy(
+                env, rl_agent_id, agent_cfg, other_agents,
+                obs_composer, reward_composer, action_composer, params,
+                action_low, action_high, action_repeat, render,
+                hooks, exp_cfg, output_dir, console, algorithm,
+            )
         else:
             console.print_error(f"Unknown algorithm: '{algorithm}'")
             sys.exit(1)
@@ -252,6 +262,82 @@ def _run_on_policy(
 
     console.print_info(f"Starting PPO training for {n_episodes} episodes...")
     trainer.train(n_episodes=n_episodes)
+
+
+def _run_off_policy(
+    env, rl_agent_id, agent_cfg, other_agents,
+    obs_composer, reward_composer, action_composer, params,
+    action_low, action_high, action_repeat, render,
+    hooks, exp_cfg, output_dir, console, algorithm,
+) -> None:
+    from replay.replay_buffer import ReplayBuffer
+    from training.off_policy_trainer import OffPolicyTrainer
+
+    total_steps = int(exp_cfg.get("total_steps", 500_000))
+    learning_starts = int(params.get("learning_starts", 10_000))
+    train_freq = int(params.get("train_freq", 1))
+    gradient_steps = int(params.get("gradient_steps", 1))
+    batch_size = int(params.get("batch_size", 256))
+    buffer_size = int(params.get("buffer_size", 1_000_000))
+
+    from utils.torch_io import resolve_device
+    device = resolve_device([params.get("device", "cpu")])
+
+    # Action dim for replay buffer: DQN stores scalar index, others store full action vector
+    if algorithm == "dqn":
+        from agents.dqn import DQNAgent
+        action_set = params.get("action_set", [])
+        agent = DQNAgent(obs_dim=obs_composer.obs_dim, action_set=action_set, params=params)
+        agent.set_total_steps(total_steps)
+        buf_action_dim = 1
+    elif algorithm in {"sac", "ddpg"}:
+        from agents.sac import SACAgent
+        agent = SACAgent(obs_dim=obs_composer.obs_dim, action_low=action_low, action_high=action_high, params=params)
+        buf_action_dim = len(action_low)
+    elif algorithm == "td3":
+        from agents.td3 import TD3Agent
+        agent = TD3Agent(obs_dim=obs_composer.obs_dim, action_low=action_low, action_high=action_high, params=params)
+        buf_action_dim = len(action_low)
+    else:
+        console.print_error(f"Off-policy algorithm '{algorithm}' not implemented.")
+        import sys; sys.exit(1)
+
+    replay_buffer = ReplayBuffer(
+        capacity=buffer_size,
+        obs_dim=obs_composer.obs_dim,
+        action_dim=buf_action_dim,
+        device=device,
+    )
+
+    for hook in hooks:
+        if hasattr(hook, "_agent") and hook._agent is None:
+            hook._agent = agent
+
+    trainer = OffPolicyTrainer(
+        env=env,
+        rl_agent_id=rl_agent_id,
+        agent=agent,
+        other_agents=other_agents,
+        obs_composer=obs_composer,
+        reward_composer=reward_composer,
+        action_composer=action_composer,
+        replay_buffer=replay_buffer,
+        action_repeat=action_repeat,
+        hooks=hooks,
+        render=render,
+    )
+
+    console.print_info(
+        f"Starting {algorithm.upper()} training for {total_steps:,} steps "
+        f"(learning_starts={learning_starts:,})"
+    )
+    trainer.train(
+        total_steps=total_steps,
+        learning_starts=learning_starts,
+        train_freq=train_freq,
+        gradient_steps=gradient_steps,
+        batch_size=batch_size,
+    )
 
 
 if __name__ == "__main__":

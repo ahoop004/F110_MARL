@@ -48,36 +48,22 @@ No known issues.
 
 ---
 
-## Phase 2 — Off-Policy Algorithms
+## Phase 2 — Off-Policy Algorithms ✅
 
-### New files to create
-- [ ] `src/replay/replay_buffer.py` — pure PyTorch ring buffer; stores `(obs, action, reward, next_obs, done)`; `add()`, `sample(batch_size)`, `__len__()`
-- [ ] `src/agents/sac/__init__.py` — `SACAgent`: twin Q-critics, auto-alpha entropy tuning, target networks (polyak), continuous actions
-- [ ] `src/agents/td3/__init__.py` — `TD3Agent`: twin critics, delayed actor updates, target policy smoothing noise
-- [ ] `src/agents/dqn/__init__.py` — `DQNAgent`: ε-greedy exploration, target network (hard or soft update), discrete actions
-- [ ] `src/training/off_policy_trainer.py` — step-based loop: interact → replay buffer → update every `train_freq` steps; episode hooks at episode boundaries
+**Working:**
+- `python run.py --scenario scenarios/sac.yaml --no-wandb --total-steps N`
+- `python run.py --scenario scenarios/td3.yaml --no-wandb --total-steps N`
+- `python run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps N`
 
-### Files to modify
-- [ ] `run.py` — add `OffPolicyTrainer` dispatch for `sac|td3|ddpg|dqn` algorithms; read `experiment.total_steps` instead of `experiment.episodes`
-- [ ] `src/core/config.py` — register `sac`, `td3`, `dqn` → new PyTorch agent classes
-- [ ] `scenarios/sac.yaml`, `td3.yaml`, `dqn.yaml` — refactor to new structure: `maps:` key, `observation:` and `reward:` as config file refs, `includes: training/off_policy.yaml`
+**New files created:**
+- `src/replay/replay_buffer.py` — pure PyTorch ring buffer
+- `src/agents/sac/__init__.py` — `SACAgent`: twin Q-critics, auto-alpha, polyak target networks
+- `src/agents/td3/__init__.py` — `TD3Agent`: twin critics, delayed actor, target policy smoothing
+- `src/agents/dqn/__init__.py` — `DQNAgent`: ε-greedy, discrete action set, soft target update
+- `src/training/off_policy_trainer.py` — step-based loop
+- `src/wrappers/actions/discrete.py` — `DiscreteActionComponent` for DQN index→action lookup
 
-### Training loop design (reference)
-```
-obs = env.reset()
-for step in 0..total_steps:
-    action = random() if step < learning_starts else rl_agent.act(obs)
-    heuristic agents act via agent.act(obs_dict[their_id])
-    next_obs, reward, done, info = env.step(all_actions)
-    replay_buffer.add(obs, action, reward, next_obs, done)
-    if step >= learning_starts and step % train_freq == 0:
-        metrics = rl_agent.update(replay_buffer.sample(batch_size))
-    if done:
-        hooks.on_episode_end(...)
-        obs = env.reset()
-    else:
-        obs = next_obs
-```
+**Scenarios refactored:** `a2c.yaml`, `ppo_centerline.yaml`, `sac.yaml`, `td3.yaml`, `dqn.yaml`
 
 ---
 

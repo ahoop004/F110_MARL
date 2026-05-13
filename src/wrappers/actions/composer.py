@@ -1,13 +1,14 @@
 """ActionComposer — chains ActionComponents into a processing pipeline."""
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 
 from wrappers.actions.base import ActionComponent
 from wrappers.actions.denormalize import DenormalizeComponent
 from wrappers.actions.constraints import PreventReverseComponent
+from wrappers.actions.discrete import DiscreteActionComponent
 
 
 class ActionComposer:
@@ -32,14 +33,22 @@ class ActionComposer:
         action_low: np.ndarray,
         action_high: np.ndarray,
         constraints: Dict,
+        action_set: Optional[np.ndarray] = None,
     ) -> "ActionComposer":
         """Build from physical action bounds and an action_constraints dict.
+
+        For discrete agents (DQN), pass action_set — action_low/high are ignored.
+        For continuous agents (SAC, TD3, PPO), pass action_low/high.
 
         Args:
             action_low:   Physical lower bounds (from env action space).
             action_high:  Physical upper bounds (from env action space).
             constraints:  agent_cfg.get("action_constraints", {})
+            action_set:   Predefined physical actions for discrete agents.
         """
+        if action_set is not None:
+            return cls([DiscreteActionComponent(np.asarray(action_set, dtype=np.float32))])
+
         components: List[ActionComponent] = [
             DenormalizeComponent(action_low, action_high),
         ]
