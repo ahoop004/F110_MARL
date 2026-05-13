@@ -48,17 +48,7 @@ scenarios/ppo.yaml                      # refactored; uses new config hierarchy
 
 ## Known Issues
 
-### 1. `outcome=?` in console output (logging gap, not a training bug)
-**Symptom:** Every episode shows `outcome=?`  
-**Cause:** The env's info dict does not set an `outcome` key. `ConsoleHook` does `info.get("outcome", "?")`.  
-**Fix:** In `OnPolicyTrainer`, after each episode ends, call `determine_outcome()` from `src/metrics/outcomes.py` using the final info dict and set `info["outcome"]` before passing to hooks.  
-**File:** `src/training/on_policy_trainer.py` (episode end logic) and `src/metrics/outcomes.py`
-
-### 2. FTG agent receives unused RL kwargs (noisy log)
-**Symptom:** `[FollowTheGapPolicy] Ignoring unsupported config keys: ['act_dim', 'action_dim', ...]`  
-**Cause:** `setup.py` still computes and passes obs/action dims to all agents including heuristic ones.  
-**Fix:** In `setup.py`, skip building `obs_dim`/`action_dim`/`action_low`/`action_high` kwargs for heuristic agents (those not in `_PYTORCH_RL_ALGOS`).  
-**File:** `src/core/setup.py` (agent kwargs construction loop)
+No known issues.
 
 ---
 
