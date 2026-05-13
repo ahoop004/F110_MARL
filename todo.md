@@ -495,19 +495,24 @@ Design `Critic(nn.Module, input_dim)` with explicit arg now — no rearchitectin
 - ✅ End-to-end verified: `python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 3`
 
 ### Deferred to Phase 2 cleanup
-- [ ] Decompose `src/wrappers/observation.py` (1020 lines legacy) into `src/wrappers/observations/` components (currently coexists)
+- [ ] Decompose `src/wrappers/observation.py` (1020 lines legacy) into `src/wrappers/observations/` components
 - [ ] Migrate `src/rewards/` → `src/wrappers/rewards/` (currently coexists; new code uses wrappers path)
 
 ---
 
 ## Phase 2 — Off-Policy Algorithms
 
-- [ ] `configs/training/off_policy.yaml`
-- [ ] `src/replay/replay_buffer.py` — pure PyTorch
-- [ ] `src/agents/sac/__init__.py`, `td3/__init__.py`, `dqn/__init__.py`
-- [ ] `src/training/off_policy_trainer.py`
-- [ ] `run.py` — add `OffPolicyTrainer` dispatch
-- [ ] `scenarios/sac.yaml`, `td3.yaml`, `dqn.yaml` — refactor to new structure
+### New files
+- [ ] `src/replay/replay_buffer.py` — pure PyTorch ring-buffer (obs, action, reward, next_obs, done)
+- [ ] `src/agents/sac/__init__.py` — SAC (twin Q-critics, auto-alpha entropy tuning)
+- [ ] `src/agents/td3/__init__.py` — TD3 (twin critics, delayed actor, target policy smoothing)
+- [ ] `src/agents/dqn/__init__.py` — DQN (ε-greedy, target network, optional PER)
+- [ ] `src/training/off_policy_trainer.py` — step-based loop
+
+### Modified files
+- [ ] `run.py` — add `OffPolicyTrainer` dispatch for `sac|td3|ddpg|dqn`
+- [ ] `src/core/config.py` — register sac, td3, dqn
+- [ ] `scenarios/sac.yaml`, `td3.yaml`, `dqn.yaml` — refactor to new structure (maps:, obs/reward file refs)
 - [ ] Update `sweeps/*.yaml` — `program: run_sb3.py` → `program: run.py`
 
 ---
@@ -551,23 +556,10 @@ python run.py --scenario scenarios/mappo_defender.yaml --no-wandb --episodes 5
 
 ## Current Status
 - Branch: `marl-rewiring`
-- Config hierarchy cleanup: ✅ reward files no longer embed agent IDs
-- marl_attacker car_2 reward: ✅ fixed
-- marl_defender car_3 hybrid_pp_ftg params: ✅ fixed
-- Grid pose mismatch crash: ✅ fixed (sb3_role_wrapper._build_grid_poses)
-- Codebase audit complete: ✅
-- Delete ros2/, agilex_ros2_ws/, empty placeholder dirs: ✅
-- New config directory structure: ✅ env/default, vehicle/default, training/on_policy+off_policy, observations/*, reward/*
-- src/env/spaces.py (SpaceSpec, DictSpaceSpec): ✅
-- src/env/f110ParallelEnv.py — Gymnasium + PettingZoo removed: ✅
-- src/wrappers/observations/ — base + composer + 6 components: ✅
-- src/wrappers/rewards/ — base + composer + 5 components: ✅
-- src/agents/common/networks.py — MLP, Actor, Critic: ✅
-- src/agents/ppo/ — RolloutBuffer, PPOAgent: ✅
-- src/training/on_policy_trainer.py: ✅
-- src/training/hooks.py: ✅
-- run.py — single entry point with PPO dispatch: ✅
-- All Phase 1 components verified (obs_dim=121, PPO act+update): ✅
-- End-to-end run.py test with real env: ✅ (3 episodes, reward ~-121 timeout+shaping)
-- scenarios/ppo.yaml refactor to new structure: ✅
-- **Phase 1 COMPLETE** — next: Phase 2 off-policy algorithms (SAC, TD3, DQN)
+- **Phase 1 COMPLETE** ✅
+  - SB3 + Gymnasium + PettingZoo removed from training path
+  - Pure PyTorch PPO running end-to-end via `run.py --scenario scenarios/ppo.yaml`
+  - ObservationComposer + RewardComposer component systems live
+  - NaN crash fixed (1-element buffer guard, correction=0 std)
+  - Render works via `env.render()` in trainer
+- **Next: Phase 2** — off-policy algorithms (SAC, TD3, DQN) + code cleanup
