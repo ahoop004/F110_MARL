@@ -175,11 +175,44 @@ def _apply_map_bundle(env_config: Dict[str, Any], bundle: str) -> Dict[str, Any]
     return env_config
 
 
+def _normalize_maps_key(env_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate the new `maps:` key into the legacy map/map_bundles representation."""
+    maps_raw = env_config.get("maps")
+    if maps_raw is None:
+        return env_config
+
+    env_config = dict(env_config)
+    env_config.pop("maps")
+
+    if isinstance(maps_raw, str) and maps_raw.strip().lower() in {"auto", "all"}:
+        env_config["map_bundles"] = True
+        return env_config
+
+    maps_list = [maps_raw] if isinstance(maps_raw, str) else list(maps_raw)
+
+    if len(maps_list) == 1:
+        bundle = str(maps_list[0]).strip()
+        map_dir = Path(str(env_config.get("map_dir", "maps"))).expanduser()
+        if not map_dir.is_absolute():
+            map_dir = (Path.cwd() / map_dir).resolve()
+        try:
+            yaml_path = _resolve_bundle_yaml(map_dir, bundle)
+            env_config["map"] = str(yaml_path)
+            env_config.setdefault("map_dir", str(map_dir))
+        except FileNotFoundError:
+            env_config["map"] = bundle
+    else:
+        env_config["map_bundles"] = maps_list
+
+    return env_config
+
+
 def _apply_map_split(
     env_config: Dict[str, Any],
     experiment_config: Dict[str, Any],
     mode: str,
 ) -> Dict[str, Any]:
+    env_config = _normalize_maps_key(env_config)
     map_bundles_raw = env_config.get("map_bundles")
     if map_bundles_raw is None:
         map_bundles = _coerce_bundle_list(map_bundles_raw)
@@ -429,6 +462,10 @@ def create_training_setup(
             require_features=bool(env_config.get('centerline_features')),
         )
 
+    # Pure PyTorch RL algorithms are instantiated by run.py, not here.
+    # setup.py only creates heuristic / fixed-policy agents.
+    _PYTORCH_RL_ALGOS = {"ppo", "a2c", "sac", "td3", "ddpg", "dqn", "qrdqn", "mappo"}
+
     # Create agents
     agents = {}
     reward_strategies = {}
@@ -436,6 +473,10 @@ def create_training_setup(
 
     for agent_id, agent_config in agent_configs.items():
         algorithm = agent_config['algorithm']
+
+        # Skip pure PyTorch RL agents — run.py creates them directly
+        if algorithm.lower() in _PYTORCH_RL_ALGOS:
+            continue
 
         # Build agent-specific configuration
         agent_kwargs = {

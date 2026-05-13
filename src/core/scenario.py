@@ -258,8 +258,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
 
     # Validate environment section
     environment = scenario['environment']
-    if 'map' not in environment and 'map_bundles' not in environment and 'map_bundle' not in environment:
-        raise ScenarioError("Environment must have 'map' or 'map_bundles' field")
+    if 'map' not in environment and 'map_bundles' not in environment and 'map_bundle' not in environment and 'maps' not in environment:
+        raise ScenarioError("Environment must have 'map' or 'maps' field")
 
     # Validate agents section
     agents = scenario['agents']

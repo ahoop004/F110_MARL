@@ -470,40 +470,32 @@ Design `Critic(nn.Module, input_dim)` with explicit arg now — no rearchitectin
 
 ## Phase 1 — MVP: Single-Agent Pure PyTorch PPO
 
-### Delete first
-- [ ] `ros2/`, `agilex_ros2_ws/`
-- [ ] `src/agents/buffers/`, `episodic/`, `rainbow/`, `src/tasks/`
+### Completed ✅
+- ✅ Delete `ros2/`, `agilex_ros2_ws/`, `src/agents/{buffers,episodic,rainbow}/`, `src/tasks/`
+- ✅ `src/env/spaces.py` — `SpaceSpec`, `DictSpaceSpec`
+- ✅ `src/env/f110ParallelEnv.py` — `ParallelEnv` + `gymnasium.spaces` removed, uses `SpaceSpec`; `env/__init__.py` made lazy to fix circular import
+- ✅ `src/agents/common/networks.py` — `MLP`, `Actor`, `Critic` (MAPPO-compatible `input_dim`)
+- ✅ `src/agents/ppo/__init__.py` — `RolloutBuffer`, `PPOAgent` (GAE, clipping, entropy)
+- ✅ `src/wrappers/observations/` — `base.py`, `composer.py`, `lidar.py`, `ego_state.py`, `target_state.py`, `relative_pose.py`, `progress.py`, `prev_action.py`
+- ✅ `src/wrappers/rewards/` — `base.py`, `composer.py`, `centerline.py`, `collision.py`, `terminal.py`, `speed.py`, `gaplock.py`
+- ✅ `src/training/on_policy_trainer.py`, `hooks.py`
+- ✅ `run.py` — single entry point, PPO dispatch
+- ✅ `configs/env/default.yaml`, `configs/vehicle/default.yaml`
+- ✅ `configs/training/on_policy.yaml`, `configs/training/off_policy.yaml`
+- ✅ `configs/observations/{rl_attacker,rl_racer,ftg,pure_pursuit,hybrid_pp_ftg}.yaml`
+- ✅ `configs/reward/gaplock_attack.yaml`, `centerline_racing.yaml`
+- ✅ `src/core/setup.py` — `SpaceSpec`-aware, drop `gymnasium.spaces`
+- ✅ Unit verification: `obs_dim=121`, `PPOAgent act+update`, `RewardComposer 4 components`
 
-### New files
-- [ ] `src/env/spaces.py` — `SpaceSpec` dataclass
-- [ ] `src/agents/common/networks.py` — `MLP`, `Actor(nn.Module)`, `Critic(nn.Module)`
-- [ ] `src/agents/ppo/__init__.py` — `RolloutBuffer`, `PPOAgent`
-- [ ] `src/wrappers/observations/base.py` — `ObservationComponent(ABC)`
-- [ ] `src/wrappers/observations/composer.py` — `ObservationComposer`
-- [ ] `src/wrappers/observations/lidar.py`, `ego_state.py`, `target_state.py`, `relative_pose.py`, `prev_action.py`
-- [ ] `src/wrappers/rewards/base.py` — `RewardComponent(ABC)`
-- [ ] `src/wrappers/rewards/composer.py` — `RewardComposer`
-- [ ] `src/wrappers/rewards/centerline.py`, `collision.py`, `terminal.py`, `speed.py`, `gaplock.py`
-- [ ] `src/training/on_policy_trainer.py`
-- [ ] `src/training/hooks.py` — `ConsoleHook`, `WandbHook`, `CheckpointHook`
-- [ ] `run.py`
-- [ ] `configs/env/default.yaml`
-- [ ] `configs/vehicle/default.yaml`
-- [ ] `configs/training/on_policy.yaml`
-- [ ] `configs/observations/rl_attacker.yaml`, `ftg.yaml`, `pure_pursuit.yaml`, `hybrid_pp_ftg.yaml`
-- [ ] `configs/reward/gaplock_attack.yaml`, `centerline_racing.yaml`
-
-### Migrate / refactor
-- [ ] `src/wrappers/observation.py` (1020 lines) → decompose into `src/wrappers/observations/` components
-- [ ] `src/rewards/` → migrate to `src/wrappers/rewards/`
-- [ ] `src/core/observations.py` + `src/core/obs_flatten.py` → absorbed into `src/wrappers/observations/`
-
-### Modified files
-- [ ] `src/env/f110ParallelEnv.py` — remove `ParallelEnv` + `gymnasium.spaces`, use `SpaceSpec`
+### Remaining 🔲
+- [ ] `scenarios/ppo.yaml` — refactor to new structure (new includes, obs/reward as file refs, `maps:` key)
 - [ ] `src/core/config.py` — register `ppo` → `PPOAgent`
-- [ ] `src/core/setup.py` — `SpaceSpec`, `training_defaults` merge, `maps:` key, obs/reward composer init
-- [ ] `src/core/scenario.py` — support `maps:` key, obs/reward as file references
-- [ ] `scenarios/ppo.yaml` — refactor to new structure
+- [ ] `src/core/scenario.py` — support obs/reward values as file path strings (resolve relative to scenario dir)
+- [ ] End-to-end smoke test: `python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1`
+
+### Deferred to Phase 2 cleanup
+- [ ] Decompose `src/wrappers/observation.py` (1020 lines legacy) into `src/wrappers/observations/` components (currently coexists)
+- [ ] Migrate `src/rewards/` → `src/wrappers/rewards/` (currently coexists; new code uses wrappers path)
 
 ---
 

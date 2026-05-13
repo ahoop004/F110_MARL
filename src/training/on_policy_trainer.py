@@ -107,7 +107,8 @@ class OnPolicyTrainer:
                     "obs": obs,
                     "next_obs": obs_dict.get(self.rl_agent_id, {}),
                     "info": last_info,
-                    "done": rl_term if done else False,
+                    "done": done,           # True for termination OR truncation
+                    "terminated": rl_term if done else False,
                     "truncated": rl_trunc if done else False,
                     "action": action_norm,
                     "timestep": 0.01,

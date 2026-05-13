@@ -114,7 +114,15 @@ def register_builtin_agents():
     except ImportError:
         pass
 
-    # Stable-Baselines3 agents
+    # Pure PyTorch agents
+    try:
+        from agents.ppo import PPOAgent
+        AgentFactory.register("ppo", PPOAgent)
+        AgentFactory.register("a2c", PPOAgent)  # placeholder until A2C is implemented
+    except ImportError:
+        pass
+
+    # Stable-Baselines3 agents (legacy — removed in Phase 2)
     try:
         from agents.sb3_agents import (
             SB3SACAgent, SB3TD3Agent, SB3DDPGAgent,

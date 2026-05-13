@@ -1,49 +1,73 @@
 includes:
-- ../configs/env/line2_gaplock.yaml
-- ../configs/reward/gaplock_centerline_pressure.yaml
-- ../configs/agents/ftg_defender.yaml
-- ../configs/agents/action_constraints.yaml
-- ../configs/evaluation/line2_gaplock_eval_standard.yaml
-- ../configs/wandb.yaml
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/on_policy.yaml
+  - ../configs/wandb.yaml
+
 experiment:
-  name: ppo
+  name: ppo_gaplock
   episodes: 2000
   seed: 42
+
 environment:
-  max_steps: 1200
+  maps: [line2]
+  max_steps: 1500
   action_repeat: 2
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
 agents:
   car_0:
+    algorithm: ppo
     role: attacker
-    algorithm: sb3_ppo
     target_id: car_1
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
+      hidden_dims: [256, 256]
       gamma: 0.99
-      n_steps: 2048
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.0
-      activation: relu
-      hidden_dims:
-      - 256
-      - 256
-      batch_size: 64
-    observation:
-      preset: gaplock
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: ftg
+    role: defender
+    observation: ../configs/observations/ftg.yaml
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 3
+      max_steer: 0.42
+      min_speed: 0.2
+      max_speed: 0.8
+      steering_gain: 0.35
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.6
+      mode: lidar
+      gap_min_range: 0.4
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+
 wandb:
-  enabled: true
+  enabled: false
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
   group: algo_comparison
   job_type: ppo
-  tags:
-  - improved
-  - curriculum_v2
-  - ppo
-  - comparison
-  - gaplock
-  notes: "PPO curriculum for gaplock adversarial task (use run_sb3.py)"
+  tags: [ppo, gaplock]
+  notes: "PPO gaplock attacker vs FTG defender"
   mode: online
