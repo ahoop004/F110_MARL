@@ -87,28 +87,201 @@ src/curriculum/training_integration.py
 
 ---
 
-## Refactor Phase — Environment Split
+## Refactor Phase — Environment Architecture
 
-Goal: reduce `src/env/f110ParallelEnv.py` from a large orchestration class into
-small modules with explicit ownership. Keep public env behavior stable while
-moving code behind private helper APIs.
+Goal: make the environment a stable runtime boundary for online RL, offline RL
+dataset generation/replay, heuristic policies, and future multi-agent trainers
+such as MAPPO/QMIX/MADDPG. The env should own physics and world state only; agent
+logic, reward shaping, observation shaping, action shaping, and trainer control
+flow should stay outside the env.
 
-- [ ] Extract map path and metadata handling into `src/env/map_config.py`.
-  - Move `_configure_map_paths`, `_load_map_metadata`, map image path selection, and map extension handling.
-  - Preserve support for preloaded `MapData`.
-- [ ] Extract map bundle selection into `src/core/map_selection.py` or `src/env/map_selection.py`.
-  - Move bundle discovery, split selection, per-episode cycling, and `maps: auto` behavior out of setup/env internals.
-- [ ] Extract spawn-point parsing and sampling into `src/env/spawn.py`.
+### Target Contract
+
+- [ ] Keep the core env API trainer-agnostic:
+  - `reset(options=None) -> (obs_dict, info_dict)`
+  - `step(action_dict) -> (obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict)`
+  - `possible_agents`, `agents`, `action_spaces`, `observation_spaces`
+  - `get_global_state()` for centralized critics and offline dataset records
+  - `get_agent_state(agent_id)` for per-agent diagnostics and dataset records
+- [ ] Keep env rewards minimal and factual.
+  - Env may expose raw facts in `info`: collisions, progress, target collision, timeouts, poses, velocities, map/spawn metadata.
+  - Task rewards remain in `RewardComposer` so online/offline/MARL trainers can reuse the same reward definitions.
+- [ ] Keep env observations factual and unshaped.
+  - Env emits raw observation dicts.
+  - `ObservationComposer` owns policy-specific flattening/normalization.
+  - This preserves support for heuristic policies that need raw LiDAR and RL policies that need compact tensors.
+- [ ] Keep action semantics explicit.
+  - Env accepts physical actions only.
+  - `ActionComposer` owns normalized continuous actions, discrete lookup actions, and constraints.
+  - Heuristic agents should output physical actions directly or use the same action adapter interface.
+
+### Module Split Plan
+
+Dependency rule: `src/env/*` should not import trainers, agents, scenario parsing,
+W&B, checkpoint hooks, or reward/observation/action composers. `src/core/*` may
+translate scenario YAML into env/trainer objects. `src/training/*` may consume
+env APIs but should not know map YAML internals.
+
+- [x] `src/env/types.py`
+  - Own small dataclasses/protocols used by multiple env modules.
+  - Initial types: `MapRuntimeConfig`, `SpawnState`, `SpawnPlan`, `ProgressState`, `AgentState`, `GlobalState`, `StepFacts`.
+  - Keep these plain Python/NumPy structures; no Torch, W&B, trainer, or policy dependencies.
+- [x] `src/env/map_config.py`
+  - Own runtime map path and metadata resolution for one selected map.
+  - Move `_configure_map_paths`, `_load_map_metadata`, image path selection, map extension handling, and preloaded `MapData` adaptation.
+  - Input: selected map config/path plus optional preloaded map data.
+  - Output: immutable `MapRuntimeConfig` with map id, image path, yaml path, origin/resolution, centerline/wall references, and render metadata.
+  - Must not own train/eval split selection or per-episode map scheduling.
+- [x] `src/core/map_selection.py`
+  - Own scenario-level map selection before env construction.
+  - Move bundle discovery, split selection, `maps: auto`, train/eval/test split handling, and per-episode map cycling policy.
+  - Output: selected map configs or a `MapSchedule` that env setup can consume.
+  - Shared by online training, offline dataset collection, evaluation, and future curriculum scheduling.
+- [ ] `src/env/spawn.py`
+  - Own spawn point parsing, deterministic spawn plans, and stochastic spawn sampling.
   - Move `_extract_spawn_points`, `_sample_random_spawn`, centerline spawn helpers, start pose resolution, and spawn metadata bookkeeping.
-- [ ] Extract centerline/progress feature support into `src/env/centerline_state.py`.
-  - Move centerline registration, progress state, finish-line parsing, and centerline feature payload assembly.
-- [ ] Extract reward/render overlay state into `src/env/render_state.py` or keep under `src/render/`.
-  - Move reward ring, reward overlay, reward heatmap, render ticker, and render callback bookkeeping.
-- [ ] Extract observation/action space construction into `src/env/spaces_builder.py`.
-  - Keep `SpaceSpec` as the public space representation.
-- [ ] Add a small smoke test after each extraction:
-  - `python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet`
-  - `python3 run.py --scenario scenarios/sac.yaml --no-wandb --total-steps 10 --quiet`
+  - Output: `SpawnState` per agent plus stable `spawn_id` metadata for logs/datasets.
+  - Support modes: fixed start pose, YAML spawn points, random centerline spawn, deterministic replay/eval plan.
+  - Must not choose train/eval maps or decide task rewards.
+- [ ] `src/env/centerline_state.py`
+  - Own centerline registration and progress/lap state.
+  - Move finish-line parsing, centerline projection, progress deltas, lap counting, wrong-way/finish flags, and centerline feature helpers.
+  - Output: factual progress payloads for `info`, `get_agent_state()`, and `get_global_state()`.
+  - Must not encode reward weights, terminal reward decisions, or policy-specific features.
+- [ ] `src/env/collision_state.py`
+  - Own collision and terminal-condition facts that are independent of reward shaping.
+  - Track agent-agent collisions, wall collisions, target-agent collision facts, timeout facts, and per-agent termination flags.
+  - Output: collision/termination fields for `StepFacts`, `info`, and offline transition records.
+- [x] `src/env/spaces_builder.py`
+  - Own raw env action/observation space construction.
+  - Keep `SpaceSpec` / `DictSpaceSpec` as the public representation.
+  - Build spaces from env runtime config only: agent count, lidar beams, pose fields, physical action bounds.
+  - Must not depend on RL observation flattening, normalization, discrete action tables, or trainer config.
+- [ ] `src/env/state_views.py`
+  - Own conversion from simulator/raw env state into stable public views.
+  - Implement `get_agent_state(agent_id)`, `get_global_state()`, mask assembly, and ordered multi-agent state vectors.
+  - Keep agent ordering stable by `possible_agents`.
+  - Centralized critics and offline datasets should use this module rather than scraping simulator internals.
+- [ ] `src/env/info_builder.py`
+  - Own `info` payload assembly and `info_level` filtering.
+  - Levels: `minimal` for fast training, `training` for reward/metrics, `debug` for diagnostics/render overlays.
+  - Keep field names stable so online trainers, offline writers, and heuristic policies can rely on them.
+- [ ] `src/render/render_state.py`
+  - Own render-only overlay bookkeeping.
+  - Move reward ring, reward overlay, reward heatmap, ticker, and render callback state out of `F110ParallelEnv`.
+  - Rendering observes env state and `StepFacts`; it must not affect reset/step behavior.
+- [ ] `src/env/f110ParallelEnv.py`
+  - Keep as the coordinator and public env class.
+  - Constructor wires map runtime, spawn manager, progress tracker, collision tracker, spaces, info builder, and render state.
+  - `reset()` delegates map/spawn/progress/state reset and returns raw observations plus reset info.
+  - `step()` delegates action application, simulator step, factual state updates, info assembly, and termination/truncation assembly.
+  - Target size after split: under 900 lines before deeper physics/render cleanup.
+- [x] `src/core/env_builder.py`
+  - Own translating scenario/environment/vehicle config into env constructor kwargs.
+  - Build `F110ParallelEnv` from selected map schedule, vehicle params, lidar config, render config, and multi-agent config.
+  - Keep trainer-specific validation outside the env constructor.
+- [x] `src/core/agent_builder.py`
+  - Own fixed-policy and trainable-agent role construction.
+  - Normalize heuristic aliases, fixed-policy defaults, controlled/trainable/fixed agent sets, and per-agent policy config.
+  - Current single-agent trainers require exactly one trainable RL agent; MAPPO can consume multiple trainable agents later.
+- [ ] `src/replay/dataset_writer.py`
+  - Add after `StepFacts`, `get_agent_state()`, and `get_global_state()` are stable.
+  - Own chunked offline dataset writes and schema metadata.
+  - Must consume public env outputs only; no simulator internals.
+
+Recommended extraction order:
+
+1. [x] Add characterization tests for current `reset()` / `step()` behavior.
+2. [x] Extract `types.py`, `map_config.py`, and `core/map_selection.py`.
+3. [ ] Extract `spawn.py`.
+4. [ ] Extract `centerline_state.py`.
+5. [ ] Extract `collision_state.py`, `state_views.py`, and `info_builder.py`.
+6. [x] Extract `spaces_builder.py`.
+7. [ ] Extract `render_state.py`.
+8. [x] Add `core/env_builder.py` and `core/agent_builder.py`.
+   - [x] `core/env_builder.py`
+   - [x] `core/agent_builder.py`
+9. [ ] Add offline `dataset_writer.py` once env facts are stable.
+
+### Online RL Support
+
+- [ ] Preserve fast online stepping for on-policy PPO/A2C and off-policy SAC/TD3/DQN.
+  - Avoid allocating large temporary dicts/arrays inside the hot `step()` path where practical.
+  - Keep info payload configurable: `info_level: minimal|training|debug`.
+- [ ] Make action repeat handling trainer-owned or expose env-level repeat as an explicit wrapper.
+  - Trainers must be able to accumulate reward/info across repeated env steps.
+  - Offline collection must record each physical env step, not only each decision step.
+
+### Offline RL / Dataset Support
+
+- [ ] Add a transition-record interface independent of trainer classes.
+  - `TransitionRecord`: `obs_raw`, `action_phys`, `reward_components`, `next_obs_raw`, `terminated`, `truncated`, `info`, `global_state`, `map_id`, `spawn_id`.
+  - Online trainers can ignore it; dataset collectors can write it.
+- [ ] Add `src/replay/dataset_writer.py` later, after env facts are stable.
+  - Start with simple chunked `.npz` or `.pt` files.
+  - Keep schema version in each dataset.
+- [ ] Ensure deterministic replay inputs.
+  - Seed, map bundle, spawn selection, vehicle params, and scenario hash should be present in dataset metadata.
+
+### Heuristic Policy Support
+
+- [ ] Define a small policy interface for fixed drivers:
+  - `reset(agent_id, info=None)`
+  - `act(raw_obs, info=None) -> physical_action`
+- [ ] Keep heuristic policies raw-observation compatible.
+  - FTG/pure-pursuit/Stanley should not depend on RL observation composers.
+  - Heuristic policies may optionally receive env/context handles for centerline access, but that dependency should be explicit.
+- [x] Centralize fixed-policy construction in `src/core/agent_builder.py`.
+  - Avoid scattering heuristic aliases and defaults across setup, scenarios, and trainers.
+
+### Multi-Agent RL Support
+
+- [ ] Add first-class controlled-agent sets.
+  - Scenario should distinguish `controlled_agents`, `trainable_agents`, and `fixed_policy_agents`.
+  - Current single-agent trainers can require exactly one `trainable_agent`.
+  - MAPPO can train multiple controlled agents with shared or separate policies.
+- [ ] Add `get_global_state()` as a stable centralized critic input source.
+  - Include poses, velocities, collisions, progress/lap facts, and optionally map/spawn identifiers.
+  - Keep ordering stable by `possible_agents`.
+- [ ] Add per-agent masks.
+  - `active_mask`, `terminated_mask`, `controlled_mask`, `trainable_mask`.
+  - MAPPO needs masks for variable active agents and centralized value bootstrapping.
+- [ ] Make reward composition multi-agent aware.
+  - `RewardComposer` should support one composer per trainable agent.
+  - Shared-policy MAPPO can aggregate per-agent rewards while retaining per-agent breakdowns.
+- [ ] Make observation composition multi-agent aware.
+  - Same component system, but composers should be created per policy/role, not only per single RL agent.
+
+### Migration Order
+
+1. [ ] Add tests around current env contract before moving code.
+   - Reset shape/key checks.
+   - One-step smoke checks.
+   - Collision/timeout info key checks.
+   - `get_global_state()` characterization once added.
+2. [ ] Extract map config and map selection first.
+   - Lowest trainer risk, easiest to verify with scenario expansion and PPO/SAC smoke tests.
+3. [ ] Extract spawn handling.
+   - Verify deterministic spawn plans and random spawn behavior.
+4. [ ] Extract centerline/progress state.
+   - Verify centerline reward scenarios still produce progress facts.
+5. [ ] Extract render state.
+   - Verify headless training remains unaffected and `--render` still starts.
+6. [ ] Add multi-agent API primitives without changing trainers.
+   - `get_global_state()`, masks, controlled-agent config parsing.
+7. [ ] Update trainers to consume the new APIs.
+   - Single-agent trainers first.
+   - MAPPO trainer after single-agent compatibility is stable.
+
+### Required Verification After Each Step
+
+```bash
+python3 -m compileall -q run.py src
+python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_marl_smoke/ppo
+python3 run.py --scenario scenarios/sac.yaml --no-wandb --total-steps 10 --quiet --output-dir /tmp/f110_marl_smoke/sac
+python3 run.py --scenario scenarios/td3.yaml --no-wandb --total-steps 10 --quiet --output-dir /tmp/f110_marl_smoke/td3
+python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 10 --quiet --output-dir /tmp/f110_marl_smoke/dqn
+```
 
 ---
 

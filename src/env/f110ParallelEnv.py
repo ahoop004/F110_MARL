@@ -1,8 +1,6 @@
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
-import yaml
-from PIL import Image
 
 
 # base classes
@@ -11,6 +9,8 @@ from src.physics import Simulator, Integrator
 # from src.render import EnvRenderer  # Moved to render() method
 from src.env.start_pose_state import StartPoseState
 from src.env.collision import build_terminations
+from src.env.map_config import normalize_map_identifier, resolve_map_runtime_config
+from src.env.spaces_builder import build_action_spaces, build_observation_spaces
 from src.env.state_buffer import StateBuffers
 from src.utils.centerline import progress_from_spacing, centerline_arc_length, centerline_pose
 from src.utils.map_loader import MapLoader
@@ -378,15 +378,10 @@ class F110ParallelEnv:
         self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
         self._render_callbacks: List[Callable[["EnvRenderer"], None]] = []
 
-        from env.spaces import SpaceSpec, DictSpaceSpec  # local import avoids circular
-        self._single_action_space = SpaceSpec(
-            shape=(2,),
-            low=np.array([self.params["s_min"], self.params["v_min"]], dtype=np.float32),
-            high=np.array([self.params["s_max"], self.params["v_max"]], dtype=np.float32),
+        self._single_action_space, self.action_spaces = build_action_spaces(
+            self.possible_agents,
+            self.params,
         )
-        self.action_spaces = {
-            aid: self._single_action_space for aid in self.possible_agents
-        }
 
     def _configure_rendering(self, cfg: Mapping[str, Any]) -> None:
         self.render_mode = cfg.get("render_mode", "human")
@@ -474,40 +469,17 @@ class F110ParallelEnv:
 
     @staticmethod
     def _normalize_map_identifier(identifier: Optional[Any]) -> Optional[str]:
-        if identifier is None:
-            return None
-        identifier = str(identifier)
-        return identifier if Path(identifier).suffix else f"{identifier}.yaml"
+        return normalize_map_identifier(identifier)
 
     def _configure_map_paths(self, cfg: Mapping[str, Any], map_data: Optional[Any]) -> None:
-        map_dir_value = cfg.get("map_dir")
-        if map_dir_value is not None:
-            self.map_dir = Path(map_dir_value)
-        elif map_data is not None:
-            self.map_dir = Path(map_data.yaml_path).parent  # type: ignore[attr-defined]
-        else:
-            self.map_dir = Path.cwd()
-
-        map_ext_value = cfg.get("map_ext")
-        if map_ext_value is not None:
-            self.map_ext = map_ext_value
-        elif map_data is not None:
-            self.map_ext = map_data.image_path.suffix or ".png"  # type: ignore[attr-defined]
-        else:
-            self.map_ext = ".png"
-
-        raw_map_name = cfg.get("map")
-        raw_map_yaml = cfg.get("map_yaml")
-        self.map_name = self._normalize_map_identifier(raw_map_name)
-        self.map_yaml = self._normalize_map_identifier(raw_map_yaml)
-
-        if self.map_name is None and self.map_yaml is not None:
-            self.map_name = self.map_yaml
-        elif self.map_yaml is None and self.map_name is not None:
-            self.map_yaml = self.map_name
-
-        self.map_path = (self.map_dir / f"{self.map_name}").resolve()
-        self.yaml_path = (self.map_dir / f"{self.map_yaml}").resolve()
+        runtime = resolve_map_runtime_config(cfg, map_data)
+        self._map_runtime = runtime
+        self.map_dir = runtime.map_dir
+        self.map_ext = runtime.map_ext
+        self.map_name = runtime.map_name
+        self.map_yaml = runtime.map_yaml
+        self.map_path = runtime.map_path
+        self.yaml_path = runtime.yaml_path
 
     def _configure_vehicle_params(self, cfg: Mapping[str, Any]) -> Dict[str, float]:
         base_vehicle_params = _default_vehicle_params()
@@ -526,42 +498,11 @@ class F110ParallelEnv:
         cfg: Mapping[str, Any],
         map_data: Optional[Any],
     ) -> Tuple[Dict[str, Any], Path, Tuple[int, int]]:
-        meta = cfg.get("map_meta")
-        if meta is None and map_data is not None:
-            meta = dict(map_data.metadata)  # type: ignore[attr-defined]
-        elif isinstance(meta, Mapping):
-            meta = dict(meta)
-        if meta is None:
-            with open(self.map_path, "r") as f:
-                meta = yaml.safe_load(f) or {}
-
-        preloaded_image_path = cfg.get("map_image_path")
-        if preloaded_image_path is None and map_data is not None:
-            preloaded_image_path = map_data.image_path  # type: ignore[attr-defined]
-        image_rel = meta.get("image")
-        if preloaded_image_path is not None:
-            img_path = Path(preloaded_image_path).resolve()
-        elif image_rel:
-            img_path = (self.map_path.parent / image_rel).resolve()
-        else:
-            img_filename = cfg.get("map_image")
-            if img_filename is not None:
-                img_path = (self.map_dir / img_filename).resolve()
-            elif map_data is not None:
-                img_path = Path(map_data.image_path).resolve()  # type: ignore[attr-defined]
-            else:
-                img_path = self.map_path.with_suffix(self.map_ext)
-
-        image_size = cfg.get("map_image_size")
-        if image_size is None and map_data is not None:
-            image_size = map_data.image_size  # type: ignore[attr-defined]
-        if image_size is not None:
-            width, height = map(int, image_size)
-        else:
-            with Image.open(img_path) as img:
-                width, height = img.size
-
-        return meta, img_path, (width, height)
+        runtime = getattr(self, "_map_runtime", None)
+        if runtime is None:
+            runtime = resolve_map_runtime_config(cfg, map_data)
+            self._map_runtime = runtime
+        return runtime.metadata, runtime.image_path, runtime.image_size
 
     @staticmethod
     def _extract_spawn_points(
@@ -2034,82 +1975,20 @@ class F110ParallelEnv:
             self.renderer = None
 
     def _build_observation_spaces(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
-        pose_low = np.array([x_min, y_min, -np.pi], dtype=np.float32)
-        pose_high = np.array([x_max, y_max, np.pi], dtype=np.float32)
-        v_min = float(self.params.get("v_min", -5.0))
-        v_max = float(self.params.get("v_max", 20.0))
-        vel_low = np.array([v_min, v_min], dtype=np.float32)
-        vel_high = np.array([v_max, v_max], dtype=np.float32)
-
-        accel_cap = float(self.params.get("a_max", 10.0))
-        accel_low = np.array([-accel_cap, -accel_cap], dtype=np.float32)
-        accel_high = np.array([accel_cap, accel_cap], dtype=np.float32)
-
-        ang_cap = float(self.params.get("ang_vel_max", 10.0))
-
-        lap_cap = float(getattr(self, "target_laps", 1))
-        lap_low = np.array([0.0, 0.0], dtype=np.float32)
-        lap_high = np.array([lap_cap, 1e5], dtype=np.float32)
-
-        from env.spaces import SpaceSpec, DictSpaceSpec  # local import avoids circular
-        obs_spaces: Dict[str, DictSpaceSpec] = {}
-        for aid in self.possible_agents:
-            sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
-            components: Dict[str, SpaceSpec] = {}
-            n_beams = self._lidar_beam_count
-
-            if "lidar" in sensors:
-                components["lidar"] = SpaceSpec(
-                    shape=(n_beams,),
-                    low=np.zeros(n_beams, dtype=np.float32),
-                    high=np.full(n_beams, self.lidar_range, dtype=np.float32),
-                )
-            if "pose" in sensors:
-                components["pose"] = SpaceSpec(shape=(3,), low=pose_low, high=pose_high)
-            if "velocity" in sensors:
-                components["velocity"] = SpaceSpec(shape=(2,), low=vel_low, high=vel_high)
-            if "acceleration" in sensors:
-                components["acceleration"] = SpaceSpec(shape=(2,), low=accel_low, high=accel_high)
-            if "angular_velocity" in sensors:
-                components["angular_velocity"] = SpaceSpec(
-                    shape=(1,),
-                    low=np.array([-ang_cap], dtype=np.float32),
-                    high=np.array([ang_cap], dtype=np.float32),
-                )
-            if "target_pose" in sensors:
-                components["target_pose"] = SpaceSpec(shape=(3,), low=pose_low, high=pose_high)
-            if "target_collision" in sensors:
-                components["target_collision"] = SpaceSpec(
-                    shape=(1,), low=np.zeros(1, dtype=np.float32), high=np.ones(1, dtype=np.float32)
-                )
-            if "lap" in sensors:
-                components["lap"] = SpaceSpec(shape=(2,), low=lap_low, high=lap_high)
-            if "collision" in sensors:
-                components["collision"] = SpaceSpec(
-                    shape=(1,), low=np.zeros(1, dtype=np.float32), high=np.ones(1, dtype=np.float32)
-                )
-
-            components["state"] = SpaceSpec(
-                shape=(self._central_state_dim,),
-                low=np.full(self._central_state_dim, -np.inf, dtype=np.float32),
-                high=np.full(self._central_state_dim, np.inf, dtype=np.float32),
-            )
-
-            obs_spaces[aid] = DictSpaceSpec(spaces=components)
-
-        if obs_spaces:
-            self.observation_spaces = obs_spaces
-        else:
-            self.observation_spaces = {
-                aid: DictSpaceSpec(spaces={
-                    "state": SpaceSpec(
-                        shape=(self._central_state_dim,),
-                        low=np.full(self._central_state_dim, -np.inf, dtype=np.float32),
-                        high=np.full(self._central_state_dim, np.inf, dtype=np.float32),
-                    )
-                })
-                for aid in self.possible_agents
-            }
+        self.observation_spaces = build_observation_spaces(
+            possible_agents=self.possible_agents,
+            agent_sensor_spec=self._agent_sensor_spec,
+            default_sensors=DEFAULT_AGENT_SENSORS,
+            central_state_dim=self._central_state_dim,
+            lidar_beam_count=self._lidar_beam_count,
+            lidar_range=self.lidar_range,
+            vehicle_params=self.params,
+            target_laps=getattr(self, "target_laps", 1),
+            x_min=x_min,
+            x_max=x_max,
+            y_min=y_min,
+            y_max=y_max,
+        )
 
     def _bind_state_views(self) -> None:
         """Expose state buffer arrays as legacy attributes expected by callers."""
