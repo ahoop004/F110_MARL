@@ -8,11 +8,27 @@ from src.physics import Simulator, Integrator
 # Lazy import to avoid pyglet initialization on HPC without display
 # from src.render import EnvRenderer  # Moved to render() method
 from src.env.start_pose_state import StartPoseState
-from src.env.collision import build_terminations
+from src.env.centerline_state import (
+    build_render_centerline_points,
+    inject_finish_line_info,
+    normalize_progress_fractions,
+    parse_finish_line,
+    reset_finish_line_tracking,
+    signed_distance_to_finish,
+    update_finish_line_progress,
+)
+from src.env.collision_state import build_step_terminations, build_truncations, update_collision_flags
+from src.env.info_builder import add_step_info_fields
 from src.env.map_config import normalize_map_identifier, resolve_map_runtime_config
+from src.env.spawn import (
+    SpawnRequest,
+    extract_spawn_points,
+    resolve_reset_spawn,
+    sample_centerline_relative_spawn,
+    sample_random_spawn,
+)
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
 from src.env.state_buffer import StateBuffers
-from src.utils.centerline import progress_from_spacing, centerline_arc_length, centerline_pose
 from src.utils.map_loader import MapLoader
 
 # Type checking only imports (don't execute at runtime)
@@ -420,7 +436,7 @@ class F110ParallelEnv:
 
         self.centerline_points: Optional[np.ndarray] = None
         self.centerline_path: Optional[Path] = None
-        self.centerline_render_progress = self._normalize_progress_fractions(
+        self.centerline_render_progress = normalize_progress_fractions(
             cfg.get("centerline_render_progress")
         )
         spacing_value = cfg.get("centerline_render_spacing")
@@ -509,80 +525,24 @@ class F110ParallelEnv:
         map_data: Optional[Any],
         metadata: Mapping[str, Any],
     ) -> Dict[str, np.ndarray]:
-        spawn_points: Dict[str, np.ndarray] = {}
-        if map_data is not None:
-            candidate = getattr(map_data, "spawn_points", None)
-            if isinstance(candidate, Mapping):
-                for name, value in candidate.items():
-                    arr = np.asarray(value, dtype=np.float32)
-                    if arr.ndim == 1 and arr.shape[0] >= 2:
-                        spawn_points[str(name)] = arr
-        if spawn_points:
-            return spawn_points
-
-        annotations = metadata.get("annotations", {})
-        if isinstance(annotations, Mapping):
-            points = annotations.get("spawn_points")
-        else:
-            points = None
-        if isinstance(points, Mapping):
-            iterable = points.items()
-        elif isinstance(points, list):
-            iterable = ((entry.get("name"), entry.get("pose")) for entry in points if isinstance(entry, Mapping))
-        else:
-            iterable = []
-
-        for name, value in iterable:
-            if name is None:
-                continue
-            arr = np.asarray(value, dtype=np.float32)
-            if arr.ndim == 1 and arr.shape[0] >= 2:
-                spawn_points[str(name)] = arr
-        return spawn_points
+        return extract_spawn_points(map_data, metadata)
 
     def _sample_random_spawn(self) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
         if not self._random_spawn_enabled or not self._spawn_point_names:
             return None
-
-        agent_ids = self.possible_agents
-        count = len(agent_ids)
-        if count == 0:
-            return None
-
-        pool = self._spawn_point_names
-        replace = self._random_spawn_allow_reuse or len(pool) < count
 
         rng = getattr(self, "rng", None)
         if rng is None:
             rng = np.random.default_rng(self.seed)
             self.rng = rng
 
-        selected_names = rng.choice(pool, size=count, replace=replace)
-        if isinstance(selected_names, np.ndarray):
-            selected_list = [str(name) for name in selected_names.tolist()]
-        else:
-            selected_list = [str(name) for name in selected_names]
-
-        pose_rows: List[np.ndarray] = []
-        spawn_mapping: Dict[str, str] = {}
-        for idx, name in enumerate(selected_list):
-            raw = self._spawn_points.get(name)
-            if raw is None:
-                continue
-            if raw.shape[0] < 3:
-                pose = np.zeros(3, dtype=np.float32)
-                pose[: raw.shape[0]] = raw
-            else:
-                pose = np.asarray(raw[:3], dtype=np.float32)
-            pose_rows.append(pose)
-            if idx < len(agent_ids):
-                spawn_mapping[agent_ids[idx]] = name
-
-        if len(pose_rows) != count:
-            return None
-
-        poses = np.stack(pose_rows, axis=0)
-        return spawn_mapping, poses
+        return sample_random_spawn(
+            spawn_points=self._spawn_points,
+            spawn_point_names=self._spawn_point_names,
+            agent_ids=self.possible_agents,
+            rng=rng,
+            allow_reuse=self._random_spawn_allow_reuse,
+        )
 
     def _select_map_bundle(self) -> Optional[str]:
         if self._map_cycle_mode != "per_episode":
@@ -678,107 +638,23 @@ class F110ParallelEnv:
         self._apply_map_data(map_data, bundle=bundle)
 
     def _sample_centerline_spawn(self) -> Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]:
-        if str(self.spawn_policy or "").lower() != "centerline_relative":
+        result = sample_centerline_relative_spawn(
+            spawn_policy=self.spawn_policy,
+            centerline=self.centerline_points,
+            map_split_mode=self._map_split_mode,
+            spawn_centerline_cfg=self.spawn_centerline_cfg,
+            spawn_offsets_cfg=self.spawn_offsets_cfg,
+            spawn_target_cfg=self.spawn_target_cfg,
+            spawn_ego_cfg=self.spawn_ego_cfg,
+            agent_ids=self.possible_agents,
+            rng=self.rng,
+            current_index=self._spawn_centerline_index,
+            walls=self.walls,
+        )
+        if result is None:
             return None
-        centerline = self.centerline_points
-        if centerline is None or centerline.shape[0] == 0:
-            return None
-
-        mode = str(self.spawn_centerline_cfg.get("mode", "random")).lower()
-        if self._map_split_mode == "eval":
-            mode_eval = self.spawn_centerline_cfg.get("mode_eval")
-            if mode_eval is not None:
-                mode = str(mode_eval).lower()
-            elif mode == "random":
-                mode = "round_robin"
-        min_progress = float(self.spawn_centerline_cfg.get("min_progress", 0.05))
-        max_progress = float(self.spawn_centerline_cfg.get("max_progress", 0.95))
-        avoid_finish = bool(self.spawn_centerline_cfg.get("avoid_finish", True))
-
-        if avoid_finish:
-            min_progress = max(min_progress, 0.05)
-            max_progress = min(max_progress, 0.95)
-
-        n_points = centerline.shape[0]
-        min_idx = int(max(0, min_progress * (n_points - 1)))
-        max_idx = int(min(n_points - 1, max_progress * (n_points - 1)))
-        if max_idx <= min_idx:
-            min_idx = 0
-            max_idx = n_points - 1
-
-        if mode == "round_robin":
-            idx = self._spawn_centerline_index
-            if idx < min_idx or idx > max_idx:
-                idx = min_idx
-            self._spawn_centerline_index = idx + 1
-            if self._spawn_centerline_index > max_idx:
-                self._spawn_centerline_index = min_idx
-        else:
-            idx = int(self.rng.integers(min_idx, max_idx + 1))
-
-        s_offset = float(self.spawn_offsets_cfg.get("s_offset", 0.0))
-        d_offset = float(self.spawn_offsets_cfg.get("d_offset", 0.0))
-        d_max = self.spawn_offsets_cfg.get("d_max")
-        d_max = float(d_max) if d_max is not None else None
-
-        spacing = centerline_arc_length(centerline) / max(n_points - 1, 1)
-        offset_idx = int(round(s_offset / spacing)) if spacing > 0.0 else 0
-        ego_idx = (idx + offset_idx) % n_points
-
-        target_enabled = bool(self.spawn_target_cfg.get("enabled", True))
-        target_pose = centerline_pose(centerline, idx)
-        ego_pose = centerline_pose(centerline, ego_idx)
-        d_offset = self._clamp_d_offset(centerline, ego_idx, d_offset, d_max)
-
-        normal = np.array([-np.sin(ego_pose[2]), np.cos(ego_pose[2])], dtype=np.float32)
-        ego_pose[:2] = ego_pose[:2] + normal * d_offset
-
-        agent_order = self.possible_agents
-        poses = np.zeros((len(agent_order), 3), dtype=np.float32)
-        for i, aid in enumerate(agent_order):
-            if target_enabled and aid == "car_1":
-                poses[i] = target_pose
-            else:
-                poses[i] = ego_pose
-
-        speeds = {}
-        target_speed = float(self.spawn_target_cfg.get("speed", 0.0))
-        ego_speed = float(self.spawn_ego_cfg.get("speed", target_speed))
-        for aid in agent_order:
-            if target_enabled and aid == "car_1":
-                speeds[aid] = target_speed
-            else:
-                speeds[aid] = ego_speed
-
-        metadata = {
-            "spawn_s": float(idx) / max(n_points - 1, 1),
-            "spawn_d": float(d_offset),
-        }
-        return poses, speeds, metadata
-
-    def _clamp_d_offset(
-        self,
-        centerline: np.ndarray,
-        index: int,
-        d_offset: float,
-        d_max: Optional[float],
-    ) -> float:
-        limit = d_max if d_max is not None else None
-        if self.walls:
-            point = centerline[index, :2].astype(np.float32)
-            distances = []
-            for wall_points in self.walls.values():
-                if wall_points is None or len(wall_points) == 0:
-                    continue
-                diffs = wall_points[:, :2] - point
-                dist = float(np.min(np.linalg.norm(diffs, axis=1)))
-                distances.append(dist)
-            if distances:
-                wall_limit = max(min(distances) - 0.1, 0.0)
-                limit = wall_limit if limit is None else min(limit, wall_limit)
-        if limit is None:
-            return float(d_offset)
-        return float(np.clip(d_offset, -limit, limit))
+        self._spawn_centerline_index = result.next_index
+        return result.poses, result.velocities, result.metadata
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
@@ -1324,9 +1200,6 @@ class F110ParallelEnv:
         self._render_ticker_dirty = True
         self._render_wrapped_obs.clear()
         self._last_spawn_metadata = {}
-        poses = None
-        velocities = None
-        spawn_mapping: Dict[str, str] = {}
 
         # Speed locking for curriculum
         self._lock_speed_steps = 0
@@ -1342,63 +1215,33 @@ class F110ParallelEnv:
             self._reward_heatmap_payload = None
             self._reward_heatmap_dirty = True
             self._reward_heatmap_applied = False
-    # Case 1: Explicit override via options
-        if options is not None:
-            if isinstance(options, dict) and "poses" in options:
-                poses = np.array(options["poses"], dtype=np.float32)
-                if poses.ndim == 1:
-                    poses = np.expand_dims(poses, axis=0)
-                self._update_start_from_poses(poses)
-                spawn_mapping = {}
-            # Extract velocities if provided (dict mapping agent_id -> velocity)
-            if isinstance(options, dict) and "velocities" in options:
-                vel_dict = options["velocities"]
-                if isinstance(vel_dict, dict):
-                    # Convert per-agent velocities to array (None for agents not in dict)
-                    velocities = np.full(self.n_agents, np.nan, dtype=np.float32)
-                    agent_index = self._agent_id_to_index
-                    for agent_id, vel in vel_dict.items():
-                        if agent_id in agent_index:
-                            velocities[agent_index[agent_id]] = float(vel)
-                    # Store velocities for speed locking
-                    self._locked_velocities = vel_dict.copy()
-                else:
-                    # Backward compatibility: array format
-                    velocities = np.array(vel_dict, dtype=np.float32)
-                    if velocities.ndim == 0:
-                        velocities = np.array([velocities])
 
-            # Extract speed locking parameter
-            if isinstance(options, dict) and "lock_speed_steps" in options:
-                self._lock_speed_steps = max(0, int(options["lock_speed_steps"]))
-        # Case 2: Centerline-based spawn policy
-        if poses is None:
-            spawn_policy = self._sample_centerline_spawn()
-            if spawn_policy is not None:
-                poses, velocities, meta = spawn_policy
-                self._update_start_from_poses(poses)
-                spawn_mapping = {}
-                self._last_spawn_metadata = dict(meta)
-
-        # Case 3: Default to config start_poses
-        if poses is None and self._random_spawn_enabled:
-            sampled = self._sample_random_spawn()
-            if sampled is not None:
-                spawn_mapping, sampled_poses = sampled
-                self._update_start_from_poses(sampled_poses)
-                poses = self.start_poses
-        if poses is None and hasattr(self, "start_poses") and len(self.start_poses) > 0:
+        spawn_result = resolve_reset_spawn(
+            SpawnRequest(
+                agent_ids=self.possible_agents,
+                n_agents=self.n_agents,
+                agent_index=self._agent_id_to_index,
+                options=options,
+                current_start_poses=getattr(self, "start_poses", None),
+                random_spawn_enabled=self._random_spawn_enabled,
+                random_spawn_allow_reuse=self._random_spawn_allow_reuse,
+                spawn_points=self._spawn_points,
+                spawn_point_names=self._spawn_point_names,
+                rng=self.rng,
+                seed=self.seed,
+            ),
+            centerline_spawn_fn=self._sample_centerline_spawn,
+        )
+        poses = spawn_result.poses
+        velocities = spawn_result.velocities
+        spawn_mapping = dict(spawn_result.spawn_mapping)
+        self._locked_velocities = dict(spawn_result.locked_velocities)
+        self._lock_speed_steps = int(spawn_result.lock_speed_steps)
+        self._last_spawn_metadata = dict(spawn_result.metadata)
+        if spawn_result.update_start_poses and poses is not None:
+            self._update_start_from_poses(poses)
             poses = self.start_poses
-            spawn_mapping = {}
         self._last_spawn_selection = dict(spawn_mapping)
-
-        if isinstance(velocities, dict):
-            vel_array = np.full(self.n_agents, np.nan, dtype=np.float32)
-            agent_index = self._agent_id_to_index
-            for agent_id, vel in velocities.items():
-                if agent_id in agent_index:
-                    vel_array[agent_index[agent_id]] = float(vel)
-            velocities = vel_array
 
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
@@ -1476,33 +1319,24 @@ class F110ParallelEnv:
         # terminations/truncations
         collisions = obs_joint["collisions"]
 
-        # Update persistent collision flags (like v1)
-        # Once an agent collides, they stay collided for the episode
-        for idx, agent_id in enumerate(self.possible_agents):
-            if bool(collisions[idx]) and not self._collision_flags[idx]:
-                self._collision_flags[idx] = True
-                self._collision_steps[idx] = self._elapsed_steps
-
-        # Use persistent collision flags for termination
-        terminations = build_terminations(
+        update_collision_flags(
             self.possible_agents,
-            self._collision_flags,  # Use persistent flags instead of current step
+            collisions,
+            self._collision_flags,
+            self._collision_steps,
+            self._elapsed_steps,
+        )
+        terminations = build_step_terminations(
+            self.possible_agents,
+            self._collision_flags,
             lap_completion,
             self.terminate_on_collision,
         )
-
-        # Global termination: if ANY agent terminates due to collision, end episode for ALL agents
-        # This ensures accurate outcome tracking (target_crash vs self_crash vs collision)
-        any_collision_termination = any(
-            self._collision_flags[idx] and self.terminate_on_collision.get(agent_id, True)
-            for idx, agent_id in enumerate(self.possible_agents)
+        truncations, trunc_flag = build_truncations(
+            self.possible_agents,
+            max_steps=self.max_steps,
+            elapsed_steps=self._elapsed_steps,
         )
-        if any_collision_termination:
-            for agent_id in self.possible_agents:
-                terminations[agent_id] = True
-
-        trunc_flag = (self.max_steps > 0) and (self._elapsed_steps + 1 >= self.max_steps)
-        truncations = {aid: bool(trunc_flag) for aid in self.possible_agents}
         infos = {aid: {} for aid in self.possible_agents}
         if trunc_flag:
             for aid in infos:
@@ -1515,40 +1349,16 @@ class F110ParallelEnv:
             for aid in infos:
                 infos[aid].update(self._last_spawn_metadata)
 
-        # Add collision info for outcome determination
-        # The training loop needs this to categorize episode outcomes
-        for idx, agent_id in enumerate(self.possible_agents):
-            if agent_id in infos:
-                # Add own collision status
-                infos[agent_id]["collision"] = bool(self._collision_flags[idx])
-
-                # Add target collision status if this agent has a target
-                target_idx = self._agent_target_index.get(agent_id)
-                if target_idx is not None and target_idx < len(self._collision_flags):
-                    infos[agent_id]["target_collision"] = bool(self._collision_flags[target_idx])
-                else:
-                    infos[agent_id]["target_collision"] = False
-
-                # Add target finish status if finish line tracking is enabled
-                finish_crossed = self._finish_crossed
-                if (
-                    target_idx is not None
-                    and finish_crossed is not None
-                    and target_idx < len(finish_crossed)
-                ):
-                    infos[agent_id]["target_finished"] = bool(finish_crossed[target_idx])
-                else:
-                    infos[agent_id]["target_finished"] = False
-
-                # Add locked speed info for curriculum-based velocity control
-                if agent_id in self._locked_velocities:
-                    infos[agent_id]["locked_velocity"] = float(self._locked_velocities[agent_id])
-                    infos[agent_id]["lock_speed_active"] = bool(
-                        self._lock_speed_steps > 0 and self._episode_step_count <= self._lock_speed_steps
-                    )
-                else:
-                    infos[agent_id]["locked_velocity"] = None
-                    infos[agent_id]["lock_speed_active"] = False
+        add_step_info_fields(
+            infos,
+            possible_agents=self.possible_agents,
+            agent_target_index=self._agent_target_index,
+            collision_flags=self._collision_flags,
+            finish_crossed=self._finish_crossed,
+            locked_velocities=self._locked_velocities,
+            lock_speed_steps=self._lock_speed_steps,
+            episode_step_count=self._episode_step_count,
+        )
 
         # advance and cull finished agents
         self._elapsed_steps += 1
@@ -1560,135 +1370,40 @@ class F110ParallelEnv:
     # Finish line helpers
     # ------------------------------------------------------------------
     def _parse_finish_line(self, cfg: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not isinstance(cfg, Mapping):
-            return None
-        start_raw = cfg.get("start")
-        end_raw = cfg.get("end")
-        if start_raw is None or end_raw is None:
-            return None
-        try:
-            start = np.asarray(start_raw, dtype=np.float32).reshape(-1)
-            end = np.asarray(end_raw, dtype=np.float32).reshape(-1)
-        except (TypeError, ValueError):
-            return None
-        if start.size < 2 or end.size < 2:
-            return None
-        start = start[:2]
-        end = end[:2]
-        segment = end - start
-        length = float(np.linalg.norm(segment))
-        if length <= 1e-6:
-            return None
-        segment_unit = segment / length
-        length_sq = float(length * length)
-        tol_value = cfg.get("tolerance", cfg.get("thickness", cfg.get("width", 1.0)))
-        try:
-            tolerance = max(float(tol_value), 1e-3)
-        except (TypeError, ValueError):
-            tolerance = 1.0
-        pad_value = cfg.get("padding", 0.5)
-        try:
-            padding = float(pad_value)
-        except (TypeError, ValueError):
-            padding = 0.5
-        dir_vec = cfg.get("direction")
-        direction_unit: Optional[np.ndarray] = None
-        if dir_vec is not None:
-            try:
-                dir_arr = np.asarray(dir_vec, dtype=np.float32).reshape(-1)
-                if dir_arr.size >= 2:
-                    norm = float(np.linalg.norm(dir_arr[:2]))
-                    if norm > 0.0:
-                        direction_unit = dir_arr[:2] / norm
-            except (TypeError, ValueError):
-                direction_unit = None
-        min_speed_raw = cfg.get("trigger_speed", cfg.get("min_speed", 0.0))
-        try:
-            min_speed = max(float(min_speed_raw), 0.0)
-        except (TypeError, ValueError):
-            min_speed = 0.0
-        return {
-            "start": start,
-            "end": end,
-            "segment": segment,
-            "segment_unit": segment_unit,
-            "segment_length": length,
-            "segment_length_sq": length_sq,
-            "tolerance": tolerance,
-            "padding": max(padding, 0.0),
-            "direction": direction_unit,
-            "min_speed": min_speed,
-        }
+        return parse_finish_line(cfg)
 
     def _reset_finish_line_tracking(self) -> None:
-        if self._finish_line_data is None or self._finish_signed_prev is None or self._finish_crossed is None:
-            return
-        self._finish_crossed.fill(False)
-        for idx in range(self.n_agents):
-            point = np.array([self.poses_x[idx], self.poses_y[idx]], dtype=np.float32)
-            self._finish_signed_prev[idx] = self._signed_distance_to_finish(point)
+        reset_finish_line_tracking(
+            self._finish_line_data,
+            self._finish_signed_prev,
+            self._finish_crossed,
+            self.poses_x,
+            self.poses_y,
+            self.n_agents,
+        )
 
     def _signed_distance_to_finish(self, point: np.ndarray) -> float:
-        data = self._finish_line_data
-        if data is None:
-            return 0.0
-        rel = point - data["start"]
-        seg_unit = data["segment_unit"]
-        cross = seg_unit[0] * rel[1] - seg_unit[1] * rel[0]
-        return cross
+        return signed_distance_to_finish(self._finish_line_data, point)
 
     def _update_finish_line_progress(self) -> Dict[str, bool]:
-        data = self._finish_line_data
-        if (
-            data is None
-            or self._finish_signed_prev is None
-            or self._finish_crossed is None
-            or not self.possible_agents
-        ):
-            return {}
-        completed: Dict[str, bool] = {}
-        segment = data["segment"]
-        len_sq = data["segment_length_sq"]
-        tolerance = data["tolerance"]
-        padding = data["padding"]
-        direction = data["direction"]
-        min_speed = data["min_speed"]
-        for idx, aid in enumerate(self.possible_agents):
-            if self._finish_crossed[idx]:
-                continue
-            point = np.array([self.poses_x[idx], self.poses_y[idx]], dtype=np.float32)
-            rel = point - data["start"]
-            proj = float(np.dot(rel, segment) / len_sq)
-            if proj < -padding or proj > 1.0 + padding:
-                self._finish_signed_prev[idx] = self._signed_distance_to_finish(point)
-                continue
-            curr_signed = self._signed_distance_to_finish(point)
-            prev_signed = self._finish_signed_prev[idx]
-            self._finish_signed_prev[idx] = curr_signed
-            sign_switch = (prev_signed <= 0.0 < curr_signed) or (prev_signed >= 0.0 > curr_signed)
-            if not sign_switch:
-                continue
-            if abs(curr_signed) > tolerance and abs(prev_signed) > tolerance:
-                continue
-            if direction is not None:
-                vel = np.array(
-                    [self.linear_vels_x_curr[idx], self.linear_vels_y_curr[idx]],
-                    dtype=np.float32,
-                )
-                if float(np.dot(vel, direction)) < min_speed:
-                    continue
-            self._finish_crossed[idx] = True
-            completed[aid] = True
-        return completed
+        return update_finish_line_progress(
+            self._finish_line_data,
+            self._finish_signed_prev,
+            self._finish_crossed,
+            self.possible_agents,
+            self.poses_x,
+            self.poses_y,
+            self.linear_vels_x_curr,
+            self.linear_vels_y_curr,
+        )
 
     def _inject_finish_line_info(self, infos: Mapping[str, Dict[str, Any]]) -> None:
-        if self._finish_line_data is None or self._finish_crossed is None:
-            return
-        for aid, idx in self._agent_id_to_index.items():
-            payload = infos.get(aid)
-            if payload is None:
-                continue
-            payload["finish_line"] = bool(self._finish_crossed[idx])
+        inject_finish_line_info(
+            self._finish_line_data,
+            self._finish_crossed,
+            self._agent_id_to_index,
+            infos,
+        )
 
     def update_map(self, map_path, map_ext):
         path = Path(map_path).resolve()
@@ -1877,61 +1592,12 @@ class F110ParallelEnv:
             return default
         return bool(value)
 
-    @staticmethod
-    def _normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:
-        if raw is None:
-            return ()
-        if isinstance(raw, (float, int)):
-            candidates: List[Any] = [raw]
-        elif isinstance(raw, str):
-            candidates = [raw]
-        else:
-            try:
-                candidates = list(raw)  # type: ignore[arg-type]
-            except TypeError:
-                candidates = [raw]
-
-        fractions: List[float] = []
-        for value in candidates:
-            try:
-                numeric = float(value)
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(numeric):
-                continue
-            frac = numeric % 1.0
-            if frac <= 0.0:
-                continue
-            fractions.append(frac)
-        if not fractions:
-            return ()
-        return tuple(sorted(set(fractions)))
-
     def _build_render_centerline_points(self) -> Optional[np.ndarray]:
-        base = self.centerline_points
-        if base is None:
-            return None
-        if base.ndim != 2 or base.shape[0] == 0:
-            return base
-        fractions: List[float] = list(self.centerline_render_progress)
-        if self.centerline_render_spacing > 0.0:
-            spacing_fracs = progress_from_spacing(base, self.centerline_render_spacing)
-            if spacing_fracs:
-                fractions.extend(spacing_fracs)
-        if not fractions:
-            return base
-        unique = sorted(set(frac for frac in fractions if 0.0 < frac < 1.0))
-        if not unique:
-            return base
-        denom = max(base.shape[0] - 1, 1)
-        indices = set()
-        for frac in unique:
-            idx = int(round(frac * denom)) % base.shape[0]
-            indices.add(idx)
-        if not indices:
-            return base
-        ordered = sorted(indices)
-        return base[ordered]
+        return build_render_centerline_points(
+            self.centerline_points,
+            self.centerline_render_progress,
+            self.centerline_render_spacing,
+        )
 
     def _update_renderer_centerline(self) -> None:
         if self.renderer is None:

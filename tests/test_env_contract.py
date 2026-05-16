@@ -27,6 +27,7 @@ def test_env_reset_step_contract_from_ppo_scenario():
     obs, infos = env.reset(seed=123)
     assert set(obs) == set(env.possible_agents)
     assert set(infos) == set(env.possible_agents)
+    assert all("spawn_point" in info for info in infos.values())
 
     for agent_id, agent_obs in obs.items():
         assert "lidar" in agent_obs

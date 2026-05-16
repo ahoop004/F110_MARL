@@ -139,18 +139,115 @@ env APIs but should not know map YAML internals.
   - Shared by online training, offline dataset collection, evaluation, and future curriculum scheduling.
 - [ ] `src/env/spawn.py`
   - Own spawn point parsing, deterministic spawn plans, and stochastic spawn sampling.
-  - Move `_extract_spawn_points`, `_sample_random_spawn`, centerline spawn helpers, start pose resolution, and spawn metadata bookkeeping.
+  - [x] Move named spawn-point parsing from env/map metadata.
+  - [x] Move random spawn sampling from `F110ParallelEnv`.
+  - [x] Move named spawn-point YAML loading from `src/core/env_builder.py`.
+  - [x] Add `SpawnRequest`, `SpawnResult`, and normalized spawn metadata types.
+  - [x] Add `resolve_reset_spawn(...)` to centralize reset pose selection.
+  - [x] Move centerline-relative spawn helpers.
+  - [x] Move start pose resolution and spawn metadata bookkeeping.
   - Output: `SpawnState` per agent plus stable `spawn_id` metadata for logs/datasets.
   - Support modes: fixed start pose, YAML spawn points, random centerline spawn, deterministic replay/eval plan.
   - Must not choose train/eval maps or decide task rewards.
+
+### Spawn Architecture
+
+Goal: support hand-authored map YAML spawn points, centerline-relative training
+spawns, curriculum-generated random spawns, deterministic evaluation, offline RL
+dataset collection, and future multi-agent training with one consistent reset
+result.
+
+- [ ] Split spawn logic into three layers.
+  - Spawn sources: `map_yaml`, `centerline_relative`, `curriculum`, `replay_plan`.
+  - Spawn samplers: `fixed`, `random_named`, `round_robin`, `centerline_random`, `curriculum_stage`.
+  - Spawn result: normalized poses, optional initial speeds, per-agent spawn ids, and metadata.
+- [ ] Keep map YAML spawn points as named anchors.
+  - Map editor can hard-code stable `annotations.spawn_points` in map YAML.
+  - Use named anchors for eval, debugging, reproducible baselines, and scenario-specific starts.
+  - Avoid making hand-authored YAML points the only training spawn mechanism.
+- [ ] Support centerline-relative online training spawns.
+  - Generate starts from centerline progress `s`, lateral offset `d`, longitudinal offset, and role assignment.
+  - Respect lap start/finish exclusion windows so random starts do not accidentally begin on terminal boundaries.
+  - Optionally clamp lateral offsets against wall distance when wall data is loaded.
+  - Emit `spawn_s`, `spawn_d`, `spawn_source`, `spawn_mode`, and role/agent placement metadata.
+- [ ] Support curriculum-generated spawn requests.
+  - Curriculum should produce a `SpawnRequest`, not mutate env internals directly.
+  - Request fields should include progress range, offset range, speed range, fixed/random mode, role placement, and optional phase/stage id.
+  - Env/spawn resolver should turn that request into the same `SpawnResult` used by regular online training.
+- [ ] Support deterministic evaluation/offline replay plans.
+  - Add deterministic `SpawnPlan` support with ordered reset entries.
+  - Include map id, spawn id, seed, plan index, vehicle params, and scenario hash in metadata.
+  - Offline dataset writer should consume public spawn metadata only.
+- [ ] Proposed scenario config shape for named map YAML spawns:
+
+  ```yaml
+  environment:
+    spawn:
+      source: map_yaml
+      mode: random_named
+      allow_reuse: true
+  ```
+
+- [ ] Proposed scenario config shape for deterministic eval:
+
+  ```yaml
+  environment:
+    spawn:
+      source: map_yaml
+      mode: fixed
+      agents:
+        car_0: spawn_2
+        car_1: spawn_1
+  ```
+
+- [ ] Proposed scenario config shape for centerline training:
+
+  ```yaml
+  environment:
+    spawn:
+      source: centerline_relative
+      mode: random
+      progress_range: [0.05, 0.95]
+      avoid_finish: true
+      ego:
+        agent: car_0
+        s_offset: 0.0
+        d_offset_range: [-0.5, 0.5]
+        speed_range: [0.2, 0.8]
+      target:
+        agent: car_1
+        s_offset: 0.0
+        d_offset: 0.0
+        speed_range: [0.2, 0.8]
+  ```
+
+- [ ] Proposed scenario config shape for curriculum-driven spawns:
+
+  ```yaml
+  environment:
+    spawn:
+      source: curriculum
+      curriculum_key: gaplock_line2
+  ```
+
+- [ ] Preserve backward compatibility during migration.
+  - Keep existing `random_spawn`, `spawn_policy: centerline_relative`, `spawn_centerline`, `spawn_offsets`, `spawn_target`, and `spawn_ego` working until scenarios are migrated.
+  - Add config normalization in `src/core/env_builder.py` or a future `src/core/spawn_config.py`.
+  - Emit deprecation notes only in verbose/debug mode, not during quiet sweeps.
+
 - [ ] `src/env/centerline_state.py`
   - Own centerline registration and progress/lap state.
-  - Move finish-line parsing, centerline projection, progress deltas, lap counting, wrong-way/finish flags, and centerline feature helpers.
+  - [x] Move finish-line parsing, crossing detection, and finish-line info injection.
+  - [x] Move centerline render progress selection helpers.
+  - [ ] Move centerline projection, progress deltas, lap counting, wrong-way/finish flags, and centerline feature helpers.
   - Output: factual progress payloads for `info`, `get_agent_state()`, and `get_global_state()`.
   - Must not encode reward weights, terminal reward decisions, or policy-specific features.
 - [ ] `src/env/collision_state.py`
   - Own collision and terminal-condition facts that are independent of reward shaping.
-  - Track agent-agent collisions, wall collisions, target-agent collision facts, timeout facts, and per-agent termination flags.
+  - [x] Track persistent collision flags and collision steps.
+  - [x] Build collision/lap terminations and global collision termination.
+  - [x] Build timeout truncation facts.
+  - [ ] Track richer wall/agent-agent collision breakdowns when simulator exposes them.
   - Output: collision/termination fields for `StepFacts`, `info`, and offline transition records.
 - [x] `src/env/spaces_builder.py`
   - Own raw env action/observation space construction.
@@ -164,6 +261,7 @@ env APIs but should not know map YAML internals.
   - Centralized critics and offline datasets should use this module rather than scraping simulator internals.
 - [ ] `src/env/info_builder.py`
   - Own `info` payload assembly and `info_level` filtering.
+  - [x] Move collision, target collision, target finish, and speed-lock step info fields.
   - Levels: `minimal` for fast training, `training` for reward/metrics, `debug` for diagnostics/render overlays.
   - Keep field names stable so online trainers, offline writers, and heuristic policies can rely on them.
 - [ ] `src/render/render_state.py`
@@ -194,8 +292,20 @@ Recommended extraction order:
 1. [x] Add characterization tests for current `reset()` / `step()` behavior.
 2. [x] Extract `types.py`, `map_config.py`, and `core/map_selection.py`.
 3. [ ] Extract `spawn.py`.
+   - [x] Named spawn parsing.
+   - [x] Random spawn sampling.
+   - [x] Named spawn YAML loading.
+   - [x] Reset pose resolution.
+   - [x] Centerline-relative spawn.
 4. [ ] Extract `centerline_state.py`.
+   - [x] Finish-line parsing/progress helpers.
+   - [x] Centerline render progress helpers.
+   - [ ] Centerline registration and lap/progress helpers.
 5. [ ] Extract `collision_state.py`, `state_views.py`, and `info_builder.py`.
+   - [x] Collision persistence/termination helpers.
+   - [x] Step info collision/target/speed-lock fields.
+   - [ ] State views and global state.
+   - [ ] Info level filtering.
 6. [x] Extract `spaces_builder.py`.
 7. [ ] Extract `render_state.py`.
 8. [x] Add `core/env_builder.py` and `core/agent_builder.py`.
@@ -254,12 +364,12 @@ Recommended extraction order:
 
 ### Migration Order
 
-1. [ ] Add tests around current env contract before moving code.
+1. [x] Add tests around current env contract before moving code.
    - Reset shape/key checks.
    - One-step smoke checks.
    - Collision/timeout info key checks.
    - `get_global_state()` characterization once added.
-2. [ ] Extract map config and map selection first.
+2. [x] Extract map config and map selection first.
    - Lowest trainer risk, easiest to verify with scenario expansion and PPO/SAC smoke tests.
 3. [ ] Extract spawn handling.
    - Verify deterministic spawn plans and random spawn behavior.
@@ -290,12 +400,12 @@ python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 10 --quiet
 Goal: make `src/core/setup.py` a coordinator rather than a 500-line config
 translator.
 
-- [ ] Extract scenario map normalization into `src/core/map_config.py`.
+- [x] Extract scenario map normalization into `src/core/map_selection.py`.
   - Move `_normalize_maps_key`, `_coerce_bundle_list`, `_resolve_bundle_yaml`, `_discover_map_bundles`, `_apply_map_bundle`, and `_apply_map_split`.
-- [ ] Extract env kwargs construction into `src/core/env_builder.py`.
+- [x] Extract env kwargs construction into `src/core/env_builder.py`.
   - Build `env_kwargs` from `experiment`, `environment`, and vehicle config.
   - Own passthrough-key handling and centerline preload coordination.
-- [ ] Extract fixed-policy agent creation into `src/core/agent_builder.py`.
+- [x] Extract fixed-policy agent creation into `src/core/agent_builder.py`.
   - Keep RL algorithms skipped in setup and instantiated by `run.py`.
   - Keep heuristic aliases in one constant.
 - [ ] Reduce `src/core/config.py` to only generic YAML/path helpers plus `AgentFactory`, or fold those helpers into the new builder modules.
@@ -303,6 +413,81 @@ translator.
   - exactly one trainable RL agent for current single-agent trainers;
   - required observation/reward config for RL agents;
   - unsupported algorithms fail before env creation.
+
+---
+
+## Review Phase — Render and CLI Output
+
+Goal: make visual debugging and terminal output predictable, scenario-configurable,
+and useful for online RL, offline data collection, heuristic policy debugging, and
+future multi-agent training.
+
+### Render Review
+
+- [ ] Define a scenario-level render config contract.
+  - Support `environment.render: true|false` as the simple switch.
+  - Add optional nested config: `environment.rendering`.
+  - Keep render config separate from physics, rewards, observations, and trainers.
+- [ ] Add scenario-configurable vehicle colors.
+  - Proposed config shape:
+
+    ```yaml
+    environment:
+      rendering:
+        vehicle_colors:
+          car_0: "#e8503c"
+          car_1: "#48a7e8"
+          car_2: [0.24, 0.78, 0.63, 1.0]
+    ```
+
+  - Accept hex strings, RGB/RGBA 0-1 floats, and optionally RGB/RGBA 0-255 ints.
+  - Validate colors before renderer creation and fail with a clear config error.
+  - Pass parsed colors from `src/core/env_builder.py` into `F110ParallelEnv`.
+  - Apply colors through existing `EnvRenderer.set_agent_colors()`.
+  - Ensure telemetry HUD swatches use the same scenario colors.
+- [ ] Add default color policy documentation.
+  - Current renderer has an internal palette keyed by trailing agent index.
+  - Document role conventions: defenders cool colors, attackers warm colors, neutral/fallback palette for additional cars.
+  - Keep stable defaults when no scenario colors are configured.
+- [ ] Move render-only state out of `F110ParallelEnv`.
+  - Continue planned `src/render/render_state.py` extraction.
+  - Include reward ring, overlays, heatmap payloads, ticker, render metrics, lidar skip, and callback bookkeeping.
+  - Env step/reset should update factual state only; render state should observe that state.
+- [ ] Review render extension output.
+  - Remove direct `print()` calls from render extensions or route them through the project logger/console.
+  - Make heatmap parameter dumps opt-in with a debug flag.
+  - Check HUD/telemetry text for overlap and readability with 2, 4, and 6 cars.
+- [ ] Add render smoke verification.
+  - Headless compile/training must still work with render disabled.
+  - `--render` should still start locally when display dependencies are available.
+  - Optional `rgb_array` smoke should verify non-empty frames when practical.
+
+### CLI Output Review
+
+- [ ] Define output modes consistently.
+  - `--quiet`: minimal run summary and errors only.
+  - default: concise per-episode/per-N-step progress.
+  - future `--verbose`: config summary, component details, map/spawn details.
+  - future `--debug`: detailed diagnostics and stack-friendly logs.
+- [ ] Consolidate terminal output paths.
+  - Prefer `ConsoleLogger` / Rich console wrappers over raw `print()`.
+  - Audit remaining prints in agents, render extensions, curriculum, utils, metrics examples, and core smoke scripts.
+  - Keep examples/docstrings as examples, but route runtime output through loggers.
+- [ ] Review `run.py` startup output.
+  - Show scenario name, algorithm, RL agents, fixed-policy agents, map bundle, seed, device, obs/action dims.
+  - Keep it compact enough for sweeps and smoke tests.
+- [ ] Review training progress output.
+  - On-policy: episode, reward, moving mean, length, outcome, crash/timeout/success breakdown.
+  - Off-policy: total steps, episode count, reward, moving mean, buffer size, update stats when available.
+  - Avoid noisy per-step logs by default.
+- [ ] Review Rich console dashboard.
+  - Decide whether it is active, optional, or deprecated.
+  - If kept, make it compatible with current `ConsoleLogger`, `TrainingHooks`, and `--quiet`.
+  - Ensure color choices work on dark/light terminals and without Unicode-only assumptions where possible.
+- [ ] Add CLI output tests or smoke checks.
+  - `--quiet` should suppress progress chatter but preserve errors.
+  - default mode should include one clear training start line and periodic progress.
+  - invalid scenario/config should fail with clear, actionable messages.
 
 ---
 

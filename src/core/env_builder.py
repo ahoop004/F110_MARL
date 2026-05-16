@@ -6,36 +6,11 @@ from typing import Any, Dict, Mapping
 import re
 
 import numpy as np
-import yaml
 
 from src.core.map_selection import relative_yaml_name
 from src.env import F110ParallelEnv
+from src.env.spawn import load_spawn_points_from_map
 from src.utils.map_loader import MapLoader
-
-
-def load_spawn_points_from_map(map_path: str, spawn_names: list[str]) -> np.ndarray:
-    """Load named spawn point poses from a map YAML file."""
-
-    map_yaml_path = Path(map_path)
-    if not map_yaml_path.exists():
-        raise FileNotFoundError(f"Map YAML not found: {map_path}")
-
-    with open(map_yaml_path, "r") as handle:
-        map_data = yaml.safe_load(handle)
-
-    spawn_points = map_data.get("annotations", {}).get("spawn_points", [])
-    spawn_dict = {sp["name"]: sp["pose"] for sp in spawn_points}
-
-    poses = []
-    for name in spawn_names:
-        if name not in spawn_dict:
-            available = list(spawn_dict.keys())
-            raise ValueError(
-                f"Spawn point '{name}' not found in map. Available: {available}"
-            )
-        poses.append(spawn_dict[name])
-
-    return np.array(poses, dtype=np.float64)
 
 
 def derive_num_agents(
