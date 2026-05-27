@@ -24,10 +24,17 @@ class PrevActionComponent(ObservationComponent):
 
     def update(self, action: np.ndarray) -> None:
         """Call after each env.step() to track the last action."""
-        self._prev_action = np.asarray(action, dtype=np.float32).ravel()[: self._action_dim]
+        arr = np.asarray(action, dtype=np.float32).ravel()
+        n = min(arr.shape[0], self._action_dim)
+        self._prev_action[:n] = arr[:n]
+        if n < self._action_dim:
+            self._prev_action[n:] = 0.0
 
     def reset(self) -> None:
-        self._prev_action = np.zeros(self._action_dim, dtype=np.float32)
+        self._prev_action.fill(0.0)
+
+    def compute_into(self, raw_obs: Dict, info: Dict, out: np.ndarray) -> None:
+        np.copyto(out, self._prev_action)
 
     def compute(self, raw_obs: Dict, info: Dict) -> np.ndarray:
         return self._prev_action.copy()

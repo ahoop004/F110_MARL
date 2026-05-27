@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from src.env.types import SpawnPlan, SpawnState  # noqa: F401  (re-exported for tests)
 from src.utils.centerline import centerline_arc_length, centerline_pose
 
 
@@ -328,19 +329,64 @@ def _normalize_option_velocities(
     return velocities, {}
 
 
+def _apply_spawn_plan(plan: SpawnPlan, request: SpawnRequest) -> SpawnResult:
+    """Convert a deterministic *plan* into a :class:`SpawnResult`.
+
+    Agents present in *plan.states* receive their stored pose; agents absent
+    from the plan receive ``[0, 0, 0]``.  ``plan_id`` and per-agent
+    ``spawn_id`` values are forwarded in the result metadata.
+
+    ``update_start_poses`` is ``False`` so replay plans do not overwrite the
+    live start-pose state used by subsequent random/centerline spawns.
+    """
+    plan_map: Dict[str, SpawnState] = {s.agent_id: s for s in plan.states}
+    poses = np.zeros((request.n_agents, 3), dtype=np.float32)
+    spawn_mapping: Dict[str, str] = {}
+    spawn_ids: Dict[str, Optional[str]] = {}
+
+    for agent_id, idx in request.agent_index.items():
+        state = plan_map.get(agent_id)
+        if state is not None:
+            raw = np.asarray(state.pose, dtype=np.float32).reshape(-1)
+            n = min(raw.shape[0], 3)
+            poses[idx, :n] = raw[:n]
+            if state.spawn_id is not None:
+                spawn_mapping[agent_id] = state.spawn_id
+                spawn_ids[agent_id] = state.spawn_id
+
+    metadata: Dict[str, Any] = {}
+    if plan.plan_id is not None:
+        metadata["plan_id"] = plan.plan_id
+    if spawn_ids:
+        metadata["spawn_ids"] = spawn_ids
+
+    return SpawnResult(
+        poses=poses,
+        velocities=None,
+        spawn_mapping=spawn_mapping,
+        metadata=metadata,
+        update_start_poses=False,
+    )
+
+
 def resolve_reset_spawn(
     request: SpawnRequest,
     *,
     centerline_spawn_fn: Optional[CenterlineSpawnFn] = None,
+    spawn_plan: Optional[SpawnPlan] = None,
 ) -> SpawnResult:
     """Resolve reset poses while preserving legacy precedence.
 
-    Precedence:
+    Precedence (highest to lowest):
+    0. deterministic *spawn_plan* (eval / offline replay)
     1. explicit options["poses"]
     2. centerline-relative spawn callback
     3. random named spawn points
     4. configured current_start_poses
     """
+    # Precedence 0: deterministic plan overrides everything.
+    if spawn_plan is not None:
+        return _apply_spawn_plan(spawn_plan, request)
 
     options = request.options if isinstance(request.options, Mapping) else None
     velocities: Optional[np.ndarray] = None

@@ -168,57 +168,79 @@ def expand_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def validate_scenario(scenario: Dict[str, Any]) -> None:
-    """Validate scenario configuration.
+    """Validate scenario configuration before env construction.
 
-    Args:
-        scenario: Scenario configuration to validate
+    Checks
+    ------
+    - Required top-level sections: ``experiment``, ``environment``, ``agents``.
+    - ``experiment.name`` present.
+    - ``environment`` has at least one map field.
+    - Each agent config is a dict with an ``algorithm`` field.
+    - Each agent's ``algorithm`` is a known RL or heuristic algorithm.
+    - Each trainable (RL) agent has ``observation`` and ``reward`` config.
 
-    Raises:
-        ScenarioError: If scenario is invalid
-
-    Example:
-        >>> scenario = load_scenario('scenarios/ppo.yaml')
-        >>> validate_scenario(scenario)  # Raises if invalid
+    Raises
+    ------
+    ScenarioError
+        On the first validation failure found.
     """
-    # Check required top-level keys
-    if 'experiment' not in scenario:
-        raise ScenarioError("Scenario must have 'experiment' section")
+    from src.core.agent_builder import (
+        HEURISTIC_ALGOS,
+        PYTORCH_RL_ALGOS,
+        is_trainable_agent,
+    )
 
-    if 'environment' not in scenario:
-        raise ScenarioError("Scenario must have 'environment' section")
+    _ALL_KNOWN_ALGOS = PYTORCH_RL_ALGOS | HEURISTIC_ALGOS
 
-    if 'agents' not in scenario:
-        raise ScenarioError("Scenario must have 'agents' section")
+    # --- Required top-level sections ---
+    for section in ("experiment", "environment", "agents"):
+        if section not in scenario:
+            raise ScenarioError(f"Scenario must have a '{section}' section.")
 
-    # Validate experiment section
-    experiment = scenario['experiment']
-    if 'name' not in experiment:
-        raise ScenarioError("Experiment must have 'name' field")
+    experiment = scenario["experiment"]
+    if "name" not in experiment:
+        raise ScenarioError("'experiment' section must have a 'name' field.")
 
-    # Validate environment section
-    environment = scenario['environment']
-    if 'map' not in environment and 'map_bundles' not in environment and 'map_bundle' not in environment and 'maps' not in environment:
-        raise ScenarioError("Environment must have 'map' or 'maps' field")
+    environment = scenario["environment"]
+    _MAP_KEYS = {"map", "maps", "map_bundle", "map_bundles"}
+    if not _MAP_KEYS.intersection(environment):
+        raise ScenarioError(
+            "Environment must declare a map via one of: "
+            + ", ".join(f"'{k}'" for k in sorted(_MAP_KEYS))
+        )
 
-    # Validate agents section
-    agents = scenario['agents']
-    if not isinstance(agents, dict):
-        raise ScenarioError("'agents' must be a dictionary")
+    agents = scenario["agents"]
+    if not isinstance(agents, dict) or not agents:
+        raise ScenarioError("'agents' must be a non-empty dictionary.")
 
-    if len(agents) == 0:
-        raise ScenarioError("Scenario must have at least one agent")
-
-    # Validate each agent
-    for agent_id, agent_config in agents.items():
-        if not isinstance(agent_config, dict):
-            raise ScenarioError(f"Agent '{agent_id}' config must be a dictionary")
-
-        # Check for algorithm or role
-        if 'algorithm' not in agent_config and 'role' not in agent_config:
+    # --- Per-agent checks ---
+    for agent_id, agent_cfg in agents.items():
+        if not isinstance(agent_cfg, dict):
             raise ScenarioError(
-                f"Agent '{agent_id}' must have 'algorithm' field "
-                "(or 'role' for non-trainable agents)"
+                f"Agent '{agent_id}' config must be a dictionary, got {type(agent_cfg).__name__}."
             )
+
+        algo = str(agent_cfg.get("algorithm", "")).strip().lower()
+        if not algo:
+            raise ScenarioError(
+                f"Agent '{agent_id}' is missing required 'algorithm' field."
+            )
+
+        if algo not in _ALL_KNOWN_ALGOS:
+            raise ScenarioError(
+                f"Agent '{agent_id}' has unknown algorithm '{algo}'. "
+                f"Known RL algorithms: {sorted(PYTORCH_RL_ALGOS)}. "
+                f"Known heuristic algorithms: {sorted(HEURISTIC_ALGOS)}."
+            )
+
+        # Trainable agents need observation and reward configs
+        if is_trainable_agent(agent_cfg):
+            for required_key in ("observation", "reward"):
+                if required_key not in agent_cfg:
+                    raise ScenarioError(
+                        f"Trainable agent '{agent_id}' (algorithm='{algo}') "
+                        f"is missing required '{required_key}' config."
+                    )
 
 
 def resolve_target_ids(scenario: Dict[str, Any]) -> Dict[str, Any]:

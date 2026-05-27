@@ -1,0 +1,94 @@
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/on_policy.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: ppo_curriculum_gaplock
+  episodes: 3000
+  seed: 42
+
+environment:
+  maps: [line2]
+  max_steps: 1500
+  action_repeat: 2
+  # Random spawn is disabled here — curriculum supplies spawn plans instead.
+  random_spawn:
+    enabled: false
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
+# Curriculum: phases advance automatically when rolling success rate exceeds
+# success_threshold over window_size most-recent episodes.
+# spawn_names must exist in the map YAML under annotations.spawn_points.
+# When a spawn_name is not found in the active map, it is silently ignored
+# and the env falls back to its normal spawn policy.
+curriculum:
+  phases:
+    - name: close_straight
+      spawn_names: [straight_a, straight_b]
+      success_threshold: 0.60
+      window_size: 50
+    - name: extended_straight
+      spawn_names: [straight_a, straight_b, straight_c, straight_d]
+      success_threshold: 0.65
+      window_size: 75
+    - name: full_track
+      spawn_names: [straight_a, straight_b, straight_c, straight_d,
+                    corner_a, corner_b, corner_c]
+      success_threshold: 0.70
+      window_size: 100
+
+agents:
+  car_0:
+    algorithm: ppo
+    role: attacker
+    target_id: car_1
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: ftg
+    role: defender
+    observation: ../configs/observations/ftg.yaml
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 3
+      max_steer: 0.42
+      min_speed: 0.2
+      max_speed: 0.8
+      steering_gain: 0.35
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.6
+      mode: lidar
+      gap_min_range: 0.4
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.08
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: curriculum
+  job_type: ppo
+  tags: [ppo, gaplock, curriculum]
+  notes: "PPO gaplock attacker vs FTG — 3-phase curriculum on spawn difficulty"
+  mode: online

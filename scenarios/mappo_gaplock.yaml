@@ -1,0 +1,52 @@
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/mappo.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: mappo_gaplock
+  episodes: 5000
+  seed: 42
+
+environment:
+  maps: [line2]
+  max_steps: 1500
+  action_repeat: 2
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
+agents:
+  car_0:
+    algorithm: mappo
+    role: attacker
+    target_id: car_1
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: mappo
+    role: defender
+    target_id: car_0
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1

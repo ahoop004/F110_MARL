@@ -1,4 +1,4 @@
-"""Agent protocol - defines the interface all RL agents must implement."""
+"""Agent protocols — interfaces for RL agents and heuristic/fixed-policy drivers."""
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
 import numpy as np
 
@@ -103,3 +103,69 @@ def is_on_policy_agent(agent: Any) -> bool:
 def is_off_policy_agent(agent: Any) -> bool:
     """Check if agent is off-policy."""
     return isinstance(agent, OffPolicyAgent)
+
+
+@runtime_checkable
+class HeuristicPolicy(Protocol):
+    """Protocol for fixed/heuristic drivers.
+
+    Heuristic policies receive *raw* observation dicts (the same dict the env
+    produces) and return a physical action array.  They do **not** depend on
+    :class:`ObservationComposer` or any RL-specific normalization.
+
+    Trainers call ``reset`` at the start of each episode and ``act`` at each
+    step.  The optional ``info`` argument mirrors the env info dict so policies
+    can read spawn metadata, lap counts, etc. without env handles.
+
+    All existing fixed-policy classes (``FTGAgent``, ``PurePursuitPolicy``,
+    ``StanleyPolicy``, ``HybridPPFTGPolicy``) satisfy this protocol already;
+    the protocol makes the contract explicit and ``isinstance``-checkable.
+    """
+
+    def act(
+        self,
+        obs: Dict[str, Any],
+        info: Optional[Dict[str, Any]] = None,
+        *,
+        deterministic: bool = False,
+    ) -> np.ndarray:
+        """Return a physical action given a raw observation dict.
+
+        Parameters
+        ----------
+        obs:
+            Raw per-agent observation dict from the env.
+        info:
+            Optional per-agent info dict from the most recent env step/reset.
+        deterministic:
+            When ``True`` the policy should act greedily (used during eval).
+
+        Returns
+        -------
+        np.ndarray
+            Physical action ``[steer, speed]`` (or equivalent).
+        """
+        ...
+
+    def reset(
+        self,
+        agent_id: str,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Reset episode-scoped state.
+
+        Called at the start of each episode before the first ``act``.
+
+        Parameters
+        ----------
+        agent_id:
+            The env agent ID this policy is driving.
+        info:
+            Optional reset info dict (spawn metadata, map bundle, etc.).
+        """
+        ...
+
+
+def is_heuristic_policy(agent: Any) -> bool:
+    """Return True when *agent* satisfies the :class:`HeuristicPolicy` protocol."""
+    return isinstance(agent, HeuristicPolicy)

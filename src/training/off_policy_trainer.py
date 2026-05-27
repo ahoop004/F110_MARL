@@ -1,10 +1,11 @@
 """Step-based off-policy training loop for SAC, TD3, DQN."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from env.types import TransitionRecord
 from metrics.outcomes import determine_outcome
 from replay.replay_buffer import ReplayBuffer
 from training.hooks import TrainingHook
@@ -38,6 +39,8 @@ class OffPolicyTrainer:
         action_repeat: int = 1,
         hooks: Optional[List[TrainingHook]] = None,
         render: bool = False,
+        run_id: str = "run",
+        spawn_plan_fn: Optional[Callable] = None,
     ) -> None:
         self.env = env
         self.rl_agent_id = rl_agent_id
@@ -50,6 +53,22 @@ class OffPolicyTrainer:
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
         self.render = render
+        self.run_id = run_id
+        self.spawn_plan_fn = spawn_plan_fn
+
+    def _episode_id(self, episode: int) -> str:
+        return f"{self.run_id}_ep{episode:06d}"
+
+    def _map_id(self) -> Optional[str]:
+        return getattr(self.env, "map_name", None)
+
+    def _spawn_id(self) -> Optional[str]:
+        sm = getattr(self.env, "_spawn_manager", None)
+        if sm is None:
+            return None
+        meta = getattr(sm, "last_spawn_metadata", {}) or {}
+        spawn_ids = meta.get("spawn_ids", {})
+        return spawn_ids.get(self.rl_agent_id) or meta.get("spawn_id")
 
     def _build_actions(self, rl_action_phys: np.ndarray, obs_dict: Dict) -> Dict[str, np.ndarray]:
         actions: Dict[str, np.ndarray] = {self.rl_agent_id: rl_action_phys}
@@ -62,6 +81,12 @@ class OffPolicyTrainer:
                 actions[aid] = np.asarray(act, dtype=np.float32)
         return actions
 
+    def _reset_env(self) -> tuple:
+        """Reset env, injecting a curriculum spawn plan when one is available."""
+        spawn_plan = self.spawn_plan_fn() if self.spawn_plan_fn is not None else None
+        options = {"spawn_plan": spawn_plan} if spawn_plan is not None else None
+        return self.env.reset(options=options)
+
     def train(
         self,
         total_steps: int,
@@ -70,7 +95,7 @@ class OffPolicyTrainer:
         gradient_steps: int,
         batch_size: int,
     ) -> None:
-        obs_dict, info_dict = self.env.reset()
+        obs_dict, info_dict = self._reset_env()
         self.obs_composer.reset()
         self.reward_composer.reset()
         obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), info_dict.get(self.rl_agent_id, {}))
@@ -80,6 +105,10 @@ class OffPolicyTrainer:
         episode_truncated = False
         last_info: Dict = {}
         update_metrics: Dict = {}
+        step_idx = 0  # within current episode
+        episode_id = self._episode_id(episode)
+        map_id = self._map_id()
+        spawn_id = self._spawn_id()
 
         for step in range(total_steps):
             # Choose action
@@ -91,10 +120,13 @@ class OffPolicyTrainer:
             action_phys = self.action_composer.process(action)
             actions = self._build_actions(action_phys, obs_dict)
 
-            # Step env (with action_repeat, accumulate reward)
+            # Step env (with action_repeat).
+            # Reward is accumulated across sub-steps so that progress-based
+            # components (centerline delta, etc.) are not lost between repeats.
             done = False
             rl_term = False
             rl_trunc = False
+            reward = 0.0
             for _ in range(self.action_repeat):
                 obs_dict, _, term_dict, trunc_dict, info_dict = self.env.step(actions)
                 if self.render:
@@ -102,28 +134,57 @@ class OffPolicyTrainer:
                         self.env.render()
                     except Exception:
                         pass
-                rl_term = term_dict.get(self.rl_agent_id, False)
-                rl_trunc = trunc_dict.get(self.rl_agent_id, False)
-                if rl_term or rl_trunc:
+                rl_term = bool(term_dict.get(self.rl_agent_id, False))
+                rl_trunc = bool(trunc_dict.get(self.rl_agent_id, False))
+                sub_done = rl_term or rl_trunc
+                sub_info = info_dict.get(self.rl_agent_id, {})
+                sub_step_info = {
+                    "obs": obs,
+                    "next_obs": obs_dict.get(self.rl_agent_id, {}),
+                    "info": sub_info,
+                    "done": sub_done,
+                    "terminated": rl_term,
+                    "truncated": rl_trunc,
+                    "action": action,
+                    "timestep": 0.01,
+                }
+                sub_reward, _ = self.reward_composer.compute(sub_step_info)
+                reward += sub_reward
+                if sub_done:
                     done = True
                     episode_truncated = bool(rl_trunc)
                     break
 
             last_info = info_dict.get(self.rl_agent_id, {})
-            step_info = {
-                "obs": obs,
-                "next_obs": obs_dict.get(self.rl_agent_id, {}),
-                "info": last_info,
-                "done": done,
-                "terminated": rl_term if done else False,
-                "truncated": rl_trunc if done else False,
-                "action": action,
-                "timestep": 0.01,
-            }
-            reward, _ = self.reward_composer.compute(step_info)
             episode_reward += reward
 
             next_obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), last_info)
+
+            # --- Emit transition record ---
+            try:
+                global_state = self.env.get_global_state().vector
+            except Exception:
+                global_state = np.zeros(0, dtype=np.float32)
+            record = TransitionRecord(
+                obs=obs,
+                action_norm=action,
+                action_phys=action_phys,
+                reward=reward,
+                reward_components={},
+                next_obs=next_obs,
+                terminated=rl_term if done else False,
+                truncated=rl_trunc if done else False,
+                info=last_info,
+                global_state=global_state,
+                map_id=map_id,
+                spawn_id=spawn_id,
+                episode_id=episode_id,
+                step_idx=step_idx,
+                agent_id=self.rl_agent_id,
+            )
+            for hook in self.hooks:
+                hook.on_step(record)
+            step_idx += 1
 
             self.replay_buffer.add(obs, action, reward, next_obs, float(done))
 
@@ -142,13 +203,17 @@ class OffPolicyTrainer:
                 for hook in self.hooks:
                     hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
 
-                obs_dict, info_dict = self.env.reset()
+                obs_dict, info_dict = self._reset_env()
                 self.obs_composer.reset()
                 self.reward_composer.reset()
                 obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), info_dict.get(self.rl_agent_id, {}))
                 episode_reward = 0.0
                 episode_truncated = False
                 episode += 1
+                step_idx = 0
+                episode_id = self._episode_id(episode)
+                map_id = self._map_id()
+                spawn_id = self._spawn_id()
             else:
                 obs = next_obs
 

@@ -29,6 +29,24 @@ def test_env_reset_step_contract_from_ppo_scenario():
     assert set(infos) == set(env.possible_agents)
     assert all("spawn_point" in info for info in infos.values())
 
+    agent_state = env.get_agent_state("car_0")
+    assert agent_state.agent_id == "car_0"
+    assert agent_state.pose.shape == (3,)
+    assert agent_state.velocity.shape == (2,)
+    assert isinstance(agent_state.collision, bool)
+
+    global_state = env.get_global_state()
+    assert global_state.agent_ids == tuple(env.possible_agents)
+    assert global_state.vector.shape == (env._central_state_dim,)
+    assert set(global_state.masks) == {
+        "active_mask",
+        "terminated_mask",
+        "controlled_mask",
+        "trainable_mask",
+    }
+    assert global_state.masks["active_mask"].tolist() == [True, True]
+    assert global_state.masks["controlled_mask"].tolist() == [True, True]
+
     for agent_id, agent_obs in obs.items():
         assert "lidar" in agent_obs
         assert "pose" in agent_obs
@@ -57,5 +75,10 @@ def test_env_reset_step_contract_from_ppo_scenario():
         assert "collision" in step_infos[agent_id]
         assert "target_collision" in step_infos[agent_id]
         assert "target_finished" in step_infos[agent_id]
+
+    assert env.last_step_facts is not None
+    assert env.last_step_facts.global_state.agent_ids == tuple(env.possible_agents)
+    assert set(env.last_step_facts.agent_states) == set(env.possible_agents)
+    assert env.last_step_facts.info == step_infos
 
     env.close()

@@ -16,13 +16,22 @@ class ActionComposer:
 
     Built from the action_constraints block in the scenario agent config and
     the physical action bounds from the environment.
+
+    The first component in the pipeline (e.g. :class:`DenormalizeComponent`)
+    always produces a freshly-allocated float32 array, so subsequent components
+    can modify it in-place without needing extra copies.
     """
 
     def __init__(self, components: List[ActionComponent]) -> None:
         self._components = components
 
     def process(self, action: np.ndarray) -> np.ndarray:
-        result = np.asarray(action, dtype=np.float32).copy()
+        """Transform *action* through all components and return the result.
+
+        The first component always allocates a new array (so the caller's
+        buffer is never mutated).  Subsequent components may modify in-place.
+        """
+        result = np.asarray(action, dtype=np.float32)
         for component in self._components:
             result = component.process(result)
         return result

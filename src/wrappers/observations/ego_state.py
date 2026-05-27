@@ -7,6 +7,8 @@ import numpy as np
 
 from wrappers.observations.base import ObservationComponent
 
+_ZEROS3 = np.zeros(3, dtype=np.float32)
+
 
 class EgoStateComponent(ObservationComponent):
     """Ego vehicle state: velocity (always) + optional pose.
@@ -27,12 +29,31 @@ class EgoStateComponent(ObservationComponent):
     def dim(self) -> int:
         return (3 if self._vel else 0) + (3 if self._pose else 0)
 
-    def compute(self, raw_obs: Dict, info: Dict) -> np.ndarray:
-        parts = []
+    def compute_into(self, raw_obs: Dict, info: Dict, out: np.ndarray) -> None:
+        offset = 0
         if self._vel:
-            vel = np.asarray(raw_obs.get("velocity", [0.0, 0.0, 0.0]), dtype=np.float32).ravel()
-            parts.append(vel[:3] if len(vel) >= 3 else np.pad(vel, (0, 3 - len(vel))))
+            raw = raw_obs.get("velocity")
+            if raw is None:
+                out[0:3] = 0.0
+            else:
+                arr = np.asarray(raw, dtype=np.float32).ravel()
+                n = min(arr.shape[0], 3)
+                out[0:n] = arr[0:n]
+                if n < 3:
+                    out[n:3] = 0.0
+            offset = 3
         if self._pose:
-            pose = np.asarray(raw_obs.get("pose", [0.0, 0.0, 0.0]), dtype=np.float32).ravel()
-            parts.append(pose[:3] if len(pose) >= 3 else np.pad(pose, (0, 3 - len(pose))))
-        return np.concatenate(parts).astype(np.float32) if parts else np.zeros(0, dtype=np.float32)
+            raw = raw_obs.get("pose")
+            if raw is None:
+                out[offset : offset + 3] = 0.0
+            else:
+                arr = np.asarray(raw, dtype=np.float32).ravel()
+                n = min(arr.shape[0], 3)
+                out[offset : offset + n] = arr[0:n]
+                if n < 3:
+                    out[offset + n : offset + 3] = 0.0
+
+    def compute(self, raw_obs: Dict, info: Dict) -> np.ndarray:
+        out = np.empty(self.dim, dtype=np.float32)
+        self.compute_into(raw_obs, info, out)
+        return out

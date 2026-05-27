@@ -1,8 +1,11 @@
 """Reward heatmap visualization for spatial reward fields."""
+import logging
 import pyglet
 import numpy as np
 from array import array
 from .base import RenderExtension
+
+_log = logging.getLogger(__name__)
 
 
 class RewardHeatmap(RenderExtension):
@@ -111,54 +114,51 @@ class RewardHeatmap(RenderExtension):
             self._create_heatmap_geometry()
 
     def _print_reward_parameters(self):
-        """Print reward strategy parameters for debugging."""
+        """Log reward strategy parameters at DEBUG level."""
         if self._reward_strategy is None:
             return
 
-        print("\n" + "="*60)
-        print("HEATMAP REWARD PARAMETERS")
-        print("="*60)
+        lines = ["", "=" * 60, "HEATMAP REWARD PARAMETERS", "=" * 60]
 
-        # Get the composer and its components
         try:
             composer = self._reward_strategy.composer
-            components = composer.components if hasattr(composer, 'components') else []
+            components = composer.components if hasattr(composer, "components") else []
 
-            print(f"\nActive reward components: {len(components)}")
+            lines.append(f"\nActive reward components: {len(components)}")
             for comp in components:
                 comp_name = comp.__class__.__name__
-                print(f"\n  • {comp_name}")
+                lines.append(f"\n  • {comp_name}")
 
-                # Extract parameters from each component
-                if comp_name == 'ForcingReward':
-                    if hasattr(comp, 'enabled') and comp.enabled:
-                        print(f"    - Forcing enabled: {comp.enabled}")
-                        if hasattr(comp, 'pinch_enabled') and comp.pinch_enabled:
-                            print(f"    - Pinch pockets:")
-                            print(f"      • anchor_forward: {comp.pinch_anchor_forward:.3f}m")
-                            print(f"      • anchor_lateral: {comp.pinch_anchor_lateral:.3f}m")
-                            print(f"      • sigma: {comp.pinch_sigma:.3f}")
-                            print(f"      • weight: {comp.pinch_weight:.3f}")
+                if comp_name == "ForcingReward":
+                    if hasattr(comp, "enabled") and comp.enabled:
+                        lines.append(f"    - Forcing enabled: {comp.enabled}")
+                        if hasattr(comp, "pinch_enabled") and comp.pinch_enabled:
+                            lines.append("    - Pinch pockets:")
+                            lines.append(f"      • anchor_forward: {comp.pinch_anchor_forward:.3f}m")
+                            lines.append(f"      • anchor_lateral: {comp.pinch_anchor_lateral:.3f}m")
+                            lines.append(f"      • sigma: {comp.pinch_sigma:.3f}")
+                            lines.append(f"      • weight: {comp.pinch_weight:.3f}")
 
-                elif comp_name == 'DistanceReward':
-                    if hasattr(comp, 'enabled') and comp.enabled:
-                        print(f"    - Distance shaping enabled")
-                        if hasattr(comp, 'near_distance'):
-                            print(f"      • near_distance: {comp.near_distance:.3f}m")
-                            print(f"      • far_distance: {comp.far_distance:.3f}m")
-                            print(f"      • reward_near: {comp.reward_near:.3f}")
-                            print(f"      • penalty_far: {comp.penalty_far:.3f}")
+                elif comp_name == "DistanceReward":
+                    if hasattr(comp, "enabled") and comp.enabled:
+                        lines.append("    - Distance shaping enabled")
+                        if hasattr(comp, "near_distance"):
+                            lines.append(f"      • near_distance: {comp.near_distance:.3f}m")
+                            lines.append(f"      • far_distance: {comp.far_distance:.3f}m")
+                            lines.append(f"      • reward_near: {comp.reward_near:.3f}")
+                            lines.append(f"      • penalty_far: {comp.penalty_far:.3f}")
 
-                elif comp_name == 'HeadingReward':
-                    if hasattr(comp, 'enabled') and comp.enabled:
-                        print(f"    - Heading alignment enabled")
-                        if hasattr(comp, 'coefficient'):
-                            print(f"      • coefficient: {comp.coefficient:.3f}")
+                elif comp_name == "HeadingReward":
+                    if hasattr(comp, "enabled") and comp.enabled:
+                        lines.append("    - Heading alignment enabled")
+                        if hasattr(comp, "coefficient"):
+                            lines.append(f"      • coefficient: {comp.coefficient:.3f}")
 
-        except Exception as e:
-            print(f"Could not extract parameters: {e}")
+        except Exception as exc:
+            lines.append(f"Could not extract parameters: {exc}")
 
-        print("\n" + "="*60 + "\n")
+        lines.append("\n" + "=" * 60)
+        _log.debug("\n".join(lines))
 
     def _create_heatmap_geometry(self):
         """Create vertex list for heatmap grid."""

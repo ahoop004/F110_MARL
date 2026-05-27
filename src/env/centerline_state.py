@@ -1,11 +1,239 @@
 """Centerline and finish-line state helpers."""
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from src.utils.centerline import progress_from_spacing
+from src.utils.centerline import (
+    centerline_heading,
+    progress_from_spacing,
+    project_to_centerline,
+)
+
+
+@dataclass
+class CenterlineRuntimeState:
+    """Mutable centerline/render-feature state owned outside the env core."""
+
+    render_auto: bool = True
+    feature_auto: bool = True
+    autoload_auto: bool = True
+    render_enabled: bool = False
+    feature_requested: bool = False
+    features_enabled: bool = False
+    render_progress: Tuple[float, ...] = field(default_factory=tuple)
+    render_spacing: float = 0.0
+    render_connect: bool = True
+    points: Optional[np.ndarray] = None
+    path: Optional[Path] = None
+    render_points: Optional[np.ndarray] = None
+
+    @classmethod
+    def from_config(cls, cfg: Mapping[str, Any]) -> "CenterlineRuntimeState":
+        render_user_override = bool(cfg.pop("_centerline_render_user_override", False))
+        feature_user_override = bool(cfg.pop("_centerline_features_user_override", False))
+        autoload_user_override = bool(cfg.pop("_centerline_autoload_user_override", False))
+
+        render_cfg_value = cfg.get("centerline_render")
+        features_cfg_value = cfg.get("centerline_features")
+
+        render_cfg = render_cfg_value if render_user_override else None
+        features_cfg = features_cfg_value if feature_user_override else None
+
+        render_progress = normalize_progress_fractions(cfg.get("centerline_render_progress"))
+        spacing_value = cfg.get("centerline_render_spacing")
+        try:
+            render_spacing = max(float(spacing_value), 0.0)
+        except (TypeError, ValueError):
+            render_spacing = 0.0
+
+        raw_connect = cfg.get("centerline_render_connect")
+        if raw_connect is None:
+            render_connect = not bool(render_progress)
+        else:
+            render_connect = bool(raw_connect)
+
+        feature_requested = bool(features_cfg) if features_cfg is not None else False
+        return cls(
+            render_auto=not render_user_override,
+            feature_auto=not feature_user_override,
+            autoload_auto=not autoload_user_override,
+            render_enabled=bool(render_cfg) if render_cfg is not None else False,
+            feature_requested=feature_requested,
+            features_enabled=feature_requested,
+            render_progress=render_progress,
+            render_spacing=render_spacing,
+            render_connect=render_connect,
+        )
+
+    def build_render_points(self) -> Optional[np.ndarray]:
+        return build_render_centerline_points(
+            self.points,
+            self.render_progress,
+            self.render_spacing,
+        )
+
+    def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
+        if centerline is not None:
+            array = np.asarray(centerline, dtype=np.float32)
+            array.setflags(write=False)
+        else:
+            array = None
+        self.points = array
+        self.path = path.resolve() if path is not None else None
+        self.features_enabled = self.feature_requested and array is not None
+        self.render_points = self.build_render_points()
+
+    def register_usage(self, *, require_render: bool = False, require_features: bool = False) -> bool:
+        changed = False
+        if require_features and self.feature_auto and not self.features_enabled:
+            self.features_enabled = True
+            self.feature_requested = True
+            changed = True
+        if require_render and self.render_auto and not self.render_enabled:
+            self.render_enabled = True
+            changed = True
+        if changed:
+            self.render_points = self.build_render_points()
+        return changed
+
+
+def apply_centerline_to_renderer(renderer: Any, state: CenterlineRuntimeState) -> None:
+    if renderer is None:
+        return
+    if state.render_enabled:
+        renderer.update_centerline(state.render_points, connect=state.render_connect)
+    else:
+        renderer.update_centerline(None)
+
+
+# ---------------------------------------------------------------------------
+# Per-episode progress facts derived from centerline projection
+# ---------------------------------------------------------------------------
+
+_HALF_LAP = 0.5  # wrap-around guard for progress delta
+
+
+class CenterlineProgressTracker:
+    """Tracks per-step centerline projection facts for all agents.
+
+    Call :meth:`reset` on each episode reset and :meth:`update` each step
+    when centerline features are enabled.  The per-agent nearest-waypoint
+    index is carried across steps so that :func:`project_to_centerline` can
+    use an efficient windowed search rather than a full O(N) scan.
+
+    The dict returned by :meth:`update` is keyed by agent_id and contains:
+
+    ``progress``
+        Normalised arc-length position in [0, 1].
+    ``progress_delta``
+        Signed progress change from the previous step, wrap-corrected at the
+        start/finish crossing.
+    ``d``
+        Cross-track (lateral) deviation in metres (positive = left of track).
+    ``vs``
+        Speed component along the track tangent (positive = forward).
+    ``vd``
+        Speed component perpendicular to the track tangent.
+    ``heading_error``
+        Ego heading minus track tangent, normalised to [-pi, pi].
+    ``wrong_way``
+        True when |heading_error| > *wrong_way_threshold* (default pi/2).
+    """
+
+    def __init__(
+        self,
+        agent_ids: Sequence[str],
+        *,
+        search_window: int = 50,
+        wrong_way_threshold: float = math.pi / 2,
+    ) -> None:
+        self._agent_ids: List[str] = list(agent_ids)
+        self.search_window = int(search_window)
+        self.wrong_way_threshold = float(wrong_way_threshold)
+        self._last_indices: Dict[str, int] = {}
+        self._prev_progress: Dict[str, float] = {}
+        self.reset()
+
+    def reset(self) -> None:
+        """Reset tracking state at the start of a new episode."""
+        for aid in self._agent_ids:
+            self._last_indices[aid] = -1
+            self._prev_progress[aid] = -1.0  # sentinel: no previous value yet
+
+    def update(
+        self,
+        centerline: np.ndarray,
+        poses_x: np.ndarray,
+        poses_y: np.ndarray,
+        poses_theta: np.ndarray,
+        linear_vels_x: np.ndarray,
+        linear_vels_y: np.ndarray,
+        agent_index: Mapping[str, int],
+    ) -> Dict[str, Dict[str, float]]:
+        """Project all agents onto *centerline* and return per-agent facts."""
+        result: Dict[str, Dict[str, float]] = {}
+        if centerline is None or centerline.ndim != 2 or centerline.shape[0] < 2:
+            return result
+
+        for aid in self._agent_ids:
+            idx = agent_index.get(aid)
+            if idx is None:
+                continue
+
+            pos = np.array(
+                [float(poses_x[idx]), float(poses_y[idx])], dtype=np.float32
+            )
+            heading = float(poses_theta[idx])
+            vx = float(linear_vels_x[idx])
+            vy = float(linear_vels_y[idx])
+
+            last_idx = self._last_indices.get(aid, -1)
+            proj = project_to_centerline(
+                centerline,
+                pos,
+                heading,
+                last_index=last_idx if last_idx >= 0 else None,
+                search_window=self.search_window,
+            )
+            self._last_indices[aid] = proj.index
+
+            # Speed projections along and perpendicular to the track tangent.
+            tangent_theta = centerline_heading(centerline, proj.index)
+            cos_t = math.cos(tangent_theta)
+            sin_t = math.sin(tangent_theta)
+            vs = vx * cos_t + vy * sin_t       # forward
+            vd = -vx * sin_t + vy * cos_t      # lateral
+
+            # Progress delta, wrap-corrected at the start/finish line.
+            prev = self._prev_progress.get(aid, -1.0)
+            if prev < 0.0:
+                # First step of the episode — no meaningful delta yet.
+                delta = 0.0
+            else:
+                delta = proj.progress - prev
+                if delta > _HALF_LAP:
+                    delta -= 1.0
+                elif delta < -_HALF_LAP:
+                    delta += 1.0
+            self._prev_progress[aid] = proj.progress
+
+            wrong_way = abs(proj.heading_error) > self.wrong_way_threshold
+
+            result[aid] = {
+                "progress": proj.progress,
+                "progress_delta": delta,
+                "d": proj.lateral_error,
+                "vs": vs,
+                "vd": vd,
+                "heading_error": proj.heading_error,
+                "wrong_way": wrong_way,
+            }
+        return result
 
 
 def normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:

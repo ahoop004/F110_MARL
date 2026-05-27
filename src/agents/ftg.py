@@ -621,6 +621,10 @@ class FollowTheGapPolicy:
     def set_action_space(self, action_space) -> None:
         self.action_space = action_space
 
+    def reset(self, agent_id: str = "", info: Optional[Dict[str, Any]] = None) -> None:  # noqa: ARG002
+        """No-op episode reset; satisfies :class:`~src.core.protocol.HeuristicPolicy`."""
+        return None
+
     def act(self, obs: Dict[str, Any], deterministic: bool = False, aid: Optional[str] = None) -> np.ndarray:
         return self.get_action(self.action_space, obs)
 

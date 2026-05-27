@@ -21,23 +21,46 @@ class ObservationComposer:
 
     Built from a config dict (loaded from configs/observations/<policy>.yaml)
     and the env config (for lidar_beams, lidar_range).
+
+    Each :meth:`wrap` call writes component outputs directly into a
+    pre-allocated internal buffer via :meth:`~ObservationComponent.compute_into`,
+    then returns a copy.  This eliminates the intermediate per-component array
+    allocations and the final :func:`numpy.concatenate` call.
     """
 
     def __init__(self, components: List[ObservationComponent]) -> None:
         self._components = components
+        # Pre-allocate assembly buffer and slice boundaries once.
+        self._obs_dim: int = sum(c.dim for c in components)
+        self._buf = np.zeros(self._obs_dim, dtype=np.float32)
+        offsets = []
+        offset = 0
+        for c in components:
+            offsets.append(offset)
+            offset += c.dim
+        self._offsets: List[int] = offsets
 
     @property
     def obs_dim(self) -> int:
-        return sum(c.dim for c in self._components)
+        return self._obs_dim
 
     @property
     def components(self) -> List[ObservationComponent]:
         return self._components
 
     def wrap(self, raw_obs: Dict, info: Optional[Dict] = None) -> np.ndarray:
+        """Assemble and return a fresh float32 observation vector.
+
+        Each component writes directly into a pre-allocated internal buffer
+        (zero intermediate allocations for components that implement
+        :meth:`~ObservationComponent.compute_into`).  Returns ``buf.copy()``
+        so the caller owns the data independently.
+        """
         info = info or {}
-        parts = [c.compute(raw_obs, info) for c in self._components]
-        return np.concatenate(parts).astype(np.float32)
+        buf = self._buf
+        for c, start in zip(self._components, self._offsets):
+            c.compute_into(raw_obs, info, buf[start : start + c.dim])
+        return buf.copy()
 
     def reset(self) -> None:
         for c in self._components:

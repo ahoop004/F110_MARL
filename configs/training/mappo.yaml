@@ -1,0 +1,23 @@
+# MAPPO training defaults
+# Merged with scenario params (scenario wins on conflict).
+training_defaults:
+  progress_unit: episodes
+
+  # Rollout collection
+  n_steps: 2048          # steps per agent before update
+  action_repeat: 1
+
+  # PPO hyperparameters
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  batch_size: 64
+  learning_rate: 3.0e-4
+  gamma: 0.99
+
+  # Network architecture
+  hidden_dims: [256, 256]
+  activation: tanh

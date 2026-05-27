@@ -1,4 +1,3 @@
-from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
 
@@ -9,27 +8,38 @@ from src.physics import Simulator, Integrator
 # from src.render import EnvRenderer  # Moved to render() method
 from src.env.start_pose_state import StartPoseState
 from src.env.centerline_state import (
-    build_render_centerline_points,
+    CenterlineProgressTracker,
+    CenterlineRuntimeState,
+    apply_centerline_to_renderer,
     inject_finish_line_info,
-    normalize_progress_fractions,
     parse_finish_line,
     reset_finish_line_tracking,
     signed_distance_to_finish,
     update_finish_line_progress,
 )
 from src.env.collision_state import build_step_terminations, build_truncations, update_collision_flags
-from src.env.info_builder import add_step_info_fields
-from src.env.map_config import normalize_map_identifier, resolve_map_runtime_config
-from src.env.spawn import (
-    SpawnRequest,
-    extract_spawn_points,
-    resolve_reset_spawn,
-    sample_centerline_relative_spawn,
-    sample_random_spawn,
+from src.env.info_builder import (
+    add_episode_metadata,
+    add_step_info_fields,
+    add_time_limit_info,
+    build_reset_info_payloads,
+    build_step_facts,
+    filter_info_payloads,
 )
+from src.env.map_config import normalize_map_identifier, resolve_map_runtime_config
+from src.env.map_schedule import MapScheduler
+from src.env.obs_assembly import split_joint_obs
+from src.env.render_adapter import (
+    build_render_observations,
+    compute_relative_snapshot,
+    flush_render_state,
+)
+from src.env.spawn_manager import SpawnManager
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
+from src.env.state_views import build_agent_state, build_global_state, central_state_tensor
 from src.env.state_buffer import StateBuffers
-from src.utils.map_loader import MapLoader
+from src.env.types import AgentState, GlobalState
+from src.render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
 # Type checking only imports (don't execute at runtime)
 if TYPE_CHECKING:
@@ -97,7 +107,6 @@ def _ensure_pyglet():
         return False
 
 # constants
-from wrappers.common import _sector_from_angle, _radial_gain, _SECTOR_NAMES
 
 # rendering
 # VIDEO_W = 600
@@ -106,6 +115,48 @@ WINDOW_W = 1000
 WINDOW_H = 800
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_vehicle_colors(color_map: Mapping[str, Any]) -> Dict[str, tuple]:
+    """Convert a scenario ``vehicle_colors`` dict to normalized RGBA float tuples.
+
+    Accepted per-agent formats
+    --------------------------
+    - Hex string: ``"#e8503c"`` or ``"#e8503cff"`` (3-byte or 4-byte)
+    - RGB list/tuple: ``[0.91, 0.31, 0.23]`` (values in [0, 1])
+    - RGBA list/tuple: ``[0.91, 0.31, 0.23, 1.0]``
+
+    Returns a dict of ``{agent_id: (r, g, b, a)}`` with floats in ``[0, 1]``.
+    Malformed entries are skipped with a warning.
+    """
+    result: Dict[str, tuple] = {}
+    for aid, raw in color_map.items():
+        try:
+            result[str(aid)] = _color_to_rgba(raw)
+        except (ValueError, TypeError) as exc:
+            logger.warning("vehicle_colors: skipping agent %r — %s", aid, exc)
+    return result
+
+
+def _color_to_rgba(raw: Any) -> tuple:
+    """Convert a single color spec to a normalized (r, g, b, a) float tuple."""
+    if isinstance(raw, str):
+        # Hex string
+        s = raw.strip().lstrip("#")
+        if len(s) == 6:
+            r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+            return (r / 255.0, g / 255.0, b / 255.0, 1.0)
+        if len(s) == 8:
+            r, g, b, a = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16), int(s[6:8], 16)
+            return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+        raise ValueError(f"Hex color must be 6 or 8 hex digits, got {len(s)}: {raw!r}")
+    if isinstance(raw, (list, tuple)):
+        if len(raw) == 3:
+            return (float(raw[0]), float(raw[1]), float(raw[2]), 1.0)
+        if len(raw) == 4:
+            return (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+        raise ValueError(f"Color list must have 3 (RGB) or 4 (RGBA) elements, got {len(raw)}")
+    raise TypeError(f"Unsupported color type {type(raw).__name__!r}: {raw!r}")
 
 DEFAULT_AGENT_SENSORS = (
     "lidar",
@@ -133,45 +184,14 @@ class F110ParallelEnv:
         self.integrator = self._resolve_integrator(merged)
 
         self._configure_map_paths(merged, map_data)
-        self._map_loader = MapLoader(base_dir=Path.cwd())
-        self._map_root = Path(merged.get("map_dir") or merged.get("map_root") or Path.cwd()).resolve()
-        self._map_cycle_mode = str(merged.get("map_cycle", "")).strip().lower()
-        self._map_pick_mode = str(merged.get("map_pick", "first")).strip().lower()
-        self._map_epoch_shuffle = bool(merged.get("epoch_shuffle", False))
         self._map_split_mode = str(merged.get("map_split_mode", "train")).strip().lower()
-        self._map_bundles_train = list(merged.get("map_bundles_train") or [])
-        self._map_bundles_eval = list(merged.get("map_bundles_eval") or [])
-        self._map_bundles = list(merged.get("map_bundles") or [])
-        if not self._map_bundles_train and self._map_bundles:
-            self._map_bundles_train = list(self._map_bundles)
-        if not self._map_bundles_eval and self._map_bundles:
-            self._map_bundles_eval = []
-        self._map_bundle_active = merged.get("map_bundle_active") or merged.get("map_bundle")
-        self._map_cycle_indices = {"train": 0, "eval": 0}
-        self._map_cycle_order = {
-            "train": list(self._map_bundles_train),
-            "eval": list(self._map_bundles_eval),
-        }
-        if self._map_epoch_shuffle:
-            for key, order in self._map_cycle_order.items():
-                if order:
-                    self.rng.shuffle(order)
-                    self._map_cycle_indices[key] = 0
+        self._map_scheduler = MapScheduler(merged, rng=self.rng)
+        self._map_bundle_active = self._map_scheduler.active_bundle
         self.walls = getattr(map_data, "walls", None) if map_data is not None else None
         self.walls_path = getattr(map_data, "walls_path", None) if map_data is not None else None
         self._track_mask = getattr(map_data, "track_mask", None) if map_data is not None else None
-        self.spawn_policy = merged.get("spawn_policy")
-        self.spawn_centerline_cfg = merged.get("spawn_centerline", {}) or {}
-        self.spawn_offsets_cfg = merged.get("spawn_offsets", {}) or {}
-        self.spawn_target_cfg = merged.get("spawn_target", {}) or {}
-        self.spawn_ego_cfg = merged.get("spawn_ego", {}) or {}
-        self._track_threshold = merged.get("track_threshold")
-        self._track_inverted = bool(merged.get("track_inverted", False))
-        self._centerline_csv = merged.get("centerline_csv")
-        self._walls_csv = merged.get("walls_csv")
-        self._walls_autoload = bool(merged.get("walls_autoload", True))
-        self._spawn_centerline_index = 0
-        self._last_spawn_metadata: Dict[str, Any] = {}
+        self.info_level = str(merged.get("info_level", "training")).strip().lower()
+        self.last_step_facts = None
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
         self.params = self._configure_vehicle_params(merged)
@@ -212,6 +232,13 @@ class F110ParallelEnv:
         self.current_time = 0.0
         self._elapsed_steps = 0
 
+        # Episode step counters — also set in reset(); initialised here so
+        # any accidental pre-reset step() call raises a clean error rather
+        # than an AttributeError.
+        self._episode_step_count = 0
+        self._lock_speed_steps = 0
+        self._locked_velocities: Dict[str, float] = {}
+
         # Persistent collision tracking (like v1)
         # Once an agent collides, they stay collided for the episode
         self._collision_flags = np.zeros(self.n_agents, dtype=bool)
@@ -244,25 +271,15 @@ class F110ParallelEnv:
         self.map_meta = meta
         self.map_image_path = img_path
         self._map_data = map_data
-        self._spawn_points = self._extract_spawn_points(map_data, meta)
-        random_spawn_cfg = merged.get("random_spawn")
-        if random_spawn_cfg is None:
-            random_spawn_cfg = merged.get("spawn_random")
-        allow_reuse_flag = False
-        if isinstance(random_spawn_cfg, Mapping):
-            enabled_val = random_spawn_cfg.get("enabled", True)
-            self._random_spawn_requested = bool(enabled_val)
-            self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
-            allow_reuse_flag = bool(random_spawn_cfg.get("allow_reuse", False))
-        else:
-            self._random_spawn_requested = bool(random_spawn_cfg)
-            self._random_spawn_enabled = self._random_spawn_requested and bool(self._spawn_points)
-            allow_reuse_flag = bool(merged.get("random_spawn_allow_reuse", False))
-        if not self._spawn_points:
-            self._random_spawn_enabled = False
-        self._random_spawn_allow_reuse = allow_reuse_flag
-        self._spawn_point_names: List[str] = sorted(self._spawn_points.keys())
-        self._last_spawn_selection: Dict[str, str] = {}
+        self._spawn_manager = SpawnManager(
+            merged, map_data,
+            possible_agents=self.possible_agents,
+            agent_index=self._agent_id_to_index,
+            rng=self.rng,
+            seed=self.seed,
+            map_split_mode=self._map_split_mode,
+            init_metadata=meta,
+        )
 
         self._finish_line_data = self._parse_finish_line(merged.get("finish_line"))
         if self._finish_line_data is not None:
@@ -282,122 +299,30 @@ class F110ParallelEnv:
         self._build_observation_spaces(x_min, x_max, y_min, y_max)
 
         # stateful observations for rendering
-        self.render_obs = None
-        self._reward_ring_config: Optional[Dict[str, Any]] = None
-        self._reward_ring_focus_agent: Optional[str] = None
-        self._reward_ring_target: Optional[str] = None
-        self._reward_ring_dirty: bool = False
-        self._reward_ring_target_dirty: bool = False
-        self._reward_ring_marker_states: Dict[str, List[bool]] = {}
-        self._reward_ring_marker_dirty: bool = False
-        self._reward_overlays: List[Dict[str, Any]] = []
-        self._reward_overlay_dirty: bool = False
-        self._reward_overlay_enabled = False
-        self._reward_overlay_applied = False
-        overlay_cfg = merged.get("reward_overlay")
-        if isinstance(overlay_cfg, Mapping):
-            enabled_raw = overlay_cfg.get("enabled", merged.get("reward_overlay_enabled", False))
-            overlay_alpha = overlay_cfg.get("alpha", merged.get("reward_overlay_alpha", 0.25))
-            overlay_scale = overlay_cfg.get(
-                "value_scale",
-                overlay_cfg.get("scale", merged.get("reward_overlay_value_scale", 1.0)),
-            )
-            overlay_segments = overlay_cfg.get("segments", merged.get("reward_overlay_segments", 48))
-        else:
-            enabled_raw = merged.get("reward_overlay_enabled", False)
-            overlay_alpha = merged.get("reward_overlay_alpha", 0.25)
-            overlay_scale = merged.get("reward_overlay_value_scale", 1.0)
-            overlay_segments = merged.get("reward_overlay_segments", 48)
-
-        self._reward_overlay_enabled = self._coerce_bool_flag(enabled_raw, default=False)
-        try:
-            self._reward_overlay_alpha = float(overlay_alpha)
-        except (TypeError, ValueError):
-            self._reward_overlay_alpha = 0.25
-        self._reward_overlay_alpha = float(min(max(self._reward_overlay_alpha, 0.0), 1.0))
-        try:
-            self._reward_overlay_value_scale = float(overlay_scale)
-        except (TypeError, ValueError):
-            self._reward_overlay_value_scale = 1.0
-        if self._reward_overlay_value_scale <= 0.0 or not np.isfinite(self._reward_overlay_value_scale):
-            self._reward_overlay_value_scale = 1.0
-        try:
-            self._reward_overlay_segments = int(overlay_segments)
-        except (TypeError, ValueError):
-            self._reward_overlay_segments = 48
-        if self._reward_overlay_segments < 8:
-            self._reward_overlay_segments = 8
-
-        self._reward_heatmap_payload: Optional[Dict[str, Any]] = None
-        self._reward_heatmap_dirty: bool = False
-        self._reward_heatmap_enabled = False
-        self._reward_heatmap_applied = False
-        heatmap_cfg = merged.get("reward_heatmap")
-        if isinstance(heatmap_cfg, Mapping):
-            enabled_raw = heatmap_cfg.get("enabled", merged.get("reward_heatmap_enabled", False))
-            heatmap_alpha = heatmap_cfg.get("alpha", merged.get("reward_heatmap_alpha", 0.22))
-            heatmap_scale = heatmap_cfg.get(
-                "value_scale",
-                heatmap_cfg.get("scale", merged.get("reward_heatmap_value_scale", 1.0)),
-            )
-            heatmap_extent = heatmap_cfg.get(
-                "extent_m",
-                heatmap_cfg.get("extent", merged.get("reward_heatmap_extent_m", merged.get("reward_heatmap_extent", 6.0))),
-            )
-            heatmap_cell_size = heatmap_cfg.get(
-                "cell_size_m",
-                heatmap_cfg.get(
-                    "cell_size",
-                    merged.get("reward_heatmap_cell_size_m", merged.get("reward_heatmap_cell_size", 0.25)),
-                ),
-            )
-        else:
-            enabled_raw = merged.get("reward_heatmap_enabled", False)
-            heatmap_alpha = merged.get("reward_heatmap_alpha", 0.22)
-            heatmap_scale = merged.get("reward_heatmap_value_scale", 1.0)
-            heatmap_extent = merged.get("reward_heatmap_extent_m", merged.get("reward_heatmap_extent", 6.0))
-            heatmap_cell_size = merged.get("reward_heatmap_cell_size_m", merged.get("reward_heatmap_cell_size", 0.25))
-
-        self._reward_heatmap_enabled = self._coerce_bool_flag(enabled_raw, default=False)
-        try:
-            self._reward_heatmap_alpha = float(heatmap_alpha)
-        except (TypeError, ValueError):
-            self._reward_heatmap_alpha = 0.22
-        self._reward_heatmap_alpha = float(min(max(self._reward_heatmap_alpha, 0.0), 1.0))
-        try:
-            self._reward_heatmap_value_scale = float(heatmap_scale)
-        except (TypeError, ValueError):
-            self._reward_heatmap_value_scale = 1.0
-        if self._reward_heatmap_value_scale <= 0.0 or not np.isfinite(self._reward_heatmap_value_scale):
-            self._reward_heatmap_value_scale = 1.0
-        try:
-            self._reward_heatmap_extent_m = float(heatmap_extent)
-        except (TypeError, ValueError):
-            self._reward_heatmap_extent_m = 6.0
-        if self._reward_heatmap_extent_m <= 0.0 or not np.isfinite(self._reward_heatmap_extent_m):
-            self._reward_heatmap_extent_m = 6.0
-        try:
-            self._reward_heatmap_cell_size_m = float(heatmap_cell_size)
-        except (TypeError, ValueError):
-            self._reward_heatmap_cell_size_m = 0.25
-        if self._reward_heatmap_cell_size_m <= 0.0 or not np.isfinite(self._reward_heatmap_cell_size_m):
-            self._reward_heatmap_cell_size_m = 0.25
-        self._render_metrics_payload: Optional[Dict[str, Any]] = None
-        self._render_metrics_dirty: bool = False
-        self._render_ticker: deque[str] = deque(maxlen=64)
-        self._render_ticker_dirty: bool = False
-        self._render_wrapped_obs: Dict[str, np.ndarray] = {}
         default_lidar_skip = int(merged.get("lidar_beams", self._lidar_beam_count))
         if default_lidar_skip < 0:
             default_lidar_skip = 0
-        self._render_lidar_skip_default = default_lidar_skip
-        self._render_lidar_skip: Dict[str, int] = {aid: default_lidar_skip for aid in self.possible_agents}
-        self._render_callbacks: List[Callable[["EnvRenderer"], None]] = []
+        self._render_state = RenderRuntimeState(
+            lidar_skip_default=default_lidar_skip,
+            lidar_skip={aid: default_lidar_skip for aid in self.possible_agents},
+        )
+        overlay = parse_overlay_config(merged)
+        self._render_state.apply_overlay_config(overlay)
+        heatmap = parse_heatmap_config(merged)
+        self._render_state.apply_heatmap_config(heatmap)
 
         self._single_action_space, self.action_spaces = build_action_spaces(
             self.possible_agents,
             self.params,
         )
+
+        # Centerline progress tracker — computes per-step projection facts when
+        # centerline_features is enabled.  _last_centerline_facts is updated each
+        # step and consumed by get_agent_state() and info injection.
+        self._centerline_progress_tracker = CenterlineProgressTracker(
+            agent_ids=self.possible_agents,
+        )
+        self._last_centerline_facts: Dict[str, Dict[str, float]] = {}
 
     def _configure_rendering(self, cfg: Mapping[str, Any]) -> None:
         self.render_mode = cfg.get("render_mode", "human")
@@ -414,42 +339,13 @@ class F110ParallelEnv:
         mode = (self.render_mode or "").lower()
         self._collect_render_data = mode == "rgb_array" or (mode == "human" and not self._headless)
 
-        render_user_override = bool(cfg.pop("_centerline_render_user_override", False))
-        feature_user_override = bool(cfg.pop("_centerline_features_user_override", False))
-        autoload_user_override = bool(cfg.pop("_centerline_autoload_user_override", False))
-
-        render_cfg_value = cfg.get("centerline_render")
-        features_cfg_value = cfg.get("centerline_features")
-        autoload_cfg_value = cfg.get("centerline_autoload")
-
-        render_cfg = render_cfg_value if render_user_override else None
-        features_cfg = features_cfg_value if feature_user_override else None
-        autoload_cfg = autoload_cfg_value if autoload_user_override else None
-
-        self._centerline_render_auto = not render_user_override
-        self._centerline_feature_auto = not feature_user_override
-        self._centerline_autoload_auto = not autoload_user_override
-
-        self.centerline_render_enabled = bool(render_cfg) if render_cfg is not None else False
-        self._centerline_feature_requested = bool(features_cfg) if features_cfg is not None else False
-        self.centerline_features_enabled = self._centerline_feature_requested
-
-        self.centerline_points: Optional[np.ndarray] = None
-        self.centerline_path: Optional[Path] = None
-        self.centerline_render_progress = normalize_progress_fractions(
-            cfg.get("centerline_render_progress")
+        # Parse scenario-level vehicle color overrides from environment.rendering.vehicle_colors
+        rendering_cfg = cfg.get("rendering", {}) or {}
+        self._vehicle_colors: Dict[str, tuple] = _parse_vehicle_colors(
+            rendering_cfg.get("vehicle_colors", {}) or {}
         )
-        spacing_value = cfg.get("centerline_render_spacing")
-        try:
-            self.centerline_render_spacing = max(float(spacing_value), 0.0)
-        except (TypeError, ValueError):
-            self.centerline_render_spacing = 0.0
-        raw_connect = cfg.get("centerline_render_connect")
-        if raw_connect is None:
-            self.centerline_render_connect = not bool(self.centerline_render_progress)
-        else:
-            self.centerline_render_connect = bool(raw_connect)
-        self._render_centerline_points: Optional[np.ndarray] = None
+
+        self._centerline_state = CenterlineRuntimeState.from_config(cfg)
 
     def _configure_basic_environment(self, cfg: Mapping[str, Any]) -> None:
         self.seed = int(cfg.get("seed", 42))
@@ -469,6 +365,9 @@ class F110ParallelEnv:
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
         self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
         self.agents = self.possible_agents.copy()
+        self.controlled_agents = list(cfg.get("controlled_agents") or self.possible_agents)
+        self.trainable_agents = list(cfg.get("trainable_agents") or [])
+        self.fixed_policy_agents = list(cfg.get("fixed_policy_agents") or [])
 
     def _resolve_integrator(self, cfg: Mapping[str, Any]) -> str:
         integrator_cfg = cfg.get("integrator", Integrator.RK4)
@@ -520,53 +419,26 @@ class F110ParallelEnv:
             self._map_runtime = runtime
         return runtime.metadata, runtime.image_path, runtime.image_size
 
-    @staticmethod
-    def _extract_spawn_points(
-        map_data: Optional[Any],
-        metadata: Mapping[str, Any],
-    ) -> Dict[str, np.ndarray]:
-        return extract_spawn_points(map_data, metadata)
+    def _apply_map_data(
+        self,
+        map_data: Any,
+        bundle: Optional[str] = None,
+        *,
+        keep_centerline: bool = False,
+    ) -> None:
+        """Apply a loaded MapData object to the env, sim, and renderer.
 
-    def _sample_random_spawn(self) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
-        if not self._random_spawn_enabled or not self._spawn_point_names:
-            return None
-
-        rng = getattr(self, "rng", None)
-        if rng is None:
-            rng = np.random.default_rng(self.seed)
-            self.rng = rng
-
-        return sample_random_spawn(
-            spawn_points=self._spawn_points,
-            spawn_point_names=self._spawn_point_names,
-            agent_ids=self.possible_agents,
-            rng=rng,
-            allow_reuse=self._random_spawn_allow_reuse,
-        )
-
-    def _select_map_bundle(self) -> Optional[str]:
-        if self._map_cycle_mode != "per_episode":
-            return None
-        mode = "eval" if self._map_split_mode == "eval" else "train"
-        bundles = self._map_cycle_order.get(mode) or []
-        if not bundles:
-            return None
-        pick = self._map_pick_mode
-        if pick == "random":
-            return bundles[int(self.rng.integers(0, len(bundles)))]
-        if pick == "first":
-            return bundles[0]
-        idx = int(self._map_cycle_indices.get(mode, 0))
-        bundle = bundles[idx % len(bundles)]
-        idx += 1
-        if idx >= len(bundles):
-            if self._map_epoch_shuffle:
-                self.rng.shuffle(bundles)
-            idx = 0
-        self._map_cycle_indices[mode] = idx
-        return bundle
-
-    def _apply_map_data(self, map_data: Any, bundle: Optional[str] = None) -> None:
+        Parameters
+        ----------
+        map_data:
+            Populated map-data object from :class:`~src.utils.map_loader.MapLoader`.
+        bundle:
+            Bundle name to record as the active bundle (when cycling maps).
+        keep_centerline:
+            When ``True``, preserve the existing in-memory centerline rather
+            than loading the new map's centerline.  Used by :meth:`update_map`
+            which hot-swaps the map surface but keeps the loaded centerline.
+        """
         if map_data is None:
             return
         self._map_data = map_data
@@ -581,12 +453,7 @@ class F110ParallelEnv:
         self._track_mask = map_data.track_mask
         self.walls = map_data.walls
         self.walls_path = map_data.walls_path
-        self._spawn_points = self._extract_spawn_points(map_data, self.map_meta)
-        self._spawn_point_names = sorted(self._spawn_points.keys())
-        if not self._spawn_points:
-            self._random_spawn_enabled = False
-        else:
-            self._random_spawn_enabled = bool(getattr(self, "_random_spawn_requested", False))
+        self._spawn_manager.update_map_data(map_data, self.map_meta)
 
         # Update simulation + renderer
         self.sim.set_map(str(self.yaml_path), self.map_ext)
@@ -598,63 +465,34 @@ class F110ParallelEnv:
                 map_image_path=self.map_image_path,
             )
 
-        # Update centerline + render
-        self.set_centerline(map_data.centerline, path=map_data.centerline_path)
-        self._update_renderer_centerline()
+        # Update centerline
+        if keep_centerline:
+            # Preserve in-memory centerline; re-apply to new renderer surface.
+            self._update_renderer_centerline()
+        else:
+            self.set_centerline(map_data.centerline, path=map_data.centerline_path)
 
         # Update observation bounds based on new map
         width, height = map_data.image_size
         R = float(self.map_meta.get("resolution", 1.0))
-        x0, y0, _ = self.map_meta.get('origin', (0.0, 0.0, 0.0))
-        x_min = x0
-        x_max = x0 + width * R
-        y_min = y0
-        y_max = y0 + height * R
-        self._build_observation_spaces(x_min, x_max, y_min, y_max)
+        x0, y0, _ = self.map_meta.get("origin", (0.0, 0.0, 0.0))
+        self._build_observation_spaces(x0, x0 + width * R, y0, y0 + height * R)
 
         if bundle is not None:
             self._map_bundle_active = bundle
+            self._map_scheduler.active_bundle = bundle
 
     def _maybe_cycle_map(self) -> None:
-        bundle = self._select_map_bundle()
-        if bundle is None:
+        bundle = self._map_scheduler.select_next_bundle(self._map_split_mode)
+        if bundle is None or bundle == self._map_scheduler.active_bundle:
             return
-        if bundle == self._map_bundle_active:
-            return
-        map_cfg = {
-            "map_dir": str(self._map_root),
-            "map_bundle": bundle,
-            "map_ext": self.map_ext,
-            "centerline_autoload": True,
-            "centerline_csv": self._centerline_csv,
-            "centerline_render": self.centerline_render_enabled,
-            "centerline_features": self.centerline_features_enabled,
-            "walls_autoload": self._walls_autoload,
-            "walls_csv": self._walls_csv,
-            "track_threshold": self._track_threshold,
-            "track_inverted": self._track_inverted,
-        }
-        map_data = self._map_loader.load(map_cfg)
-        self._apply_map_data(map_data, bundle=bundle)
-
-    def _sample_centerline_spawn(self) -> Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]:
-        result = sample_centerline_relative_spawn(
-            spawn_policy=self.spawn_policy,
-            centerline=self.centerline_points,
-            map_split_mode=self._map_split_mode,
-            spawn_centerline_cfg=self.spawn_centerline_cfg,
-            spawn_offsets_cfg=self.spawn_offsets_cfg,
-            spawn_target_cfg=self.spawn_target_cfg,
-            spawn_ego_cfg=self.spawn_ego_cfg,
-            agent_ids=self.possible_agents,
-            rng=self.rng,
-            current_index=self._spawn_centerline_index,
-            walls=self.walls,
+        map_data = self._map_scheduler.load_bundle(
+            bundle,
+            map_ext=self.map_ext,
+            centerline_render=self.centerline_render_enabled,
+            centerline_features=self.centerline_features_enabled,
         )
-        if result is None:
-            return None
-        self._spawn_centerline_index = result.next_index
-        return result.poses, result.velocities, result.metadata
+        self._apply_map_data(map_data, bundle=bundle)
 
     def action_space(self, agent: str):
         return self.action_spaces[agent]
@@ -664,142 +502,23 @@ class F110ParallelEnv:
 
     def _refresh_render_observations(self, obs: Dict[str, Dict[str, Any]]) -> None:
         if not self._collect_render_data:
-            self.render_obs = {}
+            self._render_state.render_obs = {}
             return
-
-        render_obs: Dict[str, Dict[str, Any]] = {}
-        agent_index = self._agent_id_to_index
-        for aid in self.agents:
-            idx = agent_index[aid]
-            entry = {
-                "poses_x": float(self.poses_x[idx]),
-                "poses_y": float(self.poses_y[idx]),
-                "poses_theta": float(self.poses_theta[idx]),
-                "pose": np.array([
-                    float(self.poses_x[idx]),
-                    float(self.poses_y[idx]),
-                    float(self.poses_theta[idx])
-                ], dtype=np.float32),
-                "linear_vels_x": float(self.linear_vels_x_curr[idx]),
-                "linear_vels_y": float(self.linear_vels_y_curr[idx]),
-                "lap_time": float(self.lap_times[idx]),
-                "lap_count": int(self.lap_counts[idx]),
-                "collision": bool(self.collisions[idx]),
-            }
-            agent_obs = obs.get(aid) if obs is not None else None
-            if agent_obs is not None:
-                scan_entry = agent_obs.get("scans")
-                if scan_entry is not None:
-                    entry["scans"] = scan_entry
-                    self._render_lidar_skip[aid] = self._render_lidar_skip_default
-                target_collision_val = agent_obs.get("target_collision")
-                if target_collision_val is not None:
-                    try:
-                        entry["target_collision"] = bool(target_collision_val)
-                    except Exception:
-                        entry["target_collision"] = False
-                components: Dict[str, Any] = {}
-                for key, value in agent_obs.items():
-                    if key in {"scans", "lidar", "state"}:
-                        continue
-                    if key in entry and key not in {"collision", "target_collision"}:
-                        continue
-                    cleaned: Any
-                    if key == "relative_sector":
-                        arr = np.asarray(value, dtype=np.float32).flatten()
-                        sector_flags: Dict[str, bool] = {}
-                        for idx, name in enumerate(_SECTOR_NAMES):
-                            flag = False
-                            if idx < arr.size:
-                                flag = bool(arr[idx] > 0.5)
-                            sector_flags[name] = flag
-                        cleaned = sector_flags
-                    elif isinstance(value, np.ndarray):
-                        cleaned = value.astype(np.float32, copy=False).flatten()
-                        if cleaned.size > 6:
-                            cleaned = cleaned[:6]
-                        cleaned = cleaned.tolist()
-                    elif isinstance(value, (np.bool_, bool)):
-                        cleaned = bool(value)
-                    elif isinstance(value, (np.floating, np.integer)):
-                        cleaned = float(value)
-                    else:
-                        cleaned = value
-                    components[key] = cleaned
-                if components:
-                    entry["obs_components"] = components
-            snapshot = self._compute_relative_snapshot(aid)
-            if snapshot is not None:
-                entry["relative"] = snapshot
-            wrapped_vector = self._render_wrapped_obs.get(aid)
-            if wrapped_vector is not None:
-                entry["wrapped_obs"] = np.asarray(wrapped_vector, dtype=np.float32)
-                entry["wrapped_skip"] = int(self._render_lidar_skip.get(aid, self._render_lidar_skip_default))
-            render_obs[aid] = entry
-
-        self.render_obs = render_obs
-
-    def _compute_relative_snapshot(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        agent_idx = self._agent_id_to_index.get(agent_id)
-        target_idx = self._agent_target_index.get(agent_id)
-        if agent_idx is None or target_idx is None:
-            return None
-        if not (0 <= agent_idx < len(self.poses_x)) or not (0 <= target_idx < len(self.poses_x)):
-            return None
-
-        agent_x = float(self.poses_x[agent_idx])
-        agent_y = float(self.poses_y[agent_idx])
-        agent_heading = float(self.poses_theta[agent_idx]) if agent_idx < len(self.poses_theta) else 0.0
-
-        target_x = float(self.poses_x[target_idx])
-        target_y = float(self.poses_y[target_idx])
-
-        dx = target_x - agent_x
-        dy = target_y - agent_y
-        distance = float(math.hypot(dx, dy))
-
-        if dx == 0.0 and dy == 0.0:
-            sector = "front"
-        else:
-            rel_angle = math.degrees(math.atan2(dy, dx) - agent_heading)
-            sector = _sector_from_angle(rel_angle)
-
-        cfg = self._reward_ring_config or {}
-        preferred = float(cfg.get("preferred_radius", 0.0) or 0.0)
-        inner = float(cfg.get("inner_tolerance", 0.0) or 0.0)
-        outer = float(cfg.get("outer_tolerance", 0.0) or 0.0)
-        falloff = str(cfg.get("falloff", "linear") or "linear").lower()
-
-        gain = _radial_gain(distance, preferred, inner, outer, falloff)
-        sector_active = gain > 0.0
-
-        if preferred > 0.0 or inner > 0.0 or outer > 0.0:
-            lower = max(preferred - inner, 0.0)
-            upper = preferred + outer
-            in_ring = float(lower) <= distance <= float(upper)
-        else:
-            in_ring = sector_active
-
-        weights_raw = cfg.get("weights")
-        sector_weight = 0.0
-        if isinstance(weights_raw, dict):
-            try:
-                sector_weight = float(weights_raw.get(sector, 0.0))
-            except (TypeError, ValueError):
-                sector_weight = 0.0
-        reward_sector = sector_active and sector_weight > 0.0
-
-        sector_code = "".join(word[0].upper() for word in sector.split("_")) if sector else "--"
-
-        return {
-            "distance": distance,
-            "sector": sector,
-            "sector_code": sector_code,
-            "sector_active": bool(sector_active),
-            "in_ring": bool(in_ring),
-            "sector_weight": sector_weight,
-            "reward_sector": bool(reward_sector),
-        }
+        self._render_state.render_obs = build_render_observations(
+            self.agents,
+            obs,
+            agent_index=self._agent_id_to_index,
+            agent_target_index=self._agent_target_index,
+            poses_x=self.poses_x,
+            poses_y=self.poses_y,
+            poses_theta=self.poses_theta,
+            linear_vels_x=self.linear_vels_x_curr,
+            linear_vels_y=self.linear_vels_y_curr,
+            lap_times=self.lap_times,
+            lap_counts=self.lap_counts,
+            collisions=self.collisions,
+            render_state=self._render_state,
+        )
 
     def update_render_metrics(
         self,
@@ -824,24 +543,11 @@ class F110ParallelEnv:
         }
         if step is not None:
             payload["step"] = float(step)
-        self._render_metrics_payload = payload
-        self._render_metrics_dirty = True
+        self._render_state.metrics_payload = payload
+        self._render_state.metrics_dirty = True
 
     def update_render_wrapped_observations(self, wrapped: Mapping[str, np.ndarray]) -> None:
-        if not wrapped:
-            return
-        store: Dict[str, np.ndarray] = {}
-        for agent_id, vector in wrapped.items():
-            if vector is None:
-                continue
-            try:
-                array = np.asarray(vector, dtype=np.float32)
-            except Exception:
-                continue
-            store[str(agent_id)] = array.copy()
-        if not store:
-            return
-        self._render_wrapped_obs = store
+        self._render_state.set_wrapped_observations(wrapped)
 
     def append_render_ticker(
         self,
@@ -851,7 +557,15 @@ class F110ParallelEnv:
         reward: float,
         components: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        snapshot = self._compute_relative_snapshot(agent_id)
+        snapshot = compute_relative_snapshot(
+            agent_id,
+            agent_index=self._agent_id_to_index,
+            agent_target_index=self._agent_target_index,
+            poses_x=self.poses_x,
+            poses_y=self.poses_y,
+            poses_theta=self.poses_theta,
+            reward_ring_config=self._render_state.reward_ring_config,
+        )
         if snapshot is None:
             return
 
@@ -882,114 +596,16 @@ class F110ParallelEnv:
             f"W={1 if reward_sector else 0}"
         )
 
-        self._render_ticker.appendleft(line)
-        self._render_ticker_dirty = True
+        self._render_state.append_ticker_line(line)
 
     def configure_reward_ring(self, config: Optional[Dict[str, Any]], *, agent_id: Optional[str] = None) -> None:
-        if config is None:
-            self._reward_ring_config = None
-            self._reward_ring_focus_agent = None
-            self._reward_ring_target = None
-            self._reward_ring_marker_states.clear()
-            self._reward_ring_dirty = True
-            self._reward_ring_target_dirty = True
-            self._reward_ring_marker_dirty = True
-            return
-
-        stored = {
-            "preferred_radius": max(float(config.get("preferred_radius", 0.0)), 0.0),
-            "inner_tolerance": max(float(config.get("inner_tolerance", 0.0)), 0.0),
-            "outer_tolerance": max(float(config.get("outer_tolerance", 0.0)), 0.0),
-            "segments": max(int(config.get("segments", 96) or 96), 8),
-            "marker_radius": max(float(config.get("marker_radius", 0.0)), 0.0),
-            "marker_segments": max(int(config.get("marker_segments", 12) or 12), 4),
-            "offsets_only": bool(config.get("offsets_only", False)),
-        }
-        for key in ("fill_color", "border_color", "preferred_color"):
-            if key in config and isinstance(config[key], (list, tuple)):
-                stored[key] = tuple(float(component) for component in config[key])
-        falloff_val = config.get("falloff")
-        if falloff_val is not None:
-            stored["falloff"] = str(falloff_val).lower()
-        marker_color_val = config.get("marker_color")
-        if isinstance(marker_color_val, (list, tuple)):
-            stored["marker_color"] = tuple(float(component) for component in marker_color_val)
-        offsets_val = config.get("offsets")
-        if offsets_val:
-            cleaned_offsets: List[Tuple[float, float]] = []
-            for entry in offsets_val:
-                if entry is None:
-                    continue
-                try:
-                    pair = tuple(float(v) for v in entry)  # type: ignore[arg-type]
-                except Exception:
-                    continue
-                if len(pair) >= 2:
-                    cleaned_offsets.append((pair[0], pair[1]))
-            if cleaned_offsets:
-                stored["offsets"] = cleaned_offsets
-        marker_color_active_val = config.get("marker_color_active")
-        if isinstance(marker_color_active_val, (list, tuple)):
-            stored["marker_color_active"] = tuple(float(component) for component in marker_color_active_val)
-        weights_val = config.get("weights")
-        if isinstance(weights_val, Mapping):
-            safe_weights: Dict[str, float] = {}
-            for name, value in weights_val.items():
-                if value is None:
-                    continue
-                try:
-                    safe_weights[str(name)] = float(value)
-                except (TypeError, ValueError):
-                    continue
-            if safe_weights:
-                stored["weights"] = safe_weights
-
-        if self._reward_ring_config != stored or self._reward_ring_focus_agent != agent_id:
-            self._reward_ring_config = stored
-            self._reward_ring_focus_agent = agent_id
-            self._reward_ring_marker_states.clear()
-            self._reward_ring_dirty = True
-            self._reward_ring_target_dirty = True
-            self._reward_ring_marker_dirty = True
+        self._render_state.configure_reward_ring(config, agent_id=agent_id)
 
     def update_reward_ring_target(self, agent_id: str, target_id: Optional[str]) -> None:
-        if self._reward_ring_config is None:
-            return
-
-        focus = self._reward_ring_focus_agent
-        if focus is not None and agent_id != focus:
-            return
-
-        normalized = str(target_id) if target_id else None
-        if self._reward_ring_target != normalized:
-            self._reward_ring_target = normalized
-            self._reward_ring_target_dirty = True
-            self._reward_ring_marker_dirty = True
-
-        if normalized:
-            pending = self._reward_ring_marker_states.get(agent_id)
-            if pending is not None:
-                self._reward_ring_marker_states[normalized] = list(pending)
-                if agent_id != normalized:
-                    self._reward_ring_marker_states.pop(agent_id, None)
-                self._reward_ring_marker_dirty = True
+        self._render_state.update_reward_ring_target(agent_id, target_id)
 
     def update_reward_ring_markers(self, agent_id: str, states: Optional[Sequence[bool]]) -> None:
-        if self._reward_ring_config is None:
-            return
-        focus = self._reward_ring_focus_agent
-        if focus is not None and agent_id != focus:
-            return
-        target_key = self._reward_ring_target or agent_id
-        if states is None:
-            if target_key in self._reward_ring_marker_states:
-                self._reward_ring_marker_states.pop(target_key, None)
-                self._reward_ring_marker_dirty = True
-        else:
-            snapshot = [bool(s) for s in states]
-            if self._reward_ring_marker_states.get(target_key) != snapshot:
-                self._reward_ring_marker_states[target_key] = snapshot
-                self._reward_ring_marker_dirty = True
+        self._render_state.update_reward_ring_markers(agent_id, states)
 
     def configure_agent_targets(self, target_mapping: Dict[str, str]) -> None:
         """Configure which agent is the target of which other agent.
@@ -1007,47 +623,6 @@ class F110ParallelEnv:
             target_idx = self._agent_id_to_index[target_id]
             self._agent_target_index[agent_id] = target_idx
 
-    def _apply_reward_ring_to_renderer(self) -> None:
-        if self.renderer is None:
-            return
-
-        if self._reward_ring_dirty:
-            cfg = self._reward_ring_config
-            if cfg:
-                renderer_payload: Dict[str, Any] = {
-                    "enabled": True,
-                    "preferred_radius": cfg["preferred_radius"],
-                    "inner_tolerance": cfg["inner_tolerance"],
-                    "outer_tolerance": cfg["outer_tolerance"],
-                    "segments": cfg.get("segments", 96),
-                    "marker_radius": cfg.get("marker_radius", 0.0),
-                    "marker_segments": cfg.get("marker_segments", 12),
-                    "offsets_only": cfg.get("offsets_only", False),
-                }
-                for key in ("fill_color", "border_color", "preferred_color", "marker_color"):
-                    if key in cfg:
-                        renderer_payload[key] = cfg[key]
-                if "offsets" in cfg:
-                    renderer_payload["offsets"] = cfg["offsets"]
-                self.renderer.configure_reward_ring(**renderer_payload)
-            else:
-                self.renderer.configure_reward_ring(enabled=False)
-            self._reward_ring_dirty = False
-
-        if self._reward_ring_target_dirty:
-            self.renderer.set_reward_ring_target(self._reward_ring_target)
-            self._reward_ring_target_dirty = False
-
-        if self._reward_ring_marker_dirty:
-            target_id = self._reward_ring_target
-            if target_id:
-                states = self._reward_ring_marker_states.get(target_id)
-                try:
-                    self.renderer.set_reward_ring_marker_state(target_id, states)
-                except Exception:
-                    pass
-            self._reward_ring_marker_dirty = False
-
     def update_reward_overlays(
         self,
         overlays: Optional[Sequence[Mapping[str, Any]]],
@@ -1058,50 +633,13 @@ class F110ParallelEnv:
         segments: Optional[int] = None,
     ) -> None:
         """Update translucent circle overlays used to visualise reward regions."""
-        if enabled is not None:
-            enabled_val = self._coerce_bool_flag(enabled, default=self._reward_overlay_enabled)
-            if enabled_val != self._reward_overlay_enabled:
-                self._reward_overlay_enabled = enabled_val
-                self._reward_overlay_dirty = True
-        if overlays is None:
-            if self._reward_overlays:
-                self._reward_overlays = []
-                self._reward_overlay_dirty = True
-        else:
-            cleaned: List[Dict[str, Any]] = []
-            for entry in overlays:
-                if not isinstance(entry, Mapping):
-                    continue
-                cleaned.append(dict(entry))
-            self._reward_overlays = cleaned
-            self._reward_overlay_dirty = True
-
-        if alpha is not None:
-            try:
-                alpha_val = float(alpha)
-            except (TypeError, ValueError):
-                alpha_val = self._reward_overlay_alpha
-            self._reward_overlay_alpha = float(min(max(alpha_val, 0.0), 1.0))
-            self._reward_overlay_dirty = True
-
-        if value_scale is not None:
-            try:
-                scale_val = float(value_scale)
-            except (TypeError, ValueError):
-                scale_val = self._reward_overlay_value_scale
-            if scale_val > 0.0 and np.isfinite(scale_val):
-                self._reward_overlay_value_scale = float(scale_val)
-                self._reward_overlay_dirty = True
-
-        if segments is not None:
-            try:
-                seg_val = int(segments)
-            except (TypeError, ValueError):
-                seg_val = self._reward_overlay_segments
-            seg_val = max(seg_val, 8)
-            if seg_val != self._reward_overlay_segments:
-                self._reward_overlay_segments = seg_val
-                self._reward_overlay_dirty = True
+        self._render_state.update_reward_overlays(
+            overlays,
+            enabled=enabled,
+            alpha=alpha,
+            value_scale=value_scale,
+            segments=segments,
+        )
 
     def update_reward_heatmap(
         self,
@@ -1114,61 +652,14 @@ class F110ParallelEnv:
         cell_size_m: Optional[float] = None,
     ) -> None:
         """Update the cached potential-field heatmap renderer state."""
-        if enabled is not None:
-            enabled_val = self._coerce_bool_flag(enabled, default=self._reward_heatmap_enabled)
-            if enabled_val != self._reward_heatmap_enabled:
-                self._reward_heatmap_enabled = enabled_val
-                self._reward_heatmap_dirty = True
-
-        if heatmap is None:
-            if self._reward_heatmap_payload is not None:
-                self._reward_heatmap_payload = None
-                self._reward_heatmap_dirty = True
-        elif isinstance(heatmap, Mapping):
-            try:
-                payload = dict(heatmap)
-            except Exception:
-                payload = None
-            if payload is not None and payload != self._reward_heatmap_payload:
-                self._reward_heatmap_payload = payload
-                self._reward_heatmap_dirty = True
-
-        if alpha is not None:
-            try:
-                alpha_val = float(alpha)
-            except (TypeError, ValueError):
-                alpha_val = self._reward_heatmap_alpha
-            alpha_val = float(min(max(alpha_val, 0.0), 1.0))
-            if alpha_val != self._reward_heatmap_alpha:
-                self._reward_heatmap_alpha = alpha_val
-                self._reward_heatmap_dirty = True
-
-        if value_scale is not None:
-            try:
-                scale_val = float(value_scale)
-            except (TypeError, ValueError):
-                scale_val = self._reward_heatmap_value_scale
-            if scale_val > 0.0 and np.isfinite(scale_val) and scale_val != self._reward_heatmap_value_scale:
-                self._reward_heatmap_value_scale = float(scale_val)
-                self._reward_heatmap_dirty = True
-
-        if extent_m is not None:
-            try:
-                extent_val = float(extent_m)
-            except (TypeError, ValueError):
-                extent_val = self._reward_heatmap_extent_m
-            if extent_val > 0.0 and np.isfinite(extent_val) and extent_val != self._reward_heatmap_extent_m:
-                self._reward_heatmap_extent_m = float(extent_val)
-                self._reward_heatmap_dirty = True
-
-        if cell_size_m is not None:
-            try:
-                cell_val = float(cell_size_m)
-            except (TypeError, ValueError):
-                cell_val = self._reward_heatmap_cell_size_m
-            if cell_val > 0.0 and np.isfinite(cell_val) and cell_val != self._reward_heatmap_cell_size_m:
-                self._reward_heatmap_cell_size_m = float(cell_val)
-                self._reward_heatmap_dirty = True
+        self._render_state.update_reward_heatmap(
+            heatmap,
+            enabled=enabled,
+            alpha=alpha,
+            value_scale=value_scale,
+            extent_m=extent_m,
+            cell_size_m=cell_size_m,
+        )
 
     def _update_start_from_poses(self, poses: np.ndarray):
         if poses is None or poses.size == 0:
@@ -1185,6 +676,7 @@ class F110ParallelEnv:
             reseed_sim = getattr(self.sim, "reseed", None)
             if callable(reseed_sim):
                 reseed_sim(seed_value)
+            self._spawn_manager.reseed(seed_value, self.rng)
         self._maybe_cycle_map()
         self.agents = self.possible_agents.copy()
         self._elapsed_steps = 0
@@ -1196,10 +688,10 @@ class F110ParallelEnv:
 
         self.start_state.reset()
         self.state_buffers.reset()
-        self._render_ticker.clear()
-        self._render_ticker_dirty = True
-        self._render_wrapped_obs.clear()
-        self._last_spawn_metadata = {}
+        self._render_state.reset_episode()
+        self._spawn_manager.reset_episode()
+        self._last_centerline_facts = {}
+        self._centerline_progress_tracker.reset()
 
         # Speed locking for curriculum
         self._lock_speed_steps = 0
@@ -1208,40 +700,28 @@ class F110ParallelEnv:
         if self.renderer is not None:
             self.renderer.reset_state()
             self._update_renderer_centerline()
-            self._reward_ring_dirty = True
-            self._reward_ring_target_dirty = True
-            self._reward_overlay_dirty = True
-            self._reward_overlay_applied = False
-            self._reward_heatmap_payload = None
-            self._reward_heatmap_dirty = True
-            self._reward_heatmap_applied = False
+            self._render_state.reset_renderer_payloads()
 
-        spawn_result = resolve_reset_spawn(
-            SpawnRequest(
-                agent_ids=self.possible_agents,
-                n_agents=self.n_agents,
-                agent_index=self._agent_id_to_index,
-                options=options,
-                current_start_poses=getattr(self, "start_poses", None),
-                random_spawn_enabled=self._random_spawn_enabled,
-                random_spawn_allow_reuse=self._random_spawn_allow_reuse,
-                spawn_points=self._spawn_points,
-                spawn_point_names=self._spawn_point_names,
-                rng=self.rng,
-                seed=self.seed,
-            ),
-            centerline_spawn_fn=self._sample_centerline_spawn,
+        # Extract a deterministic SpawnPlan if provided via options (e.g. curriculum).
+        _spawn_plan = None
+        if isinstance(options, dict) and "spawn_plan" in options:
+            _spawn_plan = options["spawn_plan"]
+
+        spawn_result = self._spawn_manager.resolve(
+            options,
+            centerline=self.centerline_points,
+            walls=self.walls,
+            start_poses=getattr(self, "start_poses", None),
+            spawn_plan=_spawn_plan,
         )
         poses = spawn_result.poses
         velocities = spawn_result.velocities
         spawn_mapping = dict(spawn_result.spawn_mapping)
         self._locked_velocities = dict(spawn_result.locked_velocities)
         self._lock_speed_steps = int(spawn_result.lock_speed_steps)
-        self._last_spawn_metadata = dict(spawn_result.metadata)
         if spawn_result.update_start_poses and poses is not None:
             self._update_start_from_poses(poses)
             poses = self.start_poses
-        self._last_spawn_selection = dict(spawn_mapping)
 
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
@@ -1252,18 +732,16 @@ class F110ParallelEnv:
         self._refresh_render_observations(obs)
         self._reset_finish_line_tracking()
 
-        infos = {aid: {} for aid in self.agents}
-        if self._map_bundle_active:
-            for aid in infos:
-                infos[aid]["map_bundle"] = str(self._map_bundle_active)
-        if spawn_mapping:
-            for aid, name in spawn_mapping.items():
-                if aid in infos:
-                    infos[aid]["spawn_point"] = name
-        if self._last_spawn_metadata:
-            for aid in infos:
-                infos[aid].update(self._last_spawn_metadata)
-        self._inject_finish_line_info(infos)
+        infos = build_reset_info_payloads(
+            agent_ids=self.agents,
+            map_bundle=self._map_bundle_active,
+            spawn_mapping=spawn_mapping,
+            spawn_metadata=self._spawn_manager.last_spawn_metadata,
+            finish_line_data=self._finish_line_data,
+            finish_crossed=self._finish_crossed,
+            agent_id_to_index=self._agent_id_to_index,
+            info_level=self.info_level,
+        )
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -1338,16 +816,13 @@ class F110ParallelEnv:
             elapsed_steps=self._elapsed_steps,
         )
         infos = {aid: {} for aid in self.possible_agents}
-        if trunc_flag:
-            for aid in infos:
-                infos[aid]["time_limit"] = True
+        add_time_limit_info(infos, truncated=trunc_flag)
         self._inject_finish_line_info(infos)
-        if self._map_bundle_active:
-            for aid in infos:
-                infos[aid]["map_bundle"] = str(self._map_bundle_active)
-        if self._last_spawn_metadata:
-            for aid in infos:
-                infos[aid].update(self._last_spawn_metadata)
+        add_episode_metadata(
+            infos,
+            map_bundle=self._map_bundle_active,
+            spawn_metadata=self._spawn_manager.last_spawn_metadata,
+        )
 
         add_step_info_fields(
             infos,
@@ -1358,6 +833,38 @@ class F110ParallelEnv:
             locked_velocities=self._locked_velocities,
             lock_speed_steps=self._lock_speed_steps,
             episode_step_count=self._episode_step_count,
+        )
+
+        # Centerline projection facts — injected before filtering so that both
+        # CenterlineRewardComponent and ProgressComponent can read info["centerline"].
+        if self.centerline_features_enabled and self.centerline_points is not None:
+            self._last_centerline_facts = self._centerline_progress_tracker.update(
+                self.centerline_points,
+                self.poses_x,
+                self.poses_y,
+                self.poses_theta,
+                self.linear_vels_x_curr,
+                self.linear_vels_y_curr,
+                self._agent_id_to_index,
+            )
+            for agent_id, facts in self._last_centerline_facts.items():
+                if agent_id in infos:
+                    infos[agent_id]["centerline"] = facts
+        else:
+            self._last_centerline_facts = {}
+
+        infos = filter_info_payloads(infos, info_level=self.info_level)
+        self.last_step_facts = build_step_facts(
+            agent_ids=self.possible_agents,
+            agent_states={
+                agent_id: self.get_agent_state(agent_id)
+                for agent_id in self.possible_agents
+            },
+            global_state=self.get_global_state(),
+            collision_flags=self._collision_flags,
+            terminations=terminations,
+            truncations=truncations,
+            infos=infos,
         )
 
         # advance and cull finished agents
@@ -1405,37 +912,14 @@ class F110ParallelEnv:
             infos,
         )
 
-    def update_map(self, map_path, map_ext):
-        path = Path(map_path).resolve()
+    def update_map(self, map_path: str, map_ext: str) -> None:
+        """Hot-swap the map at runtime (public API, legacy compatible).
 
-        self.map_dir = path.parent
-        self.map_ext = map_ext
-        self.map_name = path.name
-        self.map_yaml = path.name
-        self.map_path = path
-        self.yaml_path = path
-
-        with open(path, "r") as f:
-            meta = yaml.safe_load(f)
-
-        image_rel = meta.get("image")
-        if image_rel:
-            img_path = (path.parent / image_rel).resolve()
-        else:
-            img_path = path.with_suffix(map_ext)
-        self.map_meta = meta
-        self.map_image_path = img_path
-
-        self.sim.set_map(str(path), map_ext)
-
-        if self.renderer is not None:
-            self.renderer.update_map(
-                str(path.with_suffix("")),
-                map_ext,
-                map_meta=self.map_meta,
-                map_image_path=self.map_image_path,
-            )
-            self._update_renderer_centerline()
+        Preserves the in-memory centerline — the map surface (image, YAML)
+        and simulator state are updated but the loaded centerline is kept.
+        """
+        map_data = self._map_scheduler.load_from_path(map_path, map_ext)
+        self._apply_map_data(map_data, keep_centerline=True)
 
     def update_params(self, params, index=-1):
 
@@ -1463,94 +947,26 @@ class F110ParallelEnv:
                                         lidar_fov=4.7,
                                         max_range=30.0,
                                         lidar_offset=self.lidar_dist)
+            # Apply scenario-configurable vehicle color overrides
+            if self._vehicle_colors:
+                self.renderer.set_agent_colors(self._vehicle_colors)
             # use self.map_path (without extension) and self.map_ext
             self.renderer.update_map(
                 str(self.map_path.with_suffix("")),
                 self.map_ext,
                 map_meta=self.map_meta,
                 map_image_path=self.map_image_path,
-                centerline_points=self._render_centerline_points if self.centerline_render_enabled else None,
+                centerline_points=(
+                    self._centerline_state.render_points
+                    if self._centerline_state.render_enabled
+                    else None
+                ),
                 centerline_connect=self.centerline_render_connect,
             )
-            self._reward_ring_dirty = True
-            self._reward_ring_target_dirty = True
+            self._render_state.reward_ring_dirty = True
+            self._render_state.reward_ring_target_dirty = True
 
-        self._apply_reward_ring_to_renderer()
-
-        if self.renderer is not None and self._render_metrics_payload is not None and self._render_metrics_dirty:
-            payload = self._render_metrics_payload
-            self.renderer.update_metrics(
-                phase=payload.get("phase", ""),
-                metrics=payload.get("metrics", {}),
-                step=payload.get("step"),
-                timestamp=payload.get("timestamp"),
-            )
-            self._render_metrics_dirty = False
-
-        if self.renderer is not None and self._render_ticker_dirty:
-            lines = list(self._render_ticker)
-            self.renderer.update_ticker(lines[:16])
-            self._render_ticker_dirty = False
-
-        if self.render_obs:
-            self.renderer.update_obs(self.render_obs)
-        if self.renderer is not None:
-            if self._reward_heatmap_enabled:
-                if self._reward_heatmap_dirty or (not self._reward_heatmap_applied and self._reward_heatmap_payload is not None):
-                    try:
-                        self.renderer.update_reward_heatmap(
-                            self._reward_heatmap_payload,
-                            alpha=self._reward_heatmap_alpha,
-                            value_scale=self._reward_heatmap_value_scale,
-                            extent_m=self._reward_heatmap_extent_m,
-                            cell_size_m=self._reward_heatmap_cell_size_m,
-                        )
-                        self._reward_heatmap_applied = self._reward_heatmap_payload is not None
-                    except Exception:
-                        pass
-                    self._reward_heatmap_dirty = False
-            elif self._reward_heatmap_applied:
-                try:
-                    self.renderer.update_reward_heatmap(
-                        None,
-                        alpha=self._reward_heatmap_alpha,
-                        value_scale=self._reward_heatmap_value_scale,
-                        extent_m=self._reward_heatmap_extent_m,
-                        cell_size_m=self._reward_heatmap_cell_size_m,
-                    )
-                except Exception:
-                    pass
-                self._reward_heatmap_applied = False
-            if self._reward_overlay_enabled:
-                if self._reward_overlay_dirty or self._reward_overlays:
-                    try:
-                        self.renderer.update_reward_overlays(
-                            self._reward_overlays,
-                            alpha=self._reward_overlay_alpha,
-                            value_scale=self._reward_overlay_value_scale,
-                            segments=self._reward_overlay_segments,
-                        )
-                        self._reward_overlay_applied = bool(self._reward_overlays)
-                    except Exception:
-                        pass
-                    self._reward_overlay_dirty = False
-            elif self._reward_overlay_applied:
-                try:
-                    self.renderer.update_reward_overlays(
-                        [],
-                        alpha=self._reward_overlay_alpha,
-                        value_scale=self._reward_overlay_value_scale,
-                        segments=self._reward_overlay_segments,
-                    )
-                except Exception:
-                    pass
-                self._reward_overlay_applied = False
-        if self.renderer is not None and self._render_callbacks:
-            for callback in list(self._render_callbacks):
-                try:
-                    callback(self.renderer)
-                except Exception:
-                    logger.exception("Render callback failed")
+        flush_render_state(self.renderer, self._render_state, _logger=logger)
 
         self.renderer.dispatch_events()
         self.renderer.on_draw()
@@ -1569,71 +985,47 @@ class F110ParallelEnv:
     def add_render_callback(self, callback: Callable[["EnvRenderer"], None]) -> None:
         if not callable(callback):
             raise TypeError("Render callback must be callable")
-        if callback not in self._render_callbacks:
-            self._render_callbacks.append(callback)
+        self._render_state.add_callback(callback)
 
     def clear_render_callbacks(self) -> None:
-        self._render_callbacks.clear()
-
-    @staticmethod
-    def _coerce_bool_flag(value: Any, *, default: bool = False) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"true", "yes", "y", "1", "on"}:
-                return True
-            if lowered in {"false", "no", "n", "0", "off"}:
-                return False
-            return default
-        return bool(value)
+        self._render_state.callbacks.clear()
 
     def _build_render_centerline_points(self) -> Optional[np.ndarray]:
-        return build_render_centerline_points(
-            self.centerline_points,
-            self.centerline_render_progress,
-            self.centerline_render_spacing,
-        )
+        return self._centerline_state.build_render_points()
 
     def _update_renderer_centerline(self) -> None:
-        if self.renderer is None:
-            return
-        if self.centerline_render_enabled:
-            self.renderer.update_centerline(
-                self._render_centerline_points,
-                connect=self.centerline_render_connect,
-            )
-        else:
-            self.renderer.update_centerline(None)
+        apply_centerline_to_renderer(self.renderer, self._centerline_state)
 
     def register_centerline_usage(self, *, require_render: bool = False, require_features: bool = False) -> None:
-        changed = False
-        if require_features and self._centerline_feature_auto and not self.centerline_features_enabled:
-            self.centerline_features_enabled = True
-            self._centerline_feature_requested = True
-            changed = True
-        if require_render and self._centerline_render_auto and not self.centerline_render_enabled:
-            self.centerline_render_enabled = True
-            changed = True
-        if changed:
-            self._render_centerline_points = self._build_render_centerline_points()
+        if self._centerline_state.register_usage(
+            require_render=require_render,
+            require_features=require_features,
+        ):
             self._update_renderer_centerline()
 
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
-        if centerline is not None:
-            array = np.asarray(centerline, dtype=np.float32)
-            array.setflags(write=False)
-        else:
-            array = None
-        self.centerline_points = array
-        self.centerline_path = path.resolve() if path is not None else None
-        self.centerline_features_enabled = self._centerline_feature_requested and array is not None
-        self._render_centerline_points = self._build_render_centerline_points()
+        self._centerline_state.set_centerline(centerline, path=path)
         self._update_renderer_centerline()
+
+    @property
+    def centerline_points(self) -> Optional[np.ndarray]:
+        return self._centerline_state.points
+
+    @property
+    def centerline_path(self) -> Optional[Path]:
+        return self._centerline_state.path
+
+    @property
+    def centerline_render_enabled(self) -> bool:
+        return self._centerline_state.render_enabled
+
+    @property
+    def centerline_features_enabled(self) -> bool:
+        return self._centerline_state.features_enabled
+
+    @property
+    def centerline_render_connect(self) -> bool:
+        return self._centerline_state.render_connect
     
     def close(self):
         if self.renderer is not None:
@@ -1671,31 +1063,55 @@ class F110ParallelEnv:
         self.angular_vels_curr = buffers.angular_vels_curr
 
     def _central_state_tensor(self, joint: Dict[str, np.ndarray]) -> np.ndarray:
-        n = self.n_agents
-        central = np.zeros((self._central_state_dim,), dtype=np.float32)
-        if n == 0:
-            return central
-
-        span = n
-        offset = 0
-        for key in self._central_state_keys:
-            arr = joint.get(key)
-            if arr is None:
-                offset += span
-                continue
-            view = np.asarray(arr, dtype=np.float32).reshape(-1)
-            if view.size >= span:
-                central[offset:offset + span] = view[:span]
-            else:
-                central[offset:offset + view.size] = view
-            offset += span
-        return central
+        return central_state_tensor(
+            joint,
+            n_agents=self.n_agents,
+            central_state_keys=self._central_state_keys,
+        )
 
     def _attach_central_state(self, obs: Dict[str, Dict[str, np.ndarray]], joint: Dict[str, np.ndarray]) -> None:
         central_state = self._central_state_tensor(joint)
         for aid in self.possible_agents:
             if aid in obs:
                 obs[aid]["state"] = central_state
+
+    def get_agent_state(self, agent_id: str) -> AgentState:
+        if agent_id not in self._agent_id_to_index:
+            raise KeyError(f"unknown agent_id: {agent_id}")
+        return build_agent_state(
+            agent_id,
+            agent_index=self._agent_id_to_index,
+            poses_x=self.poses_x,
+            poses_y=self.poses_y,
+            poses_theta=self.poses_theta,
+            linear_vels_x=self.linear_vels_x_curr,
+            linear_vels_y=self.linear_vels_y_curr,
+            angular_vels=self.angular_vels_curr,
+            collision_flags=self._collision_flags,
+            lap_counts=self.lap_counts,
+            lap_times=self.lap_times,
+            finish_crossed=self._finish_crossed,
+            centerline_facts=self._last_centerline_facts.get(agent_id),
+            metadata={
+                "map_bundle": self._map_bundle_active,
+                **self._spawn_manager.last_spawn_metadata,
+            },
+        )
+
+    def get_global_state(self) -> GlobalState:
+        joint = self.sim.current_observation()
+        central = self._central_state_tensor(joint)
+        return build_global_state(
+            possible_agents=self.possible_agents,
+            active_agents=self.agents,
+            central_vector=central,
+            controlled_agents=self.controlled_agents,
+            trainable_agents=self.trainable_agents,
+            metadata={
+                "map_bundle": self._map_bundle_active,
+                **self._spawn_manager.last_spawn_metadata,
+            },
+        )
 
     def apply_initial_speeds(self, speed_map: Mapping[str, float]) -> Optional[Dict[str, Dict[str, np.ndarray]]]:
         """Adjust simulator state to honour per-agent initial speed requests."""
@@ -1724,100 +1140,19 @@ class F110ParallelEnv:
 
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
-        out: Dict[str, Dict[str, np.ndarray]] = {}
+        return split_joint_obs(
+            joint,
+            possible_agents=self.possible_agents,
+            agent_sensor_spec=self._agent_sensor_spec,
+            agent_target_index=self._agent_target_index,
+            default_sensors=DEFAULT_AGENT_SENSORS,
+            lidar_beam_count=self._lidar_beam_count,
+            timestep=self.timestep,
+            lap_counts=self.lap_counts,
+            lap_times=self.lap_times,
+            prev_vels_x=self.linear_vels_x_curr,
+            prev_vels_y=self.linear_vels_y_curr,
+            velocity_initialized=self.state_buffers.velocity_initialized,
+            fallback_collisions=self.collisions,
+        )
 
-        scans = joint.get("scans")
-        poses_x = joint.get("poses_x")
-        poses_y = joint.get("poses_y")
-        poses_theta = joint.get("poses_theta")
-        linear_vels_x = joint.get("linear_vels_x")
-        linear_vels_y = joint.get("linear_vels_y")
-        ang_vels_z = joint.get("ang_vels_z")
-        collisions = joint.get("collisions")
-
-        lap_counts = getattr(self, "lap_counts", np.zeros((self.n_agents,), dtype=np.float32))
-        lap_times = getattr(self, "lap_times", np.zeros((self.n_agents,), dtype=np.float32))
-
-        timestep = max(self.timestep, 1e-6)
-
-        for i, aid in enumerate(self.possible_agents):
-            sensors = self._agent_sensor_spec.get(aid, DEFAULT_AGENT_SENSORS)
-            agent_obs: Dict[str, np.ndarray] = {}
-            target_idx = self._agent_target_index.get(aid)
-
-            has_entry = isinstance(scans, np.ndarray) and i < scans.shape[0]
-
-            if "lidar" in sensors:
-                if has_entry:
-                    lidar_reading = np.asarray(scans[i], dtype=np.float32)
-                else:
-                    lidar_reading = np.zeros((scans.shape[1] if isinstance(scans, np.ndarray) and scans.ndim == 2 else self._lidar_beam_count,), dtype=np.float32)
-                agent_obs["lidar"] = lidar_reading
-                agent_obs["scans"] = lidar_reading
-
-            if "pose" in sensors:
-                if isinstance(poses_x, np.ndarray) and i < poses_x.shape[0]:
-                    agent_obs["pose"] = np.array([
-                        np.float32(poses_x[i]),
-                        np.float32(poses_y[i]),
-                        np.float32(poses_theta[i]),
-                    ], dtype=np.float32)
-                else:
-                    agent_obs["pose"] = np.zeros(3, dtype=np.float32)
-
-            curr_vx = float(linear_vels_x[i]) if isinstance(linear_vels_x, np.ndarray) and i < linear_vels_x.shape[0] else 0.0
-            curr_vy = float(linear_vels_y[i]) if isinstance(linear_vels_y, np.ndarray) and i < linear_vels_y.shape[0] else 0.0
-
-            if "velocity" in sensors:
-                agent_obs["velocity"] = np.array([curr_vx, curr_vy], dtype=np.float32)
-
-            if "acceleration" in sensors:
-                if self.state_buffers.velocity_initialized and i < self.linear_vels_x_curr.shape[0]:
-                    prev_vx = float(self.linear_vels_x_curr[i])
-                    prev_vy = float(self.linear_vels_y_curr[i])
-                    ax = (curr_vx - prev_vx) / timestep
-                    ay = (curr_vy - prev_vy) / timestep
-                else:
-                    ax = 0.0
-                    ay = 0.0
-                agent_obs["acceleration"] = np.array([ax, ay], dtype=np.float32)
-
-            if "angular_velocity" in sensors:
-                if isinstance(ang_vels_z, np.ndarray) and i < ang_vels_z.shape[0]:
-                    agent_obs["angular_velocity"] = np.float32(ang_vels_z[i])
-                else:
-                    agent_obs["angular_velocity"] = np.float32(0.0)
-
-            if "target_pose" in sensors:
-                if target_idx is not None and isinstance(poses_x, np.ndarray) and target_idx < poses_x.shape[0]:
-                    agent_obs["target_pose"] = np.array([
-                        np.float32(poses_x[target_idx]),
-                        np.float32(poses_y[target_idx]),
-                        np.float32(poses_theta[target_idx]),
-                    ], dtype=np.float32)
-                else:
-                    agent_obs["target_pose"] = np.zeros(3, dtype=np.float32)
-
-            if "target_collision" in sensors:
-                if target_idx is not None and isinstance(collisions, np.ndarray) and target_idx < collisions.shape[0]:
-                    target_col_val = float(collisions[target_idx])
-                else:
-                    target_col_val = 0.0
-                agent_obs["target_collision"] = np.float32(target_col_val)
-
-            if "lap" in sensors:
-                lap_count_val = float(lap_counts[i]) if i < len(lap_counts) else 0.0
-                lap_time_val = float(lap_times[i]) if i < len(lap_times) else 0.0
-                agent_obs["lap"] = np.array([lap_count_val, lap_time_val], dtype=np.float32)
-
-            if "collision" in sensors:
-                if isinstance(collisions, np.ndarray) and i < collisions.shape[0]:
-                    col_val = float(collisions[i])
-                else:
-                    col_val = float(self.collisions[i]) if i < self.collisions.shape[0] else 0.0
-                agent_obs["collision"] = np.float32(col_val)
-
-            out[aid] = agent_obs
-
-        return out
-    

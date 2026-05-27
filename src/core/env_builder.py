@@ -8,6 +8,7 @@ import re
 import numpy as np
 
 from src.core.map_selection import relative_yaml_name
+from src.core.spawn_config import normalize_spawn_config
 from src.env import F110ParallelEnv
 from src.env.spawn import load_spawn_points_from_map
 from src.utils.map_loader import MapLoader
@@ -34,9 +35,20 @@ def build_env_kwargs(
     agent_configs: Mapping[str, Any],
     seed: Any = None,
 ) -> Dict[str, Any]:
-    """Translate scenario env config into F110ParallelEnv constructor kwargs."""
+    """Translate scenario env config into F110ParallelEnv constructor kwargs.
 
-    num_agents = derive_num_agents(env_config, agent_configs)
+    Handles both the new nested ``environment.spawn:`` block and legacy flat
+    spawn keys via :func:`normalize_spawn_config`.  All other env config keys
+    are read directly from *env_config*.
+    """
+    # Merge normalized spawn keys over the raw env config so passthrough logic
+    # below picks up canonical flat keys regardless of which YAML form was used.
+    spawn_norm = normalize_spawn_config(env_config)
+    # Build a shallow merged view: spawn_norm overrides env_config for spawn keys.
+    effective_config: Dict[str, Any] = dict(env_config)
+    effective_config.update(spawn_norm)
+
+    num_agents = derive_num_agents(effective_config, agent_configs)
     env_seed = env_config.get("seed", seed)
     env_kwargs: Dict[str, Any] = {
         "map": env_config["map"],
@@ -88,10 +100,15 @@ def build_env_kwargs(
         "spawn_ego",
         "random_spawn",
         "random_spawn_allow_reuse",
+        "controlled_agents",
+        "trainable_agents",
+        "fixed_policy_agents",
+        "info_level",
+        "rendering",        # nested render config: vehicle_colors, hud, etc.
     ]
     for key in passthrough_keys:
-        if key in env_config and key not in env_kwargs:
-            env_kwargs[key] = env_config[key]
+        if key in effective_config and key not in env_kwargs:
+            env_kwargs[key] = effective_config[key]
 
     return env_kwargs
 
@@ -126,7 +143,8 @@ def maybe_load_map_data(env_config: Mapping[str, Any]) -> Any:
         map_loader = MapLoader(base_dir=Path.cwd())
         return map_loader.load(map_loader_cfg)
     except Exception as exc:
-        print(f"Warning: failed to load centerline data: {exc}")
+        import logging
+        logging.getLogger(__name__).warning("Failed to load centerline data: %s", exc)
         return None
 
 
@@ -147,12 +165,15 @@ def create_environment(
         else:
             env_kwargs["map"] = str(map_data.yaml_path)
 
-    if "spawn_points" in env_config:
-        spawn_names = env_config["spawn_points"]
+    # Resolve spawn_points / start_poses using the normalized config so that
+    # the nested spawn.points form is also handled.
+    spawn_norm = normalize_spawn_config(env_config)
+    if "spawn_points" in spawn_norm:
+        spawn_names = spawn_norm["spawn_points"]
         map_path = env_config["map"]
         env_kwargs["start_poses"] = load_spawn_points_from_map(map_path, spawn_names)
-    elif "start_poses" in env_config and "start_poses" not in env_kwargs:
-        env_kwargs["start_poses"] = np.array(env_config["start_poses"], dtype=np.float64)
+    elif "start_poses" in spawn_norm and "start_poses" not in env_kwargs:
+        env_kwargs["start_poses"] = np.array(spawn_norm["start_poses"], dtype=np.float64)
 
     env = F110ParallelEnv(**env_kwargs)
     if map_data is not None and map_data.centerline is not None:
