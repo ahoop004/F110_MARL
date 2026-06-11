@@ -1,0 +1,133 @@
+# MAPPO 2v2 baseline: 2 trained attackers (shared actor + centralized critic),
+# each gaplocking its own fixed-policy target/defender.
+#
+# car_0 (attacker) -> targets car_2 (defender)
+# car_1 (attacker) -> targets car_3 (defender)
+#
+# Maps cycle per-episode across all tracks except line2 (line2 is the 1v1
+# mappo_gaplock scenario's track). Hockenheim_map has no spawn_point
+# annotations and is also excluded to avoid degenerate random-spawn overlap.
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/mappo.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: mappo_2v2
+  episodes: 5000
+  seed: 42
+
+environment:
+  maps:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  max_steps: 1500
+  action_repeat: 2
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 1.0
+
+agents:
+  # --- Attackers (MAPPO-trainable, shared actor + centralized critic) ---
+  car_0:
+    algorithm: mappo
+    role: attacker
+    target_id: car_2
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: mappo
+    role: attacker
+    target_id: car_3
+    observation: ../configs/observations/rl_attacker.yaml
+    reward: ../configs/reward/gaplock_attack.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  # --- Targets (fixed hybrid pure-pursuit + follow-the-gap defenders) ---
+  car_2:
+    role: defender
+    algorithm: hybrid_pp_ftg
+    params:
+      lookahead: 1.5
+      min_speed: 0.5
+      max_speed: 3.0
+      max_steer: 0.42
+      blend_distance: 3.0
+      full_ftg_distance: 1.5
+      ftg:
+        max_distance: 10.0
+        window_size: 4
+        bubble_radius: 2.5
+        max_steer: 0.42
+        min_speed: 0.5
+        max_speed: 3.0
+        steering_gain: 0.30
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.5
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.02
+        use_disparity_extender: true
+        disparity_threshold: 0.40
+        vehicle_width: 0.225
+        safety_margin: 0.10
+
+  car_3:
+    role: defender
+    algorithm: hybrid_pp_ftg
+    params:
+      lookahead: 1.5
+      min_speed: 0.5
+      max_speed: 3.0
+      max_steer: 0.42
+      blend_distance: 3.0
+      full_ftg_distance: 1.5
+      ftg:
+        max_distance: 10.0
+        window_size: 4
+        bubble_radius: 2.5
+        max_steer: 0.42
+        min_speed: 0.5
+        max_speed: 3.0
+        steering_gain: 0.30
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.5
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.02
+        use_disparity_extender: true
+        disparity_threshold: 0.40
+        vehicle_width: 0.225
+        safety_margin: 0.10

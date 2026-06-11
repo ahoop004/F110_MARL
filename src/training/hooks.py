@@ -58,22 +58,42 @@ class ConsoleHook(TrainingHook):
         self._summary_every = max(1, summary_every)
         self._rewards: Deque[float] = deque(maxlen=summary_every)
         self._outcomes: List[str] = []
+        self._agent_outcomes: Dict[str, Deque[str]] = {}
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         self._rewards.append(reward)
         outcome = info.get("outcome", "?") if isinstance(info, dict) else "?"
         self._outcomes.append(str(outcome))
 
+        agent_outcomes = metrics.get("agent_outcomes") if isinstance(metrics, dict) else None
+        if isinstance(agent_outcomes, dict):
+            for aid, agent_outcome in agent_outcomes.items():
+                self._agent_outcomes.setdefault(aid, deque(maxlen=self._summary_every)).append(
+                    str(agent_outcome)
+                )
+
         if episode % self._log_every == 0:
             mean_r = np.mean(self._rewards) if self._rewards else 0.0
-            self._log.print_info(
-                f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  outcome={outcome}"
-            )
+            agent_rewards = metrics.get("agent_rewards") if isinstance(metrics, dict) else None
+            if isinstance(agent_rewards, dict) and len(agent_rewards) > 1:
+                rewards_str = "  ".join(
+                    f"{aid}={r:+.2f}" for aid, r in agent_rewards.items()
+                )
+                self._log.print_info(
+                    f"ep {episode:>6}  mean={mean_r:+.2f}  outcome={outcome}  | {rewards_str}"
+                )
+            else:
+                self._log.print_info(
+                    f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  outcome={outcome}"
+                )
 
         if episode % self._summary_every == 0 and self._outcomes:
             from collections import Counter
             counts = Counter(self._outcomes[-self._summary_every:])
             self._log.print_info(f"  outcomes (last {self._summary_every}): {dict(counts)}")
+            for aid, outcomes in self._agent_outcomes.items():
+                agent_counts = Counter(outcomes)
+                self._log.print_info(f"    {aid} outcomes: {dict(agent_counts)}")
 
 
 class WandbHook(TrainingHook):
@@ -89,7 +109,23 @@ class WandbHook(TrainingHook):
             outcome = info.get("outcome")
             if outcome:
                 log["episode/outcome"] = str(outcome)
-        log.update({f"episode/{k}": v for k, v in metrics.items()})
+
+        # Per-agent breakdown (MAPPO with >1 trainable agent) — flatten into
+        # individual scalar/string keys rather than nested dicts.
+        agent_rewards = metrics.get("agent_rewards")
+        if isinstance(agent_rewards, dict):
+            for aid, r in agent_rewards.items():
+                log[f"episode/reward/{aid}"] = r
+        agent_outcomes = metrics.get("agent_outcomes")
+        if isinstance(agent_outcomes, dict):
+            for aid, o in agent_outcomes.items():
+                log[f"episode/outcome/{aid}"] = str(o)
+
+        log.update({
+            f"episode/{k}": v
+            for k, v in metrics.items()
+            if k not in ("agent_rewards", "agent_outcomes")
+        })
         if hasattr(self._wandb, "log"):
             self._wandb.log(log, step=episode)
 

@@ -137,6 +137,13 @@ class MARLTrainer:
             update_metrics: Dict = {}
             last_info: Dict = {}
 
+            # Per-agent tracking — every trainable agent gets its own episode
+            # reward total, last info payload, and truncation flag so each
+            # agent's outcome can be reported independently of focal_id.
+            agent_episode_rewards: Dict[str, float] = {aid: 0.0 for aid in self.trainable_ids}
+            agent_last_info: Dict[str, Dict] = {aid: {} for aid in self.trainable_ids}
+            agent_truncated: Dict[str, bool] = {aid: False for aid in self.trainable_ids}
+
             while not done:
                 # --- Act: all trainable agents via shared actor ---
                 actions_norm: Dict[str, np.ndarray] = {}
@@ -221,6 +228,10 @@ class MARLTrainer:
                         done=done,
                     )
 
+                    agent_episode_rewards[aid] += reward
+                    agent_last_info[aid] = info_dict.get(aid, {})
+                    agent_truncated[aid] = bool(trunc_dict.get(aid, False))
+
                 episode_reward += step_reward
 
                 # --- Update observation wrappers ---
@@ -252,8 +263,21 @@ class MARLTrainer:
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
 
+            # Per-agent outcome/reward breakdown — every trainable agent's
+            # info carries its own target_id-relative collision/finish flags,
+            # so each agent's outcome is determined independently.
+            agent_outcomes = {
+                aid: determine_outcome(
+                    agent_last_info.get(aid, {}), truncated=agent_truncated.get(aid, False)
+                ).value
+                for aid in self.trainable_ids
+            }
+            episode_metrics = dict(update_metrics)
+            episode_metrics["agent_rewards"] = dict(agent_episode_rewards)
+            episode_metrics["agent_outcomes"] = agent_outcomes
+
             for hook in self.hooks:
-                hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
+                hook.on_episode_end(episode, episode_reward, last_info, episode_metrics)
 
         for hook in self.hooks:
             hook.on_training_end()

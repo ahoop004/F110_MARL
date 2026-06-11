@@ -55,6 +55,17 @@ def create_training_setup(
 
     env = create_environment(env_config, agent_configs, seed)
 
+    # Wire per-agent target_id (set explicitly or via resolve_target_ids) into
+    # the env's agent_target_index, which feeds target_pose/target_state/
+    # relative_pose observations and target_collision/target_finished info.
+    target_mapping = {
+        aid: cfg["target_id"]
+        for aid, cfg in agent_configs.items()
+        if cfg.get("target_id")
+    }
+    if target_mapping:
+        env.configure_agent_targets(target_mapping)
+
     agents = build_fixed_policy_agents(agent_configs)
     return env, agents, {}
 
