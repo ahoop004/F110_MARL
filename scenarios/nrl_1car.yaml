@@ -11,7 +11,7 @@ environment:
   maps: auto           # auto-discovers all maps with centerline + walls CSVs
   map_cycle: per_episode
   map_pick: round_robin
-  max_steps: 3000
+  max_steps: 30000
   action_repeat: 2
   centerline_autoload: true
   walls_autoload: true
@@ -21,17 +21,17 @@ environment:
 
 agents:
   car_0:
-    algorithm: hybrid_pp_ftg
+    algorithm: pure_pursuit
     params:
-      lookahead: 1.5
+      lookahead: 2.0
       min_speed: 0.5
-      max_speed: 3.0
+      max_speed: 1.5
       max_steer: 0.42
       wheelbase: 0.33020
-      curvature_slowdown_threshold: 0.3
-      speed_horizon: 3.0
-      blend_distance: 3.0
-      full_ftg_distance: 1.5
+      curvature_slowdown_threshold: 0.15
+      speed_horizon: 5.0
+      blend_distance: 1.5
+      full_ftg_distance: 0.8
       ftg:
         max_distance: 10.0
         bubble_radius: 2.5
