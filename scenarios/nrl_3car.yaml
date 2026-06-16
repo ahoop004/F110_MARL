@@ -1,0 +1,68 @@
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+
+experiment:
+  name: nrl_3car
+  episodes: 45   # probe.py distributes across maps (5 per map × 9 maps)
+  seed: 42
+
+environment:
+  maps: auto
+  map_cycle: per_episode
+  map_pick: round_robin
+  max_steps: 3000
+  action_repeat: 2
+  centerline_autoload: true
+  walls_autoload: true
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+
+agents:
+  car_0:
+    algorithm: ftg
+    params:
+      max_distance: 10.0
+      window_size: 4
+      bubble_radius: 2.5
+      max_steer: 0.42
+      min_speed: 0.5
+      max_speed: 3.0
+      steering_gain: 0.30
+      fov: 4.71238898
+      normalized: false
+      steer_smooth: 0.5
+      mode: lidar
+      gap_min_range: 0.5
+      target_mode: center
+      wall_avoid_kick: 0.02
+      use_disparity_extender: true
+      disparity_threshold: 0.35
+      vehicle_width: 0.225
+      safety_margin: 0.10
+
+  car_1:
+    algorithm: pure_pursuit
+    params:
+      lookahead: 1.5
+      min_speed: 0.5
+      max_speed: 3.0
+      max_steer: 0.42
+      wheelbase: 0.33020
+      curvature_slowdown_threshold: 0.3
+      speed_horizon: 3.0
+
+  car_2:
+    algorithm: stanley
+    params:
+      k: 1.0
+      k_s: 0.5
+      min_speed: 0.5
+      max_speed: 3.0
+      max_steer: 0.42
+      curvature_slowdown_threshold: 0.3
+      speed_horizon: 3.0
+
+wandb:
+  enabled: false
