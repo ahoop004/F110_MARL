@@ -91,7 +91,7 @@ agents:
     role: attacker
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/attacker_racing.yaml
+    reward: ../configs/reward/tasks/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -112,7 +112,7 @@ agents:
     role: attacker
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/attacker_racing.yaml
+    reward: ../configs/reward/tasks/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -133,7 +133,7 @@ agents:
     role: attacker
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/attacker_racing.yaml
+    reward: ../configs/reward/tasks/attacker_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998

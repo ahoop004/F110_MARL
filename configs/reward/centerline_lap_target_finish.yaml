@@ -1,0 +1,11 @@
+includes:
+  - components/centerline_standard.yaml
+  - components/progress_safety_standard.yaml
+  - components/lap_completion_clean_150.yaml
+  - components/target_finish_penalty_100.yaml
+  - components/collision_penalty_200.yaml
+  - components/timeout_penalty_50.yaml
+  - components/self_crash_penalty_100.yaml
+
+# Do not use target_crash_bonus here: it rewards target crashes, not clean
+# racing finishes.

@@ -623,6 +623,16 @@ class F110ParallelEnv:
             target_idx = self._agent_id_to_index[target_id]
             self._agent_target_index[agent_id] = target_idx
 
+    def get_target_id(self, agent_id: str) -> Optional[str]:
+        """Return the configured target agent ID for *agent_id*, if any."""
+
+        target_idx = self._agent_target_index.get(agent_id)
+        if target_idx is None:
+            return None
+        if target_idx < 0 or target_idx >= len(self.possible_agents):
+            return None
+        return self.possible_agents[target_idx]
+
     def update_reward_overlays(
         self,
         overlays: Optional[Sequence[Mapping[str, Any]]],
@@ -1155,4 +1165,3 @@ class F110ParallelEnv:
             velocity_initialized=self.state_buffers.velocity_initialized,
             fallback_collisions=self.collisions,
         )
-

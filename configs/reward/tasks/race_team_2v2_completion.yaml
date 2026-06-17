@@ -1,0 +1,18 @@
+task:
+  name: race_team_2v2_completion
+  description: Conservative 2v2 racing with local completion pressure until team facts are available.
+
+includes:
+  - ../components/centerline_standard.yaml
+  - ../components/progress_delta_bonus_standard.yaml
+  - ../components/relative_progress_bonus_standard.yaml
+  - ../components/team_progress_bonus_standard.yaml
+  - ../components/team_relative_progress_bonus_standard.yaml
+  - ../components/progress_safety_standard.yaml
+  - ../components/lap_completion_clean_150.yaml
+  - ../components/finish_ahead_bonus_100.yaml
+  - ../components/target_finish_penalty_100.yaml
+  - ../components/collision_penalty_250.yaml
+  - ../components/timeout_penalty_50.yaml
+  - ../components/self_crash_penalty_125.yaml
+  - ../components/step_time_penalty_light.yaml

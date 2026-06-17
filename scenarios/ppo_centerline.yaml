@@ -23,7 +23,7 @@ agents:
     algorithm: ppo
     role: racer
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/centerline_racing.yaml
+    reward: ../configs/reward/tasks/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       hidden_dims: [64, 64]

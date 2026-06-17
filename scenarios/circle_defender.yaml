@@ -19,7 +19,7 @@ agents:
     role: defender
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/centerline_racing.yaml
+    reward: ../configs/reward/tasks/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -40,7 +40,7 @@ agents:
     role: defender
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/centerline_racing.yaml
+    reward: ../configs/reward/tasks/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998
@@ -61,7 +61,7 @@ agents:
     role: defender
     algorithm: ppo
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/centerline_racing.yaml
+    reward: ../configs/reward/tasks/centerline_racing.yaml
     params:
       learning_rate: 0.0001
       gamma: 0.998

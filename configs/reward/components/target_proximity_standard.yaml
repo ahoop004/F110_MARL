@@ -1,0 +1,6 @@
+reward:
+  target_proximity:
+    enabled: true
+    weight: 1.0
+    preferred_distance: 1.5
+    distance_tolerance: 0.5

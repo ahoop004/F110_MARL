@@ -1,0 +1,5 @@
+reward:
+  relative_progress_bonus:
+    enabled: true
+    weight: 100.0
+    positive_only: false

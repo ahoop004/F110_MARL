@@ -19,7 +19,7 @@ agents:
   car_0:
     role: defender
     algorithm: ppo
-    reward: ../configs/reward/centerline_racing.yaml
+    reward: ../configs/reward/tasks/centerline_racing.yaml
     observation: ../configs/observations/rl_racer.yaml
     params:
       learning_rate: 0.0001

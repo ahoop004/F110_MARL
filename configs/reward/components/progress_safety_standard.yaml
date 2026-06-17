@@ -1,0 +1,13 @@
+reward:
+  wrong_way_penalty:
+    enabled: true
+    penalty: -2.0
+
+  reverse_progress_penalty:
+    enabled: true
+    weight: 5.0
+
+  offtrack_penalty:
+    enabled: true
+    max_abs_d: 1.5
+    penalty: -1.0

@@ -1,0 +1,5 @@
+reward:
+  finish_ahead_bonus:
+    enabled: true
+    bonus: 100.0
+    require_clean: true

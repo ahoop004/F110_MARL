@@ -1,0 +1,5 @@
+reward:
+  step_time_penalty:
+    enabled: true
+    penalty: -0.01
+    apply_on_terminal: true

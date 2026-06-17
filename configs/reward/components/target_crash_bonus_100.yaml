@@ -1,0 +1,4 @@
+reward:
+  target_crash_bonus:
+    enabled: true
+    bonus: 100.0

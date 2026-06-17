@@ -1,0 +1,13 @@
+reward:
+  centerline_progress:
+    enabled: true
+    weight: 0.5
+  centerline_lateral_velocity_penalty:
+    enabled: true
+    weight: 0.005
+  centerline_deviation_penalty:
+    enabled: true
+    weight: 0.01
+  steering_penalty:
+    enabled: true
+    weight: 0.03

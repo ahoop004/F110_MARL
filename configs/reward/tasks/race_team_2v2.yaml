@@ -1,0 +1,12 @@
+task:
+  name: race_team_2v2
+  description: Conservative 2v2 racing reward with local progress and safety terms.
+
+includes:
+  - ../components/centerline_standard.yaml
+  - ../components/progress_safety_standard.yaml
+  - ../components/lap_completion_clean_150.yaml
+  - ../components/target_finish_penalty_100.yaml
+  - ../components/collision_penalty_250.yaml
+  - ../components/timeout_penalty_50.yaml
+  - ../components/self_crash_penalty_125.yaml

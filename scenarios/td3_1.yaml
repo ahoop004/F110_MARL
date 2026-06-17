@@ -23,7 +23,7 @@ agents:
     role: attacker
     target_id: car_1
     observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/gaplock_attacker.yaml
+    reward: ../configs/reward/tasks/gaplock_attacker.yaml
     params:
       learning_rate: 0.001
       hidden_dims: [64, 64]

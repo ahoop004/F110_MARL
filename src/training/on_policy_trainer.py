@@ -10,6 +10,7 @@ from agents.ppo import PPOAgent
 from env.types import TransitionRecord
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
+from training.reward_context import build_reward_context
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
@@ -99,18 +100,13 @@ class OnPolicyTrainer:
         obs_dict: Dict,
         actions: Dict[str, np.ndarray],
     ) -> Dict[str, Any]:
-        try:
-            global_state = self.env.get_global_state().vector
-        except Exception:
-            global_state = np.zeros(0, dtype=np.float32)
-        return {
-            "agent_id": agent_id,
-            "all_infos": info_dict or {},
-            "all_obs": obs_dict or {},
-            "all_actions": actions or {},
-            "global_state": global_state,
-            "last_step_facts": getattr(self.env, "last_step_facts", None),
-        }
+        return build_reward_context(
+            env=self.env,
+            agent_id=agent_id,
+            info_dict=info_dict,
+            obs_dict=obs_dict,
+            actions=actions,
+        )
 
     def train(self, n_episodes: int) -> None:
         for episode in range(n_episodes):

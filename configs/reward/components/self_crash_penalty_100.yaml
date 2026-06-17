@@ -1,0 +1,4 @@
+reward:
+  self_crash_penalty:
+    enabled: true
+    penalty: -100.0

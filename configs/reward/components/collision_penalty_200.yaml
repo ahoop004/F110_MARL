@@ -1,0 +1,4 @@
+reward:
+  collision:
+    enabled: true
+    penalty: -200.0

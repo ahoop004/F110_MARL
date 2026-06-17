@@ -3,10 +3,9 @@
 # car_0 and car_1 are trainable MAPPO teammates with shared actor and
 # centralized critic. car_2 and car_3 are fixed non-ML racing opponents.
 #
-# Rewards are local racing rewards only. True team_progress and
-# teammate_collision rewards are deferred until trainer/env reward context
-# exposes stable multi-agent facts such as all_infos, collision pairs, or
-# StepFacts. This avoids silently inventing team reward semantics in YAML.
+# This baseline uses the local-agent race_team_2v2 reward. Use
+# race_team_2v2_completion for team progress shaping once comparing
+# completion-focused 2v2 training runs.
 #
 # line2 is used first as a stable/simple map. max_steps=3000 is enough for
 # initial 1-lap training while still allowing slow early MAPPO policies to
@@ -47,7 +46,7 @@ agents:
     role: racer
     target_id: car_2
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/racing_team_2v2.yaml
+    reward: ../configs/reward/tasks/race_team_2v2.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -62,7 +61,7 @@ agents:
     role: racer
     target_id: car_3
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/racing_team_2v2.yaml
+    reward: ../configs/reward/tasks/race_team_2v2.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

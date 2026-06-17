@@ -1,4 +1,4 @@
-"""Gaplock pressure reward — bonus for maintaining a tight gap behind the target."""
+"""Target proximity reward components."""
 from __future__ import annotations
 
 from typing import Dict
@@ -8,8 +8,8 @@ import numpy as np
 from wrappers.rewards.base import RewardComponent
 
 
-class GaplockPressureComponent(RewardComponent):
-    """Reward for staying close to the target at a preferred trailing distance."""
+class TargetProximityComponent(RewardComponent):
+    """Reward staying near a target at a preferred distance."""
 
     def __init__(self, config: dict) -> None:
         self.weight = float(config.get("weight", 1.0))
@@ -23,4 +23,4 @@ class GaplockPressureComponent(RewardComponent):
         dist = float(np.linalg.norm(target_pose[:2] - ego_pose[:2]))
         deviation = abs(dist - self.preferred_distance)
         bonus = max(0.0, 1.0 - deviation / max(self.distance_tolerance, 1e-6))
-        return {"gaplock/pressure": self.weight * bonus}
+        return {"target_proximity/bonus": self.weight * bonus}

@@ -1,0 +1,11 @@
+task:
+  name: gaplock_centerline_pressure
+  description: Target proximity with light centerline shaping.
+
+includes:
+  - ../components/target_proximity_standard.yaml
+  - ../components/centerline_light_smooth.yaml
+  - ../components/collision_penalty_200.yaml
+  - ../components/target_crash_bonus_200.yaml
+  - ../components/timeout_penalty_100.yaml
+  - ../components/self_crash_penalty_20.yaml

@@ -1,0 +1,4 @@
+reward:
+  target_finish:
+    enabled: true
+    penalty: -100.0

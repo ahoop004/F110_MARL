@@ -1,0 +1,5 @@
+reward:
+  progress_delta_bonus:
+    enabled: true
+    weight: 100.0
+    positive_only: true
