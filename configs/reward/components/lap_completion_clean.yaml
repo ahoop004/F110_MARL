@@ -3,3 +3,4 @@ reward:
     enabled: true
     bonus: 150.0
     require_clean: true
+    require_finish_line: false

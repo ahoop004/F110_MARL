@@ -1,0 +1,11 @@
+task:
+  name: time_trial_3lap
+  description: 3-lap time trial — dense centerline progress, speed incentive, reverse penalty, lap completion bonus.
+
+includes:
+  - ../components/centerline_progress.yaml
+  - ../components/progress_delta_bonus.yaml
+  - ../components/reverse_progress_penalty.yaml
+  - ../components/collision_penalty.yaml
+  - ../components/step_time_penalty.yaml
+  - ../components/lap_completion_clean.yaml

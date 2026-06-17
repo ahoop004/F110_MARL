@@ -3,9 +3,9 @@ task:
   description: Conservative 2v2 racing reward with local progress and safety terms.
 
 includes:
-  - ../components/centerline_standard.yaml
+  - ../components/centerline_progress.yaml
   - ../components/progress_safety_standard.yaml
-  - ../components/lap_completion_clean_150.yaml
+  - ../components/lap_completion_clean.yaml
   - ../components/target_finish_penalty_100.yaml
   - ../components/collision_penalty_250.yaml
   - ../components/timeout_penalty_50.yaml

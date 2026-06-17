@@ -1,0 +1,59 @@
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/on_policy.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: ppo_time_trial
+  episodes: 500000
+  seed: 42
+
+environment:
+  maps:
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+    - circle_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  max_steps: 0
+  target_laps: 3
+  action_repeat: 2
+  centerline_autoload: true
+  centerline_features: true
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+
+agents:
+  car_0:
+    algorithm: ppo
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/time_trial_3lap.yaml
+    params:
+      learning_rate: 0.0001
+      hidden_dims: [64, 64]
+      gamma: 0.999
+      gae_lambda: 0.95
+      ent_coef: 0.01
+      n_steps: 4096
+      batch_size: 256
+      checkpoint_every: 2000
+
+wandb:
+  enabled: true
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: time_trial
+  job_type: ppo_time_trial
+  tags: [ppo, time_trial, 3lap]
+  notes: "Single PPO agent, 3-lap time trial, 9 maps round-robin, no step limit"
+  mode: online

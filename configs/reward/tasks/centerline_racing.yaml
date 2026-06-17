@@ -3,7 +3,7 @@ task:
   description: Centerline progress with simple collision and terminal shaping.
 
 includes:
-  - ../components/centerline_standard.yaml
-  - ../components/collision_penalty_200.yaml
+  - ../components/centerline_progress.yaml
+  - ../components/collision_penalty.yaml
   - ../components/target_crash_bonus_100.yaml
   - ../components/timeout_penalty_50.yaml

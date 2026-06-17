@@ -5,7 +5,7 @@ task:
 includes:
   - ../components/target_proximity_standard.yaml
   - ../components/target_edge_pressure_standard.yaml
-  - ../components/collision_penalty_200.yaml
+  - ../components/collision_penalty.yaml
   - ../components/target_crash_bonus_200.yaml
   - ../components/timeout_penalty_100.yaml
   - ../components/self_crash_penalty_20.yaml
