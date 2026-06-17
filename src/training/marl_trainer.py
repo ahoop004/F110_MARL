@@ -107,6 +107,27 @@ class MARLTrainer:
                 actions[aid] = np.asarray(act, dtype=np.float32)
         return actions
 
+    def _reward_context(
+        self,
+        *,
+        agent_id: str,
+        info_dict: Dict[str, Any],
+        obs_dict: Dict[str, Any],
+        actions: Dict[str, np.ndarray],
+    ) -> Dict[str, Any]:
+        try:
+            global_state = self.env.get_global_state().vector
+        except Exception:
+            global_state = np.zeros(0, dtype=np.float32)
+        return {
+            "agent_id": agent_id,
+            "all_infos": info_dict or {},
+            "all_obs": obs_dict or {},
+            "all_actions": actions or {},
+            "global_state": global_state,
+            "last_step_facts": getattr(self.env, "last_step_facts", None),
+        }
+
     # ------------------------------------------------------------------
     # Training loop
     # ------------------------------------------------------------------
@@ -197,6 +218,14 @@ class MARLTrainer:
                             "action": actions_norm[aid],
                             "timestep": 0.01,
                         }
+                        sub_step_info.update(
+                            self._reward_context(
+                                agent_id=aid,
+                                info_dict=info_dict,
+                                obs_dict=obs_dict,
+                                actions=all_actions,
+                            )
+                        )
                         sub_reward, _ = self.reward_composers[aid].compute(sub_step_info)
                         accumulated_rewards[aid] = accumulated_rewards.get(aid, 0.0) + sub_reward
 

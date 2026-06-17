@@ -72,6 +72,16 @@ def register_builtin_agents() -> None:
     except ImportError:
         pass
 
+    try:
+        from agents.mpc import CBFMPCAgent, DefensiveMPCAgent, KinematicMPCAgent, MPCCAgent, ObstacleAwareMPCAgent
+        AgentFactory.register("cbf_mpc", CBFMPCAgent)
+        AgentFactory.register("defensive_mpc", DefensiveMPCAgent)
+        AgentFactory.register("kinematic_mpc", KinematicMPCAgent)
+        AgentFactory.register("mpcc", MPCCAgent)
+        AgentFactory.register("obstacle_aware_mpc", ObstacleAwareMPCAgent)
+    except ImportError:
+        pass
+
 
 # Register on import so callers don't have to remember to call this explicitly.
 register_builtin_agents()

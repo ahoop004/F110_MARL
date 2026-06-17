@@ -12,6 +12,9 @@ from wrappers.rewards.collision import CollisionRewardComponent
 from wrappers.rewards.speed import SpeedRewardComponent
 from wrappers.rewards.gaplock_pressure import GaplockPressureComponent
 from wrappers.rewards.gaplock_forcing import GaplockForcingComponent
+from wrappers.rewards.lap_completion import LapCompletionComponent
+from wrappers.rewards.progress_safety import ProgressSafetyComponent
+from wrappers.rewards.target_finish import TargetFinishComponent
 from wrappers.rewards.terminal_success import TerminalSuccessComponent
 from wrappers.rewards.terminal_timeout import TerminalTimeoutComponent
 from wrappers.rewards.terminal_self_crash import TerminalSelfCrashComponent
@@ -23,6 +26,9 @@ _COMPONENT_MAP = {
     "speed": SpeedRewardComponent,
     "gaplock_pressure": GaplockPressureComponent,
     "gaplock_forcing": GaplockForcingComponent,
+    "lap_completion": LapCompletionComponent,
+    "target_finish": TargetFinishComponent,
+    "progress_safety": ProgressSafetyComponent,
     "terminal_success": TerminalSuccessComponent,
     "terminal_timeout": TerminalTimeoutComponent,
     "terminal_self_crash": TerminalSelfCrashComponent,

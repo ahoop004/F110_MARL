@@ -1,0 +1,40 @@
+reward:
+  centerline:
+    enabled: true
+    vs_weight: 1.0
+    vd_weight: 0.005
+    d_weight: 0.01
+    steer_weight: 0.03
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  progress_safety:
+    enabled: true
+    wrong_way_penalty: -2.0
+    reverse_progress_weight: 5.0
+    max_abs_d: 1.5
+    offtrack_penalty: -1.0
+
+  lap_completion:
+    enabled: true
+    bonus: 150.0
+    require_clean: true
+
+  target_finish:
+    enabled: true
+    penalty: -100.0
+
+  collision:
+    enabled: true
+    penalty: -200.0
+
+  terminal_timeout:
+    enabled: true
+    penalty: -50.0
+
+  terminal_self_crash:
+    enabled: true
+    penalty: -100.0
+
+  # Do not use terminal_success here: it rewards target crashes, not clean
+  # racing finishes.

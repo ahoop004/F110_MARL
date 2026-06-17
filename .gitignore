@@ -213,4 +213,5 @@ runs/
 outputs/
 sb3_models/
 *.bak
-.claude
+# .claude
+# AGENTS.md

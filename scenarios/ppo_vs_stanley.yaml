@@ -1,0 +1,75 @@
+# PPO head-to-head racing baseline against a fixed Stanley controller.
+# line2 is a short/simple map, so max_steps=3000 is enough for initial 1-lap
+# training while still allowing slow early PPO policies to time out cleanly.
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/on_policy.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: ppo_vs_stanley
+  episodes: 5000
+  seed: 42
+
+environment:
+  maps: [line2]
+  target_laps: 1
+  max_steps: 3000
+  action_repeat: 2
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 3.0
+
+agents:
+  car_0:
+    algorithm: ppo
+    trainable: true
+    role: racer
+    target_id: car_1
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/racing_1v1.yaml
+    params:
+      learning_rate: 0.0001
+      hidden_dims: [64, 64]
+      gamma: 0.998
+      gae_lambda: 0.95
+      ent_coef: 0.0
+      n_steps: 2048
+      batch_size: 256
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: stanley
+    trainable: false
+    role: opponent
+    target_id: car_0
+    params:
+      k: 1.0
+      k_s: 0.5
+      min_speed: 0.5
+      max_speed: 3.0
+      max_steer: 0.42
+      curvature_slowdown_threshold: 0.3
+      speed_horizon: 3.0
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: racing_baselines
+  job_type: ppo_vs_stanley
+  tags: [ppo, racing, stanley, head_to_head]
+  notes: "PPO 1v1 racing against fixed Stanley on line2"
+  mode: online

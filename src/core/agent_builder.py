@@ -45,6 +45,11 @@ HEURISTIC_ALGOS: frozenset[str] = frozenset({
     "pure_pursuit",
     "stanley",
     "hybrid_pp_ftg",
+    "cbf_mpc",
+    "defensive_mpc",
+    "kinematic_mpc",
+    "mpcc",
+    "obstacle_aware_mpc",
 })
 
 

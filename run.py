@@ -39,6 +39,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--episodes", type=int, default=None)
+    p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
+    p.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path for --eval")
+    p.add_argument("--eval-episodes", type=int, default=None, help="Evaluation episodes; defaults to --episodes")
     p.add_argument("--total-steps", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--run-id", type=str, default=None)
@@ -293,6 +296,10 @@ def main() -> None:
         str(agent_configs[aid].get("algorithm", "")).lower() for aid in trainable_ids
     }
 
+    if args.eval:
+        _run_eval(scenario, args, console, scenario_dir)
+        return
+
     # Pure heuristic scenario — no RL training, just run fixed-policy agents.
     if not trainable_ids and not (MARL_ALGOS & trainable_algos):
         _run_heuristic(scenario, args, console)
@@ -499,6 +506,351 @@ def main() -> None:
     finally:
         if wandb_logger:
             wandb_logger.finish()
+
+
+def _build_eval_actions(
+    trainable_actions_phys: Dict[str, np.ndarray],
+    other_agents: Dict[str, Any],
+    obs_dict: Dict[str, Any],
+    active_agents: Optional[set[str]] = None,
+) -> Dict[str, np.ndarray]:
+    """Assemble trainable and fixed-policy actions for one env decision."""
+    active = active_agents if active_agents is not None else set(obs_dict)
+    actions: Dict[str, np.ndarray] = {
+        aid: np.asarray(action, dtype=np.float32)
+        for aid, action in trainable_actions_phys.items()
+        if aid in active
+    }
+    for aid, other_agent in other_agents.items():
+        if aid not in active or aid not in obs_dict:
+            continue
+        try:
+            act = other_agent.act(obs_dict[aid])
+        except Exception:
+            act = np.zeros(2, dtype=np.float32)
+        actions[aid] = np.asarray(act, dtype=np.float32)
+    return actions
+
+
+def _build_eval_reward_context(
+    env: Any,
+    *,
+    agent_id: str,
+    info_dict: Dict[str, Any],
+    obs_dict: Dict[str, Any],
+    actions: Dict[str, np.ndarray],
+) -> Dict[str, Any]:
+    try:
+        global_state = env.get_global_state().vector
+    except Exception:
+        global_state = np.zeros(0, dtype=np.float32)
+    return {
+        "agent_id": agent_id,
+        "all_infos": info_dict or {},
+        "all_obs": obs_dict or {},
+        "all_actions": actions or {},
+        "global_state": global_state,
+        "last_step_facts": getattr(env, "last_step_facts", None),
+    }
+
+
+def _collect_eval_agent_states(env: Any, agent_ids: List[str]) -> Dict[str, Any]:
+    states: Dict[str, Any] = {}
+    for aid in agent_ids:
+        try:
+            states[aid] = env.get_agent_state(aid)
+        except Exception:
+            continue
+    return states
+
+
+def _run_eval(
+    scenario: Dict,
+    args: argparse.Namespace,
+    console: "ConsoleLogger",
+    scenario_dir: Path,
+) -> None:
+    """Evaluate a trained PPO or MAPPO checkpoint with deterministic actions."""
+    from agents.mappo import MAPPOAgent
+    from agents.ppo import PPOAgent
+    from metrics.racing_eval import (
+        aggregate_eval_episodes,
+        create_episode_facts,
+        finalize_episode_facts,
+        update_agent_step_facts,
+    )
+    from utils.torch_io import resolve_device
+
+    checkpoint = args.checkpoint
+    if not checkpoint:
+        console.print_error("--eval requires --checkpoint")
+        sys.exit(1)
+
+    checkpoint_path = Path(checkpoint).expanduser()
+    if not checkpoint_path.is_file():
+        console.print_error(f"Checkpoint not found: {checkpoint}")
+        sys.exit(1)
+
+    agent_configs = scenario.get("agents", {})
+    trainable_ids = get_trainable_agent_ids(agent_configs)
+    if not trainable_ids:
+        console.print_error(
+            "--eval requires at least one trainable agent in the scenario."
+        )
+        sys.exit(1)
+
+    trainable_algos = {
+        str(agent_configs[aid].get("algorithm", "")).strip().lower()
+        for aid in trainable_ids
+    }
+    if trainable_algos == {"ppo"} and len(trainable_ids) == 1:
+        algorithm = "ppo"
+    elif trainable_algos == {"mappo"}:
+        algorithm = "mappo"
+    else:
+        console.print_error(
+            "--eval currently supports one PPO trainable agent or one MAPPO "
+            f"trainable team; found algorithms={sorted(trainable_algos)} "
+            f"trainable={trainable_ids}."
+        )
+        sys.exit(1)
+
+    focal_agent_id = trainable_ids[0]
+    focal_cfg = agent_configs[focal_agent_id]
+    exp_cfg = scenario.get("experiment", {})
+    env_cfg = scenario.get("environment", {})
+    eval_episodes = (
+        args.eval_episodes
+        if args.eval_episodes is not None
+        else int(exp_cfg.get("episodes", 1))
+    )
+    eval_episodes = max(1, int(eval_episodes))
+    base_seed = int(exp_cfg.get("seed", 0) or 0)
+    render = bool(env_cfg.get("render", False))
+    action_repeat = int(env_cfg.get("action_repeat", 1))
+
+    env, agents, _ = create_training_setup(scenario, mode="eval")
+    action_space = env.action_spaces.get(focal_agent_id)
+    if action_space is None:
+        console.print_error(f"RL agent '{focal_agent_id}' not in env action_spaces.")
+        sys.exit(1)
+
+    action_low = action_space.low
+    action_high = action_space.high
+    action_dim = len(action_low)
+    obs_composers = build_obs_composers(
+        agent_configs, trainable_ids, env_cfg, scenario_dir, action_dim=action_dim
+    )
+    reward_composers = build_reward_composers(agent_configs, trainable_ids, scenario_dir)
+    params = resolve_training_params(focal_cfg, scenario)
+    action_composers = {
+        aid: ActionComposer.from_config(
+            env.action_spaces[aid].low,
+            env.action_spaces[aid].high,
+            agent_configs[aid].get("action_constraints", {}),
+        )
+        for aid in trainable_ids
+    }
+
+    # Probe the env once so MAPPO can size the centralized critic before
+    # loading the checkpoint.  Episode 0 is reset again below with the same seed.
+    env.reset(seed=base_seed)
+    global_state_dim = int(env.get_global_state().vector.shape[0])
+
+    if algorithm == "ppo":
+        agent = PPOAgent(
+            obs_dim=obs_composers[focal_agent_id].obs_dim,
+            action_low=action_low,
+            action_high=action_high,
+            params=params,
+        )
+    else:
+        agent = MAPPOAgent(
+            obs_dim=obs_composers[focal_agent_id].obs_dim,
+            global_state_dim=global_state_dim,
+            action_low=action_low,
+            action_high=action_high,
+            agent_ids=trainable_ids,
+            params=params,
+        )
+    agent.load(str(checkpoint_path))
+    agent.actor.eval()
+    agent.critic.eval()
+
+    trainable_set = set(trainable_ids)
+    other_agents = {aid: ag for aid, ag in agents.items() if aid not in trainable_set}
+    for ag in other_agents.values():
+        if hasattr(ag, "set_env"):
+            ag.set_env(env)
+
+    device_str = str(resolve_device([params.get("device", "cpu")]))
+    fixed_str = ", ".join(other_agents) or "none"
+    trainable_str = ", ".join(trainable_ids)
+    console.print_header(
+        f"Evaluation: {exp_cfg.get('name', 'unnamed')}",
+        f"algorithm={algorithm}  trainable=({trainable_str})  fixed=({fixed_str})",
+    )
+    console.print_info(
+        f"checkpoint={checkpoint_path}  episodes={eval_episodes}  "
+        f"seed={base_seed}  device={device_str}  obs_dim={obs_composers[focal_agent_id].obs_dim}  "
+        f"action_dim={action_dim}"
+    )
+
+    all_agent_ids = list(getattr(env, "possible_agents", list(agent_configs)))
+    opponent_ids = [aid for aid in all_agent_ids if aid not in trainable_set]
+    target_id = str(focal_cfg.get("target_id", "") or "")
+    opponent_agent_id = target_id if target_id in opponent_ids else (opponent_ids[0] if opponent_ids else None)
+    eval_episodes_facts = []
+
+    try:
+        for episode in range(eval_episodes):
+            obs_dict, info_dict = env.reset(seed=base_seed + episode)
+            for composer in obs_composers.values():
+                composer.reset()
+            for composer in reward_composers.values():
+                composer.reset()
+            for ag in other_agents.values():
+                if hasattr(ag, "reset"):
+                    ag.reset()
+
+            wrapped_obs: Dict[str, np.ndarray] = {
+                aid: obs_composers[aid].wrap(
+                    obs_dict.get(aid, {}),
+                    info_dict.get(aid, {}),
+                )
+                for aid in trainable_ids
+            }
+            episode_facts = create_episode_facts(
+                episode=episode,
+                agent_ids=all_agent_ids,
+                trainable_ids=trainable_ids,
+                opponent_ids=opponent_ids,
+            )
+            env_steps = 0
+
+            while True:
+                active_agents = set(getattr(env, "agents", list(obs_dict)))
+                if not active_agents:
+                    break
+
+                actions_norm: Dict[str, np.ndarray] = {}
+                actions_phys: Dict[str, np.ndarray] = {}
+                for aid in trainable_ids:
+                    if aid not in active_agents or aid not in wrapped_obs:
+                        continue
+                    act_result = agent.act(wrapped_obs[aid], deterministic=True)
+                    action_norm = np.asarray(act_result[0], dtype=np.float32)
+                    actions_norm[aid] = action_norm
+                    actions_phys[aid] = action_composers[aid].process(action_norm)
+
+                actions = _build_eval_actions(
+                    actions_phys,
+                    other_agents,
+                    obs_dict,
+                    active_agents=active_agents,
+                )
+                if not actions:
+                    break
+
+                for _ in range(max(1, action_repeat)):
+                    obs_dict, _rew_dict, term_dict, trunc_dict, info_dict = env.step(actions)
+                    env_steps += 1
+                    if render:
+                        try:
+                            env.render()
+                        except Exception:
+                            pass
+
+                    update_agent_step_facts(
+                        episode_facts,
+                        step_idx=env_steps,
+                        infos=info_dict,
+                        terminations=term_dict,
+                        truncations=trunc_dict,
+                        agent_states=_collect_eval_agent_states(env, all_agent_ids),
+                    )
+
+                    for aid, action_norm in actions_norm.items():
+                        if aid not in trainable_set:
+                            continue
+                        agent_done = bool(term_dict.get(aid, False) or trunc_dict.get(aid, False))
+                        sub_step_info = {
+                            "obs": wrapped_obs.get(aid, {}),
+                            "next_obs": obs_dict.get(aid, {}),
+                            "info": info_dict.get(aid, {}),
+                            "done": agent_done,
+                            "terminated": bool(term_dict.get(aid, False)),
+                            "truncated": bool(trunc_dict.get(aid, False)),
+                            "action": action_norm,
+                            "timestep": env.timestep,
+                        }
+                        sub_step_info.update(
+                            _build_eval_reward_context(
+                                env,
+                                agent_id=aid,
+                                info_dict=info_dict,
+                                obs_dict=obs_dict,
+                                actions=actions,
+                            )
+                        )
+                        sub_reward, breakdown = reward_composers[aid].compute(sub_step_info)
+                        facts = episode_facts.agents[aid]
+                        facts.reward_total += float(sub_reward)
+                        for name, value in breakdown.items():
+                            facts.reward_components[name] = (
+                                facts.reward_components.get(name, 0.0) + float(value)
+                            )
+
+                    active_after_step = set(getattr(env, "agents", []))
+                    if not active_after_step or not set(actions).issubset(active_after_step):
+                        break
+
+                for aid in trainable_ids:
+                    if aid not in getattr(env, "agents", []):
+                        continue
+                    wrapped_obs[aid] = obs_composers[aid].wrap(
+                        obs_dict.get(aid, {}),
+                        info_dict.get(aid, {}),
+                    )
+                    if aid in actions_norm:
+                        obs_composers[aid].update_prev_action(actions_norm[aid])
+
+            finalize_episode_facts(episode_facts)
+            eval_episodes_facts.append(episode_facts)
+            episode_summary = aggregate_eval_episodes(
+                [episode_facts],
+                focal_agent_id=focal_agent_id,
+                opponent_agent_id=opponent_agent_id,
+            )
+            focal_outcome = episode_facts.agents[focal_agent_id].outcome
+            reward_total = sum(
+                episode_facts.agents[aid].reward_total
+                for aid in trainable_ids
+                if aid in episode_facts.agents
+            )
+            win_value = episode_summary.get("team_win_rate", episode_summary.get("win_rate", 0.0))
+
+            console.print_info(
+                f"eval ep {episode + 1:4d}/{eval_episodes}  "
+                f"reward={reward_total:+.2f}  steps={env_steps:5d}  "
+                f"win={win_value:.0f}  outcome={focal_outcome}"
+            )
+    finally:
+        close = getattr(env, "close", None)
+        if callable(close):
+            close()
+
+    summary = aggregate_eval_episodes(
+        eval_episodes_facts,
+        focal_agent_id=focal_agent_id,
+        opponent_agent_id=opponent_agent_id,
+    )
+    if "team_win_rate" in summary:
+        summary["success_rate"] = summary["team_win_rate"]
+    elif "win_rate" in summary:
+        summary["success_rate"] = summary["win_rate"]
+
+    console.print_summary(summary)
 
 
 def _run_on_policy(

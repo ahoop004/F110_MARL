@@ -15,6 +15,9 @@ class RewardComponent(ABC):
         Args:
             step_info: dict containing at minimum:
                 obs, next_obs, info, done, truncated, action, timestep
+                Optional multi-agent context may include:
+                agent_id, all_infos, all_obs, all_actions, global_state,
+                last_step_facts
 
         Returns:
             Dict mapping 'component/subkey' → float value (can be empty dict).
