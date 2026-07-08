@@ -4,7 +4,7 @@ from typing import Any, Dict, Tuple
 from src.env import F110ParallelEnv
 from src.core.agent_builder import (
     build_fixed_policy_agents,
-    get_fixed_policy_agent_ids,
+    get_fixed_agent_ids,
     get_trainable_agent_ids,
 )
 from src.core.config import register_builtin_agents
@@ -41,7 +41,7 @@ def create_training_setup(
     env_config = apply_map_split(env_config, experiment_config, mode)
     agent_configs = scenario['agents']
     env_config.setdefault("trainable_agents", get_trainable_agent_ids(agent_configs))
-    env_config.setdefault("fixed_policy_agents", get_fixed_policy_agent_ids(agent_configs))
+    env_config.setdefault("fixed_policy_agents", get_fixed_agent_ids(agent_configs))
 
     # Set random seed if specified
     seed = experiment_config.get('seed')

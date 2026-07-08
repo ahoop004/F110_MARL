@@ -1,0 +1,10 @@
+observation:
+  lidar:
+    enabled: true
+    normalize: true
+  centerline_ego_state:
+    enabled: true
+  progress:
+    enabled: true
+  prev_action:
+    enabled: true

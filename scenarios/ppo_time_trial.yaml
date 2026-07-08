@@ -35,17 +35,18 @@ agents:
   car_0:
     algorithm: ppo
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
+    observation: ../configs/observations/rl_racer_frenet.yaml
     reward: ../configs/reward/tasks/time_trial_3lap.yaml
     params:
       learning_rate: 0.0001
-      hidden_dims: [64, 64]
+      hidden_dims: [124, 64]
       gamma: 0.999
       gae_lambda: 0.95
       ent_coef: 0.01
-      n_steps: 4096
+      n_steps: 2046
       batch_size: 256
       checkpoint_every: 2000
+      device: cuda
 
 wandb:
   enabled: true

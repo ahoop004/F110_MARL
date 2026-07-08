@@ -10,6 +10,7 @@ import yaml
 from wrappers.observations.base import ObservationComponent
 from wrappers.observations.lidar import LidarComponent
 from wrappers.observations.ego_state import EgoStateComponent
+from wrappers.observations.centerline_ego_state import CenterlineEgoStateComponent
 from wrappers.observations.target_state import TargetStateComponent
 from wrappers.observations.relative_pose import RelativePoseComponent
 from wrappers.observations.progress import ProgressComponent
@@ -116,6 +117,10 @@ class ObservationComposer:
         rel_cfg = obs.get("relative_pose", {})
         if rel_cfg.get("enabled", False):
             components.append(RelativePoseComponent())
+
+        cl_ego_cfg = obs.get("centerline_ego_state", {})
+        if cl_ego_cfg.get("enabled", False):
+            components.append(CenterlineEgoStateComponent())
 
         prog_cfg = obs.get("progress", {})
         if prog_cfg.get("enabled", False):
