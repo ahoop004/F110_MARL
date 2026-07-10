@@ -20,10 +20,11 @@ agents:
     params:
       learning_rate: 0.0003
       gamma: 0.99
-      n_steps: 600
+      n_steps: 128
       gae_lambda: 0.95
-      ent_coef: 0.0
+      ent_coef: 0.01
       vf_coef: 0.5
+      batch_size: 64
       activation: relu
       hidden_dims:
       - 256
