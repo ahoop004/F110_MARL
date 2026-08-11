@@ -26,6 +26,7 @@ class SpawnRequest:
     current_start_poses: Optional[np.ndarray] = None
     random_spawn_enabled: bool = False
     random_spawn_allow_reuse: bool = False
+    random_spawn_min_distance: float = 0.5
     spawn_points: Mapping[str, np.ndarray] = field(default_factory=dict)
     spawn_point_names: Sequence[str] = field(default_factory=tuple)
     rng: Optional[np.random.Generator] = None
@@ -140,36 +141,79 @@ def sample_random_spawn(
     agent_ids: Sequence[str],
     rng: np.random.Generator,
     allow_reuse: bool,
+    min_distance: float = 0.5,
 ) -> Optional[Tuple[Dict[str, str], np.ndarray]]:
-    """Sample one named spawn point per agent."""
+    """Sample non-overlapping named spawn points using rejection sampling."""
 
     count = len(agent_ids)
     if count == 0 or not spawn_point_names:
         return None
 
+    min_distance = max(float(min_distance), 0.0)
     pool = list(spawn_point_names)
-    replace = bool(allow_reuse) or len(pool) < count
-    selected_names = rng.choice(pool, size=count, replace=replace)
-    if isinstance(selected_names, np.ndarray):
-        selected_list = [str(name) for name in selected_names.tolist()]
-    else:
-        selected_list = [str(name) for name in selected_names]
 
-    pose_rows = []
-    spawn_mapping: Dict[str, str] = {}
-    for idx, name in enumerate(selected_list):
-        raw = spawn_points.get(name)
-        if raw is None:
-            continue
-        pose_rows.append(pose3_from_spawn(raw))
-        if idx < count:
-            spawn_mapping[str(agent_ids[idx])] = name
-
-    if len(pose_rows) != count:
+    # If reuse is disabled, there must be enough candidate points.
+    if not allow_reuse and len(pool) < count:
         return None
-    return spawn_mapping, np.stack(pose_rows, axis=0)
 
+    selected_names = []
+    selected_poses = []
 
+    # Candidates that have not yet been consumed when reuse is disabled.
+    available = pool.copy()
+
+    max_attempts = max(100, count * len(pool) * 10)
+
+    for _ in range(max_attempts):
+        if len(selected_names) == count:
+            break
+
+        candidates = pool if allow_reuse else available
+        if not candidates:
+            break
+
+        name = str(rng.choice(candidates))
+        raw = spawn_points.get(name)
+
+        if raw is None:
+            if not allow_reuse and name in available:
+                available.remove(name)
+            continue
+
+        pose = pose3_from_spawn(raw)
+
+        # Rejection test: reject candidate if it is too close
+        # to any vehicle already accepted.
+        too_close = any(
+            np.linalg.norm(pose[:2] - existing[:2]) < min_distance
+            for existing in selected_poses
+        )
+
+        if too_close:
+            if not allow_reuse and name in available:
+                available.remove(name)
+            continue
+
+        selected_names.append(name)
+        selected_poses.append(pose)
+
+        if not allow_reuse and name in available:
+            available.remove(name)
+
+    if len(selected_names) != count:
+        raise ValueError(
+            "Unable to sample non-overlapping vehicle spawn points: "
+            f"requested {count} agents with "
+            f"min_distance={min_distance:.3f} m "
+            f"from {len(pool)} available spawn points."
+        )
+
+    spawn_mapping = {
+        str(agent_ids[i]): selected_names[i]
+        for i in range(count)
+    }
+
+    return spawn_mapping, np.stack(selected_poses, axis=0)
 def sample_centerline_relative_spawn(
     *,
     spawn_policy: Optional[Any],
@@ -437,6 +481,7 @@ def resolve_reset_spawn(
             agent_ids=request.agent_ids,
             rng=rng,
             allow_reuse=request.random_spawn_allow_reuse,
+            min_distance=request.random_spawn_min_distance,
         )
         if sampled is not None:
             spawn_mapping, sampled_poses = sampled

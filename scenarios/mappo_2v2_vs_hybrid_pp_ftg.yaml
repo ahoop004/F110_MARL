@@ -22,9 +22,19 @@ experiment:
   seed: 42
 
 environment:
-  maps: [line2]
+  maps:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_cycle: per_episode
+  map_pick: round_robin
   target_laps: 1
-  max_steps: 3000
+  max_steps: 5000
   action_repeat: 2
   centerline_autoload: true
   centerline_features: true
@@ -52,7 +62,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
   car_1:
@@ -67,7 +77,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
   # --- Fixed non-ML opponents ---
@@ -77,30 +87,30 @@ agents:
     role: opponent
     target_id: car_0
     params:
-      lookahead: 1.5
-      min_speed: 0.5
-      max_speed: 3.0
-      max_steer: 0.42
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 2.5
+      max_steer: 0.35
       wheelbase: 0.33020
-      curvature_slowdown_threshold: 0.3
+      curvature_slowdown_threshold: 0.2
       speed_horizon: 3.0
-      blend_distance: 3.0
-      full_ftg_distance: 1.5
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
       ftg:
         max_distance: 10.0
-        window_size: 4
+        window_size: 6
         bubble_radius: 2.5
-        max_steer: 0.42
-        min_speed: 0.5
-        max_speed: 3.0
-        steering_gain: 0.30
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 2.5
+        steering_gain: 0.20
         fov: 4.71238898
         normalized: false
-        steer_smooth: 0.5
+        steer_smooth: 0.7
         mode: lidar
         gap_min_range: 0.5
         target_mode: center
-        wall_avoid_kick: 0.02
+        wall_avoid_kick: 0.01
         use_disparity_extender: true
         disparity_threshold: 0.35
         vehicle_width: 0.225
@@ -112,30 +122,30 @@ agents:
     role: opponent
     target_id: car_1
     params:
-      lookahead: 1.5
-      min_speed: 0.5
-      max_speed: 3.0
-      max_steer: 0.42
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 2.5
+      max_steer: 0.35
       wheelbase: 0.33020
-      curvature_slowdown_threshold: 0.3
+      curvature_slowdown_threshold: 0.2
       speed_horizon: 3.0
-      blend_distance: 3.0
-      full_ftg_distance: 1.5
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
       ftg:
         max_distance: 10.0
-        window_size: 4
+        window_size: 6
         bubble_radius: 2.5
-        max_steer: 0.42
-        min_speed: 0.5
-        max_speed: 3.0
-        steering_gain: 0.30
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 2.5
+        steering_gain: 0.20
         fov: 4.71238898
         normalized: false
-        steer_smooth: 0.5
+        steer_smooth: 0.7
         mode: lidar
         gap_min_range: 0.5
         target_mode: center
-        wall_avoid_kick: 0.02
+        wall_avoid_kick: 0.01
         use_disparity_extender: true
         disparity_threshold: 0.35
         vehicle_width: 0.225
