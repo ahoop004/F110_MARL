@@ -34,7 +34,7 @@ environment:
   map_cycle: per_episode
   map_pick: round_robin
   target_laps: 1
-  max_steps: 5000
+  max_steps: 500000
   action_repeat: 2
   centerline_autoload: true
   centerline_features: true
