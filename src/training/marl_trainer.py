@@ -16,12 +16,12 @@ Key differences from :class:`~training.on_policy_trainer.OnPolicyTrainer`
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from agents.mappo import MAPPOAgent
+from env.types import TransitionRecord
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
 from training.reward_context import build_reward_context
@@ -60,6 +60,8 @@ class MARLTrainer:
     focal_agent_id:
         Agent ID used for episode-level logging (reward, outcome).  Defaults
         to the first element of *trainable_ids*.
+    run_id:
+        Stable run identifier used in per-agent dataset transition records.
     """
 
     def __init__(
@@ -75,6 +77,7 @@ class MARLTrainer:
         hooks: Optional[List[TrainingHook]] = None,
         render: bool = False,
         focal_agent_id: Optional[str] = None,
+        run_id: str = "run",
     ) -> None:
         self.env = env
         self.agent = agent
@@ -87,6 +90,7 @@ class MARLTrainer:
         self.hooks = hooks or []
         self.render = render
         self.focal_id = focal_agent_id or (trainable_ids[0] if trainable_ids else "")
+        self.run_id = run_id
 
     # ------------------------------------------------------------------
     # Action assembly
@@ -99,14 +103,29 @@ class MARLTrainer:
     ) -> Dict[str, np.ndarray]:
         """Combine trainable and fixed-policy actions into one dict."""
         actions: Dict[str, np.ndarray] = dict(trainable_actions)
+        active_agents = set(getattr(self.env, "agents", obs_dict))
         for aid, other_agent in self.other_agents.items():
-            if aid in obs_dict:
+            if aid in active_agents:
                 try:
                     act = other_agent.act(obs_dict[aid])
                 except Exception:
                     act = np.zeros(2, dtype=np.float32)
                 actions[aid] = np.asarray(act, dtype=np.float32)
         return actions
+
+    def _episode_id(self, episode: int) -> str:
+        return f"{self.run_id}_ep{episode:06d}"
+
+    def _map_id(self) -> Optional[str]:
+        return getattr(self.env, "map_name", None)
+
+    def _spawn_id(self, agent_id: str) -> Optional[str]:
+        spawn_manager = getattr(self.env, "_spawn_manager", None)
+        if spawn_manager is None:
+            return None
+        metadata = getattr(spawn_manager, "last_spawn_metadata", {}) or {}
+        spawn_ids = metadata.get("spawn_ids", {})
+        return spawn_ids.get(agent_id) or metadata.get("spawn_id")
 
     def _reward_context(
         self,
@@ -148,7 +167,7 @@ class MARLTrainer:
                 for aid in self.trainable_ids
             }
 
-            done = False
+            episode_done = False
             episode_reward = 0.0
             episode_truncated = False
             update_metrics: Dict = {}
@@ -160,15 +179,19 @@ class MARLTrainer:
             agent_episode_rewards: Dict[str, float] = {aid: 0.0 for aid in self.trainable_ids}
             agent_last_info: Dict[str, Dict] = {aid: {} for aid in self.trainable_ids}
             agent_truncated: Dict[str, bool] = {aid: False for aid in self.trainable_ids}
+            step_idx = 0
+            episode_id = self._episode_id(episode)
+            map_id = self._map_id()
 
-            while not done:
+            while not episode_done:
                 # --- Act: all trainable agents via shared actor ---
+                active_before = set(getattr(self.env, "agents", obs_dict))
                 actions_norm: Dict[str, np.ndarray] = {}
                 actions_phys: Dict[str, np.ndarray] = {}
                 log_probs: Dict[str, float] = {}
 
                 for aid in self.trainable_ids:
-                    if aid in obs_dict:
+                    if aid in active_before:
                         a_norm, lp = self.agent.act(wrapped_obs[aid])
                         a_phys = self.action_composer.process(a_norm)
                         actions_norm[aid] = a_norm
@@ -186,6 +209,11 @@ class MARLTrainer:
                 term_dict: Dict[str, bool] = {}
                 trunc_dict: Dict[str, bool] = {}
                 accumulated_rewards: Dict[str, float] = {aid: 0.0 for aid in self.trainable_ids}
+                reward_breakdowns: Dict[str, Dict[str, float]] = {
+                    aid: {} for aid in actions_norm
+                }
+                decision_terminated = {aid: False for aid in actions_norm}
+                decision_truncated = {aid: False for aid in actions_norm}
 
                 for _ in range(self.action_repeat):
                     obs_dict, rew_dict, term_dict, trunc_dict, info_dict = self.env.step(
@@ -196,21 +224,20 @@ class MARLTrainer:
                             self.env.render()
                         except Exception:
                             pass
-                    focal_term = bool(term_dict.get(self.focal_id, False))
-                    focal_trunc = bool(trunc_dict.get(self.focal_id, False))
-                    sub_done = focal_term or focal_trunc
-
                     # Compute sub-step reward for each trainable agent
-                    for aid in self.trainable_ids:
-                        if aid not in actions_norm:
-                            continue
+                    for aid in actions_norm:
+                        agent_term = bool(term_dict.get(aid, False))
+                        agent_trunc = bool(trunc_dict.get(aid, False))
+                        agent_done = agent_term or agent_trunc
+                        decision_terminated[aid] = decision_terminated[aid] or agent_term
+                        decision_truncated[aid] = decision_truncated[aid] or agent_trunc
                         sub_step_info = {
                             "obs": wrapped_obs.get(aid, {}),
                             "next_obs": obs_dict.get(aid, {}),
                             "info": info_dict.get(aid, {}),
-                            "done": sub_done,
-                            "terminated": bool(term_dict.get(aid, False)),
-                            "truncated": bool(trunc_dict.get(aid, False)),
+                            "done": agent_done,
+                            "terminated": agent_term,
+                            "truncated": agent_trunc,
                             "action": actions_norm[aid],
                             "timestep": 0.01,
                         }
@@ -222,25 +249,43 @@ class MARLTrainer:
                                 actions=all_actions,
                             )
                         )
-                        sub_reward, _ = self.reward_composers[aid].compute(sub_step_info)
+                        sub_reward, breakdown = self.reward_composers[aid].compute(sub_step_info)
                         accumulated_rewards[aid] = accumulated_rewards.get(aid, 0.0) + sub_reward
+                        for name, component_reward in breakdown.items():
+                            reward_breakdowns[aid][name] = (
+                                reward_breakdowns[aid].get(name, 0.0)
+                                + float(component_reward)
+                            )
 
-                    if sub_done:
-                        done = True
-                        episode_truncated = bool(focal_trunc)
+                    active_after_substep = set(getattr(self.env, "agents", []))
+                    repeat_boundary = (
+                        bool(getattr(self.env, "episode_done", False))
+                        or not set(all_actions).issubset(active_after_substep)
+                    )
+                    if repeat_boundary:
                         break
 
-                last_info = info_dict.get(self.focal_id, {})
+                episode_done = bool(getattr(self.env, "episode_done", False)) or not bool(
+                    getattr(self.env, "agents", [])
+                )
+                episode_truncated = episode_truncated or bool(
+                    decision_truncated.get(self.focal_id, False)
+                )
                 next_global_state = self.env.get_global_state().vector
 
                 # --- Store transitions with accumulated rewards ---
                 step_reward = 0.0
-                for aid in self.trainable_ids:
-                    if aid not in actions_norm:
-                        continue  # agent wasn't active this step
+                next_wrapped_obs: Dict[str, np.ndarray] = {}
+                for aid in actions_norm:
                     reward = accumulated_rewards.get(aid, 0.0)
                     if aid == self.focal_id:
                         step_reward = reward
+
+                    agent_info = info_dict.get(aid, {})
+                    next_obs = self.obs_composers[aid].wrap(
+                        obs_dict.get(aid, {}), agent_info
+                    )
+                    next_wrapped_obs[aid] = next_obs
 
                     self.agent.store(
                         agent_id=aid,
@@ -250,41 +295,59 @@ class MARLTrainer:
                         reward=reward,
                         log_prob=log_probs[aid],
                         value=value,
-                        done=done,
+                        terminated=decision_terminated[aid],
+                        truncated=decision_truncated[aid],
                     )
 
+                    record = TransitionRecord(
+                        obs=wrapped_obs[aid],
+                        action_norm=actions_norm[aid],
+                        action_phys=actions_phys[aid],
+                        reward=reward,
+                        reward_components=reward_breakdowns[aid],
+                        next_obs=next_obs,
+                        terminated=decision_terminated[aid],
+                        truncated=decision_truncated[aid],
+                        info=agent_info,
+                        global_state=np.asarray(global_state, dtype=np.float32).copy(),
+                        map_id=map_id,
+                        spawn_id=self._spawn_id(aid),
+                        episode_id=episode_id,
+                        step_idx=step_idx,
+                        agent_id=aid,
+                    )
+                    for hook in self.hooks:
+                        hook.on_step(record)
+
                     agent_episode_rewards[aid] += reward
-                    agent_last_info[aid] = info_dict.get(aid, {})
-                    agent_truncated[aid] = bool(trunc_dict.get(aid, False))
+                    agent_last_info[aid] = agent_info
+                    agent_truncated[aid] = (
+                        agent_truncated[aid] or decision_truncated[aid]
+                    )
 
                 episode_reward += step_reward
 
                 # --- Update observation wrappers ---
                 for aid in self.trainable_ids:
-                    if aid in obs_dict:
-                        wrapped_obs[aid] = self.obs_composers[aid].wrap(
-                            obs_dict.get(aid, {}), info_dict.get(aid, {})
-                        )
+                    if aid in getattr(self.env, "agents", []):
+                        wrapped_obs[aid] = next_wrapped_obs[aid]
                         self.obs_composers[aid].update_prev_action(
                             actions_norm.get(aid, np.zeros(2, dtype=np.float32))
                         )
 
                 global_state = next_global_state
+                step_idx += 1
 
                 # --- Trigger update when any buffer is full or episode ends ---
-                if self.agent.any_buffer_full() or done:
-                    dones_map = {
-                        aid: (term_dict.get(aid, False) or trunc_dict.get(aid, False))
-                        for aid in self.trainable_ids
-                    }
+                if self.agent.any_buffer_full() or episode_done:
                     update_metrics = self.agent.update(
                         next_global_state=next_global_state,
-                        dones=dones_map,
                     )
                     self.agent.clear_buffers()
                     for hook in self.hooks:
                         hook.on_update(update_metrics)
 
+            last_info = agent_last_info.get(self.focal_id, {})
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
 

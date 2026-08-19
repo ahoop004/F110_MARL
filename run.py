@@ -482,6 +482,7 @@ def main() -> None:
                 action_low, action_high, action_repeat, render,
                 hooks, exp_cfg, output_dir, console,
                 focal_agent_id=rl_agent_id,
+                run_id=run_id,
             )
         elif algorithm in ON_POLICY_ALGOS:
             _run_on_policy(
@@ -983,6 +984,7 @@ def _run_mappo(
     action_low, action_high, action_repeat, render,
     hooks, exp_cfg, output_dir, console,
     focal_agent_id=None,
+    run_id="run",
 ) -> None:
     from agents.mappo import MAPPOAgent
     from training.marl_trainer import MARLTrainer
@@ -1025,6 +1027,7 @@ def _run_mappo(
         hooks=hooks,
         render=render,
         focal_agent_id=focal_id,
+        run_id=run_id,
     )
 
     console.print_info(

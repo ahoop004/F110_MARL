@@ -33,7 +33,7 @@ environment:
     - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
-  target_laps: 1
+  target_laps: 3
   max_steps: 500000
   action_repeat: 2
   centerline_autoload: true

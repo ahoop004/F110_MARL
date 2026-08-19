@@ -14,7 +14,8 @@ Centralized critic
 
 Per-agent rollout buffers
     One :class:`MAPPORolloutBuffer` per trainable agent.  Each buffer stores
-    ``(local_obs, action, reward, log_prob, global_state, done)`` so GAE can
+    ``(local_obs, action, reward, log_prob, global_state, terminated, truncated)``
+    so GAE can
     be re-evaluated against the centralized critic during the update.
 
 Update
@@ -76,7 +77,8 @@ class MAPPORolloutBuffer:
         self.rewards = torch.zeros(n_steps, device=device)
         self.log_probs = torch.zeros(n_steps, device=device)
         self.values = torch.zeros(n_steps, device=device)
-        self.dones = torch.zeros(n_steps, device=device)
+        self.terminated = torch.zeros(n_steps, device=device)
+        self.truncated = torch.zeros(n_steps, device=device)
         self.ptr = 0
 
     def add(
@@ -87,7 +89,8 @@ class MAPPORolloutBuffer:
         reward: float,
         log_prob: float,
         value: float,
-        done: bool,
+        terminated: bool,
+        truncated: bool,
     ) -> None:
         i = self.ptr % self.n_steps
         self.obs[i] = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -98,7 +101,8 @@ class MAPPORolloutBuffer:
         self.rewards[i] = float(reward)
         self.log_probs[i] = float(log_prob)
         self.values[i] = float(value)
-        self.dones[i] = float(done)
+        self.terminated[i] = float(terminated)
+        self.truncated[i] = float(truncated)
         self.ptr += 1
 
     def is_full(self) -> bool:
@@ -122,14 +126,17 @@ class MAPPORolloutBuffer:
         next_val = float(next_value)
 
         for t in reversed(range(n)):
-            next_non_terminal = 1.0 - float(self.dones[t])
+            bootstrap_mask = 1.0 - float(self.terminated[t])
+            continuation_mask = 1.0 - float(
+                bool(self.terminated[t]) or bool(self.truncated[t])
+            )
             nv = next_val if t == n - 1 else float(self.values[t + 1])
             delta = (
                 float(self.rewards[t])
-                + gamma * nv * next_non_terminal
+                + gamma * nv * bootstrap_mask
                 - float(self.values[t])
             )
-            last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
+            last_gae = delta + gamma * gae_lambda * continuation_mask * last_gae
             advantages[t] = last_gae
 
         returns = advantages + self.values[:n]
@@ -280,10 +287,20 @@ class MAPPOAgent:
         reward: float,
         log_prob: float,
         value: float,
-        done: bool,
+        terminated: bool,
+        truncated: bool,
     ) -> None:
         """Store one transition in *agent_id*'s rollout buffer."""
-        self.buffers[agent_id].add(obs, global_state, action, reward, log_prob, value, done)
+        self.buffers[agent_id].add(
+            obs,
+            global_state,
+            action,
+            reward,
+            log_prob,
+            value,
+            terminated,
+            truncated,
+        )
 
     def any_buffer_full(self) -> bool:
         """True when any agent's buffer has reached ``n_steps``."""
@@ -300,7 +317,6 @@ class MAPPOAgent:
     def update(
         self,
         next_global_state: np.ndarray,
-        dones: Dict[str, bool],
     ) -> Dict[str, float]:
         """Compute GAE for each agent and run PPO update.
 
@@ -308,9 +324,6 @@ class MAPPOAgent:
         ----------
         next_global_state:
             Global state at the end of the rollout (for bootstrapping).
-        dones:
-            Per-agent done flags at the end of the rollout.
-
         Returns
         -------
         Dict with average training losses across all minibatch updates.
@@ -328,11 +341,10 @@ class MAPPOAgent:
         for aid in self.agent_ids:
             buf = self.buffers[aid]
             n = buf.size()
-            if n < 2:
+            if n == 0:
                 continue
 
-            boot_value = 0.0 if dones.get(aid, False) else next_value
-            adv, ret = buf.compute_gae(boot_value, self.gamma, self.gae_lambda)
+            adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
 
             all_obs.append(buf.obs[:n])
             all_gs.append(buf.global_states[:n])

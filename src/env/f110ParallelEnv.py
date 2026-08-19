@@ -17,7 +17,13 @@ from src.env.centerline_state import (
     signed_distance_to_finish,
     update_finish_line_progress,
 )
-from src.env.collision_state import build_step_terminations, build_truncations, update_collision_flags
+from src.env.collision_state import (
+    apply_episode_termination_policy,
+    build_step_terminations,
+    build_truncations,
+    normalize_episode_termination_mode,
+    update_collision_flags,
+)
 from src.env.info_builder import (
     add_episode_metadata,
     add_step_info_fields,
@@ -211,7 +217,15 @@ class F110ParallelEnv:
         self.terminate_on_collision = {
             aid: default_terminate for aid in self.possible_agents
         }
-        self.terminate_on_any_done = bool(merged.get("terminate_on_any_done", False))
+        episode_termination = merged.get("episode_termination", {}) or {}
+        if not isinstance(episode_termination, Mapping):
+            raise TypeError("environment.episode_termination must be a mapping")
+        legacy_any_done = merged.get("terminate_on_any_done")
+        default_mode = "any_agent" if legacy_any_done is not False else "all_agents"
+        self.episode_termination_mode = normalize_episode_termination_mode(
+            episode_termination.get("mode", default_mode)
+        )
+        self.episode_done = False
 
         self._agent_sensor_spec: Dict[str, Tuple[str, ...]] = {
             aid: DEFAULT_AGENT_SENSORS for aid in self.possible_agents
@@ -365,6 +379,7 @@ class F110ParallelEnv:
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
         self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
         self.agents = self.possible_agents.copy()
+        self.episode_done = False
         self.controlled_agents = list(cfg.get("controlled_agents") or self.possible_agents)
         self.trainable_agents = list(cfg.get("trainable_agents") or [])
         self.fixed_policy_agents = list(cfg.get("fixed_policy_agents") or [])
@@ -689,6 +704,7 @@ class F110ParallelEnv:
             self._spawn_manager.reseed(seed_value, self.rng)
         self._maybe_cycle_map()
         self.agents = self.possible_agents.copy()
+        self.episode_done = False
         self._elapsed_steps = 0
         self.current_time = 0.0
 
@@ -814,6 +830,7 @@ class F110ParallelEnv:
             self._collision_steps,
             self._elapsed_steps,
         )
+        active_before_step = tuple(self.agents)
         terminations = build_step_terminations(
             self.possible_agents,
             self._collision_flags,
@@ -824,6 +841,14 @@ class F110ParallelEnv:
             self.possible_agents,
             max_steps=self.max_steps,
             elapsed_steps=self._elapsed_steps,
+        )
+        terminations, self.episode_done = apply_episode_termination_policy(
+            terminations,
+            truncations,
+            active_agents=active_before_step,
+            possible_agents=self.possible_agents,
+            trainable_agents=self.trainable_agents,
+            mode=self.episode_termination_mode,
         )
         infos = {aid: {} for aid in self.possible_agents}
         add_time_limit_info(infos, truncated=trunc_flag)
@@ -879,7 +904,13 @@ class F110ParallelEnv:
 
         # advance and cull finished agents
         self._elapsed_steps += 1
-        self.agents = [aid for aid in self.possible_agents if not (terminations[aid] or truncations[aid])]
+        self.agents = [
+            aid
+            for aid in active_before_step
+            if not (terminations[aid] or truncations[aid])
+        ]
+        if self.episode_done:
+            self.agents = []
 
         return obs, rewards, terminations, truncations, infos
 
