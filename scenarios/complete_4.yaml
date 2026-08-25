@@ -1,0 +1,113 @@
+# Four-car cooperative MAPPO lap-completion scenario.
+#
+# All cars are trainable and use the shared MAPPO actor with local observations.
+# The centralized critic consumes the joint global state. Each car terminates
+# independently after completing its lap or crashing; the joint episode ends
+# only after every car is terminal or the step limit is reached.
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/mappo.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: complete_4
+  episodes: 5000
+  seed: 42
+
+environment:
+  maps:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  target_laps: 3
+  max_steps: 3000000
+  action_repeat: 2
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true
+  episode_termination:
+    mode: all_agents
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 3.0
+
+agents:
+  car_0:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_1:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_2:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+  car_3:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      gamma: 0.99
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+wandb:
+  enabled: false
+  project: marl-f110
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: lap_completion
+  job_type: complete_4
+  tags: [mappo, racing, completion, 4car]
+  notes: "Four trainable MAPPO racers focused on one-lap completion"
+  mode: online
