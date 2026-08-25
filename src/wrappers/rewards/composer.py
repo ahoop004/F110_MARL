@@ -19,7 +19,7 @@ from wrappers.rewards.collision import CollisionRewardComponent, SelfCrashPenalt
 from wrappers.rewards.speed import SpeedRewardComponent
 from wrappers.rewards.proximity import TargetProximityComponent
 from wrappers.rewards.track_edge_pressure import TargetEdgePressureComponent
-from wrappers.rewards.lap_completion import LapCompletionComponent
+from wrappers.rewards.lap_completion import LapCompletionComponent, PerLapBonusComponent
 from wrappers.rewards.progress_safety import (
     OfftrackPenaltyComponent,
     ProgressSafetyComponent,
@@ -56,6 +56,7 @@ COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
     "team_relative_progress_bonus": TeamRelativeProgressBonusComponent,
     "step_time_penalty": StepTimePenaltyComponent,
     "lap_completion": LapCompletionComponent,
+    "per_lap_bonus": PerLapBonusComponent,
     "target_finish": TargetFinishComponent,
     "progress_safety": ProgressSafetyComponent,
     "wrong_way_penalty": WrongWayPenaltyComponent,

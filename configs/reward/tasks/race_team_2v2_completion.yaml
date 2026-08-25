@@ -10,6 +10,7 @@ includes:
   - ../components/team_relative_progress_bonus_standard.yaml
   - ../components/progress_safety_standard.yaml
   - ../components/lap_completion_clean.yaml
+  - ../components/per_lap_bonus_25.yaml
   - ../components/finish_ahead_bonus_100.yaml
   - ../components/target_finish_penalty_100.yaml
   - ../components/collision_penalty_250.yaml

@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
 
 
@@ -6,23 +7,21 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 from src.physics import Simulator, Integrator
 # Lazy import to avoid pyglet initialization on HPC without display
 # from src.render import EnvRenderer  # Moved to render() method
-from src.env.start_pose_state import StartPoseState
 from src.env.centerline_state import (
     CenterlineProgressTracker,
     CenterlineRuntimeState,
+    LapTracker,
     apply_centerline_to_renderer,
     inject_finish_line_info,
-    parse_finish_line,
-    reset_finish_line_tracking,
-    signed_distance_to_finish,
-    update_finish_line_progress,
+    resolve_finish_line_config,
+    validate_finish_line,
 )
 from src.env.collision_state import (
+    RaceLifecycle,
     apply_episode_termination_policy,
-    build_step_terminations,
-    build_truncations,
     normalize_episode_termination_mode,
     update_collision_flags,
+    validate_target_laps,
 )
 from src.env.info_builder import (
     add_episode_metadata,
@@ -43,8 +42,12 @@ from src.env.render_adapter import (
 from src.env.spawn_manager import SpawnManager
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
 from src.env.state_views import build_agent_state, build_global_state, central_state_tensor
-from src.env.state_buffer import StateBuffers
-from src.env.types import AgentState, GlobalState
+from src.env.state_buffer import (
+    StateBuffers,
+    TerminalAgentConfig,
+    TerminalVehicleController,
+)
+from src.env.types import AgentRaceStatus, AgentState, GlobalState
 from src.render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
 # Type checking only imports (don't execute at runtime)
@@ -234,14 +237,16 @@ class F110ParallelEnv:
             aid: None for aid in self.possible_agents
         }
 
-        raw_target_laps = merged.get("target_laps") or merged.get("laps")
-        try:
-            laps_val = int(raw_target_laps) if raw_target_laps is not None else 1
-        except (TypeError, ValueError):
-            laps_val = 1
-        if laps_val <= 0:
-            laps_val = 1
-        self.target_laps: int = int(laps_val)
+        raw_target_laps = merged.get("target_laps", merged.get("laps", 1))
+        self.target_laps = validate_target_laps(raw_target_laps)
+        self.lifecycle = RaceLifecycle(self.possible_agents, self.target_laps)
+        self.terminal_agent_config = TerminalAgentConfig.from_mapping(
+            merged.get("terminal_agents")
+        )
+        self._terminal_controller = TerminalVehicleController(
+            self.possible_agents,
+            self.terminal_agent_config,
+        )
 
         self.current_time = 0.0
         self._elapsed_steps = 0
@@ -258,15 +263,10 @@ class F110ParallelEnv:
         self._collision_flags = np.zeros(self.n_agents, dtype=bool)
         self._collision_steps = np.full(self.n_agents, -1, dtype=np.int32)
 
-        # Start pose state machine
-        self.lap_forward_vel_epsilon = float(merged.get("lap_forward_vel_epsilon", 0.1))
-        self.start_state = StartPoseState.build(
-            self.possible_agents,
-            self.start_poses,
-            self.lap_forward_vel_epsilon,
-        )
-        self.lap_counts = self.start_state.lap_counts
-        self.lap_times = self.start_state.lap_times
+        # Compatibility views backed exclusively by the authoritative
+        # lifecycle/LapTracker contract.
+        self.lap_counts = np.zeros((self.n_agents,), dtype=np.float32)
+        self.lap_times = np.zeros((self.n_agents,), dtype=np.float32)
 
         # initiate stuff
         self.sim = Simulator(
@@ -295,13 +295,12 @@ class F110ParallelEnv:
             init_metadata=meta,
         )
 
-        self._finish_line_data = self._parse_finish_line(merged.get("finish_line"))
-        if self._finish_line_data is not None:
-            self._finish_signed_prev = np.zeros((self.n_agents,), dtype=np.float32)
-            self._finish_crossed = np.zeros((self.n_agents,), dtype=bool)
-        else:
-            self._finish_signed_prev = None
-            self._finish_crossed = None
+        self._finish_line_override = merged.get("finish_line")
+        self._finish_line_data: Optional[Dict[str, Any]] = None
+        self._finish_signed_prev = None  # legacy compatibility view
+        self._finish_crossed = np.zeros((self.n_agents,), dtype=bool)
+        self._lap_tracker: Optional[LapTracker] = None
+        self._configure_lap_tracker(meta, map_data=map_data)
 
         R = float(meta.get("resolution", 1.0))
         x0, y0, _ = meta.get('origin', (0.0, 0.0, 0.0))
@@ -375,14 +374,22 @@ class F110ParallelEnv:
             "ang_vels_z",
             "collisions",
         )
-        self._central_state_dim = self.n_agents * len(self._central_state_keys)
+        # Physical state plus active/finished/crashed/truncated masks and
+        # normalized lap progress for the centralized critic.
+        self._central_state_dim = self.n_agents * (len(self._central_state_keys) + 5)
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
+        self.physical_agents = tuple(self.possible_agents)
         self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
         self.agents = self.possible_agents.copy()
         self.episode_done = False
         self.controlled_agents = list(cfg.get("controlled_agents") or self.possible_agents)
         self.trainable_agents = list(cfg.get("trainable_agents") or [])
         self.fixed_policy_agents = list(cfg.get("fixed_policy_agents") or [])
+
+    @property
+    def decision_agents(self) -> Tuple[str, ...]:
+        """Agents that still require external policy actions."""
+        return tuple(self.agents)
 
     def _resolve_integrator(self, cfg: Mapping[str, Any]) -> str:
         integrator_cfg = cfg.get("integrator", Integrator.RK4)
@@ -469,6 +476,7 @@ class F110ParallelEnv:
         self.walls = map_data.walls
         self.walls_path = map_data.walls_path
         self._spawn_manager.update_map_data(map_data, self.map_meta)
+        self._configure_lap_tracker(self.map_meta, map_data=map_data)
 
         # Update simulation + renderer
         self.sim.set_map(str(self.yaml_path), self.map_ext)
@@ -690,8 +698,6 @@ class F110ParallelEnv:
         if poses is None or poses.size == 0:
             return
         self.start_poses = np.asarray(poses, dtype=np.float32)
-        self.start_state.apply_start_poses(self.start_poses)
-        self.start_state.reset()
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
         if seed is not None:
@@ -711,8 +717,11 @@ class F110ParallelEnv:
         # Reset persistent collision tracking
         self._collision_flags.fill(False)
         self._collision_steps.fill(-1)
+        self.lifecycle.reset()
+        self._terminal_controller.reset()
 
-        self.start_state.reset()
+        self.lap_counts.fill(0.0)
+        self.lap_times.fill(0.0)
         self.state_buffers.reset()
         self._render_state.reset_episode()
         self._spawn_manager.reset_episode()
@@ -763,6 +772,7 @@ class F110ParallelEnv:
             map_bundle=self._map_bundle_active,
             spawn_mapping=spawn_mapping,
             spawn_metadata=self._spawn_manager.last_spawn_metadata,
+            protocol_metadata=self.map_protocol_metadata,
             finish_line_data=self._finish_line_data,
             finish_crossed=self._finish_crossed,
             agent_id_to_index=self._agent_id_to_index,
@@ -774,9 +784,17 @@ class F110ParallelEnv:
 
         joint = np.zeros((self.n_agents, 2), dtype=np.float32)
         agent_index = self._agent_id_to_index
-        for aid in self.agents:
+        active_before_step = tuple(self.agents)
+        for aid in active_before_step:
             if aid in actions:
                 joint[agent_index[aid]] = np.asarray(actions[aid], dtype=np.float32)
+
+        self._terminal_controller.apply(
+            joint,
+            agent_index=agent_index,
+            simulator=self.sim,
+            step=self._elapsed_steps,
+        )
 
 
         # Increment episode step counter
@@ -802,21 +820,19 @@ class F110ParallelEnv:
         self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
         self._refresh_render_observations(obs)
-        finish_completion = self._update_finish_line_progress()
-
         self.current_time += self.timestep
-        lap_completion = self.start_state.update_progress(
-            self.poses_x,
-            self.poses_y,
-            self.linear_vels_x_curr,
-            self.linear_vels_y_curr,
-            self.current_time,
-            self.target_laps,
-        )
-        if finish_completion:
-            for aid, done in finish_completion.items():
-                if done:
-                    lap_completion[aid] = True
+        if self._lap_tracker is not None:
+            lap_crossings = self._lap_tracker.update(
+                self.poses_x,
+                self.poses_y,
+                self.linear_vels_x_curr,
+                self.linear_vels_y_curr,
+                step=self._elapsed_steps,
+            )
+        else:
+            self.lifecycle.begin_step()
+            lap_crossings = {aid: False for aid in self.possible_agents}
+        self._sync_lifecycle_lap_views(lap_crossings)
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
@@ -830,33 +846,60 @@ class F110ParallelEnv:
             self._collision_steps,
             self._elapsed_steps,
         )
-        active_before_step = tuple(self.agents)
-        terminations = build_step_terminations(
-            self.possible_agents,
-            self._collision_flags,
-            lap_completion,
-            self.terminate_on_collision,
-        )
-        truncations, trunc_flag = build_truncations(
-            self.possible_agents,
-            max_steps=self.max_steps,
-            elapsed_steps=self._elapsed_steps,
-        )
-        terminations, self.episode_done = apply_episode_termination_policy(
-            terminations,
-            truncations,
-            active_agents=active_before_step,
-            possible_agents=self.possible_agents,
-            trainable_agents=self.trainable_agents,
-            mode=self.episode_termination_mode,
-        )
+        collision_array = np.asarray(collisions)
+        for idx, agent_id in enumerate(self.possible_agents):
+            if agent_id not in active_before_step:
+                continue
+            collision_event = idx < collision_array.size and bool(collision_array[idx])
+            if collision_event and self.terminate_on_collision.get(agent_id, True):
+                self.lifecycle.record_collision(agent_id, step=self._elapsed_steps)
+
+        trunc_flag = self.max_steps > 0 and self._elapsed_steps + 1 >= self.max_steps
+        if trunc_flag:
+            self.lifecycle.truncate_active(step=self._elapsed_steps)
+
+        terminations = {
+            aid: self.lifecycle.records[aid].status
+            in {AgentRaceStatus.FINISHED, AgentRaceStatus.CRASHED}
+            for aid in self.possible_agents
+        }
+        truncations = {
+            aid: self.lifecycle.records[aid].status is AgentRaceStatus.TRUNCATED
+            for aid in self.possible_agents
+        }
+
+        if self.episode_termination_mode == "all_agents":
+            self.episode_done = self.lifecycle.episode_done
+        else:
+            # Preserve the historical early-ending policies for existing
+            # scenarios. P8 race scenarios explicitly use ``all_agents``.
+            terminations, self.episode_done = apply_episode_termination_policy(
+                terminations,
+                truncations,
+                active_agents=active_before_step,
+                possible_agents=self.possible_agents,
+                trainable_agents=self.trainable_agents,
+                mode=self.episode_termination_mode,
+            )
+
+        for aid in active_before_step:
+            record = self.lifecycle.records[aid]
+            if not record.is_active and record.terminal_step == self._elapsed_steps:
+                self._terminal_controller.capture(
+                    aid,
+                    status=record.status,
+                    terminal_step=self._elapsed_steps,
+                    action=joint[agent_index[aid]],
+                    vehicle_state=self.sim.agents[agent_index[aid]].state,
+                )
         infos = {aid: {} for aid in self.possible_agents}
-        add_time_limit_info(infos, truncated=trunc_flag)
+        add_time_limit_info(infos, truncations=truncations)
         self._inject_finish_line_info(infos)
         add_episode_metadata(
             infos,
             map_bundle=self._map_bundle_active,
             spawn_metadata=self._spawn_manager.last_spawn_metadata,
+            protocol_metadata=self.map_protocol_metadata,
         )
 
         add_step_info_fields(
@@ -864,7 +907,9 @@ class F110ParallelEnv:
             possible_agents=self.possible_agents,
             agent_target_index=self._agent_target_index,
             collision_flags=self._collision_flags,
+            collision_events=collision_array,
             finish_crossed=self._finish_crossed,
+            lifecycle_records=self.lifecycle.records,
             locked_velocities=self._locked_velocities,
             lock_speed_steps=self._lock_speed_steps,
             episode_step_count=self._episode_step_count,
@@ -904,11 +949,7 @@ class F110ParallelEnv:
 
         # advance and cull finished agents
         self._elapsed_steps += 1
-        self.agents = [
-            aid
-            for aid in active_before_step
-            if not (terminations[aid] or truncations[aid])
-        ]
+        self.agents = list(self.lifecycle.active_agents)
         if self.episode_done:
             self.agents = []
 
@@ -917,33 +958,69 @@ class F110ParallelEnv:
     # ------------------------------------------------------------------
     # Finish line helpers
     # ------------------------------------------------------------------
-    def _parse_finish_line(self, cfg: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
-        return parse_finish_line(cfg)
+    def _configure_lap_tracker(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        map_data: Optional[Any] = None,
+    ) -> None:
+        config = resolve_finish_line_config(self._finish_line_override, metadata)
+        if config is None:
+            self._finish_line_data = None
+            self._lap_tracker = None
+            self._finish_crossed.fill(False)
+            try:
+                map_hash = hashlib.sha256(Path(self.yaml_path).read_bytes()).hexdigest()[:16]
+            except OSError:
+                map_hash = None
+            self.map_protocol_metadata = {
+                "map_hash": map_hash,
+                "finish_line_version": None,
+            }
+            return
+
+        annotations = metadata.get("annotations", {})
+        spawn_items = annotations.get("spawn_points", []) if isinstance(annotations, Mapping) else []
+        spawn_poses = None
+        if isinstance(spawn_items, Sequence):
+            poses = [item.get("pose") for item in spawn_items if isinstance(item, Mapping)]
+            if poses:
+                spawn_poses = np.asarray(poses, dtype=np.float32)
+        centerline = getattr(map_data, "centerline", None) if map_data is not None else None
+        self._finish_line_data = validate_finish_line(
+            config,
+            centerline=centerline,
+            spawn_poses=spawn_poses,
+        )
+        self._lap_tracker = LapTracker(
+            self.possible_agents,
+            self._finish_line_data,
+            self.lifecycle,
+        )
+        self._finish_crossed.fill(False)
+        try:
+            map_hash = hashlib.sha256(Path(self.yaml_path).read_bytes()).hexdigest()[:16]
+        except OSError:
+            map_hash = None
+        self.map_protocol_metadata = {
+            "map_hash": map_hash,
+            "finish_line_version": int(config.get("version", 1)),
+        }
+
+    def _sync_lifecycle_lap_views(self, crossings: Mapping[str, bool]) -> None:
+        for idx, agent_id in enumerate(self.possible_agents):
+            record = self.lifecycle.records[agent_id]
+            self.lap_counts[idx] = float(record.lap_count)
+            self._finish_crossed[idx] = bool(crossings.get(agent_id, False))
+            if self._finish_crossed[idx]:
+                self.lap_times[idx] = float(self.current_time)
 
     def _reset_finish_line_tracking(self) -> None:
-        reset_finish_line_tracking(
-            self._finish_line_data,
-            self._finish_signed_prev,
-            self._finish_crossed,
-            self.poses_x,
-            self.poses_y,
-            self.n_agents,
-        )
-
-    def _signed_distance_to_finish(self, point: np.ndarray) -> float:
-        return signed_distance_to_finish(self._finish_line_data, point)
-
-    def _update_finish_line_progress(self) -> Dict[str, bool]:
-        return update_finish_line_progress(
-            self._finish_line_data,
-            self._finish_signed_prev,
-            self._finish_crossed,
-            self.possible_agents,
-            self.poses_x,
-            self.poses_y,
-            self.linear_vels_x_curr,
-            self.linear_vels_y_curr,
-        )
+        if self._lap_tracker is not None:
+            self._lap_tracker.reset(self.poses_x, self.poses_y)
+        else:
+            self.lifecycle.reset()
+        self._sync_lifecycle_lap_views({})
 
     def _inject_finish_line_info(self, infos: Mapping[str, Dict[str, Any]]) -> None:
         inject_finish_line_info(
@@ -1104,10 +1181,36 @@ class F110ParallelEnv:
         self.angular_vels_curr = buffers.angular_vels_curr
 
     def _central_state_tensor(self, joint: Dict[str, np.ndarray]) -> np.ndarray:
-        return central_state_tensor(
+        physical = central_state_tensor(
             joint,
             n_agents=self.n_agents,
             central_state_keys=self._central_state_keys,
+        )
+        lifecycle = getattr(self, "lifecycle", None)
+        if lifecycle is None:
+            active = np.ones(self.n_agents, dtype=np.float32)
+            terminal = np.zeros((3, self.n_agents), dtype=np.float32)
+            lap_progress = np.zeros(self.n_agents, dtype=np.float32)
+        else:
+            statuses = [lifecycle.records[aid].status for aid in self.possible_agents]
+            active = np.asarray([s == AgentRaceStatus.ACTIVE for s in statuses], dtype=np.float32)
+            terminal = np.asarray(
+                [[s == wanted for s in statuses] for wanted in (
+                    AgentRaceStatus.FINISHED,
+                    AgentRaceStatus.CRASHED,
+                    AgentRaceStatus.TRUNCATED,
+                )],
+                dtype=np.float32,
+            )
+            lap_progress = np.asarray(
+                [
+                    min(lifecycle.records[aid].lap_count / self.target_laps, 1.0)
+                    for aid in self.possible_agents
+                ],
+                dtype=np.float32,
+            )
+        return np.concatenate((physical, active, *terminal, lap_progress)).astype(
+            np.float32, copy=False
         )
 
     def _attach_central_state(self, obs: Dict[str, Dict[str, np.ndarray]], joint: Dict[str, np.ndarray]) -> None:
@@ -1133,6 +1236,7 @@ class F110ParallelEnv:
             lap_times=self.lap_times,
             finish_crossed=self._finish_crossed,
             centerline_facts=self._last_centerline_facts.get(agent_id),
+            lifecycle=self.lifecycle.records[agent_id],
             metadata={
                 "map_bundle": self._map_bundle_active,
                 **self._spawn_manager.last_spawn_metadata,
@@ -1148,6 +1252,7 @@ class F110ParallelEnv:
             central_vector=central,
             controlled_agents=self.controlled_agents,
             trainable_agents=self.trainable_agents,
+            lifecycle_records=self.lifecycle.records,
             metadata={
                 "map_bundle": self._map_bundle_active,
                 **self._spawn_manager.last_spawn_metadata,

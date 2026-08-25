@@ -413,10 +413,28 @@ def main() -> None:
     # Optional dataset recording
     dataset_writer = None
     if args.dataset_dir:
-        from replay.dataset_writer import DatasetWriter, DatasetHook
+        from src.replay.dataset_writer import DatasetWriter, DatasetHook
         import hashlib, yaml as _yaml
         with open(args.scenario, "rb") as _f:
             _scenario_hash = hashlib.sha256(_f.read()).hexdigest()[:16]
+        _env_cfg = scenario.get("environment", {})
+        _map_protocols = {}
+        _bundles = set(_env_cfg.get("map_bundles", []) or [])
+        _bundles.update(_env_cfg.get("map_bundles_train", []) or [])
+        _bundles.update(_env_cfg.get("map_bundles_eval", []) or [])
+        _map_root = Path(_env_cfg.get("map_dir") or _env_cfg.get("map_root") or "maps")
+        for _bundle in sorted(_bundles):
+            _yaml_path = _map_root / str(_bundle) / f"{_bundle}.yaml"
+            if not _yaml_path.exists():
+                continue
+            _map_meta = _yaml.safe_load(_yaml_path.read_text()) or {}
+            _finish_annotation = (_map_meta.get("annotations") or {}).get(
+                "finish_line", {}
+            )
+            _map_protocols[str(_bundle)] = {
+                "yaml_sha256": hashlib.sha256(_yaml_path.read_bytes()).hexdigest(),
+                "finish_line_version": int(_finish_annotation.get("version", 1)),
+            }
         dataset_writer = DatasetWriter(
             output_dir=args.dataset_dir,
             chunk_size=args.dataset_chunk_size,
@@ -426,6 +444,19 @@ def main() -> None:
                 "scenario": exp_cfg.get("name"),
                 "scenario_hash": _scenario_hash,
                 "trainable_agents": trainable_ids,
+                "episode_termination": scenario.get("environment", {}).get(
+                    "episode_termination", {}
+                ),
+                "terminal_agents": scenario.get("environment", {}).get(
+                    "terminal_agents", {}
+                ),
+                "target_laps": scenario.get("environment", {}).get("target_laps", 1),
+                "map_protocols": _map_protocols,
+                "global_state_dim": len(env.get_global_state().vector),
+                "observation_dims": {
+                    aid: composer.obs_dim for aid, composer in obs_composers.items()
+                },
+                "lifecycle_contract_version": "1.0",
             },
         )
         hooks.append(DatasetHook(dataset_writer))
@@ -906,7 +937,7 @@ def _run_off_policy(
     run_id: str = "run",
     spawn_plan_fn=None,
 ) -> None:
-    from replay.replay_buffer import ReplayBuffer
+    from src.replay.replay_buffer import ReplayBuffer
     from training.off_policy_trainer import OffPolicyTrainer
 
     total_steps = int(exp_cfg.get("total_steps", 500_000))

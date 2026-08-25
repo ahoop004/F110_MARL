@@ -37,12 +37,26 @@ def _string_ids(values: Optional[Iterable[Any]]) -> list[str]:
 def _agent_progress_delta(step_info: dict, agent_id: str) -> Optional[float]:
     agent_id = str(agent_id)
     if str(step_info.get("agent_id")) == agent_id:
+        info = step_info.get("info") or {}
+        if (
+            info.get("status") not in {None, "active"}
+            and not info.get("lap_crossed", False)
+            and not info.get("collision_event", False)
+        ):
+            return None
         return _float_or_none(_centerline_info(step_info).get("progress_delta"))
 
     all_infos = step_info.get("all_infos") or {}
     if not isinstance(all_infos, dict):
         return None
-    return _float_or_none(_centerline_from_info(all_infos.get(agent_id)).get("progress_delta"))
+    agent_info = all_infos.get(agent_id)
+    if isinstance(agent_info, dict) and (
+        agent_info.get("status") not in {None, "active"}
+        and not agent_info.get("lap_crossed", False)
+        and not agent_info.get("collision_event", False)
+    ):
+        return None
+    return _float_or_none(_centerline_from_info(agent_info).get("progress_delta"))
 
 
 def _aggregate_progress_delta(
@@ -153,15 +167,17 @@ class FinishAheadBonusComponent(RewardComponent):
         self.require_clean = bool(config.get("require_clean", True))
 
     def compute(self, step_info: dict) -> Dict[str, float]:
-        if not step_info.get("terminated", False):
-            return {}
-
         info = step_info.get("info") or {}
-        if not bool(info.get("finish_line", False)):
-            return {}
-        if bool(info.get("target_finished", False)):
+        if not bool(info.get("race_completed", False)):
             return {}
         if self.require_clean and bool(info.get("collision", False)):
+            return {}
+
+        ego_position = info.get("finish_position")
+        target_position = info.get("target_finish_position")
+        if target_position is not None and (
+            ego_position is None or int(ego_position) >= int(target_position)
+        ):
             return {}
 
         return {"finish_ahead/bonus": self.bonus}

@@ -24,7 +24,7 @@ from agents.mappo import MAPPOAgent
 from env.types import TransitionRecord
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
-from training.reward_context import build_reward_context
+from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
@@ -117,7 +117,9 @@ class MARLTrainer:
         return f"{self.run_id}_ep{episode:06d}"
 
     def _map_id(self) -> Optional[str]:
-        return getattr(self.env, "map_name", None)
+        return getattr(self.env, "_map_bundle_active", None) or getattr(
+            self.env, "map_name", None
+        )
 
     def _spawn_id(self, agent_id: str) -> Optional[str]:
         spawn_manager = getattr(self.env, "_spawn_manager", None)
@@ -315,6 +317,7 @@ class MARLTrainer:
                         episode_id=episode_id,
                         step_idx=step_idx,
                         agent_id=aid,
+                        **transition_lifecycle_fields(self.env, agent_info),
                     )
                     for hook in self.hooks:
                         hook.on_step(record)
@@ -363,6 +366,18 @@ class MARLTrainer:
             episode_metrics = dict(update_metrics)
             episode_metrics["agent_rewards"] = dict(agent_episode_rewards)
             episode_metrics["agent_outcomes"] = agent_outcomes
+            episode_metrics["agent_terminal_reasons"] = {
+                aid: agent_last_info.get(aid, {}).get("terminal_reason")
+                for aid in self.trainable_ids
+            }
+            episode_metrics["agent_finish_positions"] = {
+                aid: agent_last_info.get(aid, {}).get("finish_position")
+                for aid in self.trainable_ids
+            }
+            episode_metrics["agent_lap_counts"] = {
+                aid: int(agent_last_info.get(aid, {}).get("lap_count", 0))
+                for aid in self.trainable_ids
+            }
 
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, episode_metrics)

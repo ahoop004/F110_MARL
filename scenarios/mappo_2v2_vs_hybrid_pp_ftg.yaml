@@ -3,13 +3,8 @@
 # car_0 and car_1 are trainable MAPPO teammates with shared actor and
 # centralized critic. car_2 and car_3 are fixed non-ML racing opponents.
 #
-# This baseline uses the local-agent race_team_2v2 reward. Use
-# race_team_2v2_completion for team progress shaping once comparing
-# completion-focused 2v2 training runs.
-#
-# line2 is used first as a stable/simple map. max_steps=3000 is enough for
-# initial 1-lap training while still allowing slow early MAPPO policies to
-# time out cleanly.
+# Completion-focused three-lap race. Six maps are used for training and two
+# held-out maps are reserved for evaluation; the split is explicit and stable.
 includes:
   - ../configs/env/default.yaml
   - ../configs/vehicle/default.yaml
@@ -22,7 +17,7 @@ experiment:
   seed: 42
 
 environment:
-  maps:
+  map_bundles:
     - Budapest_map
     - circle_map
     - Melbourne_map
@@ -31,14 +26,33 @@ environment:
     - Silverstone_map
     - Spa_map
     - Spielberg_map
+  map_bundles_train:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Spielberg_map
+  map_bundles_eval:
+    - Silverstone_map
+    - Spa_map
   map_cycle: per_episode
   map_pick: round_robin
   target_laps: 3
-  max_steps: 500000
+  # Geometry-derived upper bound: permits three Spa laps above ~0.67 m/s.
+  # Replace with an empirical percentile after deterministic controller runs.
+  max_steps: 250000
   action_repeat: 2
   centerline_autoload: true
   centerline_features: true
   walls_autoload: true
+  episode_termination:
+    mode: all_agents
+  terminal_agents:
+    remain_collidable: true
+    crashed_behavior: stationary
+    finished_behavior: coast_then_stop
+    finish_clearance_steps: 200
   random_spawn:
     enabled: true
     allow_reuse: true
@@ -56,7 +70,7 @@ agents:
     role: racer
     target_id: car_2
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/race_team_2v2.yaml
+    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -71,7 +85,7 @@ agents:
     role: racer
     target_id: car_3
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/race_team_2v2.yaml
+    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -159,5 +173,5 @@ wandb:
   group: racing_baselines
   job_type: mappo_2v2_vs_hybrid_pp_ftg
   tags: [mappo, racing, hybrid_pp_ftg, 2v2]
-  notes: "MAPPO 2v2 racing against fixed Hybrid PP+FTG opponents on line2"
+  notes: "Three-lap MAPPO 2v2 race with independent lifecycle and collidable terminal vehicles"
   mode: online

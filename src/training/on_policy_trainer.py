@@ -10,7 +10,7 @@ from agents.ppo import PPOAgent
 from env.types import TransitionRecord
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook
-from training.reward_context import build_reward_context
+from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
@@ -62,9 +62,12 @@ class OnPolicyTrainer:
         rl_action_phys: np.ndarray,
         obs_dict: Dict,
     ) -> Dict[str, np.ndarray]:
-        actions: Dict[str, np.ndarray] = {self.rl_agent_id: rl_action_phys}
+        active = set(getattr(self.env, "agents", obs_dict))
+        actions: Dict[str, np.ndarray] = {}
+        if self.rl_agent_id in active:
+            actions[self.rl_agent_id] = rl_action_phys
         for aid, other_agent in self.other_agents.items():
-            if aid in obs_dict:
+            if aid in active:
                 try:
                     act = other_agent.act(obs_dict[aid])
                 except Exception:
@@ -76,7 +79,9 @@ class OnPolicyTrainer:
         return f"{self.run_id}_ep{episode:06d}"
 
     def _map_id(self) -> Optional[str]:
-        return getattr(self.env, "map_name", None)
+        return getattr(self.env, "_map_bundle_active", None) or getattr(
+            self.env, "map_name", None
+        )
 
     def _spawn_id(self) -> Optional[str]:
         sm = getattr(self.env, "_spawn_manager", None)
@@ -130,6 +135,7 @@ class OnPolicyTrainer:
                 action_norm, log_prob, value = self.agent.act(obs)
                 action_phys = self.action_composer.process(action_norm)
                 actions = self._build_actions(action_phys, obs_dict)
+                acted_agents = set(actions)
 
                 # Accumulate reward across action_repeat sub-steps so
                 # progress-based reward components aren't missed.
@@ -167,9 +173,15 @@ class OnPolicyTrainer:
                     )
                     sub_reward, _ = self.reward_composer.compute(sub_step_info)
                     reward += sub_reward
-                    if sub_done:
+                    membership_changed = not acted_agents.issubset(
+                        set(getattr(self.env, "agents", []))
+                    )
+                    if sub_done or membership_changed:
                         done = True
                         episode_truncated = bool(rl_trunc)
+                        if sub_done:
+                            break
+                        done = False
                         break
 
                 last_info = info_dict.get(self.rl_agent_id, {})
@@ -202,6 +214,7 @@ class OnPolicyTrainer:
                     episode_id=episode_id,
                     step_idx=step_idx,
                     agent_id=self.rl_agent_id,
+                    **transition_lifecycle_fields(self.env, last_info),
                 )
                 for hook in self.hooks:
                     hook.on_step(record)

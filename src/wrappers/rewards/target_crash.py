@@ -11,13 +11,16 @@ class TargetCrashBonusComponent(RewardComponent):
 
     def __init__(self, config: dict) -> None:
         self.bonus = float(config.get("bonus", 200.0))
+        self._awarded = False
+
+    def reset(self) -> None:
+        self._awarded = False
 
     def compute(self, step_info: dict) -> Dict[str, float]:
-        if not (step_info.get("done") or step_info.get("terminated")):
-            return {}
         info = step_info.get("info") or {}
-        target_crashed = bool(info.get("target_collision", False))
-        ego_crashed = bool(info.get("collision", False))
-        if target_crashed and not ego_crashed:
+        target_crashed = info.get("target_terminal_reason") == "collision"
+        ego_crashed = info.get("terminal_reason") == "collision"
+        if target_crashed and not ego_crashed and not self._awarded:
+            self._awarded = True
             return {"target_crash/bonus": self.bonus}
         return {}

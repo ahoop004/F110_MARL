@@ -1,11 +1,122 @@
 """Collision state and termination helpers."""
 from __future__ import annotations
 
-from typing import Dict, Mapping, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from src.env.collision import build_terminations
+from src.env.types import AgentLifecycleRecord, AgentRaceStatus, TerminalReason
+
+
+def validate_target_laps(value: object) -> int:
+    """Validate and return the configured positive integer race distance."""
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError("environment.target_laps must be a positive integer")
+    target_laps = int(value)
+    if target_laps <= 0:
+        raise ValueError("environment.target_laps must be a positive integer")
+    return target_laps
+
+
+class RaceLifecycle:
+    """Framework-independent owner of monotonic per-agent race results."""
+
+    def __init__(self, agent_ids: Sequence[str], target_laps: int) -> None:
+        self.agent_ids = tuple(str(agent_id) for agent_id in agent_ids)
+        self.target_laps = validate_target_laps(target_laps)
+        self.records: Dict[str, AgentLifecycleRecord] = {}
+        self._next_finish_position = 1
+        self.reset()
+
+    def reset(self) -> None:
+        self.records = {
+            agent_id: AgentLifecycleRecord(
+                agent_id=agent_id,
+                target_laps=self.target_laps,
+            )
+            for agent_id in self.agent_ids
+        }
+        self._next_finish_position = 1
+
+    @property
+    def active_agents(self) -> Tuple[str, ...]:
+        return tuple(
+            agent_id
+            for agent_id in self.agent_ids
+            if self.records[agent_id].is_active
+        )
+
+    @property
+    def episode_done(self) -> bool:
+        return all(not record.is_active for record in self.records.values())
+
+    def begin_step(self) -> None:
+        for record in self.records.values():
+            record.lap_crossed = False
+
+    def record_lap_crossing(self, agent_id: str, *, step: int) -> bool:
+        """Record one accepted crossing and finish at the configured distance."""
+        record = self._record(agent_id)
+        if not record.is_active:
+            return False
+        record.lap_crossed = True
+        record.lap_count += 1
+        if record.race_completed:
+            return self._transition(
+                agent_id,
+                AgentRaceStatus.FINISHED,
+                TerminalReason.RACE_COMPLETE,
+                step=step,
+                finish_position=self._next_finish_position,
+            )
+        return False
+
+    def record_collision(self, agent_id: str, *, step: int) -> bool:
+        return self._transition(
+            agent_id,
+            AgentRaceStatus.CRASHED,
+            TerminalReason.COLLISION,
+            step=step,
+        )
+
+    def truncate_active(self, *, step: int) -> Tuple[str, ...]:
+        transitioned = []
+        for agent_id in self.active_agents:
+            if self._transition(
+                agent_id,
+                AgentRaceStatus.TRUNCATED,
+                TerminalReason.TIME_LIMIT,
+                step=step,
+            ):
+                transitioned.append(agent_id)
+        return tuple(transitioned)
+
+    def _transition(
+        self,
+        agent_id: str,
+        status: AgentRaceStatus,
+        reason: TerminalReason,
+        *,
+        step: int,
+        finish_position: Optional[int] = None,
+    ) -> bool:
+        record = self._record(agent_id)
+        if not record.is_active:
+            return False
+        record.status = status
+        record.terminal_reason = reason
+        record.terminal_step = int(step)
+        record.finish_position = finish_position
+        if status is AgentRaceStatus.FINISHED:
+            self._next_finish_position += 1
+        return True
+
+    def _record(self, agent_id: str) -> AgentLifecycleRecord:
+        try:
+            return self.records[str(agent_id)]
+        except KeyError as exc:
+            raise KeyError(f"unknown agent_id: {agent_id}") from exc
 
 
 def update_collision_flags(

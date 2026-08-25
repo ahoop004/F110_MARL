@@ -5,7 +5,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 
-from src.env.types import AgentState, GlobalState, ProgressState
+from src.env.types import AgentLifecycleRecord, AgentRaceStatus, AgentState, GlobalState, ProgressState
 
 
 def central_state_tensor(
@@ -50,6 +50,7 @@ def build_agent_state(
     finish_crossed: Optional[np.ndarray] = None,
     centerline_facts: Optional[Mapping[str, Any]] = None,
     metadata: Optional[Mapping[str, Any]] = None,
+    lifecycle: Optional[AgentLifecycleRecord] = None,
 ) -> AgentState:
     idx = agent_index[agent_id]
     pose = np.array(
@@ -62,7 +63,11 @@ def build_agent_state(
     )
     lap_count = int(lap_counts[idx]) if lap_counts is not None and idx < len(lap_counts) else 0
     lap_time = float(lap_times[idx]) if lap_times is not None and idx < len(lap_times) else 0.0
-    finished = bool(finish_crossed[idx]) if finish_crossed is not None and idx < len(finish_crossed) else False
+    finished = (
+        lifecycle.status == AgentRaceStatus.FINISHED
+        if lifecycle is not None
+        else bool(finish_crossed[idx]) if finish_crossed is not None and idx < len(finish_crossed) else False
+    )
 
     cl = centerline_facts or {}
     progress = ProgressState(
@@ -80,7 +85,21 @@ def build_agent_state(
         angular_velocity=float(angular_vels[idx]) if idx < len(angular_vels) else 0.0,
         collision=bool(collision_flags[idx]) if idx < len(collision_flags) else False,
         progress=progress,
-        metadata=dict(metadata or {}),
+        metadata={
+            **dict(metadata or {}),
+            **(
+                {
+                    "status": lifecycle.status.value,
+                    "terminal_reason": lifecycle.terminal_reason.value if lifecycle.terminal_reason else None,
+                    "terminal_step": lifecycle.terminal_step,
+                    "finish_position": lifecycle.finish_position,
+                    "target_laps": lifecycle.target_laps,
+                    "race_completed": lifecycle.race_completed,
+                }
+                if lifecycle is not None
+                else {}
+            ),
+        },
     )
 
 
@@ -90,6 +109,7 @@ def build_masks(
     *,
     controlled_agents: Optional[Sequence[str]] = None,
     trainable_agents: Optional[Sequence[str]] = None,
+    lifecycle_records: Optional[Mapping[str, AgentLifecycleRecord]] = None,
 ) -> Dict[str, np.ndarray]:
     active_set = set(active_agents)
     controlled_set = set(controlled_agents) if controlled_agents is not None else set(possible_agents)
@@ -97,12 +117,23 @@ def build_masks(
     active_mask = np.array([agent_id in active_set for agent_id in possible_agents], dtype=bool)
     controlled_mask = np.array([agent_id in controlled_set for agent_id in possible_agents], dtype=bool)
     trainable_mask = np.array([agent_id in trainable_set for agent_id in possible_agents], dtype=bool)
-    return {
+    masks = {
         "active_mask": active_mask,
         "terminated_mask": np.logical_not(active_mask),
         "controlled_mask": controlled_mask,
         "trainable_mask": trainable_mask,
     }
+    if lifecycle_records is not None:
+        for status in (
+            AgentRaceStatus.FINISHED,
+            AgentRaceStatus.CRASHED,
+            AgentRaceStatus.TRUNCATED,
+        ):
+            masks[f"{status.value}_mask"] = np.array(
+                [lifecycle_records[aid].status == status for aid in possible_agents],
+                dtype=bool,
+            )
+    return masks
 
 
 def build_global_state(
@@ -113,6 +144,7 @@ def build_global_state(
     controlled_agents: Optional[Sequence[str]] = None,
     trainable_agents: Optional[Sequence[str]] = None,
     metadata: Optional[Mapping[str, Any]] = None,
+    lifecycle_records: Optional[Mapping[str, AgentLifecycleRecord]] = None,
 ) -> GlobalState:
     return GlobalState(
         agent_ids=tuple(possible_agents),
@@ -122,6 +154,7 @@ def build_global_state(
             active_agents,
             controlled_agents=controlled_agents,
             trainable_agents=trainable_agents,
+            lifecycle_records=lifecycle_records,
         ),
         metadata=dict(metadata or {}),
     )

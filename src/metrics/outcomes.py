@@ -33,10 +33,11 @@ class EpisodeOutcome(Enum):
     TIMEOUT = "timeout"
     IDLE_STOP = "idle_stop"
     TARGET_FINISH = "target_finish"
+    FINISHED = "finished"
 
     def is_success(self) -> bool:
         """Check if outcome represents attacker success."""
-        return self == EpisodeOutcome.TARGET_CRASH
+        return self in {EpisodeOutcome.TARGET_CRASH, EpisodeOutcome.FINISHED}
 
     def is_failure(self) -> bool:
         """Check if outcome represents attacker failure."""
@@ -74,7 +75,15 @@ def determine_outcome(info: Dict[str, Any], truncated: bool = False) -> EpisodeO
         >>> determine_outcome(info)
         <EpisodeOutcome.COLLISION: 'collision'>
     """
-    # Check for target finish (highest priority)
+    terminal_reason = info.get("terminal_reason")
+    if terminal_reason == "race_complete":
+        return EpisodeOutcome.FINISHED
+    if terminal_reason == "collision":
+        return EpisodeOutcome.SELF_CRASH
+    if terminal_reason == "time_limit":
+        return EpisodeOutcome.TIMEOUT
+
+    # Backward-compatible adversarial outcome classification.
     if info.get('target_finished', False):
         return EpisodeOutcome.TARGET_FINISH
 

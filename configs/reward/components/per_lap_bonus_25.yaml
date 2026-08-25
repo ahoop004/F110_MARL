@@ -1,0 +1,5 @@
+reward:
+  per_lap_bonus:
+    enabled: true
+    bonus: 25.0
+    include_final_lap: false

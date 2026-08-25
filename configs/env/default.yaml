@@ -9,3 +9,8 @@ environment:
     # End the joint racing episode when any active agent reaches a terminal state.
     # Use all_agents or all_trainable for independent-survival tasks.
     mode: any_agent
+  terminal_agents:
+    remain_collidable: true
+    crashed_behavior: stationary
+    finished_behavior: coast_then_stop
+    finish_clearance_steps: 200

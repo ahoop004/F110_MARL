@@ -13,9 +13,7 @@ class TimeoutPenaltyComponent(RewardComponent):
         self.penalty = float(config.get("penalty", -100.0))
 
     def compute(self, step_info: dict) -> Dict[str, float]:
-        if not step_info.get("truncated"):
-            return {}
         info = step_info.get("info") or {}
-        if bool(info.get("collision")) or bool(info.get("target_collision")):
+        if info.get("terminal_reason") != "time_limit":
             return {}
         return {"timeout/penalty": self.penalty}

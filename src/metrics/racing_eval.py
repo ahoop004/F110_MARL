@@ -34,6 +34,9 @@ class AgentEpisodeFacts:
     final_progress: Optional[float] = None
     speed_samples: list[float] = field(default_factory=list)
     outcome: str = "unknown"
+    terminal_reason: Optional[str] = None
+    finish_position: Optional[int] = None
+    final_lap_count: int = 0
 
     @property
     def completed(self) -> bool:
@@ -112,11 +115,19 @@ def update_agent_step_facts(
         if not isinstance(info, Mapping):
             info = {}
 
+        if facts.done_step is not None:
+            continue
         facts.active_steps += 1
-        if bool(info.get("finish_line", False)) and facts.finish_step is None:
-            facts.finish_step = int(step_idx)
-        if bool(info.get("collision", False)) and facts.collision_step is None:
-            facts.collision_step = int(step_idx)
+        facts.final_lap_count = int(info.get("lap_count", facts.final_lap_count))
+        terminal_reason = info.get("terminal_reason")
+        if terminal_reason:
+            facts.terminal_reason = str(terminal_reason)
+        if bool(info.get("race_completed", False)) and facts.finish_step is None:
+            facts.finish_step = int(info.get("terminal_step", step_idx))
+            position = info.get("finish_position")
+            facts.finish_position = int(position) if position is not None else None
+        if terminal_reason == "collision" and facts.collision_step is None:
+            facts.collision_step = int(info.get("terminal_step", step_idx))
         if bool(info.get("time_limit", False)) or bool(truncations.get(agent_id, False)):
             facts.timed_out = True
 
@@ -150,12 +161,12 @@ def update_agent_step_facts(
 
 def finalize_episode_facts(episode: EvalEpisodeFacts) -> EvalEpisodeFacts:
     for facts in episode.agents.values():
-        if facts.clean_finish:
+        if facts.terminal_reason == "race_complete" or facts.clean_finish:
             facts.outcome = "finished"
-        elif facts.collided:
-            facts.outcome = "collision"
-        elif facts.timed_out:
-            facts.outcome = "timeout"
+        elif facts.terminal_reason == "collision" or facts.collided:
+            facts.outcome = "crashed"
+        elif facts.terminal_reason == "time_limit" or facts.timed_out:
+            facts.outcome = "truncated"
         else:
             facts.outcome = "incomplete"
     return episode
@@ -304,6 +315,35 @@ def _aggregate_team(
         "mean_team_progress": _mean(_team_mean_progress(ep, trainable_ids) for ep in episodes),
         "opponent_team_progress": _mean(_team_mean_progress(ep, opponent_ids) for ep in episodes),
         "team_collision_rate": team_collisions / total,
+        "team_completion_rate": _rate(
+            any(ep.agents[aid].completed for aid in trainable_ids if aid in ep.agents)
+            for ep in episodes
+        ),
+        "team_both_finished_rate": _rate(
+            all(ep.agents[aid].completed for aid in trainable_ids if aid in ep.agents)
+            for ep in episodes
+        ),
+        "team_dnf_rate": _rate(
+            any(not ep.agents[aid].completed for aid in trainable_ids if aid in ep.agents)
+            for ep in episodes
+        ),
+        "team_mean_finish_position": _mean(
+            facts.finish_position
+            for ep in episodes
+            for aid in trainable_ids
+            if (facts := ep.agents.get(aid)) is not None and facts.finish_position is not None
+        ),
+        "team_best_finish_position": _mean(
+            min(
+                (
+                    ep.agents[aid].finish_position
+                    for aid in trainable_ids
+                    if aid in ep.agents and ep.agents[aid].finish_position is not None
+                ),
+                default=0,
+            )
+            for ep in episodes
+        ),
     }
 
 

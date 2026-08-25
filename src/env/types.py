@@ -6,10 +6,56 @@ used by online trainers, offline dataset tooling, and heuristic policies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
+
+
+class AgentRaceStatus(str, Enum):
+    """Monotonic per-agent race lifecycle states."""
+
+    ACTIVE = "active"
+    FINISHED = "finished"
+    CRASHED = "crashed"
+    TRUNCATED = "truncated"
+
+
+class TerminalReason(str, Enum):
+    """Immutable cause for an agent leaving the active decision set."""
+
+    RACE_COMPLETE = "race_complete"
+    COLLISION = "collision"
+    TIME_LIMIT = "time_limit"
+
+
+@dataclass
+class AgentLifecycleRecord:
+    """Authoritative mutable race result for one physical agent.
+
+    ``status``, ``terminal_reason``, ``terminal_step``, and ``finish_position``
+    become immutable once the agent leaves :attr:`AgentRaceStatus.ACTIVE`.
+    ``lap_crossed`` is a one-step event and is cleared at the beginning of the
+    next lifecycle update.
+    """
+
+    agent_id: str
+    target_laps: int
+    status: AgentRaceStatus = AgentRaceStatus.ACTIVE
+    terminal_reason: Optional[TerminalReason] = None
+    terminal_step: Optional[int] = None
+    finish_position: Optional[int] = None
+    lap_crossed: bool = False
+    lap_count: int = 0
+
+    @property
+    def race_completed(self) -> bool:
+        return self.lap_count >= self.target_laps
+
+    @property
+    def is_active(self) -> bool:
+        return self.status is AgentRaceStatus.ACTIVE
 
 
 @dataclass(frozen=True)
@@ -183,3 +229,11 @@ class TransitionRecord:
     episode_id: str
     step_idx: int
     agent_id: str
+    lap_crossed: bool = False
+    lap_count: int = 0
+    target_laps: int = 1
+    race_completed: bool = False
+    terminal_reason: Optional[str] = None
+    lifecycle_status: str = "active"
+    finish_position: Optional[int] = None
+    lifecycle_masks: Dict[str, np.ndarray] = field(default_factory=dict)

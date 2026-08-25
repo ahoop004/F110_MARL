@@ -71,6 +71,9 @@ class ConsoleHook(TrainingHook):
                 self._agent_outcomes.setdefault(aid, deque(maxlen=self._summary_every)).append(
                     str(agent_outcome)
                 )
+        agent_terminal_reasons = (
+            metrics.get("agent_terminal_reasons") if isinstance(metrics, dict) else None
+        )
 
         if episode % self._log_every == 0:
             mean_r = np.mean(self._rewards) if self._rewards else 0.0
@@ -82,6 +85,12 @@ class ConsoleHook(TrainingHook):
                 self._log.print_info(
                     f"ep {episode:>6}  mean={mean_r:+.2f}  outcome={outcome}  | {rewards_str}"
                 )
+                if isinstance(agent_terminal_reasons, dict):
+                    terminal_str = "  ".join(
+                        f"{aid}={reason or 'active'}"
+                        for aid, reason in agent_terminal_reasons.items()
+                    )
+                    self._log.print_info(f"  terminal reasons: {terminal_str}")
             else:
                 self._log.print_info(
                     f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  outcome={outcome}"
@@ -120,11 +129,28 @@ class WandbHook(TrainingHook):
         if isinstance(agent_outcomes, dict):
             for aid, o in agent_outcomes.items():
                 log[f"episode/outcome/{aid}"] = str(o)
+        for metric_name in (
+            "agent_terminal_reasons",
+            "agent_finish_positions",
+            "agent_lap_counts",
+        ):
+            values = metrics.get(metric_name)
+            if isinstance(values, dict):
+                label = metric_name.removeprefix("agent_")
+                for aid, value in values.items():
+                    if value is not None:
+                        log[f"episode/{label}/{aid}"] = value
 
         log.update({
             f"episode/{k}": v
             for k, v in metrics.items()
-            if k not in ("agent_rewards", "agent_outcomes")
+            if k not in (
+                "agent_rewards",
+                "agent_outcomes",
+                "agent_terminal_reasons",
+                "agent_finish_positions",
+                "agent_lap_counts",
+            )
         })
         if hasattr(self._wandb, "log"):
             self._wandb.log(log, step=episode)

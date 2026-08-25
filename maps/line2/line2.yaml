@@ -8,20 +8,28 @@ occupied_thresh: 0.65
 free_thresh: 0.196
 negate: 0
 finish_line:
+    version: 1
     start:
     - 45.7685
     - 0.6567
     end:
     - 45.7144
     - -2.0465
+    direction: [0.99979985, -0.02000933]
+    min_speed: 0.1
+    hysteresis: 0.5
 annotations:
   finish_line:
+    version: 1
     start:
     - 45.7685
     - 0.6567
     end:
     - 45.7144
     - -2.0465
+    direction: [0.99979985, -0.02000933]
+    min_speed: 0.1
+    hysteresis: 0.5
   spawn_points:
   - name: spawn_1
     pose:

@@ -208,6 +208,10 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             "Environment must declare a map via one of: "
             + ", ".join(f"'{k}'" for k in sorted(_MAP_KEYS))
         )
+    if "target_laps" in environment:
+        target_laps = environment["target_laps"]
+        if isinstance(target_laps, bool) or not isinstance(target_laps, int) or target_laps <= 0:
+            raise ScenarioError("'environment.target_laps' must be a positive integer.")
 
     agents = scenario["agents"]
     if not isinstance(agents, dict) or not agents:

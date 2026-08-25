@@ -41,6 +41,7 @@ _STATE_KEYS: Tuple[str, ...] = (
     "collisions",
 )
 _N_KEYS = len(_STATE_KEYS)
+_V2_KEYS_PER_AGENT = _N_KEYS + 5
 
 _DEFAULT_TIMESTEP = 0.01
 _DEFAULT_ACTION_REPEAT = 2
@@ -81,13 +82,21 @@ def group_episodes(data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
 # Global-state decoding
 # ---------------------------------------------------------------------------
 
-def unpack_global_state(gs: np.ndarray) -> Dict[str, Dict[str, float]]:
+def unpack_global_state(
+    gs: np.ndarray,
+    n_agents: Optional[int] = None,
+) -> Dict[str, Dict[str, float]]:
     """Decode the packed global-state vector into per-agent render-obs dicts.
 
     Layout (n_agents agents, 7 keys each):
         [poses_x[0..n-1] | poses_y[0..n-1] | poses_theta[0..n-1] | ...]
     """
-    n = max(1, len(gs) // _N_KEYS)
+    if n_agents is not None:
+        n = max(1, int(n_agents))
+    elif len(gs) % _V2_KEYS_PER_AGENT == 0:
+        n = max(1, len(gs) // _V2_KEYS_PER_AGENT)
+    else:
+        n = max(1, len(gs) // _N_KEYS)
     result: Dict[str, Dict[str, float]] = {}
     for i in range(n):
         entry: Dict[str, float] = {}
@@ -161,6 +170,12 @@ def replay(
 ) -> None:
     print(f"Loading dataset: {dataset_dir}")
     data = load_dataset(dataset_dir)
+    lifecycle_masks = data.get("lifecycle_masks")
+    dataset_n_agents = (
+        int(lifecycle_masks.shape[-1])
+        if lifecycle_masks is not None and lifecycle_masks.ndim == 3
+        else None
+    )
     episodes = group_episodes(data)
     total_loaded = len(data["episode_id"])
     print(f"  {total_loaded:,} transitions across {len(episodes)} episode(s)")
@@ -214,7 +229,7 @@ def replay(
 
             for frame_idx, row in enumerate(frames):
                 gs = data["global_state"][row]
-                render_obs = unpack_global_state(gs)
+                render_obs = unpack_global_state(gs, n_agents=dataset_n_agents)
 
                 try:
                     renderer.update_obs(render_obs)

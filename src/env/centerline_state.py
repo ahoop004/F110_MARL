@@ -13,6 +13,7 @@ from src.utils.centerline import (
     progress_from_spacing,
     project_to_centerline,
 )
+from src.env.collision_state import RaceLifecycle
 
 
 @dataclass
@@ -330,6 +331,7 @@ def parse_finish_line(cfg: Optional[Mapping[str, Any]]) -> Optional[Dict[str, An
     )
     tolerance = max(tolerance, 1e-3)
     padding = max(_float_with_default(cfg.get("padding", 0.5), 0.5), 0.0)
+    hysteresis = max(_float_with_default(cfg.get("hysteresis", 0.5), 0.5), 1e-3)
 
     direction_unit: Optional[np.ndarray] = None
     dir_vec = cfg.get("direction")
@@ -356,9 +358,155 @@ def parse_finish_line(cfg: Optional[Mapping[str, Any]]) -> Optional[Dict[str, An
         "segment_length_sq": length_sq,
         "tolerance": tolerance,
         "padding": padding,
+        "hysteresis": hysteresis,
         "direction": direction_unit,
         "min_speed": min_speed,
     }
+
+
+def resolve_finish_line_config(
+    explicit: Optional[Mapping[str, Any]],
+    map_metadata: Optional[Mapping[str, Any]],
+) -> Optional[Mapping[str, Any]]:
+    """Resolve scenario override first, then the map's shared annotation."""
+    if isinstance(explicit, Mapping):
+        return explicit
+    metadata = map_metadata or {}
+    annotations = metadata.get("annotations", {})
+    if isinstance(annotations, Mapping):
+        annotated = annotations.get("finish_line")
+        if isinstance(annotated, Mapping):
+            return annotated
+    top_level = metadata.get("finish_line")
+    return top_level if isinstance(top_level, Mapping) else None
+
+
+def validate_finish_line(
+    cfg: Optional[Mapping[str, Any]],
+    *,
+    centerline: Optional[np.ndarray] = None,
+    spawn_poses: Optional[np.ndarray] = None,
+    proximity_tolerance: float = 5.0,
+) -> Dict[str, Any]:
+    """Parse finish geometry and reject ambiguous or misplaced annotations."""
+    parsed = parse_finish_line(cfg)
+    if parsed is None:
+        raise ValueError("finish_line requires two distinct start/end points")
+    if parsed["direction"] is None:
+        raise ValueError("finish_line.direction must be a non-zero 2D vector")
+
+    midpoint = (parsed["start"] + parsed["end"]) * 0.5
+    centerline_distance: Optional[float] = None
+    if centerline is not None:
+        points = np.asarray(centerline, dtype=np.float32)
+        if points.ndim == 2 and points.shape[0] and points.shape[1] >= 2:
+            centerline_distance = float(
+                np.min(np.linalg.norm(points[:, :2] - midpoint, axis=1))
+            )
+    if (
+        centerline_distance is not None
+        and centerline_distance > float(proximity_tolerance)
+    ):
+        raise ValueError("finish_line is not close to the centerline")
+    return parsed
+
+
+class LapTracker:
+    """Shared-line, forward-only multi-lap tracker for every physical agent."""
+
+    def __init__(
+        self,
+        agent_ids: Sequence[str],
+        finish_line: Mapping[str, Any],
+        lifecycle: RaceLifecycle,
+    ) -> None:
+        self.agent_ids = tuple(str(agent_id) for agent_id in agent_ids)
+        self.finish_line = dict(finish_line)
+        self.lifecycle = lifecycle
+        self._previous = np.zeros(len(self.agent_ids), dtype=np.float32)
+        self._armed = np.zeros(len(self.agent_ids), dtype=bool)
+
+        segment = np.asarray(self.finish_line["segment"], dtype=np.float32)
+        normal = np.array([-segment[1], segment[0]], dtype=np.float32)
+        direction = np.asarray(self.finish_line["direction"], dtype=np.float32)
+        orientation = float(np.dot(direction, normal))
+        if abs(orientation) <= 1e-6:
+            raise ValueError("finish_line.direction must cross, not run along, the line")
+        self._forward_sign = 1.0 if orientation > 0.0 else -1.0
+
+    def reset(self, poses_x: np.ndarray, poses_y: np.ndarray) -> None:
+        self.lifecycle.reset()
+        hysteresis = float(self.finish_line["hysteresis"])
+        for idx, _agent_id in enumerate(self.agent_ids):
+            point = np.array([poses_x[idx], poses_y[idx]], dtype=np.float32)
+            oriented = self._oriented_distance(point)
+            self._previous[idx] = oriented
+            # Spawning on or beyond the completed side cannot count immediately.
+            self._armed[idx] = oriented <= -hysteresis
+
+    def update(
+        self,
+        poses_x: np.ndarray,
+        poses_y: np.ndarray,
+        linear_vels_x: np.ndarray,
+        linear_vels_y: np.ndarray,
+        *,
+        step: int,
+    ) -> Dict[str, bool]:
+        """Return per-agent crossing events for this simulator step."""
+        self.lifecycle.begin_step()
+        crossings = {agent_id: False for agent_id in self.agent_ids}
+        hysteresis = float(self.finish_line["hysteresis"])
+        direction = np.asarray(self.finish_line["direction"], dtype=np.float32)
+        min_speed = float(self.finish_line["min_speed"])
+
+        for idx, agent_id in enumerate(self.agent_ids):
+            point = np.array([poses_x[idx], poses_y[idx]], dtype=np.float32)
+            current = self._oriented_distance(point)
+            previous = float(self._previous[idx])
+            self._previous[idx] = current
+            record = self.lifecycle.records[agent_id]
+            if not record.is_active:
+                continue
+            if not self._armed[idx]:
+                if current <= -hysteresis:
+                    self._armed[idx] = True
+                continue
+            if not (previous < 0.0 <= current):
+                continue
+
+            # Simulator ``linear_vels_x`` is longitudinal/body-frame speed;
+            # the oriented sign change supplies the world-frame direction.
+            if float(linear_vels_x[idx]) < min_speed:
+                continue
+            if not self._crossing_within_segment(point, previous, current):
+                continue
+
+            crossings[agent_id] = True
+            self._armed[idx] = False
+            self.lifecycle.record_lap_crossing(agent_id, step=step)
+        return crossings
+
+    def _oriented_distance(self, point: np.ndarray) -> float:
+        return self._forward_sign * signed_distance_to_finish(self.finish_line, point)
+
+    def _crossing_within_segment(
+        self,
+        current_point: np.ndarray,
+        previous_distance: float,
+        current_distance: float,
+    ) -> bool:
+        denom = current_distance - previous_distance
+        if abs(denom) <= 1e-9:
+            return False
+        velocity_fraction = -previous_distance / denom
+        # Recover the prior point from this step's displacement direction is
+        # unavailable here; using the current point is safe at simulator-scale
+        # steps and the configured endpoint padding covers the small offset.
+        rel = current_point - self.finish_line["start"]
+        projection = float(np.dot(rel, self.finish_line["segment"]) / self.finish_line["segment_length_sq"])
+        padding = float(self.finish_line["padding"])
+        return 0.0 <= velocity_fraction <= 1.0 and -padding <= projection <= 1.0 + padding
 
 
 def reset_finish_line_tracking(

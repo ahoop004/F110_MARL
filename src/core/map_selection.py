@@ -168,6 +168,22 @@ def apply_map_split(
     mode: str,
 ) -> Dict[str, Any]:
     env_config = normalize_maps_key(env_config)
+    explicit_train = coerce_bundle_list(env_config.get("map_bundles_train"))
+    explicit_eval = coerce_bundle_list(env_config.get("map_bundles_eval"))
+    if explicit_train or explicit_eval:
+        train_bundles = explicit_train or explicit_eval or []
+        eval_bundles = explicit_eval or train_bundles
+        is_eval = str(mode).lower() in {"eval", "evaluation", "test"}
+        active_bundles = eval_bundles if is_eval else train_bundles
+        if not active_bundles:
+            raise ValueError(f"No explicit map bundles configured for {mode} mode")
+        env_config = dict(env_config)
+        env_config["map_bundles_train"] = list(train_bundles)
+        env_config["map_bundles_eval"] = list(eval_bundles)
+        env_config["map_bundle_active"] = active_bundles[0]
+        env_config["map_split_mode"] = "eval" if is_eval else "train"
+        return apply_map_bundle(env_config, active_bundles[0])
+
     map_bundles_raw = env_config.get("map_bundles")
     if map_bundles_raw is None:
         map_bundles = coerce_bundle_list(map_bundles_raw)

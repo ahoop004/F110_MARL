@@ -41,7 +41,20 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-DATASET_SCHEMA_VERSION = "1.0"
+DATASET_SCHEMA_VERSION = "2.0"
+SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION})
+
+
+def detect_dataset_schema(path: str | Path) -> str:
+    """Return a supported dataset schema without guessing from chunk fields."""
+    metadata_path = Path(path)
+    if metadata_path.is_dir():
+        metadata_path = metadata_path / "metadata.json"
+    with open(metadata_path) as handle:
+        version = str((json.load(handle) or {}).get("schema_version", ""))
+    if version not in SUPPORTED_DATASET_SCHEMA_VERSIONS:
+        raise ValueError(f"Unsupported dataset schema version: {version or '<missing>'}")
+    return version
 
 
 class DatasetWriter:
@@ -124,6 +137,22 @@ class DatasetWriter:
         episode_id_arr  = np.empty(n, dtype=object)
         step_idx_arr    = np.zeros(n,             dtype=np.int32)
         agent_id_arr    = np.empty(n, dtype=object)
+        lap_crossed_arr = np.zeros(n, dtype=bool)
+        lap_count_arr = np.zeros(n, dtype=np.int32)
+        target_laps_arr = np.ones(n, dtype=np.int32)
+        race_completed_arr = np.zeros(n, dtype=bool)
+        terminal_reason_arr = np.empty(n, dtype=object)
+        lifecycle_status_arr = np.empty(n, dtype=object)
+        finish_position_arr = np.full(n, -1, dtype=np.int32)
+        mask_keys = ("active_mask", "finished_mask", "crashed_mask", "truncated_mask")
+        mask_dim = max(
+            (
+                len(np.asarray(rec.lifecycle_masks.get("active_mask", [])))
+                for rec in self._buffer
+            ),
+            default=0,
+        )
+        lifecycle_mask_arr = np.zeros((n, len(mask_keys), mask_dim), dtype=bool)
 
         for i, rec in enumerate(self._buffer):
             obs_arr[i]        = rec.obs
@@ -140,6 +169,16 @@ class DatasetWriter:
             episode_id_arr[i] = rec.episode_id
             step_idx_arr[i]   = rec.step_idx
             agent_id_arr[i]   = rec.agent_id
+            lap_crossed_arr[i] = rec.lap_crossed
+            lap_count_arr[i] = rec.lap_count
+            target_laps_arr[i] = rec.target_laps
+            race_completed_arr[i] = rec.race_completed
+            terminal_reason_arr[i] = rec.terminal_reason or ""
+            lifecycle_status_arr[i] = rec.lifecycle_status
+            finish_position_arr[i] = rec.finish_position if rec.finish_position is not None else -1
+            for mask_idx, key in enumerate(mask_keys):
+                mask = np.asarray(rec.lifecycle_masks.get(key, []), dtype=bool).reshape(-1)
+                lifecycle_mask_arr[i, mask_idx, : min(mask_dim, mask.size)] = mask[:mask_dim]
 
         chunk_path = self._dir / f"transitions_{self._chunk_idx:06d}.npz"
         np.savez_compressed(
@@ -157,6 +196,15 @@ class DatasetWriter:
             episode_id=episode_id_arr,
             step_idx=step_idx_arr,
             agent_id=agent_id_arr,
+            lap_crossed=lap_crossed_arr,
+            lap_count=lap_count_arr,
+            target_laps=target_laps_arr,
+            race_completed=race_completed_arr,
+            terminal_reason=terminal_reason_arr,
+            lifecycle_status=lifecycle_status_arr,
+            finish_position=finish_position_arr,
+            lifecycle_masks=lifecycle_mask_arr,
+            lifecycle_mask_keys=np.asarray(mask_keys, dtype=object),
         )
         _log.info("DatasetWriter: wrote %d transitions → %s", n, chunk_path)
 

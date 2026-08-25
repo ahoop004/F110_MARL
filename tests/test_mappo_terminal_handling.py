@@ -69,6 +69,29 @@ def test_mappo_update_accepts_single_step_agent_buffers() -> None:
     assert "train/value_loss" in metrics
 
 
+def test_mappo_rejects_pre_lifecycle_global_state_checkpoint(tmp_path) -> None:
+    old_agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=7,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4]},
+    )
+    path = tmp_path / "old.pt"
+    old_agent.save(str(path))
+    lifecycle_agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=12,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4]},
+    )
+    with pytest.raises(ValueError, match="P8 lifecycle-aware"):
+        lifecycle_agent.load(str(path))
+
+
 class _ObservationComposer:
     def reset(self) -> None:
         pass

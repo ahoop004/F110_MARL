@@ -449,6 +449,17 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        checkpoint_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
+        checkpoint_global_dim = int(
+            ckpt.get("global_state_dim", self.global_state_dim)
+        )
+        if checkpoint_obs_dim != self.obs_dim or checkpoint_global_dim != self.global_state_dim:
+            raise ValueError(
+                "Incompatible MAPPO checkpoint dimensions: "
+                f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
+                f"current={self.obs_dim}/{self.global_state_dim}. "
+                "P8 lifecycle-aware centralized state requires a new checkpoint."
+            )
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         if "optimizer" in ckpt:

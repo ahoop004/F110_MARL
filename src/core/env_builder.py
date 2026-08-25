@@ -106,6 +106,9 @@ def build_env_kwargs(
         "episode_termination",
         "terminate_on_any_done",
         "terminate_on_collision",
+        "target_laps",
+        "terminal_agents",
+        "finish_line",
         "info_level",
         "rendering",        # nested render config: vehicle_colors, hud, etc.
     ]
