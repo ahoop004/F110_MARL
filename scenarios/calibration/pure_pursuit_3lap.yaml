@@ -1,0 +1,28 @@
+# Independent waypoint-controller check for the three-lap lifecycle.
+includes:
+  - hybrid_pp_ftg_3lap.yaml
+
+experiment:
+  name: calibration_pure_pursuit_3lap
+
+environment:
+  max_steps: 150000
+
+agents:
+  car_0:
+    algorithm: pure_pursuit
+    trainable: false
+    role: racer
+    params:
+      lookahead: 0.75
+      min_speed: 0.5
+      max_speed: 2.0
+      max_steer: 0.42
+      wheelbase: 0.33020
+      curvature_slowdown_threshold: 0.3
+      speed_horizon: 3.0
+
+wandb:
+  job_type: pure_pursuit_3lap
+  tags: [calibration, pure_pursuit, 3lap]
+  notes: "Three-lap waypoint-controller lifecycle and duration validation"

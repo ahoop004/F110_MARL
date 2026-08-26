@@ -35,6 +35,7 @@ class CSVLogger:
         self,
         output_dir: str,
         scenario_config: Optional[Dict[str, Any]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
         enabled: bool = True,
     ):
         """Initialize CSV logger.
@@ -47,6 +48,7 @@ class CSVLogger:
         self.output_dir = Path(output_dir)
         self.enabled = enabled
         self.scenario_config = scenario_config
+        self.provenance = dict(provenance or {})
 
         if not self.enabled:
             return
@@ -117,6 +119,54 @@ class CSVLogger:
                 }
                 self._write_agent_row(agent_row)
 
+    def log_training_episode(
+        self,
+        episode: int,
+        reward: float,
+        info: Dict[str, Any],
+        metrics: Dict[str, Any],
+    ) -> None:
+        """Write the current hook contract without requiring legacy metrics classes."""
+        if not self.enabled:
+            return
+
+        row: Dict[str, Any] = {
+            "episode": int(episode),
+            "reward": float(reward),
+            "outcome": info.get("outcome"),
+            "map_bundle": info.get("map_bundle"),
+            "spawn_id": info.get("spawn_id") or info.get("spawn_point"),
+            "episode_steps": metrics.get("episode_steps"),
+            "lap_count": info.get("lap_count"),
+            "finish_position": info.get("finish_position"),
+            "terminal_reason": info.get("terminal_reason"),
+        }
+        for key, value in metrics.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                row.setdefault(key.replace("/", "_"), value)
+        self._write_episode_row(row)
+
+        agent_fields = {
+            "reward": metrics.get("agent_rewards"),
+            "individual_reward": metrics.get("agent_individual_rewards"),
+            "outcome": metrics.get("agent_outcomes"),
+            "terminal_reason": metrics.get("agent_terminal_reasons"),
+            "finish_position": metrics.get("agent_finish_positions"),
+            "lap_count": metrics.get("agent_lap_counts"),
+        }
+        agent_ids = {
+            str(agent_id)
+            for values in agent_fields.values()
+            if isinstance(values, dict)
+            for agent_id in values
+        }
+        for agent_id in sorted(agent_ids):
+            agent_row = {"episode": int(episode), "agent_id": agent_id}
+            for field, values in agent_fields.items():
+                if isinstance(values, dict):
+                    agent_row[field] = values.get(agent_id)
+            self._write_agent_row(agent_row)
+
     def _write_episode_row(self, row_data: Dict[str, Any]):
         """Write row to episode metrics CSV.
 
@@ -179,6 +229,7 @@ class CSVLogger:
         # Add metadata
         snapshot = {
             'timestamp': datetime.now().isoformat(),
+            'provenance': self.provenance,
             'config': config,
         }
 

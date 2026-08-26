@@ -1,0 +1,91 @@
+# Deterministic fixed-controller race-duration calibration.
+# Run once per seed; eight episodes cover every map exactly once.
+includes:
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/wandb.yaml
+
+experiment:
+  name: calibration_hybrid_pp_ftg_1lap
+  episodes: 8
+  seed: 11
+
+environment:
+  map_bundles:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_bundles_train:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  target_laps: 1
+  max_steps: 250000
+  action_repeat: 2
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true
+  episode_termination:
+    mode: all_agents
+  random_spawn:
+    enabled: true
+    allow_reuse: false
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -1.0
+    v_max: 3.0
+
+agents:
+  car_0:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    role: racer
+    params:
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 2.5
+      max_steer: 0.35
+      wheelbase: 0.33020
+      curvature_slowdown_threshold: 0.2
+      speed_horizon: 3.0
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
+      ftg:
+        max_distance: 10.0
+        window_size: 6
+        bubble_radius: 2.5
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 2.5
+        steering_gain: 0.20
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.7
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.01
+        use_disparity_extender: true
+        disparity_threshold: 0.35
+        vehicle_width: 0.225
+        safety_margin: 0.10
+
+wandb:
+  enabled: false
+  group: race_duration_calibration
+  job_type: fixed_controller_1lap
+  tags: [calibration, hybrid_pp_ftg, 1lap]
+  notes: "One-lap fixed-controller duration calibration across all race maps"

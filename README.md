@@ -10,12 +10,12 @@ training loop.
 ## Current Capabilities
 
 - Single-agent RL against fixed-policy opponents.
+- MAPPO with a shared actor and configurable team or agent-conditioned critic.
 - Pure PyTorch PPO/A2C, SAC/DDPG, TD3, and DQN implementations.
 - Component-based observation, reward, and action pipelines.
 - Map bundle loading, random spawn support, centerline features, console logging,
   W&B logging, and checkpoint hooks.
-- Evaluation and curriculum utilities are present, but still being cleaned up
-  after the pure PyTorch migration.
+- Deterministic PPO/MAPPO checkpoint evaluation and curriculum utilities.
 
 ## Quick Start
 
@@ -30,6 +30,18 @@ Run a short PPO smoke test:
 ```bash
 python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1
 ```
+
+Run the paired four-agent MAPPO reward/critic experiments:
+
+```bash
+python3 run.py --scenario scenarios/complete_4_individual.yaml --no-wandb
+python3 run.py --scenario scenarios/complete_4_team_shared.yaml --no-wandb
+```
+
+The individual arm uses per-agent rewards and an agent-conditioned centralized
+critic, `V_i(s)`. The team arm averages factual per-agent rewards with a fixed
+team-size denominator and uses one shared team critic, `V(s)`. The actor remains
+decentralized in both modes and receives only its local observation.
 
 Run off-policy agents:
 
@@ -52,6 +64,7 @@ run.py
   -> wrappers.actions.ActionComposer
   -> training.on_policy_trainer.OnPolicyTrainer
      or training.off_policy_trainer.OffPolicyTrainer
+     or training.marl_trainer.MARLTrainer
 ```
 
 Important directories:
@@ -178,6 +191,5 @@ python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 10 --quiet
 
 - Finish cleanup after the SB3/Gymnasium/PettingZoo removal.
 - Normalize remaining scenario and sweep files around `run.py`.
-- Add MAPPO with shared actor and centralized critic.
-- Revisit evaluation and curriculum once the single-agent and off-policy paths
-  are stable.
+- Calibrate multi-lap episode limits with deterministic controller runs.
+- Run multi-seed MAPPO reward/critic comparisons on explicit train/eval maps.

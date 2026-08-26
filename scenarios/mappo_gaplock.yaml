@@ -9,6 +9,11 @@ experiment:
   episodes: 5000
   seed: 42
 
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
 environment:
   maps: [line2]
   max_steps: 1500

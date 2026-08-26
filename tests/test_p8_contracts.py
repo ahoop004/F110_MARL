@@ -9,7 +9,7 @@ import pytest
 
 from core.env_builder import build_env_kwargs, create_environment
 from core.map_selection import apply_map_split
-from core.scenario import load_and_expand_scenario
+from core.scenario import ScenarioError, load_and_expand_scenario, validate_scenario
 from env.collision_state import RaceLifecycle
 from env.state_buffer import TerminalAgentConfig, TerminalVehicleController
 from env.state_views import build_global_state
@@ -179,6 +179,37 @@ def test_2v2_scenario_expands_explicit_race_contract() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("scenario_path", "reward_mode", "critic_mode"),
+    [
+        ("scenarios/complete_4_individual.yaml", "individual", "agent_conditioned"),
+        ("scenarios/complete_4_team_shared.yaml", "team_shared", "shared_team"),
+        ("scenarios/mappo_2v2_individual.yaml", "individual", "agent_conditioned"),
+        ("scenarios/mappo_2v2_team_shared.yaml", "team_shared", "shared_team"),
+    ],
+)
+def test_mappo_comparison_scenarios_have_explicit_contracts(
+    scenario_path: str,
+    reward_mode: str,
+    critic_mode: str,
+) -> None:
+    scenario = load_and_expand_scenario(scenario_path)
+
+    assert scenario["mappo"] == {
+        "reward_mode": reward_mode,
+        "critic_mode": critic_mode,
+        "team_reward_reduction": "mean",
+    }
+
+
+def test_individual_rewards_reject_shared_team_critic() -> None:
+    scenario = load_and_expand_scenario("scenarios/complete_4_individual.yaml")
+    scenario["mappo"]["critic_mode"] = "shared_team"
+
+    with pytest.raises(ScenarioError, match="individual rewards require"):
+        validate_scenario(scenario)
+
+
 def test_global_state_exposes_distinct_lifecycle_masks() -> None:
     lifecycle = RaceLifecycle(["car_0", "car_1", "car_2"], 1)
     lifecycle.record_lap_crossing("car_0", step=1)
@@ -258,6 +289,29 @@ def test_four_car_standings_remain_immutable() -> None:
     assert summary["team_both_finished_rate"] == 1.0
     assert summary["team_mean_finish_position"] == 1.5
     assert summary["team_best_finish_position"] == 1.0
+
+
+def test_cooperative_team_collision_rate_does_not_require_opponents() -> None:
+    episode = create_episode_facts(
+        episode=0,
+        agent_ids=["car_0", "car_1"],
+        trainable_ids=["car_0", "car_1"],
+        opponent_ids=[],
+    )
+    update_agent_step_facts(
+        episode,
+        step_idx=1,
+        infos={
+            "car_0": {"terminal_reason": "collision"},
+            "car_1": {"terminal_reason": "collision"},
+        },
+        terminations={"car_0": True, "car_1": True},
+    )
+    finalize_episode_facts(episode)
+
+    summary = aggregate_eval_episodes([episode])
+    assert summary["team_collision_rate"] == 1.0
+    assert summary["team_both_finished_rate"] == 0.0
 
 
 def test_finished_vehicle_remains_physical_and_can_crash_active_vehicle() -> None:

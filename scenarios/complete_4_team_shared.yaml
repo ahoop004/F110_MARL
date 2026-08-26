@@ -1,0 +1,39 @@
+# Four-car cooperative racing with one team reward and one shared V(s).
+# Per-agent factual rewards are averaged with a fixed four-agent denominator;
+# every agent that acted receives the same resulting learning reward.
+includes:
+  - complete_4.yaml
+
+experiment:
+  name: complete_4_team_shared
+
+mappo:
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: mean
+
+environment:
+  map_bundles:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_bundles_train:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Spielberg_map
+  map_bundles_eval:
+    - Silverstone_map
+    - Spa_map
+
+wandb:
+  job_type: complete_4_team_shared
+  tags: [mappo, racing, completion, 4car, team_reward, shared_team_critic]
+  notes: "Three-lap four-racer MAPPO with a fixed-denominator shared team reward and V(s)"

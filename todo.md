@@ -5,7 +5,7 @@ Completed work lives in `done.md`.
 ## Current Status
 
 **P0-P7 historical baseline:** 393 tests green. **P8 engineering implementation
-is complete; research-readiness gates remain.** The current focused suite has 42
+is complete; research-readiness gates remain.** The current focused suite has 53
 tests green, including lifecycle, lap tracking, physical terminal vehicles,
 cause-based rewards, standings, MAPPO collection, and dataset schema v2.
 
@@ -561,8 +561,8 @@ rg "stable_baselines3|from gymnasium|from pettingzoo" run.py src configs scenari
 
 Gate 3 - deterministic controller validation:
 
-- [ ] Run a one-lap fixed-controller race and verify one crossing/completion.
-- [ ] Run a three-lap fixed-controller race and verify three crossings but only
+- [x] Run a one-lap fixed-controller race and verify one crossing/completion.
+- [x] Run a three-lap fixed-controller race and verify three crossings but only
   one completion per finisher.
 - [x] Run a scripted early crash and verify remaining agents continue.
 - [x] Run a scripted collision with a finished vehicle.
@@ -582,10 +582,10 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 
 Gate 5 - research readiness:
 
-- [ ] Run multiple fixed seeds.
-- [ ] Confirm map split, finish geometry, spawn assignments, and terminal behavior
+- [x] Run multiple fixed seeds.
+- [x] Confirm map split, finish geometry, spawn assignments, and terminal behavior
   are recorded in metadata.
-- [ ] Compare completion rates and episode lengths across maps.
+- [x] Compare completion rates and episode lengths across maps.
 - [ ] Set the final `max_steps` from observed race-duration distributions.
 - [ ] Start long MAPPO training only after all earlier gates pass.
 
@@ -624,6 +624,38 @@ Gate 5 - research readiness:
 - [x] Rewards, metrics, and datasets identify the actual finisher and cause.
 - [ ] One-lap and multi-lap deterministic tests pass on every configured map.
 - [x] The 2v2 scenario passes a headless MAPPO smoke run with auditable metadata.
+
+---
+
+## P9 - Explicit MAPPO Reward/Critic Experiment Contract
+
+The training stack now supports both reward/critic comparison arms without
+changing decentralized actor execution:
+
+```yaml
+mappo:
+  reward_mode: individual       # individual | team_shared
+  critic_mode: agent_conditioned # agent_conditioned | shared_team
+  team_reward_reduction: mean   # mean | sum
+```
+
+- [x] Condition `V_i(s)` on a focal-agent one-hot vector for individual rewards.
+- [x] Preserve one scalar `V(s)` option for shared team rewards.
+- [x] Reject `individual + shared_team` during scenario validation.
+- [x] Aggregate team rewards once per joint sub-step.
+- [x] Use the configured team size as the `mean` denominator after teammates
+  become terminal, preventing reward-scale drift.
+- [x] Preserve raw individual reward components while storing the final learning
+  reward in transitions.
+- [x] Report individual and learning rewards separately in console, W&B, dataset
+  transition info, and evaluation summaries.
+- [x] Store the reward/critic contract in checkpoints and dataset metadata.
+- [x] Reject checkpoints created under a different or legacy implicit contract.
+- [x] Add paired `complete_4` and 2v2 individual/team-shared scenarios.
+- [x] Give the paired `complete_4` scenarios explicit train/evaluation map sets.
+- [x] Pass focused tests and one-episode headless smokes for both critic modes.
+- [ ] Run calibrated multi-seed comparisons only after the remaining P8
+  deterministic-controller and `max_steps` gates pass.
 
 ---
 

@@ -1,5 +1,12 @@
 # MAPPO training defaults
 # Merged with scenario params (scenario wins on conflict).
+mappo:
+  # Individual rewards require V_i(s). Cooperative experiments may instead
+  # choose team_shared + shared_team explicitly in their scenario.
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
 training_defaults:
   progress_unit: episodes
 

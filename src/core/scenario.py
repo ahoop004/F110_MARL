@@ -17,6 +17,26 @@ class ScenarioError(Exception):
     pass
 
 
+MAPPO_DEFAULTS: Dict[str, str] = {
+    "reward_mode": "individual",
+    "critic_mode": "agent_conditioned",
+    "team_reward_reduction": "mean",
+}
+
+
+def resolve_mappo_config(scenario: Dict[str, Any]) -> Dict[str, str]:
+    """Return the normalized MAPPO reward/critic experiment contract."""
+    raw = scenario.get("mappo", {}) or {}
+    if not isinstance(raw, dict):
+        raise ScenarioError("'mappo' must be a dictionary when provided.")
+    unknown = sorted(set(raw) - set(MAPPO_DEFAULTS))
+    if unknown:
+        raise ScenarioError(f"Unknown MAPPO config field(s): {unknown}.")
+    config = dict(MAPPO_DEFAULTS)
+    config.update({key: str(value).strip().lower() for key, value in raw.items()})
+    return config
+
+
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Deep-merge two dictionaries (override wins)."""
     merged = copy.deepcopy(base)
@@ -246,6 +266,35 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                         f"is missing required '{required_key}' config."
                     )
 
+    trainable_mappo = [
+        aid
+        for aid, cfg in agents.items()
+        if is_trainable_agent(cfg)
+        and str(cfg.get("algorithm", "")).strip().lower() == "mappo"
+    ]
+    if trainable_mappo:
+        mappo = resolve_mappo_config(scenario)
+        reward_mode = mappo["reward_mode"]
+        critic_mode = mappo["critic_mode"]
+        reduction = mappo["team_reward_reduction"]
+        if reward_mode not in {"individual", "team_shared"}:
+            raise ScenarioError(
+                "'mappo.reward_mode' must be 'individual' or 'team_shared'."
+            )
+        if critic_mode not in {"shared_team", "agent_conditioned"}:
+            raise ScenarioError(
+                "'mappo.critic_mode' must be 'shared_team' or 'agent_conditioned'."
+            )
+        if reduction not in {"mean", "sum"}:
+            raise ScenarioError(
+                "'mappo.team_reward_reduction' must be 'mean' or 'sum'."
+            )
+        if reward_mode == "individual" and critic_mode == "shared_team":
+            raise ScenarioError(
+                "MAPPO individual rewards require critic_mode='agent_conditioned'; "
+                "a shared team critic cannot represent distinct per-agent returns."
+            )
+
 
 def resolve_target_ids(scenario: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve target_id for agents based on roles.
@@ -341,6 +390,7 @@ __all__ = [
     'expand_agent_config',
     'expand_scenario',
     'validate_scenario',
+    'resolve_mappo_config',
     'resolve_target_ids',
     'load_and_expand_scenario',
 ]

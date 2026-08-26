@@ -25,6 +25,7 @@ class AgentEpisodeFacts:
     agent_id: str
     team: str
     reward_total: float = 0.0
+    individual_reward_total: float = 0.0
     reward_components: Dict[str, float] = field(default_factory=dict)
     active_steps: int = 0
     done_step: Optional[int] = None
@@ -198,6 +199,14 @@ def aggregate_eval_episodes(
         aid: _mean(ep.agents[aid].reward_total for ep in episodes if aid in ep.agents)
         for aid in all_agent_ids
     }
+    summary["per_agent_individual_rewards_mean"] = {
+        aid: _mean(
+            ep.agents[aid].individual_reward_total
+            for ep in episodes
+            if aid in ep.agents
+        )
+        for aid in all_agent_ids
+    }
     summary["per_agent_reward_components_mean"] = _aggregate_reward_components(
         episodes, all_agent_ids
     )
@@ -297,12 +306,15 @@ def _aggregate_team(
     for ep in episodes:
         trainable = [ep.agents[aid] for aid in trainable_ids if aid in ep.agents]
         opponents = [ep.agents[aid] for aid in opponent_ids if aid in ep.agents]
-        if not trainable or not opponents:
+        if not trainable:
+            continue
+
+        team_collisions += int(any(t.collided for t in trainable))
+        if not opponents:
             continue
 
         team_wins += int(any(_agent_beats(t, o) for t in trainable for o in opponents))
         strict_wins += int(all(_agent_beats(t, o) for t in trainable for o in opponents))
-        team_collisions += int(any(t.collided for t in trainable))
 
     total = len(episodes)
     return {

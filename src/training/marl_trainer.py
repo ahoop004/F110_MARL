@@ -9,8 +9,8 @@ Key differences from :class:`~training.on_policy_trainer.OnPolicyTrainer`
   shared actor.  Fixed-policy opponents are still polled via ``other_agents``.
 - The centralized critic uses ``env.get_global_state().vector`` — a flat
   concatenation of all agents' state — rather than local observations.
-- Per-agent rewards are computed independently by each agent's
-  :class:`~wrappers.rewards.composer.RewardComposer`.
+- Per-agent factual rewards are computed independently, then either retained
+  or reduced to one shared team learning reward according to the MAPPO config.
 - The buffer-full / update trigger is checked across all agents: when **any**
   agent's buffer is full, an update is triggered for all.
 """
@@ -28,6 +28,22 @@ from training.reward_context import build_reward_context, transition_lifecycle_f
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
+
+
+def map_mappo_learning_rewards(
+    individual_rewards: Dict[str, float],
+    *,
+    trainable_ids: List[str],
+    reward_mode: str,
+    team_reward_reduction: str,
+) -> Dict[str, float]:
+    """Convert per-agent factual rewards into MAPPO learning rewards."""
+    if reward_mode == "individual":
+        return dict(individual_rewards)
+    team_reward = float(sum(individual_rewards.values()))
+    if team_reward_reduction == "mean":
+        team_reward /= max(len(trainable_ids), 1)
+    return {aid: team_reward for aid in individual_rewards}
 
 
 class MARLTrainer:
@@ -78,6 +94,8 @@ class MARLTrainer:
         render: bool = False,
         focal_agent_id: Optional[str] = None,
         run_id: str = "run",
+        reward_mode: str = "individual",
+        team_reward_reduction: str = "mean",
     ) -> None:
         self.env = env
         self.agent = agent
@@ -91,6 +109,18 @@ class MARLTrainer:
         self.render = render
         self.focal_id = focal_agent_id or (trainable_ids[0] if trainable_ids else "")
         self.run_id = run_id
+        self.reward_mode = str(reward_mode).strip().lower()
+        self.team_reward_reduction = str(team_reward_reduction).strip().lower()
+        if self.reward_mode not in {"individual", "team_shared"}:
+            raise ValueError(
+                "MAPPO reward_mode must be 'individual' or 'team_shared', "
+                f"got {self.reward_mode!r}."
+            )
+        if self.team_reward_reduction not in {"mean", "sum"}:
+            raise ValueError(
+                "MAPPO team_reward_reduction must be 'mean' or 'sum', "
+                f"got {self.team_reward_reduction!r}."
+            )
 
     # ------------------------------------------------------------------
     # Action assembly
@@ -145,6 +175,23 @@ class MARLTrainer:
             actions=actions,
         )
 
+    def _learning_rewards(
+        self,
+        individual_rewards: Dict[str, float],
+    ) -> Dict[str, float]:
+        """Map factual per-agent rewards to the configured learning signal.
+
+        Team means always use the configured team size as denominator.  A
+        teammate that already terminated therefore contributes zero instead
+        of silently changing reward scale as the active set shrinks.
+        """
+        return map_mappo_learning_rewards(
+            individual_rewards,
+            trainable_ids=self.trainable_ids,
+            reward_mode=self.reward_mode,
+            team_reward_reduction=self.team_reward_reduction,
+        )
+
     # ------------------------------------------------------------------
     # Training loop
     # ------------------------------------------------------------------
@@ -179,6 +226,9 @@ class MARLTrainer:
             # reward total, last info payload, and truncation flag so each
             # agent's outcome can be reported independently of focal_id.
             agent_episode_rewards: Dict[str, float] = {aid: 0.0 for aid in self.trainable_ids}
+            agent_individual_rewards: Dict[str, float] = {
+                aid: 0.0 for aid in self.trainable_ids
+            }
             agent_last_info: Dict[str, Dict] = {aid: {} for aid in self.trainable_ids}
             agent_truncated: Dict[str, bool] = {aid: False for aid in self.trainable_ids}
             step_idx = 0
@@ -201,7 +251,10 @@ class MARLTrainer:
                         log_probs[aid] = lp
 
                 # Centralized value estimate from current global state
-                value = self.agent.evaluate_state(global_state)
+                values = {
+                    aid: self.agent.evaluate_state(global_state, aid)
+                    for aid in actions_norm
+                }
 
                 all_actions = self._build_actions(actions_phys, obs_dict)
 
@@ -210,7 +263,12 @@ class MARLTrainer:
                 # reward components (centerline delta, etc.) are not missed.
                 term_dict: Dict[str, bool] = {}
                 trunc_dict: Dict[str, bool] = {}
-                accumulated_rewards: Dict[str, float] = {aid: 0.0 for aid in self.trainable_ids}
+                accumulated_individual_rewards: Dict[str, float] = {
+                    aid: 0.0 for aid in actions_norm
+                }
+                accumulated_learning_rewards: Dict[str, float] = {
+                    aid: 0.0 for aid in actions_norm
+                }
                 reward_breakdowns: Dict[str, Dict[str, float]] = {
                     aid: {} for aid in actions_norm
                 }
@@ -226,7 +284,8 @@ class MARLTrainer:
                             self.env.render()
                         except Exception:
                             pass
-                    # Compute sub-step reward for each trainable agent
+                    # Compute factual sub-step rewards independently first.
+                    substep_individual_rewards: Dict[str, float] = {}
                     for aid in actions_norm:
                         agent_term = bool(term_dict.get(aid, False))
                         agent_trunc = bool(trunc_dict.get(aid, False))
@@ -252,12 +311,21 @@ class MARLTrainer:
                             )
                         )
                         sub_reward, breakdown = self.reward_composers[aid].compute(sub_step_info)
-                        accumulated_rewards[aid] = accumulated_rewards.get(aid, 0.0) + sub_reward
+                        substep_individual_rewards[aid] = float(sub_reward)
+                        accumulated_individual_rewards[aid] += float(sub_reward)
                         for name, component_reward in breakdown.items():
                             reward_breakdowns[aid][name] = (
                                 reward_breakdowns[aid].get(name, 0.0)
                                 + float(component_reward)
                             )
+
+                    # Convert the factual signals into the configured learning
+                    # signal exactly once per joint environment sub-step.
+                    substep_learning_rewards = self._learning_rewards(
+                        substep_individual_rewards
+                    )
+                    for aid, learning_reward in substep_learning_rewards.items():
+                        accumulated_learning_rewards[aid] += learning_reward
 
                     active_after_substep = set(getattr(self.env, "agents", []))
                     repeat_boundary = (
@@ -279,11 +347,20 @@ class MARLTrainer:
                 step_reward = 0.0
                 next_wrapped_obs: Dict[str, np.ndarray] = {}
                 for aid in actions_norm:
-                    reward = accumulated_rewards.get(aid, 0.0)
+                    reward = accumulated_learning_rewards.get(aid, 0.0)
+                    individual_reward = accumulated_individual_rewards.get(aid, 0.0)
                     if aid == self.focal_id:
                         step_reward = reward
 
-                    agent_info = info_dict.get(aid, {})
+                    agent_info = dict(info_dict.get(aid, {}))
+                    agent_info.update(
+                        {
+                            "individual_reward": individual_reward,
+                            "learning_reward": reward,
+                            "reward_mode": self.reward_mode,
+                            "team_reward_reduction": self.team_reward_reduction,
+                        }
+                    )
                     next_obs = self.obs_composers[aid].wrap(
                         obs_dict.get(aid, {}), agent_info
                     )
@@ -296,7 +373,7 @@ class MARLTrainer:
                         action=actions_norm[aid],
                         reward=reward,
                         log_prob=log_probs[aid],
-                        value=value,
+                        value=values[aid],
                         terminated=decision_terminated[aid],
                         truncated=decision_truncated[aid],
                     )
@@ -323,6 +400,7 @@ class MARLTrainer:
                         hook.on_step(record)
 
                     agent_episode_rewards[aid] += reward
+                    agent_individual_rewards[aid] += individual_reward
                     agent_last_info[aid] = agent_info
                     agent_truncated[aid] = (
                         agent_truncated[aid] or decision_truncated[aid]
@@ -364,7 +442,13 @@ class MARLTrainer:
                 for aid in self.trainable_ids
             }
             episode_metrics = dict(update_metrics)
+            episode_metrics["episode_steps"] = step_idx
             episode_metrics["agent_rewards"] = dict(agent_episode_rewards)
+            episode_metrics["agent_individual_rewards"] = dict(
+                agent_individual_rewards
+            )
+            episode_metrics["reward_mode"] = self.reward_mode
+            episode_metrics["team_reward_reduction"] = self.team_reward_reduction
             episode_metrics["agent_outcomes"] = agent_outcomes
             episode_metrics["agent_terminal_reasons"] = {
                 aid: agent_last_info.get(aid, {}).get("terminal_reason")

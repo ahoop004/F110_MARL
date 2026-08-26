@@ -8,7 +8,8 @@ Shared actor
 
 Centralized critic
     A single :class:`~agents.common.networks.Critic` takes the **global state**
-    (``env.get_global_state().vector``) and outputs one scalar value per call.
+    (``env.get_global_state().vector``). It either estimates one team value
+    ``V(s)`` or appends focal-agent identity to estimate ``V_i(s)``.
     This is the CTDE (Centralized Training, Decentralized Execution) pattern:
     the critic sees everything during training but the actor only uses local obs.
 
@@ -193,6 +194,18 @@ class MAPPOAgent:
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
         self.agent_ids = list(agent_ids)
+        self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
+
+        self.critic_mode = str(params.get("critic_mode", "agent_conditioned")).strip().lower()
+        if self.critic_mode not in {"shared_team", "agent_conditioned"}:
+            raise ValueError(
+                "MAPPO critic_mode must be 'shared_team' or 'agent_conditioned', "
+                f"got {self.critic_mode!r}."
+            )
+        self.reward_mode = str(params.get("reward_mode", "individual")).strip().lower()
+        self.team_reward_reduction = str(
+            params.get("team_reward_reduction", "mean")
+        ).strip().lower()
 
         # Hyperparameters
         self.lr = float(params.get("learning_rate", 3e-4))
@@ -220,8 +233,13 @@ class MAPPOAgent:
         # Shared actor (local obs → action)
         self.actor = Actor(obs_dim, self.action_dim, hidden_dims, activation).to(self.device)
 
-        # Centralized critic (global state → value)
-        self.critic = Critic(global_state_dim, vf_dims, activation).to(self.device)
+        # The team critic estimates one shared V(s).  The agent-conditioned
+        # critic estimates V_i(s) by appending a focal-agent one-hot vector.
+        # In both cases the actor remains decentralized and sees local obs only.
+        self.critic_input_dim = global_state_dim + (
+            len(self.agent_ids) if self.critic_mode == "agent_conditioned" else 0
+        )
+        self.critic = Critic(self.critic_input_dim, vf_dims, activation).to(self.device)
 
         self.optimizer = optim.Adam(
             list(self.actor.parameters()) + list(self.critic.parameters()),
@@ -260,8 +278,44 @@ class MAPPOAgent:
             float(log_prob_t.squeeze()),
         )
 
+    def _critic_input(
+        self,
+        global_state: np.ndarray,
+        agent_id: Optional[str] = None,
+    ) -> np.ndarray:
+        state = np.asarray(global_state, dtype=np.float32).reshape(-1)
+        if state.size != self.global_state_dim:
+            raise ValueError(
+                f"Expected global state dimension {self.global_state_dim}, got {state.size}."
+            )
+        if self.critic_mode == "shared_team":
+            return state
+        if agent_id not in self._agent_index:
+            raise ValueError(
+                "agent_conditioned critic requires a known agent_id; "
+                f"got {agent_id!r}."
+            )
+        identity = np.zeros(len(self.agent_ids), dtype=np.float32)
+        identity[self._agent_index[agent_id]] = 1.0
+        return np.concatenate((state, identity))
+
+    def _critic_batch(self, global_states: torch.Tensor, agent_id: str) -> torch.Tensor:
+        if self.critic_mode == "shared_team":
+            return global_states
+        identity = torch.zeros(
+            (global_states.shape[0], len(self.agent_ids)),
+            dtype=global_states.dtype,
+            device=global_states.device,
+        )
+        identity[:, self._agent_index[agent_id]] = 1.0
+        return torch.cat((global_states, identity), dim=-1)
+
     @torch.no_grad()
-    def evaluate_state(self, global_state: np.ndarray) -> float:
+    def evaluate_state(
+        self,
+        global_state: np.ndarray,
+        agent_id: Optional[str] = None,
+    ) -> float:
         """Estimate value of a global state using the centralized critic.
 
         Parameters
@@ -269,8 +323,9 @@ class MAPPOAgent:
         global_state:
             Flat numpy array from ``env.get_global_state().vector``.
         """
+        critic_input = self._critic_input(global_state, agent_id)
         gs_t = torch.as_tensor(
-            global_state, dtype=torch.float32, device=self.device
+            critic_input, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
         return float(self.critic(gs_t).squeeze())
 
@@ -328,8 +383,6 @@ class MAPPOAgent:
         -------
         Dict with average training losses across all minibatch updates.
         """
-        next_value = self.evaluate_state(next_global_state)
-
         # Collect per-agent advantages and returns
         all_obs: List[torch.Tensor] = []
         all_gs: List[torch.Tensor] = []
@@ -344,10 +397,11 @@ class MAPPOAgent:
             if n == 0:
                 continue
 
+            next_value = self.evaluate_state(next_global_state, aid)
             adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
 
             all_obs.append(buf.obs[:n])
-            all_gs.append(buf.global_states[:n])
+            all_gs.append(self._critic_batch(buf.global_states[:n], aid))
             all_acts.append(buf.actions[:n])
             all_old_lp.append(buf.log_probs[:n])
             all_adv.append(adv)
@@ -442,6 +496,10 @@ class MAPPOAgent:
                 "agent_ids": self.agent_ids,
                 "obs_dim": self.obs_dim,
                 "global_state_dim": self.global_state_dim,
+                "critic_input_dim": self.critic_input_dim,
+                "critic_mode": self.critic_mode,
+                "reward_mode": self.reward_mode,
+                "team_reward_reduction": self.team_reward_reduction,
             },
             path,
         )
@@ -449,16 +507,35 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if "critic_mode" not in ckpt or "reward_mode" not in ckpt:
+            raise ValueError(
+                "MAPPO checkpoint predates the explicit reward/critic contract; "
+                "start a new experiment with a contract-aware checkpoint."
+            )
         checkpoint_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
         checkpoint_global_dim = int(
             ckpt.get("global_state_dim", self.global_state_dim)
         )
-        if checkpoint_obs_dim != self.obs_dim or checkpoint_global_dim != self.global_state_dim:
+        checkpoint_critic_mode = str(ckpt["critic_mode"])
+        checkpoint_reward_mode = str(ckpt["reward_mode"])
+        checkpoint_reduction = str(ckpt.get("team_reward_reduction", "mean"))
+        if (
+            checkpoint_obs_dim != self.obs_dim
+            or checkpoint_global_dim != self.global_state_dim
+            or checkpoint_critic_mode != self.critic_mode
+            or checkpoint_reward_mode != self.reward_mode
+            or checkpoint_reduction != self.team_reward_reduction
+        ):
             raise ValueError(
-                "Incompatible MAPPO checkpoint dimensions: "
+                "Incompatible MAPPO checkpoint contract: "
                 f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
-                f"current={self.obs_dim}/{self.global_state_dim}. "
-                "P8 lifecycle-aware centralized state requires a new checkpoint."
+                f"current={self.obs_dim}/{self.global_state_dim}; "
+                f"checkpoint critic_mode={checkpoint_critic_mode!r}, "
+                f"current={self.critic_mode!r}; "
+                f"checkpoint reward={checkpoint_reward_mode}/{checkpoint_reduction}, "
+                f"current={self.reward_mode}/{self.team_reward_reduction}. "
+                "Use a checkpoint created with the same lifecycle-state dimensions "
+                "and MAPPO reward/critic contract."
             )
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
