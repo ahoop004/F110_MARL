@@ -200,8 +200,13 @@ class MARLTrainer:
                         actions_phys[aid] = a_phys
                         log_probs[aid] = lp
 
-                # Centralized value estimate from current global state
-                value = self.agent.evaluate_state(global_state)
+                # Agent-conditioned centralized values.  Each reward composer
+                # defines a separate return stream even though the agents share
+                # one critic network and the same global state.
+                values = {
+                    aid: self.agent.evaluate_state(global_state, aid)
+                    for aid in actions_norm
+                }
 
                 all_actions = self._build_actions(actions_phys, obs_dict)
 
@@ -296,7 +301,7 @@ class MARLTrainer:
                         action=actions_norm[aid],
                         reward=reward,
                         log_prob=log_probs[aid],
-                        value=value,
+                        value=values[aid],
                         terminated=decision_terminated[aid],
                         truncated=decision_truncated[aid],
                     )

@@ -8,9 +8,11 @@ Shared actor
 
 Centralized critic
     A single :class:`~agents.common.networks.Critic` takes the **global state**
-    (``env.get_global_state().vector``) and outputs one scalar value per call.
-    This is the CTDE (Centralized Training, Decentralized Execution) pattern:
-    the critic sees everything during training but the actor only uses local obs.
+    (``env.get_global_state().vector``) plus a one-hot trainable-agent identity.
+    It therefore estimates a distinct ``V_i(s)`` for each independently
+    rewarded agent while sharing critic parameters.  This is the CTDE
+    (Centralized Training, Decentralized Execution) pattern: the critic sees
+    everything during training but the actor only uses local observations.
 
 Per-agent rollout buffers
     One :class:`MAPPORolloutBuffer` per trainable agent.  Each buffer stores
@@ -220,8 +222,12 @@ class MAPPOAgent:
         # Shared actor (local obs → action)
         self.actor = Actor(obs_dim, self.action_dim, hidden_dims, activation).to(self.device)
 
-        # Centralized critic (global state → value)
-        self.critic = Critic(global_state_dim, vf_dims, activation).to(self.device)
+        # Agent-conditioned centralized critic.  Reward composers are
+        # independent per agent, so V(s) alone would receive conflicting return
+        # targets for the same global state.  A one-hot agent identity preserves
+        # centralized state access while allowing V_i(s) estimates.
+        self.critic_input_dim = global_state_dim + len(self.agent_ids)
+        self.critic = Critic(self.critic_input_dim, vf_dims, activation).to(self.device)
 
         self.optimizer = optim.Adam(
             list(self.actor.parameters()) + list(self.critic.parameters()),
@@ -260,19 +266,37 @@ class MAPPOAgent:
             float(log_prob_t.squeeze()),
         )
 
+    def _critic_inputs(
+        self,
+        global_states: torch.Tensor,
+        agent_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        """Append one-hot agent identities to batched global states."""
+        identities = torch.nn.functional.one_hot(
+            agent_indices.long(), num_classes=len(self.agent_ids)
+        ).to(dtype=global_states.dtype, device=global_states.device)
+        return torch.cat((global_states, identities), dim=-1)
+
     @torch.no_grad()
-    def evaluate_state(self, global_state: np.ndarray) -> float:
-        """Estimate value of a global state using the centralized critic.
+    def evaluate_state(self, global_state: np.ndarray, agent_id: str) -> float:
+        """Estimate one agent's value from the centralized global state.
 
         Parameters
         ----------
         global_state:
             Flat numpy array from ``env.get_global_state().vector``.
+        agent_id:
+            Trainable agent whose independently rewarded return is estimated.
         """
+        if agent_id not in self.buffers:
+            raise KeyError(f"Unknown MAPPO agent_id: {agent_id}")
+        agent_index = self.agent_ids.index(agent_id)
         gs_t = torch.as_tensor(
             global_state, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
-        return float(self.critic(gs_t).squeeze())
+        index_t = torch.tensor([agent_index], dtype=torch.long, device=self.device)
+        critic_input = self._critic_inputs(gs_t, index_t)
+        return float(self.critic(critic_input).squeeze())
 
     # ------------------------------------------------------------------
     # Experience storage
@@ -328,28 +352,36 @@ class MAPPOAgent:
         -------
         Dict with average training losses across all minibatch updates.
         """
-        next_value = self.evaluate_state(next_global_state)
+        next_values = {
+            aid: self.evaluate_state(next_global_state, aid) for aid in self.agent_ids
+        }
 
         # Collect per-agent advantages and returns
         all_obs: List[torch.Tensor] = []
         all_gs: List[torch.Tensor] = []
         all_acts: List[torch.Tensor] = []
         all_old_lp: List[torch.Tensor] = []
+        all_agent_indices: List[torch.Tensor] = []
         all_adv: List[torch.Tensor] = []
         all_ret: List[torch.Tensor] = []
 
-        for aid in self.agent_ids:
+        for agent_index, aid in enumerate(self.agent_ids):
             buf = self.buffers[aid]
             n = buf.size()
             if n == 0:
                 continue
 
-            adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
+            adv, ret = buf.compute_gae(
+                next_values[aid], self.gamma, self.gae_lambda
+            )
 
             all_obs.append(buf.obs[:n])
             all_gs.append(buf.global_states[:n])
             all_acts.append(buf.actions[:n])
             all_old_lp.append(buf.log_probs[:n])
+            all_agent_indices.append(
+                torch.full((n,), agent_index, dtype=torch.long, device=self.device)
+            )
             all_adv.append(adv)
             all_ret.append(ret)
 
@@ -361,6 +393,7 @@ class MAPPOAgent:
         gs_pool = torch.cat(all_gs, dim=0)
         acts_pool = torch.cat(all_acts, dim=0)
         old_lp_pool = torch.cat(all_old_lp, dim=0)
+        agent_index_pool = torch.cat(all_agent_indices, dim=0)
         adv_pool = torch.cat(all_adv, dim=0)
         ret_pool = torch.cat(all_ret, dim=0)
 
@@ -381,11 +414,12 @@ class MAPPOAgent:
                 gs_b = gs_pool[idx]
                 acts_b = acts_pool[idx]
                 old_lp_b = old_lp_pool[idx]
+                agent_indices_b = agent_index_pool[idx]
                 adv_b = adv_pool[idx]
                 ret_b = ret_pool[idx]
 
                 # Actor loss
-                _, new_lp_b = self.actor.get_action(obs_b)
+                new_lp_b, entropy_b = self.actor.evaluate_actions(obs_b, acts_b)
                 ratio = (new_lp_b - old_lp_b).exp()
                 pi_loss = torch.max(
                     -adv_b * ratio,
@@ -393,13 +427,12 @@ class MAPPOAgent:
                 ).mean()
 
                 # Centralized critic loss
-                value_pred = self.critic(gs_b)
+                critic_input_b = self._critic_inputs(gs_b, agent_indices_b)
+                value_pred = self.critic(critic_input_b)
                 vf_loss = nn.functional.mse_loss(value_pred, ret_b)
 
                 # Entropy bonus
-                mean_b, std_b = self.actor(obs_b)
-                dist = torch.distributions.Normal(mean_b, std_b)
-                entropy = dist.entropy().sum(-1).mean()
+                entropy = entropy_b.mean()
 
                 loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
 
@@ -442,6 +475,7 @@ class MAPPOAgent:
                 "agent_ids": self.agent_ids,
                 "obs_dim": self.obs_dim,
                 "global_state_dim": self.global_state_dim,
+                "critic_mode": "agent_conditioned_v1",
             },
             path,
         )
@@ -453,12 +487,21 @@ class MAPPOAgent:
         checkpoint_global_dim = int(
             ckpt.get("global_state_dim", self.global_state_dim)
         )
-        if checkpoint_obs_dim != self.obs_dim or checkpoint_global_dim != self.global_state_dim:
+        checkpoint_critic_mode = ckpt.get("critic_mode")
+        checkpoint_agent_ids = list(ckpt.get("agent_ids", []))
+        if (
+            checkpoint_obs_dim != self.obs_dim
+            or checkpoint_global_dim != self.global_state_dim
+            or checkpoint_critic_mode != "agent_conditioned_v1"
+            or checkpoint_agent_ids != self.agent_ids
+        ):
             raise ValueError(
-                "Incompatible MAPPO checkpoint dimensions: "
+                "Incompatible MAPPO checkpoint: "
                 f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
-                f"current={self.obs_dim}/{self.global_state_dim}. "
-                "P8 lifecycle-aware centralized state requires a new checkpoint."
+                f"current={self.obs_dim}/{self.global_state_dim}; "
+                f"checkpoint agents={checkpoint_agent_ids}, current={self.agent_ids}. "
+                "Agent-conditioned critic checkpoints require matching dimensions "
+                "and agent order."
             )
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])

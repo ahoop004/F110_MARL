@@ -74,12 +74,35 @@ class Actor(nn.Module):
             log_prob = (dist.log_prob(raw) - torch.log(1 - action.pow(2) + 1e-6)).sum(-1)
         return action, log_prob
 
+    def evaluate_actions(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate log probabilities for already-sampled squashed actions.
+
+        PPO must compare the current policy probability of each rollout action
+        with the probability recorded when that same action was collected.
+        Recover the pre-tanh action with a numerically safe inverse transform,
+        then apply the tanh change-of-variables correction.
+        """
+        mean, std = self(obs)
+        dist = torch.distributions.Normal(mean, std)
+        bounded_actions = actions.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
+        raw_actions = torch.atanh(bounded_actions)
+        log_prob = (
+            dist.log_prob(raw_actions)
+            - torch.log(1.0 - bounded_actions.pow(2) + 1e-6)
+        ).sum(-1)
+        entropy = dist.entropy().sum(-1)
+        return log_prob, entropy
+
 
 class Critic(nn.Module):
     """Value function — maps obs (or global state for MAPPO) to scalar.
 
     input_dim=obs_dim  for PPO (local obs)
-    input_dim=n_agents*obs_dim  for MAPPO (global state)
+    input_dim=global_state_dim+n_trainable_agents for agent-conditioned MAPPO
     """
 
     def __init__(
