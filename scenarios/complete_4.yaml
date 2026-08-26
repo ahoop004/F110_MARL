@@ -15,8 +15,15 @@ experiment:
   episodes: 5000
   seed: 42
 
+# Legacy scenario name retained for compatibility. New comparisons should use
+# complete_4_individual.yaml and complete_4_team_shared.yaml explicitly.
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
 environment:
-  maps:
+  map_bundles:
     - Budapest_map
     - circle_map
     - Melbourne_map
@@ -25,10 +32,23 @@ environment:
     - Silverstone_map
     - Spa_map
     - Spielberg_map
+  map_bundles_train:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Spielberg_map
+  map_bundles_eval:
+    - Silverstone_map
+    - Spa_map
   map_cycle: per_episode
   map_pick: round_robin
   target_laps: 3
-  max_steps: 3000000
+  # Shared provisional safety ceiling; successful three-lap p95 was 64,121,
+  # but all-map controller completion remains a readiness gate. See
+  # docs/RACE_DURATION_CALIBRATION.md.
+  max_steps: 250000
   action_repeat: 2
   centerline_autoload: true
   centerline_features: true
@@ -109,5 +129,5 @@ wandb:
   group: lap_completion
   job_type: complete_4
   tags: [mappo, racing, completion, 4car]
-  notes: "Four trainable MAPPO racers focused on one-lap completion"
+  notes: "Three-lap four-racer MAPPO with individual rewards and an agent-conditioned critic"
   mode: online

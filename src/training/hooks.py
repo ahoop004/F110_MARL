@@ -12,6 +12,7 @@ from loggers.wandb_logger import WandbLogger
 
 if TYPE_CHECKING:
     from env.types import TransitionRecord
+    from loggers.csv_logger import CSVLogger
     from training.curriculum import CurriculumManager
 
 _log = logging.getLogger(__name__)
@@ -91,6 +92,17 @@ class ConsoleHook(TrainingHook):
                         for aid, reason in agent_terminal_reasons.items()
                     )
                     self._log.print_info(f"  terminal reasons: {terminal_str}")
+                individual_rewards = metrics.get("agent_individual_rewards")
+                if (
+                    metrics.get("reward_mode") == "team_shared"
+                    and isinstance(individual_rewards, dict)
+                ):
+                    individual_str = "  ".join(
+                        f"{aid}={r:+.2f}" for aid, r in individual_rewards.items()
+                    )
+                    self._log.print_info(
+                        f"  individual reward signals: {individual_str}"
+                    )
             else:
                 self._log.print_info(
                     f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  outcome={outcome}"
@@ -125,6 +137,10 @@ class WandbHook(TrainingHook):
         if isinstance(agent_rewards, dict):
             for aid, r in agent_rewards.items():
                 log[f"episode/reward/{aid}"] = r
+        agent_individual_rewards = metrics.get("agent_individual_rewards")
+        if isinstance(agent_individual_rewards, dict):
+            for aid, r in agent_individual_rewards.items():
+                log[f"episode/individual_reward/{aid}"] = r
         agent_outcomes = metrics.get("agent_outcomes")
         if isinstance(agent_outcomes, dict):
             for aid, o in agent_outcomes.items():
@@ -146,6 +162,7 @@ class WandbHook(TrainingHook):
             for k, v in metrics.items()
             if k not in (
                 "agent_rewards",
+                "agent_individual_rewards",
                 "agent_outcomes",
                 "agent_terminal_reasons",
                 "agent_finish_positions",
@@ -159,6 +176,19 @@ class WandbHook(TrainingHook):
         self._step += 1
         if hasattr(self._wandb, "log"):
             self._wandb.log(metrics, step=self._step)
+
+
+class CSVHook(TrainingHook):
+    """Persist normal training metrics locally, independent of W&B."""
+
+    def __init__(self, csv_logger: "CSVLogger") -> None:
+        self._csv = csv_logger
+
+    def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
+        self._csv.log_training_episode(episode, reward, info, metrics)
+
+    def on_training_end(self) -> None:
+        self._csv.close()
 
 
 class CurriculumHook(TrainingHook):
@@ -217,6 +247,7 @@ class CheckpointHook(TrainingHook):
         agent: Any,
         output_dir: str,
         save_every: int = 100,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> None:
         from pathlib import Path
         self._agent = agent
@@ -225,14 +256,40 @@ class CheckpointHook(TrainingHook):
         self._save_every = max(1, save_every)
         self._best_reward = float("-inf")
         self._recent_rewards: Deque[float] = deque(maxlen=50)
+        self._provenance = dict(provenance or {})
+
+    def _save(self, path: Any) -> None:
+        """Save atomically enough to preserve the original agent checkpoint on error."""
+        if not self._provenance:
+            self._agent.save(str(path))
+            return
+
+        import torch
+        from pathlib import Path
+        from utils.torch_io import safe_load
+
+        target = Path(path)
+        unannotated = target.with_name(f".{target.name}.unannotated")
+        annotated = target.with_name(f".{target.name}.annotated")
+        try:
+            self._agent.save(str(unannotated))
+            checkpoint = safe_load(str(unannotated), map_location="cpu")
+            if not isinstance(checkpoint, dict):
+                raise TypeError("Agent checkpoint must be a dictionary to attach provenance.")
+            checkpoint["provenance"] = dict(self._provenance)
+            torch.save(checkpoint, annotated)
+            annotated.replace(target)
+        finally:
+            unannotated.unlink(missing_ok=True)
+            annotated.unlink(missing_ok=True)
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         self._recent_rewards.append(reward)
         mean = float(np.mean(self._recent_rewards))
 
         if episode % self._save_every == 0:
-            self._agent.save(str(self._dir / f"checkpoint_ep{episode:06d}.pt"))
+            self._save(self._dir / f"checkpoint_ep{episode:06d}.pt")
 
         if mean > self._best_reward and len(self._recent_rewards) >= 10:
             self._best_reward = mean
-            self._agent.save(str(self._dir / "best_model.pt"))
+            self._save(self._dir / "best_model.pt")

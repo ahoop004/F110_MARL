@@ -14,16 +14,18 @@ SRC_DIR = ROOT_DIR / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from core.scenario import ScenarioError, load_and_expand_scenario
+from core.scenario import ScenarioError, load_and_expand_scenario, resolve_mappo_config
 from core.setup import create_training_setup
 from core.run_id import resolve_run_id, set_run_id_env
+from core.provenance import build_run_provenance, provenance_mismatches
 from src.core.agent_builder import get_trainable_agent_ids
 from loggers.console import ConsoleLogger
+from loggers.csv_logger import CSVLogger
 from loggers.wandb_logger import WandbLogger
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
 from wrappers.actions.composer import ActionComposer
-from training.hooks import CheckpointHook, ConsoleHook, CurriculumHook, WandbHook
+from training.hooks import CSVHook, CheckpointHook, ConsoleHook, CurriculumHook, WandbHook
 
 ON_POLICY_ALGOS = {"ppo", "a2c"}
 OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn"}
@@ -41,6 +43,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--episodes", type=int, default=None)
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
     p.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path for --eval")
+    p.add_argument(
+        "--allow-provenance-mismatch",
+        action="store_true",
+        help="Allow --eval with a checkpoint from a different scenario/config/map contract.",
+    )
     p.add_argument("--eval-episodes", type=int, default=None, help="Evaluation episodes; defaults to --episodes")
     p.add_argument("--total-steps", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
@@ -188,6 +195,24 @@ def _run_heuristic(
     agent_ids = list(agent_configs.keys())
     algos = {aid: agent_configs[aid].get("algorithm", "?") for aid in agent_ids}
     agents_str = "  ".join(f"{aid}={v}" for aid, v in algos.items())
+    algorithm = "+".join(sorted({str(value) for value in algos.values()})) or "heuristic"
+    run_id = args.run_id or resolve_run_id(
+        scenario_name=exp_cfg.get("name"),
+        algorithm=algorithm,
+        seed=exp_cfg.get("seed"),
+    )
+    set_run_id_env(run_id)
+    output_dir = args.output_dir or os.path.join(
+        "outputs", exp_cfg.get("name", "unnamed"), run_id
+    )
+    provenance = build_run_provenance(
+        scenario,
+        scenario_path=args.scenario,
+        run_id=run_id,
+        algorithm=algorithm,
+        trainable_agents=[],
+    )
+    csv_logger = CSVLogger(output_dir, scenario, provenance=provenance)
 
     console.print_header(
         f"Heuristic: {exp_cfg.get('name', 'unnamed')}",
@@ -215,7 +240,7 @@ def _run_heuristic(
 
     try:
         for episode in range(n_episodes):
-            obs_dict, _ = env.reset()
+            obs_dict, info = env.reset()
             for ag in agents.values():
                 if hasattr(ag, "reset"):
                     ag.reset()
@@ -259,6 +284,36 @@ def _run_heuristic(
             status = "TIMEOUT" if timeout else ("COLLISION" if any_collision else "ok")
             console.print_info(f"ep {episode+1:4d}/{n_episodes}  steps={step:5d}  {status}")
 
+            final_infos = {aid: dict(info.get(aid, {})) for aid in agent_ids}
+            focal_info = final_infos.get(agent_ids[0], {}) if agent_ids else {}
+            focal_info["outcome"] = focal_info.get("terminal_reason") or status.lower()
+            csv_logger.log_training_episode(
+                episode,
+                reward=0.0,
+                info=focal_info,
+                metrics={
+                    "episode_steps": step,
+                    "collision": int(any_collision),
+                    "timeout": int(timeout),
+                    "agent_outcomes": {
+                        aid: str(payload.get("terminal_reason") or status.lower())
+                        for aid, payload in final_infos.items()
+                    },
+                    "agent_terminal_reasons": {
+                        aid: payload.get("terminal_reason")
+                        for aid, payload in final_infos.items()
+                    },
+                    "agent_finish_positions": {
+                        aid: payload.get("finish_position")
+                        for aid, payload in final_infos.items()
+                    },
+                    "agent_lap_counts": {
+                        aid: int(payload.get("lap_count", 0))
+                        for aid, payload in final_infos.items()
+                    },
+                },
+            )
+
             if wandb_logger:
                 wandb_logger.log({
                     "episode": episode,
@@ -267,6 +322,7 @@ def _run_heuristic(
                     "timeout": int(timeout),
                 })
     finally:
+        csv_logger.close()
         if wandb_logger:
             wandb_logger.finish()
 
@@ -363,6 +419,14 @@ def main() -> None:
 
     # Training params (needed before banner so we can show device)
     params = resolve_training_params(agent_cfg, scenario)
+    if algorithm in MARL_ALGOS:
+        params = {**params, **resolve_mappo_config(scenario)}
+        obs_dims = {aid: obs_composers[aid].obs_dim for aid in trainable_ids}
+        if len(set(obs_dims.values())) != 1:
+            raise ValueError(
+                "Shared MAPPO actor requires identical local observation dimensions; "
+                f"got {obs_dims}."
+            )
 
     # --- Startup banner ---
     maps_raw = env_cfg.get("maps", env_cfg.get("map", "?"))
@@ -393,6 +457,18 @@ def main() -> None:
     output_dir = args.output_dir or os.path.join(
         "outputs", exp_cfg.get("name", "unnamed"), run_id
     )
+    provenance = build_run_provenance(
+        scenario,
+        scenario_path=args.scenario,
+        run_id=run_id,
+        algorithm=algorithm,
+        trainable_agents=trainable_ids,
+    )
+    csv_logger = CSVLogger(
+        output_dir=output_dir,
+        scenario_config=scenario,
+        provenance=provenance,
+    )
 
     # Hooks
     hooks = [
@@ -401,10 +477,12 @@ def main() -> None:
             log_every=int(os.environ.get("F110_LOG_EVERY", "1")),
             summary_every=int(os.environ.get("F110_SUMMARY_EVERY", "25")),
         ),
+        CSVHook(csv_logger),
         CheckpointHook(
             agent=None,
             output_dir=output_dir,
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
+            provenance=provenance,
         ),  # agent set below
     ]
     if wandb_logger:
@@ -414,27 +492,6 @@ def main() -> None:
     dataset_writer = None
     if args.dataset_dir:
         from src.replay.dataset_writer import DatasetWriter, DatasetHook
-        import hashlib, yaml as _yaml
-        with open(args.scenario, "rb") as _f:
-            _scenario_hash = hashlib.sha256(_f.read()).hexdigest()[:16]
-        _env_cfg = scenario.get("environment", {})
-        _map_protocols = {}
-        _bundles = set(_env_cfg.get("map_bundles", []) or [])
-        _bundles.update(_env_cfg.get("map_bundles_train", []) or [])
-        _bundles.update(_env_cfg.get("map_bundles_eval", []) or [])
-        _map_root = Path(_env_cfg.get("map_dir") or _env_cfg.get("map_root") or "maps")
-        for _bundle in sorted(_bundles):
-            _yaml_path = _map_root / str(_bundle) / f"{_bundle}.yaml"
-            if not _yaml_path.exists():
-                continue
-            _map_meta = _yaml.safe_load(_yaml_path.read_text()) or {}
-            _finish_annotation = (_map_meta.get("annotations") or {}).get(
-                "finish_line", {}
-            )
-            _map_protocols[str(_bundle)] = {
-                "yaml_sha256": hashlib.sha256(_yaml_path.read_bytes()).hexdigest(),
-                "finish_line_version": int(_finish_annotation.get("version", 1)),
-            }
         dataset_writer = DatasetWriter(
             output_dir=args.dataset_dir,
             chunk_size=args.dataset_chunk_size,
@@ -442,7 +499,9 @@ def main() -> None:
                 "run_id": run_id,
                 "algorithm": algorithm,
                 "scenario": exp_cfg.get("name"),
-                "scenario_hash": _scenario_hash,
+                "scenario_hash": provenance["scenario_source_sha256"][:16],
+                "scenario_source_sha256": provenance["scenario_source_sha256"],
+                "resolved_config_hash": provenance["resolved_config_sha256"],
                 "trainable_agents": trainable_ids,
                 "episode_termination": scenario.get("environment", {}).get(
                     "episode_termination", {}
@@ -451,12 +510,18 @@ def main() -> None:
                     "terminal_agents", {}
                 ),
                 "target_laps": scenario.get("environment", {}).get("target_laps", 1),
-                "map_protocols": _map_protocols,
+                "map_protocols": provenance["map_protocols"],
+                "provenance": provenance,
                 "global_state_dim": len(env.get_global_state().vector),
                 "observation_dims": {
                     aid: composer.obs_dim for aid, composer in obs_composers.items()
                 },
                 "lifecycle_contract_version": "1.0",
+                "mappo": (
+                    resolve_mappo_config(scenario)
+                    if algorithm in MARL_ALGOS
+                    else None
+                ),
             },
         )
         hooks.append(DatasetHook(dataset_writer))
@@ -536,6 +601,7 @@ def main() -> None:
             console.print_error(f"Unknown algorithm: '{algorithm}'")
             sys.exit(1)
     finally:
+        csv_logger.close()
         if wandb_logger:
             wandb_logger.finish()
 
@@ -611,6 +677,7 @@ def _run_eval(
         finalize_episode_facts,
         update_agent_step_facts,
     )
+    from training.marl_trainer import map_mappo_learning_rewards
     from utils.torch_io import resolve_device
 
     checkpoint = args.checkpoint
@@ -675,6 +742,8 @@ def _run_eval(
     )
     reward_composers = build_reward_composers(agent_configs, trainable_ids, scenario_dir)
     params = resolve_training_params(focal_cfg, scenario)
+    if algorithm == "mappo":
+        params = {**params, **resolve_mappo_config(scenario)}
     action_composers = {
         aid: ActionComposer.from_config(
             env.action_spaces[aid].low,
@@ -704,6 +773,36 @@ def _run_eval(
             action_high=action_high,
             agent_ids=trainable_ids,
             params=params,
+        )
+    from utils.torch_io import safe_load
+    checkpoint_payload = safe_load(str(checkpoint_path), map_location="cpu")
+    stored_provenance = (
+        checkpoint_payload.get("provenance")
+        if isinstance(checkpoint_payload, dict)
+        else None
+    )
+    if isinstance(stored_provenance, dict):
+        current_provenance = build_run_provenance(
+            scenario,
+            scenario_path=args.scenario,
+            run_id="evaluation",
+            algorithm=algorithm,
+            trainable_agents=trainable_ids,
+        )
+        mismatches = provenance_mismatches(stored_provenance, current_provenance)
+        if mismatches and not args.allow_provenance_mismatch:
+            raise ValueError(
+                "Checkpoint provenance does not match the evaluation scenario: "
+                + "; ".join(mismatches)
+                + ". Pass --allow-provenance-mismatch only for an intentional cross-scenario evaluation."
+            )
+        if mismatches:
+            console.print_warning("Checkpoint provenance mismatch explicitly allowed: " + "; ".join(mismatches))
+        else:
+            console.print_info("Checkpoint provenance matches scenario/config/map hashes.")
+    else:
+        console.print_warning(
+            "Checkpoint has no provenance block; scenario/config/map compatibility cannot be verified."
         )
     agent.load(str(checkpoint_path))
     agent.actor.eval()
@@ -802,6 +901,7 @@ def _run_eval(
                         agent_states=_collect_eval_agent_states(env, all_agent_ids),
                     )
 
+                    substep_individual_rewards: Dict[str, float] = {}
                     for aid, action_norm in actions_norm.items():
                         if aid not in trainable_set:
                             continue
@@ -827,11 +927,23 @@ def _run_eval(
                         )
                         sub_reward, breakdown = reward_composers[aid].compute(sub_step_info)
                         facts = episode_facts.agents[aid]
-                        facts.reward_total += float(sub_reward)
+                        facts.individual_reward_total += float(sub_reward)
+                        substep_individual_rewards[aid] = float(sub_reward)
                         for name, value in breakdown.items():
                             facts.reward_components[name] = (
                                 facts.reward_components.get(name, 0.0) + float(value)
                             )
+
+                    learning_rewards = map_mappo_learning_rewards(
+                        substep_individual_rewards,
+                        trainable_ids=trainable_ids,
+                        reward_mode=str(params.get("reward_mode", "individual")),
+                        team_reward_reduction=str(
+                            params.get("team_reward_reduction", "mean")
+                        ),
+                    )
+                    for aid, learning_reward in learning_rewards.items():
+                        episode_facts.agents[aid].reward_total += learning_reward
 
                     active_after_step = set(getattr(env, "agents", []))
                     if not active_after_step or not set(actions).issubset(active_after_step):
@@ -860,7 +972,12 @@ def _run_eval(
                 for aid in trainable_ids
                 if aid in episode_facts.agents
             )
-            win_value = episode_summary.get("team_win_rate", episode_summary.get("win_rate", 0.0))
+            if not opponent_ids and len(trainable_ids) > 1:
+                win_value = episode_summary.get("team_both_finished_rate", 0.0)
+            else:
+                win_value = episode_summary.get(
+                    "team_win_rate", episode_summary.get("win_rate", 0.0)
+                )
 
             console.print_info(
                 f"eval ep {episode + 1:4d}/{eval_episodes}  "
@@ -877,7 +994,9 @@ def _run_eval(
         focal_agent_id=focal_agent_id,
         opponent_agent_id=opponent_agent_id,
     )
-    if "team_win_rate" in summary:
+    if not opponent_ids and len(trainable_ids) > 1:
+        summary["success_rate"] = summary.get("team_both_finished_rate", 0.0)
+    elif "team_win_rate" in summary:
         summary["success_rate"] = summary["team_win_rate"]
     elif "win_rate" in summary:
         summary["success_rate"] = summary["win_rate"]
@@ -1059,11 +1178,19 @@ def _run_mappo(
         render=render,
         focal_agent_id=focal_id,
         run_id=run_id,
+        reward_mode=str(params.get("reward_mode", "individual")),
+        team_reward_reduction=str(params.get("team_reward_reduction", "mean")),
     )
 
     console.print_info(
         f"Starting MAPPO training for {n_episodes} episodes "
         f"| agents={trainable_ids} | obs_dim={obs_dim} | global_state_dim={global_state_dim}"
+    )
+    console.print_info(
+        "MAPPO contract: "
+        f"reward_mode={params.get('reward_mode')}  "
+        f"critic_mode={params.get('critic_mode')}  "
+        f"team_reward_reduction={params.get('team_reward_reduction')}"
     )
     trainer.train(n_episodes=n_episodes)
 

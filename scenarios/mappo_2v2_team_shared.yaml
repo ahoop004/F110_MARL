@@ -1,0 +1,17 @@
+# Two trainable racers versus two fixed opponents with a shared learning reward
+# and shared team critic. Local factual reward components remain auditable.
+includes:
+  - mappo_2v2_vs_hybrid_pp_ftg.yaml
+
+experiment:
+  name: mappo_2v2_team_shared
+
+mappo:
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: mean
+
+wandb:
+  job_type: mappo_2v2_team_shared
+  tags: [mappo, racing, hybrid_pp_ftg, 2v2, team_reward, shared_team_critic]
+  notes: "Three-lap 2v2 MAPPO with a fixed-denominator shared team reward and V(s)"

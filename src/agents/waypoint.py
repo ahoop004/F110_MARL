@@ -19,6 +19,18 @@ import numpy as np
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _is_closed_path(pts: np.ndarray) -> bool:
+    """Return whether the endpoint gap is consistent with a closed centerline."""
+    if len(pts) < 3:
+        return False
+    segment_lengths = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    positive = segment_lengths[segment_lengths > 1e-6]
+    if positive.size == 0:
+        return False
+    endpoint_gap = float(np.linalg.norm(pts[0] - pts[-1]))
+    return endpoint_gap <= 1.25 * float(np.median(positive))
+
+
 def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int = 60) -> int:
     """Return the index of the centerline point closest to pos.
 
@@ -30,6 +42,12 @@ def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int =
     if last_idx < 0 or last_idx >= n:
         dists = np.sum((pts - pos) ** 2, axis=1)
         return int(np.argmin(dists))
+    if _is_closed_path(pts):
+        # Modular candidates let the incremental search cross N-1 -> 0 at
+        # the start/finish seam without abandoning its O(window) behavior.
+        candidates = np.arange(last_idx - window, last_idx + window + 1) % n
+        dists = np.sum((pts[candidates] - pos) ** 2, axis=1)
+        return int(candidates[int(np.argmin(dists))])
     lo = max(0, last_idx - window)
     hi = min(n, last_idx + window + 1)
     dists = np.sum((pts[lo:hi] - pos) ** 2, axis=1)
@@ -39,21 +57,24 @@ def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int =
 def _lookahead_point(pts: np.ndarray, start: int, dist: float) -> tuple[np.ndarray, int]:
     """Walk forward along centerline until arc length >= dist from pts[start].
 
-    Returns (goal_xy, goal_idx).  Clamps at the last point rather than wrapping
-    so this works on open or closed centerlines without special-casing.
+    Returns (goal_xy, goal_idx). Closed centerlines wrap at the seam; open
+    centerlines retain the previous endpoint clamp.
     """
     n = len(pts)
     idx = start
     accumulated = 0.0
-    while idx < n - 1:
-        seg = float(np.linalg.norm(pts[idx + 1] - pts[idx]))
+    closed = _is_closed_path(pts)
+    max_segments = n if closed else max(n - 1 - start, 0)
+    for _ in range(max_segments):
+        next_idx = (idx + 1) % n if closed else idx + 1
+        seg = float(np.linalg.norm(pts[next_idx] - pts[idx]))
         if accumulated + seg >= dist:
             # Interpolate exactly at the requested distance
             frac = (dist - accumulated) / max(seg, 1e-9)
-            goal = pts[idx] + frac * (pts[idx + 1] - pts[idx])
+            goal = pts[idx] + frac * (pts[next_idx] - pts[idx])
             return goal, idx
         accumulated += seg
-        idx += 1
+        idx = next_idx
     return pts[-1].copy(), n - 1
 
 

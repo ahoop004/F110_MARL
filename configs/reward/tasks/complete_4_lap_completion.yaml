@@ -8,13 +8,14 @@ includes:
   - ../components/collision_penalty.yaml
   - ../components/timeout_penalty_50.yaml
   - ../components/step_time_penalty.yaml
+  - ../components/centerline_progress.yaml
 
 reward:
   # One forward lap is worth approximately +100, independent of track length.
   # Clamp projection discontinuities so a single step cannot create a spike.
   progress_delta_bonus:
     weight: 100.0
-    max_delta: 0.01
+    max_delta: 0.025
 
   lap_completion:
     bonus: 200.0
@@ -23,4 +24,4 @@ reward:
     penalty: -200.0
 
   step_time_penalty:
-    penalty: -0.01
+    penalty: -0.005

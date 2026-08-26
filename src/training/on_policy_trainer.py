@@ -236,6 +236,8 @@ class OnPolicyTrainer:
 
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
+            update_metrics = dict(update_metrics)
+            update_metrics["episode_steps"] = step_idx
 
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)

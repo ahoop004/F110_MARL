@@ -16,6 +16,11 @@ experiment:
   episodes: 5000
   seed: 42
 
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
 environment:
   map_bundles:
     - Budapest_map
@@ -39,8 +44,9 @@ environment:
   map_cycle: per_episode
   map_pick: round_robin
   target_laps: 3
-  # Geometry-derived upper bound: permits three Spa laps above ~0.67 m/s.
-  # Replace with an empirical percentile after deterministic controller runs.
+  # Safety ceiling retained after the 2026-08-26 calibration. Successful
+  # three-lap p95 was 64,121, but the fixed baseline did not finish every map;
+  # see docs/RACE_DURATION_CALIBRATION.md before declaring a final limit.
   max_steps: 250000
   action_repeat: 2
   centerline_autoload: true

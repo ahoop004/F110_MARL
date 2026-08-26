@@ -88,8 +88,40 @@ def test_mappo_rejects_pre_lifecycle_global_state_checkpoint(tmp_path) -> None:
         agent_ids=["car_0"],
         params={"hidden_dims": [4]},
     )
-    with pytest.raises(ValueError, match="P8 lifecycle-aware"):
+    with pytest.raises(ValueError, match="checkpoint contract"):
         lifecycle_agent.load(str(path))
+
+
+def test_mappo_rejects_checkpoint_from_different_reward_critic_contract(tmp_path) -> None:
+    team_agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0", "car_1"],
+        params={
+            "hidden_dims": [4],
+            "critic_mode": "shared_team",
+            "reward_mode": "team_shared",
+        },
+    )
+    path = tmp_path / "team.pt"
+    team_agent.save(str(path))
+    individual_agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0", "car_1"],
+        params={
+            "hidden_dims": [4],
+            "critic_mode": "agent_conditioned",
+            "reward_mode": "individual",
+        },
+    )
+
+    with pytest.raises(ValueError, match="checkpoint contract"):
+        individual_agent.load(str(path))
 
 
 class _ObservationComposer:
@@ -104,11 +136,14 @@ class _ObservationComposer:
 
 
 class _RewardComposer:
+    def __init__(self, reward: float = 1.0) -> None:
+        self.reward = float(reward)
+
     def reset(self) -> None:
         pass
 
     def compute(self, _step_info):
-        return 1.0, {"unit": 1.0}
+        return self.reward, {"unit": self.reward}
 
 
 class _ActionComposer:
@@ -143,7 +178,7 @@ class _FakeMAPPOAgent:
     def act(self, _obs):
         return np.zeros(2, dtype=np.float32), 0.0
 
-    def evaluate_state(self, _global_state) -> float:
+    def evaluate_state(self, _global_state, _agent_id=None) -> float:
         return 0.0
 
     def store(self, **transition) -> None:
@@ -227,3 +262,90 @@ def test_trainer_stops_collecting_after_individual_agent_termination() -> None:
     assert hook.records[-1].terminated is False
     assert hook.records[-1].truncated is True
     assert hook.records[-1].episode_id == "terminal-test_ep000000"
+
+
+def test_team_reward_mean_uses_fixed_configured_team_size() -> None:
+    env = _MixedEndingEnv()
+    trainer = MARLTrainer(
+        env=env,
+        agent=_FakeMAPPOAgent(),
+        trainable_ids=["car_0", "car_1"],
+        other_agents={},
+        obs_composers={aid: _ObservationComposer() for aid in env.possible_agents},
+        reward_composers={aid: _RewardComposer() for aid in env.possible_agents},
+        action_composer=_ActionComposer(),
+        reward_mode="team_shared",
+        team_reward_reduction="mean",
+    )
+
+    assert trainer._learning_rewards({"car_0": 2.0, "car_1": 6.0}) == {
+        "car_0": 4.0,
+        "car_1": 4.0,
+    }
+    # car_1 is no longer active, but the denominator remains two.
+    assert trainer._learning_rewards({"car_0": 2.0}) == {"car_0": 1.0}
+
+
+def test_team_shared_training_records_learning_and_individual_rewards() -> None:
+    env = _MixedEndingEnv()
+    agent = _FakeMAPPOAgent()
+    hook = _RecordingHook()
+    trainer = MARLTrainer(
+        env=env,
+        agent=agent,
+        trainable_ids=["car_0", "car_1"],
+        other_agents={},
+        obs_composers={aid: _ObservationComposer() for aid in env.possible_agents},
+        reward_composers={
+            "car_0": _RewardComposer(2.0),
+            "car_1": _RewardComposer(6.0),
+        },
+        action_composer=_ActionComposer(),
+        hooks=[hook],
+        reward_mode="team_shared",
+        team_reward_reduction="mean",
+    )
+
+    trainer.train(n_episodes=1)
+
+    assert [item["reward"] for item in agent.stored] == [4.0, 4.0, 1.0]
+    assert [record.reward for record in hook.records] == [4.0, 4.0, 1.0]
+    assert [record.info["individual_reward"] for record in hook.records] == [
+        2.0,
+        6.0,
+        2.0,
+    ]
+    assert all(record.info["reward_mode"] == "team_shared" for record in hook.records)
+
+
+def test_agent_conditioned_critic_inputs_identify_focal_agent() -> None:
+    agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0", "car_1"],
+        params={"hidden_dims": [4], "critic_mode": "agent_conditioned"},
+    )
+    state = np.array([3.0, 4.0], dtype=np.float32)
+
+    assert agent._critic_input(state, "car_0").tolist() == [3.0, 4.0, 1.0, 0.0]
+    assert agent._critic_input(state, "car_1").tolist() == [3.0, 4.0, 0.0, 1.0]
+    with pytest.raises(ValueError, match="known agent_id"):
+        agent.evaluate_state(state)
+
+
+def test_shared_team_critic_uses_unmodified_global_state() -> None:
+    agent = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0", "car_1"],
+        params={"hidden_dims": [4], "critic_mode": "shared_team"},
+    )
+    state = np.array([3.0, 4.0], dtype=np.float32)
+
+    assert agent.critic_input_dim == 2
+    assert agent._critic_input(state, "car_0").tolist() == [3.0, 4.0]
+    assert agent._critic_input(state, "car_1").tolist() == [3.0, 4.0]

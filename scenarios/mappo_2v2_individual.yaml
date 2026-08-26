@@ -1,0 +1,17 @@
+# Two trainable racers versus two fixed opponents with individual rewards and
+# an agent-conditioned centralized critic. Comparison arm for team-shared mode.
+includes:
+  - mappo_2v2_vs_hybrid_pp_ftg.yaml
+
+experiment:
+  name: mappo_2v2_individual
+
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
+wandb:
+  job_type: mappo_2v2_individual
+  tags: [mappo, racing, hybrid_pp_ftg, 2v2, individual_reward, agent_conditioned_critic]
+  notes: "Three-lap 2v2 MAPPO with individual rewards and V_i(s)"

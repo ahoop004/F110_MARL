@@ -1,0 +1,14 @@
+# Three-lap arm of the fixed-controller race-duration calibration.
+includes:
+  - hybrid_pp_ftg_1lap.yaml
+
+experiment:
+  name: calibration_hybrid_pp_ftg_3lap
+
+environment:
+  target_laps: 3
+
+wandb:
+  job_type: fixed_controller_3lap
+  tags: [calibration, hybrid_pp_ftg, 3lap]
+  notes: "Three-lap fixed-controller duration calibration across all race maps"

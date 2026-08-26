@@ -8,11 +8,10 @@ Shared actor
 
 Centralized critic
     A single :class:`~agents.common.networks.Critic` takes the **global state**
-    (``env.get_global_state().vector``) plus a one-hot trainable-agent identity.
-    It therefore estimates a distinct ``V_i(s)`` for each independently
-    rewarded agent while sharing critic parameters.  This is the CTDE
-    (Centralized Training, Decentralized Execution) pattern: the critic sees
-    everything during training but the actor only uses local observations.
+    (``env.get_global_state().vector``). It either estimates one team value
+    ``V(s)`` or appends focal-agent identity to estimate ``V_i(s)``.
+    This is the CTDE (Centralized Training, Decentralized Execution) pattern:
+    the critic sees everything during training but the actor only uses local obs.
 
 Per-agent rollout buffers
     One :class:`MAPPORolloutBuffer` per trainable agent.  Each buffer stores
@@ -195,6 +194,18 @@ class MAPPOAgent:
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
         self.agent_ids = list(agent_ids)
+        self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
+
+        self.critic_mode = str(params.get("critic_mode", "agent_conditioned")).strip().lower()
+        if self.critic_mode not in {"shared_team", "agent_conditioned"}:
+            raise ValueError(
+                "MAPPO critic_mode must be 'shared_team' or 'agent_conditioned', "
+                f"got {self.critic_mode!r}."
+            )
+        self.reward_mode = str(params.get("reward_mode", "individual")).strip().lower()
+        self.team_reward_reduction = str(
+            params.get("team_reward_reduction", "mean")
+        ).strip().lower()
 
         # Hyperparameters
         self.lr = float(params.get("learning_rate", 3e-4))
@@ -222,11 +233,12 @@ class MAPPOAgent:
         # Shared actor (local obs → action)
         self.actor = Actor(obs_dim, self.action_dim, hidden_dims, activation).to(self.device)
 
-        # Agent-conditioned centralized critic.  Reward composers are
-        # independent per agent, so V(s) alone would receive conflicting return
-        # targets for the same global state.  A one-hot agent identity preserves
-        # centralized state access while allowing V_i(s) estimates.
-        self.critic_input_dim = global_state_dim + len(self.agent_ids)
+        # The team critic estimates one shared V(s).  The agent-conditioned
+        # critic estimates V_i(s) by appending a focal-agent one-hot vector.
+        # In both cases the actor remains decentralized and sees local obs only.
+        self.critic_input_dim = global_state_dim + (
+            len(self.agent_ids) if self.critic_mode == "agent_conditioned" else 0
+        )
         self.critic = Critic(self.critic_input_dim, vf_dims, activation).to(self.device)
 
         self.optimizer = optim.Adam(
@@ -266,37 +278,56 @@ class MAPPOAgent:
             float(log_prob_t.squeeze()),
         )
 
-    def _critic_inputs(
+    def _critic_input(
         self,
-        global_states: torch.Tensor,
-        agent_indices: torch.Tensor,
-    ) -> torch.Tensor:
-        """Append one-hot agent identities to batched global states."""
-        identities = torch.nn.functional.one_hot(
-            agent_indices.long(), num_classes=len(self.agent_ids)
-        ).to(dtype=global_states.dtype, device=global_states.device)
-        return torch.cat((global_states, identities), dim=-1)
+        global_state: np.ndarray,
+        agent_id: Optional[str] = None,
+    ) -> np.ndarray:
+        state = np.asarray(global_state, dtype=np.float32).reshape(-1)
+        if state.size != self.global_state_dim:
+            raise ValueError(
+                f"Expected global state dimension {self.global_state_dim}, got {state.size}."
+            )
+        if self.critic_mode == "shared_team":
+            return state
+        if agent_id not in self._agent_index:
+            raise ValueError(
+                "agent_conditioned critic requires a known agent_id; "
+                f"got {agent_id!r}."
+            )
+        identity = np.zeros(len(self.agent_ids), dtype=np.float32)
+        identity[self._agent_index[agent_id]] = 1.0
+        return np.concatenate((state, identity))
+
+    def _critic_batch(self, global_states: torch.Tensor, agent_id: str) -> torch.Tensor:
+        if self.critic_mode == "shared_team":
+            return global_states
+        identity = torch.zeros(
+            (global_states.shape[0], len(self.agent_ids)),
+            dtype=global_states.dtype,
+            device=global_states.device,
+        )
+        identity[:, self._agent_index[agent_id]] = 1.0
+        return torch.cat((global_states, identity), dim=-1)
 
     @torch.no_grad()
-    def evaluate_state(self, global_state: np.ndarray, agent_id: str) -> float:
-        """Estimate one agent's value from the centralized global state.
+    def evaluate_state(
+        self,
+        global_state: np.ndarray,
+        agent_id: Optional[str] = None,
+    ) -> float:
+        """Estimate value of a global state using the centralized critic.
 
         Parameters
         ----------
         global_state:
             Flat numpy array from ``env.get_global_state().vector``.
-        agent_id:
-            Trainable agent whose independently rewarded return is estimated.
         """
-        if agent_id not in self.buffers:
-            raise KeyError(f"Unknown MAPPO agent_id: {agent_id}")
-        agent_index = self.agent_ids.index(agent_id)
+        critic_input = self._critic_input(global_state, agent_id)
         gs_t = torch.as_tensor(
-            global_state, dtype=torch.float32, device=self.device
+            critic_input, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
-        index_t = torch.tensor([agent_index], dtype=torch.long, device=self.device)
-        critic_input = self._critic_inputs(gs_t, index_t)
-        return float(self.critic(critic_input).squeeze())
+        return float(self.critic(gs_t).squeeze())
 
     # ------------------------------------------------------------------
     # Experience storage
@@ -352,36 +383,27 @@ class MAPPOAgent:
         -------
         Dict with average training losses across all minibatch updates.
         """
-        next_values = {
-            aid: self.evaluate_state(next_global_state, aid) for aid in self.agent_ids
-        }
-
         # Collect per-agent advantages and returns
         all_obs: List[torch.Tensor] = []
         all_gs: List[torch.Tensor] = []
         all_acts: List[torch.Tensor] = []
         all_old_lp: List[torch.Tensor] = []
-        all_agent_indices: List[torch.Tensor] = []
         all_adv: List[torch.Tensor] = []
         all_ret: List[torch.Tensor] = []
 
-        for agent_index, aid in enumerate(self.agent_ids):
+        for aid in self.agent_ids:
             buf = self.buffers[aid]
             n = buf.size()
             if n == 0:
                 continue
 
-            adv, ret = buf.compute_gae(
-                next_values[aid], self.gamma, self.gae_lambda
-            )
+            next_value = self.evaluate_state(next_global_state, aid)
+            adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
 
             all_obs.append(buf.obs[:n])
-            all_gs.append(buf.global_states[:n])
+            all_gs.append(self._critic_batch(buf.global_states[:n], aid))
             all_acts.append(buf.actions[:n])
             all_old_lp.append(buf.log_probs[:n])
-            all_agent_indices.append(
-                torch.full((n,), agent_index, dtype=torch.long, device=self.device)
-            )
             all_adv.append(adv)
             all_ret.append(ret)
 
@@ -393,7 +415,6 @@ class MAPPOAgent:
         gs_pool = torch.cat(all_gs, dim=0)
         acts_pool = torch.cat(all_acts, dim=0)
         old_lp_pool = torch.cat(all_old_lp, dim=0)
-        agent_index_pool = torch.cat(all_agent_indices, dim=0)
         adv_pool = torch.cat(all_adv, dim=0)
         ret_pool = torch.cat(all_ret, dim=0)
 
@@ -414,12 +435,11 @@ class MAPPOAgent:
                 gs_b = gs_pool[idx]
                 acts_b = acts_pool[idx]
                 old_lp_b = old_lp_pool[idx]
-                agent_indices_b = agent_index_pool[idx]
                 adv_b = adv_pool[idx]
                 ret_b = ret_pool[idx]
 
                 # Actor loss
-                new_lp_b, entropy_b = self.actor.evaluate_actions(obs_b, acts_b)
+                _, new_lp_b = self.actor.get_action(obs_b)
                 ratio = (new_lp_b - old_lp_b).exp()
                 pi_loss = torch.max(
                     -adv_b * ratio,
@@ -427,12 +447,13 @@ class MAPPOAgent:
                 ).mean()
 
                 # Centralized critic loss
-                critic_input_b = self._critic_inputs(gs_b, agent_indices_b)
-                value_pred = self.critic(critic_input_b)
+                value_pred = self.critic(gs_b)
                 vf_loss = nn.functional.mse_loss(value_pred, ret_b)
 
                 # Entropy bonus
-                entropy = entropy_b.mean()
+                mean_b, std_b = self.actor(obs_b)
+                dist = torch.distributions.Normal(mean_b, std_b)
+                entropy = dist.entropy().sum(-1).mean()
 
                 loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
 
@@ -475,7 +496,10 @@ class MAPPOAgent:
                 "agent_ids": self.agent_ids,
                 "obs_dim": self.obs_dim,
                 "global_state_dim": self.global_state_dim,
-                "critic_mode": "agent_conditioned_v1",
+                "critic_input_dim": self.critic_input_dim,
+                "critic_mode": self.critic_mode,
+                "reward_mode": self.reward_mode,
+                "team_reward_reduction": self.team_reward_reduction,
             },
             path,
         )
@@ -483,25 +507,35 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if "critic_mode" not in ckpt or "reward_mode" not in ckpt:
+            raise ValueError(
+                "MAPPO checkpoint predates the explicit reward/critic contract; "
+                "start a new experiment with a contract-aware checkpoint."
+            )
         checkpoint_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
         checkpoint_global_dim = int(
             ckpt.get("global_state_dim", self.global_state_dim)
         )
-        checkpoint_critic_mode = ckpt.get("critic_mode")
-        checkpoint_agent_ids = list(ckpt.get("agent_ids", []))
+        checkpoint_critic_mode = str(ckpt["critic_mode"])
+        checkpoint_reward_mode = str(ckpt["reward_mode"])
+        checkpoint_reduction = str(ckpt.get("team_reward_reduction", "mean"))
         if (
             checkpoint_obs_dim != self.obs_dim
             or checkpoint_global_dim != self.global_state_dim
-            or checkpoint_critic_mode != "agent_conditioned_v1"
-            or checkpoint_agent_ids != self.agent_ids
+            or checkpoint_critic_mode != self.critic_mode
+            or checkpoint_reward_mode != self.reward_mode
+            or checkpoint_reduction != self.team_reward_reduction
         ):
             raise ValueError(
-                "Incompatible MAPPO checkpoint: "
+                "Incompatible MAPPO checkpoint contract: "
                 f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
                 f"current={self.obs_dim}/{self.global_state_dim}; "
-                f"checkpoint agents={checkpoint_agent_ids}, current={self.agent_ids}. "
-                "Agent-conditioned critic checkpoints require matching dimensions "
-                "and agent order."
+                f"checkpoint critic_mode={checkpoint_critic_mode!r}, "
+                f"current={self.critic_mode!r}; "
+                f"checkpoint reward={checkpoint_reward_mode}/{checkpoint_reduction}, "
+                f"current={self.reward_mode}/{self.team_reward_reduction}. "
+                "Use a checkpoint created with the same lifecycle-state dimensions "
+                "and MAPPO reward/critic contract."
             )
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
