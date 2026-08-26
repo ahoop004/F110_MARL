@@ -438,8 +438,11 @@ class MAPPOAgent:
                 adv_b = adv_pool[idx]
                 ret_b = ret_pool[idx]
 
-                # Actor loss
-                _, new_lp_b = self.actor.get_action(obs_b)
+                # PPO compares the current policy probability with the
+                # probability recorded for the same rollout action.  Sampling
+                # a replacement action here would make the importance ratio
+                # unrelated to the collected transition.
+                new_lp_b, entropy_b = self.actor.evaluate_actions(obs_b, acts_b)
                 ratio = (new_lp_b - old_lp_b).exp()
                 pi_loss = torch.max(
                     -adv_b * ratio,
@@ -450,10 +453,8 @@ class MAPPOAgent:
                 value_pred = self.critic(gs_b)
                 vf_loss = nn.functional.mse_loss(value_pred, ret_b)
 
-                # Entropy bonus
-                mean_b, std_b = self.actor(obs_b)
-                dist = torch.distributions.Normal(mean_b, std_b)
-                entropy = dist.entropy().sum(-1).mean()
+                # Entropy of the current unsquashed Gaussian policy.
+                entropy = entropy_b.mean()
 
                 loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
 

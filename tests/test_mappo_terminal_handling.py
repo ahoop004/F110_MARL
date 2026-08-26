@@ -63,10 +63,24 @@ def test_mappo_update_accepts_single_step_agent_buffers() -> None:
             truncated=False,
         )
 
+    evaluated_actions = []
+    evaluate_actions = agent.actor.evaluate_actions
+
+    def record_evaluated_actions(obs, actions):
+        evaluated_actions.append(actions.detach().clone())
+        return evaluate_actions(obs, actions)
+
+    def reject_resampling(*_args, **_kwargs):
+        raise AssertionError("MAPPO update must not sample replacement actions")
+
+    agent.actor.evaluate_actions = record_evaluated_actions
+    agent.actor.get_action = reject_resampling
     metrics = agent.update(next_global_state=np.array([0.0], dtype=np.float32))
 
     assert "train/policy_loss" in metrics
     assert "train/value_loss" in metrics
+    assert len(evaluated_actions) == 1
+    assert torch.equal(evaluated_actions[0], torch.zeros((2, 2)))
 
 
 def test_mappo_rejects_pre_lifecycle_global_state_checkpoint(tmp_path) -> None:
