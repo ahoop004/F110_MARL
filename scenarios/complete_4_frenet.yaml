@@ -4,7 +4,10 @@ includes:
 
 experiment:
   name: complete_4_vehicle_track_frenet
-
+mappo:
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: mean
 environment:
   centerline_autoload: true
   centerline_features: true
