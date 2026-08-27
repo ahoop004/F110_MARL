@@ -35,4 +35,4 @@ environment:
 wandb:
   job_type: complete_4_individual
   tags: [mappo, racing, completion, 4car, individual_reward, agent_conditioned_critic]
-  notes: "Three-lap four-racer MAPPO with individual rewards and V_i(s)"
+  notes: "One-full-circuit four-racer MAPPO with individual rewards and V_i(s)"

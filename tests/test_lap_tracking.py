@@ -57,6 +57,28 @@ def test_three_forward_crossings_finish_only_on_lap_three() -> None:
             assert _update(tracker, -1.0, 1.0, lap * 10 + 1) is False
 
 
+def test_initial_crossing_can_start_race_without_completing_a_lap() -> None:
+    lifecycle = RaceLifecycle(["car_0"], target_laps=1)
+    tracker = LapTracker(
+        ["car_0"],
+        _line(),
+        lifecycle,
+        count_initial_crossing_as_lap=False,
+    )
+    tracker.reset(np.array([-1.0]), np.array([0.0]))
+
+    # Crossing from the starting grid begins the lap.
+    assert _update(tracker, 0.1, 1.0, 1) is False
+    assert lifecycle.records["car_0"].lap_count == 0
+    assert lifecycle.records["car_0"].status == AgentRaceStatus.ACTIVE
+
+    # The car must travel back around and cross again to complete one circuit.
+    assert _update(tracker, -1.0, 1.0, 2) is False
+    assert _update(tracker, 0.1, 1.0, 3) is True
+    assert lifecycle.records["car_0"].lap_count == 1
+    assert lifecycle.records["car_0"].status == AgentRaceStatus.FINISHED
+
+
 def test_reverse_crossing_and_stationary_jitter_do_not_count() -> None:
     lifecycle = RaceLifecycle(["car_0"], target_laps=1)
     tracker = LapTracker(["car_0"], _line(), lifecycle)

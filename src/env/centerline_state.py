@@ -419,12 +419,16 @@ class LapTracker:
         agent_ids: Sequence[str],
         finish_line: Mapping[str, Any],
         lifecycle: RaceLifecycle,
+        *,
+        count_initial_crossing_as_lap: bool = True,
     ) -> None:
         self.agent_ids = tuple(str(agent_id) for agent_id in agent_ids)
         self.finish_line = dict(finish_line)
         self.lifecycle = lifecycle
+        self.count_initial_crossing_as_lap = bool(count_initial_crossing_as_lap)
         self._previous = np.zeros(len(self.agent_ids), dtype=np.float32)
         self._armed = np.zeros(len(self.agent_ids), dtype=bool)
+        self._initial_crossing_seen = np.zeros(len(self.agent_ids), dtype=bool)
 
         segment = np.asarray(self.finish_line["segment"], dtype=np.float32)
         normal = np.array([-segment[1], segment[0]], dtype=np.float32)
@@ -436,6 +440,7 @@ class LapTracker:
 
     def reset(self, poses_x: np.ndarray, poses_y: np.ndarray) -> None:
         self.lifecycle.reset()
+        self._initial_crossing_seen.fill(False)
         hysteresis = float(self.finish_line["hysteresis"])
         for idx, _agent_id in enumerate(self.agent_ids):
             point = np.array([poses_x[idx], poses_y[idx]], dtype=np.float32)
@@ -482,8 +487,18 @@ class LapTracker:
             if not self._crossing_within_segment(point, previous, current):
                 continue
 
-            crossings[agent_id] = True
             self._armed[idx] = False
+            if (
+                not self.count_initial_crossing_as_lap
+                and not self._initial_crossing_seen[idx]
+            ):
+                # Grid spawns sit before the shared start/finish line. The
+                # first forward crossing starts the lap; the following
+                # crossing is the first completed full circuit.
+                self._initial_crossing_seen[idx] = True
+                continue
+
+            crossings[agent_id] = True
             self.lifecycle.record_lap_crossing(agent_id, step=step)
         return crossings
 

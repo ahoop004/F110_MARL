@@ -21,6 +21,8 @@ mappo:
   reward_mode: individual
   critic_mode: agent_conditioned
   team_reward_reduction: mean
+training_defaults:
+  device: cuda
 
 environment:
   map_bundles:
@@ -44,7 +46,11 @@ environment:
     - Spa_map
   map_cycle: per_episode
   map_pick: round_robin
-  target_laps: 3
+  target_laps: 1
+  # Grid spawns are before the shared start/finish line. Treat that first
+  # crossing as the start of the lap, not as a completed circuit.
+  lap_counting:
+    count_initial_crossing_as_lap: false
   # Shared provisional safety ceiling; successful three-lap p95 was 64,121,
   # but all-map controller completion remains a readiness gate. See
   # docs/RACE_DURATION_CALIBRATION.md.
@@ -129,5 +135,5 @@ wandb:
   group: lap_completion
   job_type: complete_4
   tags: [mappo, racing, completion, 4car]
-  notes: "Three-lap four-racer MAPPO with individual rewards and an agent-conditioned critic"
+  notes: "One-full-circuit four-racer MAPPO with individual rewards and an agent-conditioned critic"
   mode: online

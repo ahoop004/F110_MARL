@@ -296,6 +296,12 @@ class F110ParallelEnv:
         )
 
         self._finish_line_override = merged.get("finish_line")
+        lap_counting_cfg = merged.get("lap_counting") or {}
+        if not isinstance(lap_counting_cfg, Mapping):
+            raise TypeError("environment.lap_counting must be a mapping")
+        self._count_initial_crossing_as_lap = bool(
+            lap_counting_cfg.get("count_initial_crossing_as_lap", True)
+        )
         self._finish_line_data: Optional[Dict[str, Any]] = None
         self._finish_signed_prev = None  # legacy compatibility view
         self._finish_crossed = np.zeros((self.n_agents,), dtype=bool)
@@ -996,6 +1002,7 @@ class F110ParallelEnv:
             self.possible_agents,
             self._finish_line_data,
             self.lifecycle,
+            count_initial_crossing_as_lap=self._count_initial_crossing_as_lap,
         )
         self._finish_crossed.fill(False)
         try:
@@ -1005,6 +1012,7 @@ class F110ParallelEnv:
         self.map_protocol_metadata = {
             "map_hash": map_hash,
             "finish_line_version": int(config.get("version", 1)),
+            "count_initial_crossing_as_lap": self._count_initial_crossing_as_lap,
         }
 
     def _sync_lifecycle_lap_views(self, crossings: Mapping[str, bool]) -> None:

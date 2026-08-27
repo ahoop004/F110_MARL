@@ -36,4 +36,4 @@ environment:
 wandb:
   job_type: complete_4_team_shared
   tags: [mappo, racing, completion, 4car, team_reward, shared_team_critic]
-  notes: "Three-lap four-racer MAPPO with a fixed-denominator shared team reward and V(s)"
+  notes: "One-full-circuit four-racer MAPPO with a fixed-denominator shared team reward and V(s)"

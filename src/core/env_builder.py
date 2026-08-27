@@ -107,6 +107,7 @@ def build_env_kwargs(
         "terminate_on_any_done",
         "terminate_on_collision",
         "target_laps",
+        "lap_counting",
         "terminal_agents",
         "finish_line",
         "info_level",
