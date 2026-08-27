@@ -22,7 +22,7 @@ mappo:
   critic_mode: agent_conditioned
   team_reward_reduction: mean
 training_defaults:
-  device: cuda:1
+  device: cuda
 
 environment:
   map_bundles:
@@ -67,8 +67,8 @@ environment:
   vehicle_params:
     v_switch: 0.8
     a_max: 2.0
-    v_min: -1.0
-    v_max: 3.0
+    v_min: -20.0
+    v_max: 20.0
 
 agents:
   car_0:
