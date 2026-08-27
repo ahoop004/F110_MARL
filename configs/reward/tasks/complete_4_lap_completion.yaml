@@ -9,6 +9,7 @@ includes:
   - ../components/timeout_penalty_50.yaml
   - ../components/step_time_penalty.yaml
   - ../components/centerline_progress.yaml
+  - ../components/reverse_velocity_penalty.yaml
 
 reward:
   # One forward lap is worth approximately +100, independent of track length.
@@ -24,4 +25,4 @@ reward:
     penalty: -200.0
 
   step_time_penalty:
-    penalty: -0.005
+    penalty: -0.015

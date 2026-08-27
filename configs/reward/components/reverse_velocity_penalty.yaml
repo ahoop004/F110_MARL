@@ -1,0 +1,8 @@
+reward:
+  reverse_velocity_penalty:
+    enabled: true
+    # Penalize actual negative body-frame longitudinal velocity. Ignore small
+    # simulator jitter and cap the per-step magnitude after the deadband.
+    weight: 0.5
+    deadband: 0.05
+    max_reverse_speed: 2.0
