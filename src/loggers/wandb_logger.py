@@ -124,8 +124,14 @@ class WandbLogger:
                         pass
                 if self.should_log("define_metrics"):
                     try:
+                        # Keep episode and optimizer-update charts on explicit,
+                        # independent x-axes. W&B's internal step remains
+                        # monotonic because callers do not provide a global step.
+                        wandb.define_metric("episode/number")
+                        wandb.define_metric("episode/*", step_metric="episode/number")
+                        wandb.define_metric("train/update")
+                        wandb.define_metric("train/*", step_metric="train/update")
                         wandb.define_metric("train/episode")
-                        wandb.define_metric("train/*", step_metric="train/episode")
                         wandb.define_metric("target/*", step_metric="train/episode")
                         wandb.define_metric("curriculum/*", step_metric="train/episode")
                         wandb.define_metric("eval/episode")

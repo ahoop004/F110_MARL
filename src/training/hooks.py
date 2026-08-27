@@ -122,7 +122,25 @@ class WandbHook(TrainingHook):
 
     def __init__(self, wandb_logger: WandbLogger) -> None:
         self._wandb = wandb_logger
-        self._step = 0
+        self._update = 0
+        self._episode_agents: set[str] = set()
+        self._reward_components: Dict[str, Dict[str, float]] = {}
+        self._map_id: Optional[str] = None
+
+    def on_step(self, record: "TransitionRecord") -> None:
+        aid = str(record.agent_id)
+        self._episode_agents.add(aid)
+        if record.map_id:
+            self._map_id = str(record.map_id)
+        agent_components = self._reward_components.setdefault(aid, {})
+        for component, value in (record.reward_components or {}).items():
+            try:
+                component_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            agent_components[str(component)] = (
+                agent_components.get(str(component), 0.0) + component_value
+            )
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         log = {"episode/reward": reward, "episode/number": episode}
@@ -130,6 +148,13 @@ class WandbHook(TrainingHook):
             outcome = info.get("outcome")
             if outcome:
                 log["episode/outcome"] = str(outcome)
+            map_id = info.get("map_bundle") or self._map_id
+            if map_id:
+                log["episode/map_bundle"] = str(map_id)
+
+        episode_steps = metrics.get("episode_steps")
+        if episode_steps is not None:
+            log["episode/steps"] = episode_steps
 
         # Per-agent breakdown (MAPPO with >1 trainable agent) — flatten into
         # individual scalar/string keys rather than nested dicts.
@@ -157,25 +182,41 @@ class WandbHook(TrainingHook):
                     if value is not None:
                         log[f"episode/{label}/{aid}"] = value
 
-        log.update({
-            f"episode/{k}": v
-            for k, v in metrics.items()
-            if k not in (
-                "agent_rewards",
-                "agent_individual_rewards",
-                "agent_outcomes",
-                "agent_terminal_reasons",
-                "agent_finish_positions",
-                "agent_lap_counts",
+        terminal_reasons = metrics.get("agent_terminal_reasons")
+        if isinstance(agent_outcomes, dict) and agent_outcomes:
+            agent_count = len(agent_outcomes)
+            finished = sum(str(value) == "finished" for value in agent_outcomes.values())
+            log["episode/team/completion_rate"] = finished / agent_count
+            log["episode/team/all_finished"] = float(finished == agent_count)
+        if isinstance(terminal_reasons, dict) and terminal_reasons:
+            agent_count = len(terminal_reasons)
+            collisions = sum(
+                str(value) == "collision" for value in terminal_reasons.values()
             )
-        })
-        if hasattr(self._wandb, "log"):
-            self._wandb.log(log, step=episode)
+            timeouts = sum(
+                str(value) == "time_limit" for value in terminal_reasons.values()
+            )
+            log["episode/team/collision_rate"] = collisions / agent_count
+            log["episode/team/timeout_rate"] = timeouts / agent_count
+
+        # Persist per-agent and team-mean component totals for reward debugging.
+        component_totals: Dict[str, float] = {}
+        for aid, components in self._reward_components.items():
+            for component, value in components.items():
+                log[f"episode/reward_component/{component}/{aid}"] = value
+                component_totals[component] = component_totals.get(component, 0.0) + value
+        denominator = max(len(self._episode_agents), 1)
+        for component, total in component_totals.items():
+            log[f"episode/reward_component_mean/{component}"] = total / denominator
+
+        self._wandb.log_metrics(log)
+        self._episode_agents.clear()
+        self._reward_components.clear()
+        self._map_id = None
 
     def on_update(self, metrics: Dict[str, float]) -> None:
-        self._step += 1
-        if hasattr(self._wandb, "log"):
-            self._wandb.log(metrics, step=self._step)
+        self._update += 1
+        self._wandb.log_metrics({"train/update": self._update, **metrics})
 
 
 class CSVHook(TrainingHook):

@@ -12,6 +12,9 @@ def test_complete_4_has_consistent_full_circuit_contract_and_held_out_maps() -> 
     assert set(environment["map_bundles_train"]).isdisjoint(
         environment["map_bundles_eval"]
     )
+    assert scenario["wandb"]["enabled"] is True
+    assert scenario["wandb"]["group"] == "complete4-full-circuit-v1"
+    assert scenario["wandb"]["job_type"] == "train-individual"
     assert "one-full-circuit" in scenario["wandb"]["notes"].lower()
 
 

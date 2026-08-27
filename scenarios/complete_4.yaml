@@ -22,7 +22,7 @@ mappo:
   critic_mode: agent_conditioned
   team_reward_reduction: mean
 training_defaults:
-  device: cuda
+  device: cuda:1
 
 environment:
   map_bundles:
@@ -128,12 +128,12 @@ agents:
       speed_index: 1
 
 wandb:
-  enabled: false
+  enabled: true
   project: marl-f110
   entity: ahoop004-old-dominion-university
   name: null
-  group: lap_completion
-  job_type: complete_4
-  tags: [mappo, racing, completion, 4car]
+  group: complete4-full-circuit-v1
+  job_type: train-individual
+  tags: [mappo, racing, completion, 4car, full-circuit, individual-reward, agent-conditioned-critic]
   notes: "One-full-circuit four-racer MAPPO with individual rewards and an agent-conditioned critic"
   mode: online

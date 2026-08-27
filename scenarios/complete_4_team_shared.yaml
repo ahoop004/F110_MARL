@@ -34,6 +34,6 @@ environment:
     - Spa_map
 
 wandb:
-  job_type: complete_4_team_shared
+  job_type: train-team-shared
   tags: [mappo, racing, completion, 4car, team_reward, shared_team_critic]
   notes: "One-full-circuit four-racer MAPPO with a fixed-denominator shared team reward and V(s)"

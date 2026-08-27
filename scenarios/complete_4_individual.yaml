@@ -33,6 +33,6 @@ environment:
     - Spa_map
 
 wandb:
-  job_type: complete_4_individual
+  job_type: train-individual
   tags: [mappo, racing, completion, 4car, individual_reward, agent_conditioned_critic]
   notes: "One-full-circuit four-racer MAPPO with individual rewards and V_i(s)"
