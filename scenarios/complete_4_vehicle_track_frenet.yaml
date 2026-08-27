@@ -1,0 +1,29 @@
+# Opt-in comparison arm: LiDAR plus normalized vehicle/Frenet/track preview.
+includes:
+  - complete_4.yaml
+
+experiment:
+  name: complete_4_vehicle_track_frenet
+
+environment:
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true
+  track_preview:
+    points: 20
+    spacing: 0.3
+
+agents:
+  car_0:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+  car_1:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+  car_2:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+  car_3:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+
+wandb:
+  group: complete4-vehicle-track-frenet-v1
+  tags: [mappo, racing, completion, 4car, lidar, frenet, track-preview]
+  notes: "LiDAR plus normalized vehicle/Frenet state and 0.3 m curvature/width preview"

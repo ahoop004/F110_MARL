@@ -42,6 +42,7 @@ from src.env.render_adapter import (
 from src.env.spawn_manager import SpawnManager
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
 from src.env.state_views import build_agent_state, build_global_state, central_state_tensor
+from src.utils.track_preview import TrackPreviewGeometry
 from src.env.state_buffer import (
     StateBuffers,
     TerminalAgentConfig,
@@ -190,6 +191,7 @@ class F110ParallelEnv:
         self._configure_basic_environment(merged)
    
         self.timestep: float = float(merged.get("timestep", 0.01))
+        self._control_timestep = self.timestep * max(int(merged.get("action_repeat", 1)), 1)
         self.integrator = self._resolve_integrator(merged)
 
         self._configure_map_paths(merged, map_data)
@@ -204,6 +206,17 @@ class F110ParallelEnv:
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
         self.params = self._configure_vehicle_params(merged)
+
+        preview_cfg = merged.get("track_preview", {}) or {}
+        self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
+        self._track_preview_spacing = max(float(preview_cfg.get("spacing", 0.3)), 1e-3)
+        self._track_preview_geometry: Optional[TrackPreviewGeometry] = None
+        self._track_preview_last_indices = {
+            agent_id: -1 for agent_id in self.possible_agents
+        }
+        self._last_control_commands = np.zeros((self.n_agents, 2), dtype=np.float32)
+        self._last_speed_reference_rates = np.zeros(self.n_agents, dtype=np.float32)
+        self._control_command_initialized = np.zeros(self.n_agents, dtype=bool)
         
         self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
@@ -497,6 +510,13 @@ class F110ParallelEnv:
         # Update centerline
         if keep_centerline:
             # Preserve in-memory centerline; re-apply to new renderer surface.
+            self._track_preview_geometry = TrackPreviewGeometry.build(
+                self.centerline_points,
+                self.walls,
+                spacing=self._track_preview_spacing,
+            )
+            for agent_id in self.possible_agents:
+                self._track_preview_last_indices[agent_id] = -1
             self._update_renderer_centerline()
         else:
             self.set_centerline(map_data.centerline, path=map_data.centerline_path)
@@ -733,6 +753,13 @@ class F110ParallelEnv:
         self._spawn_manager.reset_episode()
         self._last_centerline_facts = {}
         self._centerline_progress_tracker.reset()
+        for agent_id in self.possible_agents:
+            self._track_preview_last_indices[agent_id] = -1
+        self._last_control_commands.fill(0.0)
+        self._last_speed_reference_rates.fill(0.0)
+        # Zero is the defined pre-episode reference, so the first command has
+        # a meaningful rate relative to reset.
+        self._control_command_initialized.fill(True)
 
         # Speed locking for curriculum
         self._lock_speed_steps = 0
@@ -784,6 +811,7 @@ class F110ParallelEnv:
             agent_id_to_index=self._agent_id_to_index,
             info_level=self.info_level,
         )
+        self._update_centerline_observation_facts(infos)
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -794,6 +822,8 @@ class F110ParallelEnv:
         for aid in active_before_step:
             if aid in actions:
                 joint[agent_index[aid]] = np.asarray(actions[aid], dtype=np.float32)
+
+        self._record_control_commands(joint, active_before_step)
 
         self._terminal_controller.apply(
             joint,
@@ -936,6 +966,7 @@ class F110ParallelEnv:
             for agent_id, facts in self._last_centerline_facts.items():
                 if agent_id in infos:
                     infos[agent_id]["centerline"] = facts
+            self._inject_track_previews(infos)
         else:
             self._last_centerline_facts = {}
 
@@ -1131,6 +1162,13 @@ class F110ParallelEnv:
 
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
         self._centerline_state.set_centerline(centerline, path=path)
+        self._track_preview_geometry = TrackPreviewGeometry.build(
+            centerline,
+            self.walls,
+            spacing=self._track_preview_spacing,
+        )
+        for agent_id in self.possible_agents:
+            self._track_preview_last_indices[agent_id] = -1
         self._update_renderer_centerline()
 
     @property
@@ -1294,7 +1332,7 @@ class F110ParallelEnv:
 
     # helper: joint->per-agent dicts expected by PZ Parallel API
     def _split_obs(self, joint: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
-        return split_joint_obs(
+        observations = split_joint_obs(
             joint,
             possible_agents=self.possible_agents,
             agent_sensor_spec=self._agent_sensor_spec,
@@ -1309,3 +1347,74 @@ class F110ParallelEnv:
             velocity_initialized=self.state_buffers.velocity_initialized,
             fallback_collisions=self.collisions,
         )
+        for index, agent_id in enumerate(self.possible_agents):
+            agent_obs = observations[agent_id]
+            simulator_agent = self.sim.agents[index]
+            agent_obs["steering_angle"] = np.float32(simulator_agent.state[2])
+            agent_obs["steering_reference"] = np.float32(self._last_control_commands[index, 0])
+            agent_obs["speed_reference"] = np.float32(self._last_control_commands[index, 1])
+            agent_obs["speed_reference_rate"] = np.float32(
+                self._last_speed_reference_rates[index]
+            )
+        return observations
+
+    def _record_control_commands(
+        self,
+        joint: np.ndarray,
+        active_agents: Sequence[str],
+    ) -> None:
+        """Retain physical command references and their latest change rate."""
+        for agent_id in active_agents:
+            index = self._agent_id_to_index[agent_id]
+            command = joint[index]
+            if self._control_command_initialized[index]:
+                delta_speed = float(command[1] - self._last_control_commands[index, 1])
+                if abs(delta_speed) > 1e-8:
+                    self._last_speed_reference_rates[index] = (
+                        delta_speed / self._control_timestep
+                    )
+            else:
+                self._last_speed_reference_rates[index] = 0.0
+                self._control_command_initialized[index] = True
+            self._last_control_commands[index] = command
+
+    def _inject_track_previews(self, infos: Dict[str, Dict[str, Any]]) -> None:
+        geometry = self._track_preview_geometry
+        if geometry is None:
+            return
+        for agent_id in self.possible_agents:
+            index = self._agent_id_to_index[agent_id]
+            position = np.array(
+                [self.poses_x[index], self.poses_y[index]], dtype=np.float32
+            )
+            preview_index = geometry.nearest_index(
+                position,
+                last_index=self._track_preview_last_indices.get(agent_id, -1),
+            )
+            self._track_preview_last_indices[agent_id] = preview_index
+            infos.setdefault(agent_id, {})["track_preview"] = geometry.preview(
+                position,
+                self._track_preview_points,
+                start_index=preview_index,
+            )
+
+    def _update_centerline_observation_facts(
+        self,
+        infos: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Populate Frenet facts for the initial observation after reset."""
+        if not self.centerline_features_enabled or self.centerline_points is None:
+            self._last_centerline_facts = {}
+            return
+        self._last_centerline_facts = self._centerline_progress_tracker.update(
+            self.centerline_points,
+            self.poses_x,
+            self.poses_y,
+            self.poses_theta,
+            self.linear_vels_x_curr,
+            self.linear_vels_y_curr,
+            self._agent_id_to_index,
+        )
+        for agent_id, facts in self._last_centerline_facts.items():
+            infos.setdefault(agent_id, {})["centerline"] = facts
+        self._inject_track_previews(infos)

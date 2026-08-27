@@ -5,6 +5,9 @@ environment:
   render: false
   centerline_autoload: false
   walls_autoload: false
+  track_preview:
+    points: 20
+    spacing: 0.3
   episode_termination:
     # End the joint racing episode when any active agent reaches a terminal state.
     # Use all_agents or all_trainable for independent-survival tasks.

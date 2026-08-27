@@ -11,6 +11,7 @@ from wrappers.observations.base import ObservationComponent
 from wrappers.observations.lidar import LidarComponent
 from wrappers.observations.ego_state import EgoStateComponent
 from wrappers.observations.centerline_ego_state import CenterlineEgoStateComponent
+from wrappers.observations.frenet_vehicle_track import FrenetVehicleTrackComponent
 from wrappers.observations.target_state import TargetStateComponent
 from wrappers.observations.relative_pose import RelativePoseComponent
 from wrappers.observations.progress import ProgressComponent
@@ -121,6 +122,17 @@ class ObservationComposer:
         cl_ego_cfg = obs.get("centerline_ego_state", {})
         if cl_ego_cfg.get("enabled", False):
             components.append(CenterlineEgoStateComponent())
+
+        frenet_cfg = obs.get("frenet_vehicle_track", {})
+        if frenet_cfg.get("enabled", False):
+            components.append(
+                FrenetVehicleTrackComponent(
+                    points=int(frenet_cfg.get("points", 20)),
+                    wheel_radius=float(frenet_cfg.get("wheel_radius", 0.05)),
+                    maxima=frenet_cfg.get("maxima", {}),
+                    clip=bool(frenet_cfg.get("clip", False)),
+                )
+            )
 
         prog_cfg = obs.get("progress", {})
         if prog_cfg.get("enabled", False):

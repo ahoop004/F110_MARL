@@ -23,6 +23,8 @@ MINIMAL_INFO_KEYS = {
     "terminal_step",
     "finish_position",
     "status",
+    "centerline",
+    "track_preview",
     "target_lap_count",
     "target_race_completed",
 }
@@ -49,6 +51,7 @@ STABLE_STEP_INFO_KEYS: frozenset = frozenset(
         "target_terminal_reason",
         "target_finish_position",
         "centerline",        # dict — CenterlineProgressTracker facts (when enabled)
+        "track_preview",     # dict — forward curvature/width samples and maxima
     }
 )
 

@@ -129,7 +129,7 @@ agents:
 
 wandb:
   enabled: true
-  project: marl-f110
+  project: marl-f110-complete
   entity: ahoop004-old-dominion-university
   name: null
   group: complete4-full-circuit-v1
