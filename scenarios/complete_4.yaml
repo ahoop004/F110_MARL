@@ -82,7 +82,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
   car_1:
@@ -96,7 +96,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
   car_2:
@@ -110,7 +110,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
   car_3:
@@ -124,7 +124,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
 wandb:
