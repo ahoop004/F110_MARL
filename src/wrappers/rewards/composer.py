@@ -16,7 +16,7 @@ from wrappers.rewards.centerline import (
     SteeringPenaltyComponent,
 )
 from wrappers.rewards.collision import CollisionRewardComponent, SelfCrashPenaltyComponent
-from wrappers.rewards.speed import SpeedRewardComponent
+from wrappers.rewards.speed import ReverseVelocityPenaltyComponent, SpeedRewardComponent
 from wrappers.rewards.proximity import TargetProximityComponent
 from wrappers.rewards.track_edge_pressure import TargetEdgePressureComponent
 from wrappers.rewards.lap_completion import LapCompletionComponent, PerLapBonusComponent
@@ -47,6 +47,7 @@ COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
     "steering_penalty": SteeringPenaltyComponent,
     "collision": CollisionRewardComponent,
     "speed": SpeedRewardComponent,
+    "reverse_velocity_penalty": ReverseVelocityPenaltyComponent,
     "target_proximity": TargetProximityComponent,
     "target_edge_pressure": TargetEdgePressureComponent,
     "progress_delta_bonus": ProgressDeltaBonusComponent,

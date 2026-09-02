@@ -1,17 +1,17 @@
 reward:
   centerline_progress:
     enabled: true
-    weight: 0.02
+    weight: 0.1
     normalize_by_track_length: true
     reference_length: 400.0
-  # centerline_lateral_velocity_penalty:
-  #   enabled: true
-  #   weight: 0.005
-  #   normalize_by_track_length: true
-  #   reference_length: 400.0
-  # centerline_deviation_penalty:
-  #   enabled: true
-  #   weight: 0.01
-  # steering_penalty:
-  #   enabled: true
-  #   weight: 0.03
+  centerline_lateral_velocity_penalty:
+    enabled: true
+    weight: 0.005
+    normalize_by_track_length: true
+    reference_length: 400.0
+  centerline_deviation_penalty:
+    enabled: true
+    weight: 0.01
+  steering_penalty:
+    enabled: true
+    weight: 0.03

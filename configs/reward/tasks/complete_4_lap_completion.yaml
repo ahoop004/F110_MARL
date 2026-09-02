@@ -8,6 +8,7 @@ includes:
   - ../components/collision_penalty.yaml
   - ../components/timeout_penalty_50.yaml
   - ../components/step_time_penalty.yaml
+  - ../components/reverse_velocity_penalty.yaml
 
 reward:
   # One forward lap is worth approximately +100 and one reverse lap -100,
