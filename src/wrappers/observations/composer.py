@@ -12,6 +12,7 @@ from wrappers.observations.lidar import LidarComponent
 from wrappers.observations.ego_state import EgoStateComponent
 from wrappers.observations.centerline_ego_state import CenterlineEgoStateComponent
 from wrappers.observations.frenet_vehicle_track import FrenetVehicleTrackComponent
+from wrappers.observations.frenet_neighbors import FrenetNeighborsComponent
 from wrappers.observations.target_state import TargetStateComponent
 from wrappers.observations.relative_pose import RelativePoseComponent
 from wrappers.observations.progress import ProgressComponent
@@ -131,6 +132,16 @@ class ObservationComposer:
                     wheel_radius=float(frenet_cfg.get("wheel_radius", 0.05)),
                     maxima=frenet_cfg.get("maxima", {}),
                     clip=bool(frenet_cfg.get("clip", False)),
+                )
+            )
+
+        neighbors_cfg = obs.get("frenet_neighbors", {})
+        if neighbors_cfg.get("enabled", False):
+            components.append(
+                FrenetNeighborsComponent(
+                    max_neighbors=int(neighbors_cfg.get("max_neighbors", 1)),
+                    maxima=neighbors_cfg.get("maxima", {}),
+                    clip=bool(neighbors_cfg.get("clip", False)),
                 )
             )
 

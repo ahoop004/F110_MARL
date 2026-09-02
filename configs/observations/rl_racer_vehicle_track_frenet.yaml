@@ -1,6 +1,6 @@
 # LiDAR plus the normalized vehicle/Frenet/track observation described in Eq. (2).
-# Replace the provisional maxima below with maxima measured from the system-
-# identification dataset before running the final experiment.
+# State scales match the physical envelope used by complete_4. Clipping keeps
+# observations bounded if transient dynamics exceed that envelope.
 observation:
   lidar:
     enabled: true
@@ -9,15 +9,15 @@ observation:
     enabled: true
     points: 20
     wheel_radius: 0.05
-    clip: false
+    clip: true
     maxima:
-      vx: 10.0
-      vy: 10.0
+      vx: 20.0
+      vy: 20.0
       u: 3.141592653589793
       n: 5.0
       r: 10.0
       delta: 0.46
       delta_ref: 0.46
       omega_ref_dot: 20000.0
-      omega_ref: 200.0
-      omega: 200.0
+      omega_ref: 400.0
+      omega: 400.0

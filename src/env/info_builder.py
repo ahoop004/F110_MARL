@@ -25,6 +25,7 @@ MINIMAL_INFO_KEYS = {
     "status",
     "centerline",
     "track_preview",
+    "frenet_neighbors",
     "target_lap_count",
     "target_race_completed",
 }
@@ -52,6 +53,7 @@ STABLE_STEP_INFO_KEYS: frozenset = frozenset(
         "target_finish_position",
         "centerline",        # dict — CenterlineProgressTracker facts (when enabled)
         "track_preview",     # dict — forward curvature/width samples and maxima
+        "frenet_neighbors",  # list — ego-relative Frenet state of other agents
     }
 )
 

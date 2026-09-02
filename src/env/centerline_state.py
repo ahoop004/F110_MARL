@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from src.utils.centerline import (
-    centerline_heading,
+    CenterlineGeometry,
+    prepare_centerline_geometry,
     progress_from_spacing,
     project_to_centerline,
 )
@@ -134,6 +135,8 @@ class CenterlineProgressTracker:
     ``progress_delta``
         Signed progress change from the previous step, wrap-corrected at the
         start/finish crossing.
+    ``s``
+        Continuous arc length in metres from the first centerline point.
     ``d``
         Cross-track (lateral) deviation in metres (positive = left of track).
     ``vs``
@@ -158,6 +161,8 @@ class CenterlineProgressTracker:
         self.wrong_way_threshold = float(wrong_way_threshold)
         self._last_indices: Dict[str, int] = {}
         self._prev_progress: Dict[str, float] = {}
+        self._geometry: Optional[CenterlineGeometry] = None
+        self._geometry_source: Optional[np.ndarray] = None
         self.reset()
 
     def reset(self) -> None:
@@ -165,6 +170,14 @@ class CenterlineProgressTracker:
         for aid in self._agent_ids:
             self._last_indices[aid] = -1
             self._prev_progress[aid] = -1.0  # sentinel: no previous value yet
+
+    @property
+    def track_length(self) -> float:
+        return self._geometry.total_length if self._geometry is not None else 0.0
+
+    @property
+    def closed(self) -> bool:
+        return self._geometry.closed if self._geometry is not None else False
 
     def update(
         self,
@@ -180,6 +193,12 @@ class CenterlineProgressTracker:
         result: Dict[str, Dict[str, float]] = {}
         if centerline is None or centerline.ndim != 2 or centerline.shape[0] < 2:
             return result
+        if self._geometry is None or self._geometry_source is not centerline:
+            self._geometry = prepare_centerline_geometry(centerline)
+            self._geometry_source = centerline
+            for aid in self._agent_ids:
+                self._last_indices[aid] = -1
+                self._prev_progress[aid] = -1.0
 
         for aid in self._agent_ids:
             idx = agent_index.get(aid)
@@ -190,25 +209,28 @@ class CenterlineProgressTracker:
                 [float(poses_x[idx]), float(poses_y[idx])], dtype=np.float32
             )
             heading = float(poses_theta[idx])
-            vx = float(linear_vels_x[idx])
-            vy = float(linear_vels_y[idx])
+            # The simulator exposes longitudinal/lateral velocity in the
+            # vehicle body frame, not Cartesian world-frame velocity.
+            v_long = float(linear_vels_x[idx])
+            v_lat = float(linear_vels_y[idx])
 
             last_idx = self._last_indices.get(aid, -1)
             proj = project_to_centerline(
-                centerline,
+                self._geometry,
                 pos,
                 heading,
                 last_index=last_idx if last_idx >= 0 else None,
                 search_window=self.search_window,
             )
-            self._last_indices[aid] = proj.index
+            self._last_indices[aid] = proj.segment_index
 
-            # Speed projections along and perpendicular to the track tangent.
-            tangent_theta = centerline_heading(centerline, proj.index)
-            cos_t = math.cos(tangent_theta)
-            sin_t = math.sin(tangent_theta)
-            vs = vx * cos_t + vy * sin_t       # forward
-            vd = -vx * sin_t + vy * cos_t      # lateral
+            # Rotate body-frame velocity into the Frenet tangent/normal frame.
+            # Using heading_error directly keeps the result invariant to a
+            # rigid rotation of the map and vehicle pose.
+            cos_error = math.cos(proj.heading_error)
+            sin_error = math.sin(proj.heading_error)
+            vs = v_long * cos_error - v_lat * sin_error
+            vd = v_long * sin_error + v_lat * cos_error
 
             # Progress delta, wrap-corrected at the start/finish line.
             prev = self._prev_progress.get(aid, -1.0)
@@ -228,6 +250,7 @@ class CenterlineProgressTracker:
             result[aid] = {
                 "progress": proj.progress,
                 "progress_delta": delta,
+                "s": proj.arc_length,
                 "d": proj.lateral_error,
                 "vs": vs,
                 "vd": vd,
@@ -235,6 +258,41 @@ class CenterlineProgressTracker:
                 "wrong_way": wrong_way,
             }
         return result
+
+
+def build_relative_frenet_facts(
+    centerline_facts: Mapping[str, Mapping[str, float]],
+    *,
+    track_length: float,
+    closed: bool,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Build deterministic ego-relative Frenet facts for every other agent."""
+    length = max(float(track_length), 0.0)
+    relative: Dict[str, List[Dict[str, Any]]] = {}
+    for ego_id, ego in centerline_facts.items():
+        neighbors: List[Dict[str, Any]] = []
+        ego_s = float(ego.get("s", 0.0))
+        for other_id, other in centerline_facts.items():
+            if other_id == ego_id:
+                continue
+            delta_s = float(other.get("s", 0.0)) - ego_s
+            if closed and length > 0.0:
+                delta_s = (delta_s + 0.5 * length) % length - 0.5 * length
+            neighbors.append(
+                {
+                    "agent_id": str(other_id),
+                    "delta_s": delta_s,
+                    "delta_d": float(other.get("d", 0.0))
+                    - float(ego.get("d", 0.0)),
+                    "delta_vs": float(other.get("vs", 0.0))
+                    - float(ego.get("vs", 0.0)),
+                    "delta_vd": float(other.get("vd", 0.0))
+                    - float(ego.get("vd", 0.0)),
+                }
+            )
+        neighbors.sort(key=lambda item: (abs(item["delta_s"]), item["agent_id"]))
+        relative[str(ego_id)] = neighbors
+    return relative
 
 
 def normalize_progress_fractions(raw: Optional[Any]) -> Tuple[float, ...]:

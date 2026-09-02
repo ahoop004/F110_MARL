@@ -3,164 +3,175 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
-from numba import njit
 
 
 @dataclass
 class CenterlineProjection:
+    """Continuous projection of a Cartesian pose onto a centerline segment."""
+
     index: int
+    segment_index: int
+    arc_length: float
     lateral_error: float
     longitudinal_error: float
     heading_error: float
+    tangent_heading: float
     progress: float
 
 
-@njit(cache=True)
-def _project_to_centerline_core(
-    points: np.ndarray,
-    position: np.ndarray,
-    heading: float,
-    tangent_theta: float,
-    best_index: int,
-) -> Tuple[float, float, float]:
-    """JIT-compiled core computation for centerline projection.
+@dataclass(frozen=True)
+class CenterlineGeometry:
+    """Precomputed segment and arc-length data for repeated projections."""
 
-    Args:
-        points: Centerline waypoints (N, 2)
-        position: Agent position (2,)
-        heading: Agent heading in radians
-        tangent_theta: Centerline heading at nearest point
-        best_index: Index of nearest waypoint
+    points: np.ndarray
+    segment_starts: np.ndarray
+    segment_vectors: np.ndarray
+    segment_lengths: np.ndarray
+    arc_lengths: np.ndarray
+    total_length: float
+    closed: bool
 
-    Returns:
-        (lateral_error, longitudinal_error, heading_error)
-    """
-    nearest = points[best_index]
-
-    tangent_cos = np.cos(tangent_theta)
-    tangent_sin = np.sin(tangent_theta)
-    tangent = np.array([tangent_cos, tangent_sin], dtype=np.float32)
-    normal = np.array([-tangent_sin, tangent_cos], dtype=np.float32)
-
-    offset_x = position[0] - nearest[0]
-    offset_y = position[1] - nearest[1]
-
-    lateral_error = offset_x * normal[0] + offset_y * normal[1]
-    longitudinal_error = offset_x * tangent[0] + offset_y * tangent[1]
-
-    heading_diff = heading - tangent_theta
-    heading_error = np.arctan2(np.sin(heading_diff), np.cos(heading_diff))
-
-    return lateral_error, longitudinal_error, heading_error
+    @property
+    def valid(self) -> bool:
+        return self.segment_lengths.size > 0 and self.total_length > 0.0
 
 
-@njit(cache=True)
-def _find_nearest_point(
-    points: np.ndarray,
-    position: np.ndarray,
-    last_index: int,
-    search_window: int,
-) -> int:
-    """JIT-compiled nearest point search.
+def prepare_centerline_geometry(centerline: np.ndarray) -> CenterlineGeometry:
+    """Build immutable geometry used by continuous Frenet projection."""
+    array = np.asarray(centerline, dtype=np.float32)
+    if array.ndim != 2 or array.shape[0] < 2 or array.shape[1] < 2:
+        raise ValueError("centerline must contain at least two (x, y) points")
+    points = array[:, :2]
+    points = points[np.isfinite(points).all(axis=1)]
+    if points.shape[0] < 2:
+        raise ValueError("centerline must contain at least two finite points")
 
-    Args:
-        points: Centerline waypoints (N, 2)
-        position: Agent position (2,)
-        last_index: Previous closest index (-1 for full search)
-        search_window: Window size around last_index
+    # Remove consecutive duplicates before determining topology. Real map
+    # centerlines normally stop one sample short of repeating their first point.
+    keep = np.concatenate(
+        ([True], np.linalg.norm(np.diff(points, axis=0), axis=1) > 1e-7)
+    )
+    points = points[keep]
+    open_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    typical_spacing = float(np.median(open_lengths)) if open_lengths.size else 0.0
+    closing_length = float(np.linalg.norm(points[-1] - points[0]))
+    closed = typical_spacing > 0.0 and closing_length <= 1.5 * typical_spacing
 
-    Returns:
-        Index of nearest waypoint
-    """
-    N = points.shape[0]
-
-    # Full search if no hint
-    if last_index < 0 or last_index >= N:
-        min_dist_sq = 1e10
-        best_idx = 0
-        for i in range(N):
-            dx = points[i, 0] - position[0]
-            dy = points[i, 1] - position[1]
-            dist_sq = dx * dx + dy * dy
-            if dist_sq < min_dist_sq:
-                min_dist_sq = dist_sq
-                best_idx = i
-        return best_idx
-
-    # Local search with window
-    start = max(0, last_index - search_window)
-    end = min(N, last_index + search_window + 1)
-
-    min_dist_sq = 1e10
-    best_idx = last_index
-    for i in range(start, end):
-        dx = points[i, 0] - position[0]
-        dy = points[i, 1] - position[1]
-        dist_sq = dx * dx + dy * dy
-        if dist_sq < min_dist_sq:
-            min_dist_sq = dist_sq
-            best_idx = i
-
-    return best_idx
+    ends = np.roll(points, -1, axis=0) if closed else points[1:]
+    starts = points if closed else points[:-1]
+    vectors = ends - starts
+    lengths = np.linalg.norm(vectors, axis=1)
+    valid = lengths > 1e-7
+    starts = starts[valid]
+    vectors = vectors[valid]
+    lengths = lengths[valid]
+    arc_lengths = np.concatenate(
+        (np.zeros(1, dtype=np.float32), np.cumsum(lengths, dtype=np.float32))
+    )
+    total_length = float(arc_lengths[-1])
+    for value in (points, starts, vectors, lengths, arc_lengths):
+        value.setflags(write=False)
+    return CenterlineGeometry(
+        points=points,
+        segment_starts=starts,
+        segment_vectors=vectors,
+        segment_lengths=lengths,
+        arc_lengths=arc_lengths,
+        total_length=total_length,
+        closed=closed,
+    )
 
 
 def project_to_centerline(
-    centerline: np.ndarray,
+    centerline: Union[np.ndarray, CenterlineGeometry],
     position: np.ndarray,
     heading: float,
     *,
     last_index: Optional[int] = None,
     search_window: int = 50,
 ) -> CenterlineProjection:
-    """Project a pose onto the closest point of the track centerline.
+    """Project a pose onto the closest centerline segment.
 
     Args:
-        centerline: Array of waypoints shaped (N, 2 or 3). Columns are x, y, optional theta.
+        centerline: Raw waypoints or geometry from :func:`prepare_centerline_geometry`.
         position: Cartesian position (x, y).
         heading: Heading angle in radians.
         last_index: Optional hint of the previous closest waypoint index.
         search_window: Number of waypoints to search around ``last_index`` when provided.
 
     Returns:
-        CenterlineProjection containing the closest waypoint index along with lateral/longitudinal
-        errors, heading error (ego heading vs. tangent), and normalised progress in [0, 1].
+        A continuous arc-length projection with signed lateral error, heading
+        error (ego heading vs. segment tangent), and progress in [0, 1].
     """
-
-    if centerline.ndim != 2 or centerline.shape[0] == 0:
-        raise ValueError("centerline must be a non-empty 2D array")
-
-    points = centerline[:, :2].astype(np.float32, copy=False)
-    if position.shape[0] != 2:
-        raise ValueError("position must contain (x, y)")
-
-    position_f32 = position.astype(np.float32, copy=False)
-
-    # Use JIT-compiled nearest point search
-    last_idx = -1 if last_index is None else int(last_index)
-    best_index = _find_nearest_point(points, position_f32, last_idx, int(search_window))
-
-    # Get tangent heading
-    if centerline.shape[1] >= 3:
-        tangent_theta = float(centerline[best_index, 2])
-    else:
-        tangent_theta = 0.0
-
-    # Use JIT-compiled projection
-    lateral_error, longitudinal_error, heading_error = _project_to_centerline_core(
-        points, position_f32, float(heading), tangent_theta, best_index
+    geometry = (
+        centerline
+        if isinstance(centerline, CenterlineGeometry)
+        else prepare_centerline_geometry(centerline)
     )
+    if not geometry.valid:
+        raise ValueError("centerline must contain a non-zero-length segment")
+    position_array = np.asarray(position, dtype=np.float32).reshape(-1)
+    if position_array.size != 2:
+        raise ValueError("position must contain (x, y)")
+    if not np.isfinite(position_array).all():
+        raise ValueError("position must contain finite values")
 
-    progress = best_index / max(len(points) - 1, 1)
+    segment_count = geometry.segment_lengths.size
+    if last_index is None or not 0 <= int(last_index) < segment_count:
+        candidates = np.arange(segment_count, dtype=np.int64)
+    elif geometry.closed:
+        window = max(int(search_window), 0)
+        offsets = np.arange(-window, window + 1, dtype=np.int64)
+        candidates = (int(last_index) + offsets) % segment_count
+    else:
+        window = max(int(search_window), 0)
+        start = max(int(last_index) - window, 0)
+        stop = min(int(last_index) + window + 1, segment_count)
+        candidates = np.arange(start, stop, dtype=np.int64)
+
+    starts = geometry.segment_starts[candidates]
+    vectors = geometry.segment_vectors[candidates]
+    lengths = geometry.segment_lengths[candidates]
+    relative = position_array - starts
+    fractions = np.clip(
+        np.einsum("ij,ij->i", relative, vectors) / np.square(lengths),
+        0.0,
+        1.0,
+    )
+    projected = starts + fractions[:, None] * vectors
+    residuals = position_array - projected
+    distances_sq = np.einsum("ij,ij->i", residuals, residuals)
+    local_best = int(np.argmin(distances_sq))
+    segment_index = int(candidates[local_best])
+    fraction = float(fractions[local_best])
+    tangent = vectors[local_best] / lengths[local_best]
+    normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+    residual = residuals[local_best]
+    lateral_error = float(np.dot(residual, normal))
+    longitudinal_error = float(np.dot(residual, tangent))
+    tangent_heading = float(np.arctan2(tangent[1], tangent[0]))
+    heading_difference = float(heading) - tangent_heading
+    heading_error = float(
+        np.arctan2(np.sin(heading_difference), np.cos(heading_difference))
+    )
+    arc_length = float(
+        geometry.arc_lengths[segment_index]
+        + fraction * geometry.segment_lengths[segment_index]
+    )
+    progress = arc_length / geometry.total_length
 
     return CenterlineProjection(
-        index=best_index,
-        lateral_error=float(lateral_error),
-        longitudinal_error=float(longitudinal_error),
-        heading_error=float(heading_error),
-        progress=float(progress),
+        index=segment_index,
+        segment_index=segment_index,
+        arc_length=arc_length,
+        lateral_error=lateral_error,
+        longitudinal_error=longitudinal_error,
+        heading_error=heading_error,
+        tangent_heading=tangent_heading,
+        progress=float(np.clip(progress, 0.0, 1.0)),
     )
 
 

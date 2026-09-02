@@ -1,0 +1,22 @@
+# Opt-in comparison arm: Frenet track preview plus relative states for all
+# three other racers. These exact relative facts are simulator privileged.
+includes:
+  - complete_4_frenet.yaml
+
+experiment:
+  name: complete_4_frenet_neighbors
+
+agents:
+  car_0:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+  car_1:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+  car_2:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+  car_3:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+
+wandb:
+  group: complete4-frenet-neighbors-v1
+  tags: [mappo, racing, completion, 4car, lidar, frenet, track-preview, privileged-neighbors]
+  notes: "Frenet baseline plus normalized relative Frenet states for the three other racers"

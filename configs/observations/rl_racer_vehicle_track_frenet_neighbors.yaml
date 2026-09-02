@@ -1,0 +1,32 @@
+# LiDAR plus normalized vehicle/Frenet/track state and nearby-agent slots.
+# The exact relative-agent facts are simulator-derived privileged observations;
+# keep this as a separate experimental arm from the ego-only Frenet baseline.
+observation:
+  lidar:
+    enabled: true
+    normalize: true
+  frenet_vehicle_track:
+    enabled: true
+    points: 20
+    wheel_radius: 0.05
+    clip: true
+    maxima:
+      vx: 20.0
+      vy: 20.0
+      u: 3.141592653589793
+      n: 5.0
+      r: 10.0
+      delta: 0.46
+      delta_ref: 0.46
+      omega_ref_dot: 20000.0
+      omega_ref: 400.0
+      omega: 400.0
+  frenet_neighbors:
+    enabled: true
+    max_neighbors: 3
+    clip: true
+    maxima:
+      delta_s: 20.0
+      delta_d: 5.0
+      delta_vs: 20.0
+      delta_vd: 10.0

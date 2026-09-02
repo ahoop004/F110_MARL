@@ -12,6 +12,7 @@ from src.env.centerline_state import (
     CenterlineRuntimeState,
     LapTracker,
     apply_centerline_to_renderer,
+    build_relative_frenet_facts,
     inject_finish_line_info,
     resolve_finish_line_config,
     validate_finish_line,
@@ -843,14 +844,10 @@ class F110ParallelEnv:
             for agent_id, locked_vel in self._locked_velocities.items():
                 if agent_id in agent_index:
                     idx = agent_index[agent_id]
-                    # Directly set the velocity in the simulation state
-                    # state[3] is v_long (longitudinal velocity)
-                    self.sim.agents[idx].state[3] = float(locked_vel)
-                    # Update the velocity attributes if they exist
-                    if hasattr(self.sim.agents[idx], 'v_long'):
-                        self.sim.agents[idx].v_long = float(locked_vel)
-                    # Update the observation to reflect locked velocity
-                    obs_joint['linear_vels_x'][idx] = float(locked_vel)
+                    self.sim.set_agent_speed(idx, float(locked_vel))
+            # set_agent_speed updates both body-frame velocity components;
+            # refresh the copied observation returned by sim.step accordingly.
+            obs_joint = self.sim.current_observation()
 
         obs = self._split_obs(obs_joint)
         self._attach_central_state(obs, obs_joint)
@@ -966,6 +963,7 @@ class F110ParallelEnv:
             for agent_id, facts in self._last_centerline_facts.items():
                 if agent_id in infos:
                     infos[agent_id]["centerline"] = facts
+            self._inject_frenet_neighbors(infos)
             self._inject_track_previews(infos)
         else:
             self._last_centerline_facts = {}
@@ -1188,6 +1186,11 @@ class F110ParallelEnv:
         return self._centerline_state.features_enabled
 
     @property
+    def centerline_track_length(self) -> float:
+        """Arc length of the active centerline used by Frenet features."""
+        return self._centerline_progress_tracker.track_length
+
+    @property
     def centerline_render_connect(self) -> bool:
         return self._centerline_state.render_connect
     
@@ -1398,6 +1401,18 @@ class F110ParallelEnv:
                 start_index=preview_index,
             )
 
+    def _inject_frenet_neighbors(
+        self,
+        infos: Dict[str, Dict[str, Any]],
+    ) -> None:
+        relative = build_relative_frenet_facts(
+            self._last_centerline_facts,
+            track_length=self._centerline_progress_tracker.track_length,
+            closed=self._centerline_progress_tracker.closed,
+        )
+        for agent_id, neighbors in relative.items():
+            infos.setdefault(agent_id, {})["frenet_neighbors"] = neighbors
+
     def _update_centerline_observation_facts(
         self,
         infos: Dict[str, Dict[str, Any]],
@@ -1417,4 +1432,5 @@ class F110ParallelEnv:
         )
         for agent_id, facts in self._last_centerline_facts.items():
             infos.setdefault(agent_id, {})["centerline"] = facts
+        self._inject_frenet_neighbors(infos)
         self._inject_track_previews(infos)

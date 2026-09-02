@@ -3,7 +3,7 @@ includes:
   - complete_4.yaml
 
 experiment:
-  name: complete_4_vehicle_track_frenet
+  name: complete_4_frenet
 
 environment:
   centerline_autoload: true

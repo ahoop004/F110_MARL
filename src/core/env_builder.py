@@ -89,6 +89,8 @@ def build_env_kwargs(
         "centerline_csv",
         "centerline_render",
         "centerline_features",
+        "track_preview",
+        "action_repeat",
         "walls_autoload",
         "walls_csv",
         "track_threshold",

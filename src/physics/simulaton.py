@@ -13,6 +13,23 @@ from physics.collision_models import get_vertices, collision_multiple
 ENV_COLLISION_IDX = -2
 
 
+def _body_velocity_from_state(state: np.ndarray) -> tuple[float, float]:
+    """Return longitudinal/lateral velocity from ``[speed, slip_angle]``.
+
+    The single-track model stores speed magnitude at ``state[3]`` and body
+    slip angle at ``state[6]``.  Downstream observations expose body-frame
+    components, so both axes must include the corresponding trigonometric
+    projection.
+    """
+    speed = float(state[3])
+    # vehicle_dynamics_st switches to its no-slip kinematic equations below
+    # this threshold; state[6] can still retain an older dynamic-model value.
+    if abs(speed) < 0.5:
+        return speed, 0.0
+    slip_angle = float(state[6])
+    return speed * float(np.cos(slip_angle)), speed * float(np.sin(slip_angle))
+
+
 @njit(cache=True)
 def _merge_collision_results(
     agent_flags: np.ndarray,
@@ -218,8 +235,9 @@ class Simulator(object):
             self.agent_poses[i, 1] = np.float32(agent.state[1])
             self.agent_poses[i, 2] = np.float32(agent.state[4])
 
-            self._linear_vels_x[i] = np.float32(agent.state[3])
-            self._linear_vels_y[i] = np.float32(agent.state[3] * np.sin(agent.state[6]))
+            v_long, v_lat = _body_velocity_from_state(agent.state)
+            self._linear_vels_x[i] = np.float32(v_long)
+            self._linear_vels_y[i] = np.float32(v_lat)
             self._ang_vels_z[i] = np.float32(agent.state[5])
 
             scan_row = np.asarray(agent.scan, dtype=np.float32)
@@ -298,9 +316,9 @@ class Simulator(object):
         else:
             agent.state[3] = value
 
-        self._linear_vels_x[agent_idx] = np.float32(agent.state[3])
-        lateral = float(agent.state[3] * np.sin(agent.state[6]))
-        self._linear_vels_y[agent_idx] = np.float32(lateral)
+        v_long, v_lat = _body_velocity_from_state(agent.state)
+        self._linear_vels_x[agent_idx] = np.float32(v_long)
+        self._linear_vels_y[agent_idx] = np.float32(v_lat)
         self._ang_vels_z[agent_idx] = np.float32(agent.state[5])
 
     def current_observation(self) -> dict:
@@ -370,8 +388,7 @@ class Simulator(object):
             self.agent_poses[i, 1] = np.float32(agent.state[1])
             self.agent_poses[i, 2] = np.float32(agent.state[4])
 
-            v_long = float(getattr(agent, "v_long", agent.state[3]))
-            v_lat = float(getattr(agent, "v_lat", agent.state[3] * np.sin(agent.state[6])))
+            v_long, v_lat = _body_velocity_from_state(agent.state)
             yaw_rate = float(getattr(agent, "yaw_rate", agent.state[5]))
 
             self._linear_vels_x[i] = np.float32(v_long)

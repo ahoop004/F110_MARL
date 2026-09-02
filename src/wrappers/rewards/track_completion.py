@@ -100,7 +100,11 @@ class ProgressDeltaBonusComponent(RewardComponent):
         if self.positive_only:
             progress_delta = max(progress_delta, 0.0)
         if self.max_delta is not None:
-            progress_delta = min(progress_delta, self.max_delta)
+            bound = abs(self.max_delta)
+            if self.positive_only:
+                progress_delta = min(progress_delta, bound)
+            else:
+                progress_delta = max(-bound, min(bound, progress_delta))
 
         return {"progress_delta/bonus": self.weight * progress_delta}
 

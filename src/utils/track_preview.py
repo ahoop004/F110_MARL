@@ -6,6 +6,12 @@ from typing import Mapping, Optional
 
 import numpy as np
 
+from .centerline import (
+    CenterlineGeometry,
+    prepare_centerline_geometry,
+    project_to_centerline,
+)
+
 
 @dataclass(frozen=True)
 class TrackPreviewGeometry:
@@ -18,6 +24,7 @@ class TrackPreviewGeometry:
     closed: bool
     curvature_max: float
     width_max: float
+    projection_geometry: CenterlineGeometry
 
     @classmethod
     def build(
@@ -36,6 +43,7 @@ class TrackPreviewGeometry:
         width = _track_width(points, walls, closed)
         curvature_max = max(float(np.max(np.abs(curvature))), 1e-6)
         width_max = max(float(np.max(width)), 1e-6)
+        projection_geometry = prepare_centerline_geometry(points)
         for array in (points, curvature, width):
             array.setflags(write=False)
         return cls(
@@ -46,6 +54,7 @@ class TrackPreviewGeometry:
             closed=closed,
             curvature_max=curvature_max,
             width_max=width_max,
+            projection_geometry=projection_geometry,
         )
 
     def nearest_index(
@@ -81,16 +90,40 @@ class TrackPreviewGeometry:
     ) -> dict[str, np.ndarray | float]:
         """Return *count* samples beginning one interval ahead of the vehicle."""
         count = max(int(count), 1)
-        start = self.nearest_index(position) if start_index is None else int(start_index)
-        # The first sample is one spacing interval in front of the vehicle.
-        indices = start + 1 + np.arange(count, dtype=np.int64)
+        projection = project_to_centerline(
+            self.projection_geometry,
+            np.asarray(position, dtype=np.float32).reshape(-1)[:2],
+            0.0,
+            last_index=start_index,
+        )
+        # The first sample is exactly one configured interval ahead of the
+        # continuous vehicle projection, rather than one waypoint ahead.
+        distances = projection.arc_length + self.spacing * np.arange(
+            1, count + 1, dtype=np.float32
+        )
+        sample_arc = self.projection_geometry.arc_lengths
         if self.closed:
-            indices %= self.points.shape[0]
+            sample_arc = sample_arc[:-1]
+            distances %= self.projection_geometry.total_length
+            interpolation_arc = np.append(
+                sample_arc, self.projection_geometry.total_length
+            )
+            curvature_values = np.append(self.curvature, self.curvature[0])
+            width_values = np.append(self.width, self.width[0])
         else:
-            indices = np.clip(indices, 0, self.points.shape[0] - 1)
+            distances = np.clip(
+                distances, 0.0, self.projection_geometry.total_length
+            )
+            interpolation_arc = sample_arc
+            curvature_values = self.curvature
+            width_values = self.width
         return {
-            "curvature": self.curvature[indices].astype(np.float32, copy=True),
-            "width": self.width[indices].astype(np.float32, copy=True),
+            "curvature": np.interp(
+                distances, interpolation_arc, curvature_values
+            ).astype(np.float32),
+            "width": np.interp(
+                distances, interpolation_arc, width_values
+            ).astype(np.float32),
             "curvature_max": self.curvature_max,
             "width_max": self.width_max,
         }

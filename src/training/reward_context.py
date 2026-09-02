@@ -45,6 +45,7 @@ def build_reward_context(
         "all_actions": actions or {},
         "global_state": global_state,
         "last_step_facts": getattr(env, "last_step_facts", None),
+        "track_length": getattr(env, "centerline_track_length", None),
     }
 
 
