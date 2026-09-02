@@ -233,7 +233,9 @@ def _run_heuristic(
             mode=wandb_cfg.get("mode", "online"),
         )
 
-    env, agents, _ = create_training_setup(scenario, mode="train")
+    env, agents, _ = create_training_setup(
+        scenario, mode="train", scenario_dir=Path(args.scenario).resolve().parent
+    )
     for ag in agents.values():
         if hasattr(ag, "set_env"):
             ag.set_env(env)
@@ -395,7 +397,9 @@ def main() -> None:
         )
 
     # Build env + heuristic agents (before banner so we can show real dims)
-    env, agents, _ = create_training_setup(scenario, mode="train")
+    env, agents, _ = create_training_setup(
+        scenario, mode="train", scenario_dir=scenario_dir
+    )
 
     # Action bounds from env
     action_space = env.action_spaces.get(rl_agent_id)
@@ -728,7 +732,9 @@ def _run_eval(
     render = bool(env_cfg.get("render", False))
     action_repeat = int(env_cfg.get("action_repeat", 1))
 
-    env, agents, _ = create_training_setup(scenario, mode="eval")
+    env, agents, _ = create_training_setup(
+        scenario, mode="eval", scenario_dir=scenario_dir
+    )
     action_space = env.action_spaces.get(focal_agent_id)
     if action_space is None:
         console.print_error(f"RL agent '{focal_agent_id}' not in env action_spaces.")

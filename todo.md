@@ -104,11 +104,11 @@ experiment changes, not implementation optimizations.
 **Goal:** compare changes on identical work rather than variable-length random
 episodes.
 
-- [ ] Add a benchmark script under `scripts/` or a focused benchmark test that
+- [x] Add a benchmark script under `scripts/` or a focused benchmark test that
   runs a fixed number of MAPPO decisions and physics substeps.
-- [ ] Use an explicit scenario, map, spawn plan, seed, action sequence, device,
+- [x] Use an explicit scenario, map, spawn plan, seed, action sequence, device,
   warm-up period, and measured interval.
-- [ ] Separate timings for:
+- [x] Separate timings for:
 
   ```text
   environment reset/map setup
@@ -122,22 +122,22 @@ episodes.
   total wall time
   ```
 
-- [ ] Report decisions/s, physics substeps/s, update samples/s, peak RSS, and
+- [x] Report decisions/s, physics substeps/s, update samples/s, peak RSS, and
   peak CUDA memory.
-- [ ] Support all three `complete_4` observation variants.
-- [ ] Run at least three measured repetitions and report median plus spread.
-- [ ] Store benchmark metadata alongside results: commit, Python, NumPy,
+- [x] Support all three `complete_4` observation variants.
+- [x] Run at least three measured repetitions and report median plus spread.
+- [x] Store benchmark metadata alongside results: commit, Python, NumPy,
   PyTorch, CUDA, GPU, CPU, scenario hash, and resolved config hash.
-- [ ] Keep profiling optional so instrumentation overhead is excluded from the
+- [x] Keep profiling optional so instrumentation overhead is excluded from the
   primary throughput number.
-- [ ] Add a documented command for generating `cProfile` output and a readable
+- [x] Add a documented command for generating `cProfile` output and a readable
   top-function report.
 
 Exit criteria:
 
 - [ ] Repeated unchanged runs have sufficiently low variance to detect a 5%
   throughput change.
-- [ ] Baseline and optimized runs execute the same number of agent decisions,
+- [x] Baseline and optimized runs execute the same number of agent decisions,
   environment substeps, transitions, and optimizer samples.
 
 ---
@@ -161,9 +161,9 @@ src/wrappers/observations/frenet_vehicle_track.py
 src/wrappers/observations/frenet_neighbors.py
 ```
 
-- [ ] Derive explicit environment feature requirements from every active
+- [x] Derive explicit environment feature requirements from every active
   observation and reward config during setup.
-- [ ] Distinguish these requirements rather than treating all centerline users
+- [x] Distinguish these requirements rather than treating all centerline users
   as equivalent:
 
   ```text
@@ -174,23 +174,23 @@ src/wrappers/observations/frenet_neighbors.py
   centerline rendering
   ```
 
-- [ ] Generate `track_preview` only when a configured consumer requires it.
-- [ ] Generate `frenet_neighbors` only when a configured consumer requires it.
-- [ ] Preserve centerline progress facts for `complete_4.yaml`; its observation
+- [x] Generate `track_preview` only when a configured consumer requires it.
+- [x] Generate `frenet_neighbors` only when a configured consumer requires it.
+- [x] Preserve centerline progress facts for `complete_4.yaml`; its observation
   and lap-completion reward depend on them.
-- [ ] Keep requirements aggregated across all agents so heterogeneous scenarios
+- [x] Keep requirements aggregated across all agents so heterogeneous scenarios
   remain valid.
 - [ ] Fail clearly during setup when an enabled component requires unavailable
   geometry.
-- [ ] Add contract tests proving each scenario requests the intended features.
-- [ ] Add numerical-equivalence tests for Frenet preview and neighbor payloads.
+- [x] Add contract tests proving each scenario requests the intended features.
+- [x] Add numerical-equivalence tests for Frenet preview and neighbor payloads.
 
 Exit criteria:
 
-- [ ] `complete_4.yaml` performs no track-preview projection or neighbor sorting.
-- [ ] `complete_4_frenet.yaml` receives unchanged preview arrays and no unused
+- [x] `complete_4.yaml` performs no track-preview projection or neighbor sorting.
+- [x] `complete_4_frenet.yaml` receives unchanged preview arrays and no unused
   neighbor payload.
-- [ ] `complete_4_frenet_neighbors.yaml` receives unchanged preview and neighbor
+- [x] `complete_4_frenet_neighbors.yaml` receives unchanged preview and neighbor
   payloads.
 - [ ] Reward totals, lap facts, observations, and terminal outcomes are
   unchanged for fixed trajectories.

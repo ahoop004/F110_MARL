@@ -89,6 +89,7 @@ def build_env_kwargs(
         "centerline_csv",
         "centerline_render",
         "centerline_features",
+        "feature_requirements",
         "track_preview",
         "action_repeat",
         "walls_autoload",
@@ -191,4 +192,20 @@ def create_environment(
             require_render=bool(env_config.get("centerline_render")),
             require_features=bool(env_config.get("centerline_features")),
         )
+    requirements = env_config.get("feature_requirements")
+    if isinstance(requirements, Mapping):
+        preview_agents = tuple(requirements.get("track_preview_agents", ()))
+        neighbor_agents = tuple(requirements.get("frenet_neighbor_agents", ()))
+        if preview_agents and env._track_preview_geometry is None:
+            raise ValueError(
+                "Frenet track-preview observation requires available centerline "
+                f"geometry; requested by agents {preview_agents}."
+            )
+        if neighbor_agents and (
+            env.centerline_points is None or not env.centerline_features_enabled
+        ):
+            raise ValueError(
+                "Frenet-neighbor observation requires enabled centerline facts; "
+                f"requested by agents {neighbor_agents}."
+            )
     return env

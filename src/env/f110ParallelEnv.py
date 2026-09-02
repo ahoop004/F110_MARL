@@ -211,6 +211,19 @@ class F110ParallelEnv:
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
         self._track_preview_spacing = max(float(preview_cfg.get("spacing", 0.3)), 1e-3)
+        requirements_cfg = merged.get("feature_requirements")
+        if isinstance(requirements_cfg, Mapping):
+            self._track_preview_agents = frozenset(
+                str(aid) for aid in requirements_cfg.get("track_preview_agents", ())
+            )
+            self._frenet_neighbor_agents = frozenset(
+                str(aid) for aid in requirements_cfg.get("frenet_neighbor_agents", ())
+            )
+        else:
+            # Direct environment construction predates the setup-level feature
+            # contract. Preserve its legacy payload behavior.
+            self._track_preview_agents = frozenset(self.possible_agents)
+            self._frenet_neighbor_agents = frozenset(self.possible_agents)
         self._track_preview_geometry: Optional[TrackPreviewGeometry] = None
         self._track_preview_last_indices = {
             agent_id: -1 for agent_id in self.possible_agents
@@ -511,10 +524,8 @@ class F110ParallelEnv:
         # Update centerline
         if keep_centerline:
             # Preserve in-memory centerline; re-apply to new renderer surface.
-            self._track_preview_geometry = TrackPreviewGeometry.build(
-                self.centerline_points,
-                self.walls,
-                spacing=self._track_preview_spacing,
+            self._track_preview_geometry = self._build_track_preview_geometry(
+                self.centerline_points
             )
             for agent_id in self.possible_agents:
                 self._track_preview_last_indices[agent_id] = -1
@@ -1160,14 +1171,21 @@ class F110ParallelEnv:
 
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
         self._centerline_state.set_centerline(centerline, path=path)
-        self._track_preview_geometry = TrackPreviewGeometry.build(
+        self._track_preview_geometry = self._build_track_preview_geometry(centerline)
+        for agent_id in self.possible_agents:
+            self._track_preview_last_indices[agent_id] = -1
+        self._update_renderer_centerline()
+
+    def _build_track_preview_geometry(
+        self, centerline: Optional[np.ndarray]
+    ) -> Optional[TrackPreviewGeometry]:
+        if not self._track_preview_agents:
+            return None
+        return TrackPreviewGeometry.build(
             centerline,
             self.walls,
             spacing=self._track_preview_spacing,
         )
-        for agent_id in self.possible_agents:
-            self._track_preview_last_indices[agent_id] = -1
-        self._update_renderer_centerline()
 
     @property
     def centerline_points(self) -> Optional[np.ndarray]:
@@ -1383,9 +1401,11 @@ class F110ParallelEnv:
 
     def _inject_track_previews(self, infos: Dict[str, Dict[str, Any]]) -> None:
         geometry = self._track_preview_geometry
-        if geometry is None:
+        if geometry is None or not self._track_preview_agents:
             return
         for agent_id in self.possible_agents:
+            if agent_id not in self._track_preview_agents:
+                continue
             index = self._agent_id_to_index[agent_id]
             position = np.array(
                 [self.poses_x[index], self.poses_y[index]], dtype=np.float32
@@ -1405,12 +1425,16 @@ class F110ParallelEnv:
         self,
         infos: Dict[str, Dict[str, Any]],
     ) -> None:
+        if not self._frenet_neighbor_agents:
+            return
         relative = build_relative_frenet_facts(
             self._last_centerline_facts,
             track_length=self._centerline_progress_tracker.track_length,
             closed=self._centerline_progress_tracker.closed,
         )
         for agent_id, neighbors in relative.items():
+            if agent_id not in self._frenet_neighbor_agents:
+                continue
             infos.setdefault(agent_id, {})["frenet_neighbors"] = neighbors
 
     def _update_centerline_observation_facts(

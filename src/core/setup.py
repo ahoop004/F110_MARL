@@ -1,5 +1,6 @@
 """Training setup builder - creates environment and agents from scenario config."""
-from typing import Any, Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 from src.env import F110ParallelEnv
 from src.core.agent_builder import (
@@ -9,6 +10,7 @@ from src.core.agent_builder import (
 )
 from src.core.config import register_builtin_agents
 from src.core.env_builder import create_environment
+from src.core.feature_requirements import derive_environment_feature_requirements
 from src.core.map_selection import apply_map_split
 
 
@@ -16,6 +18,7 @@ def create_training_setup(
     scenario: Dict[str, Any],
     *,
     mode: str = "train",
+    scenario_dir: Optional[Path] = None,
 ) -> Tuple[F110ParallelEnv, Dict[str, Any], Dict]:
     """Create training setup from scenario configuration.
 
@@ -42,6 +45,13 @@ def create_training_setup(
     agent_configs = scenario['agents']
     env_config.setdefault("trainable_agents", get_trainable_agent_ids(agent_configs))
     env_config.setdefault("fixed_policy_agents", get_fixed_agent_ids(agent_configs))
+    if scenario_dir is not None:
+        requirements = derive_environment_feature_requirements(
+            agent_configs,
+            scenario_dir=Path(scenario_dir),
+            centerline_render=bool(env_config.get("centerline_render", False)),
+        )
+        env_config["feature_requirements"] = requirements.as_dict()
 
     # Set random seed if specified
     seed = experiment_config.get('seed')

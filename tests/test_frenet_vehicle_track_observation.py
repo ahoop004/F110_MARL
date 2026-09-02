@@ -8,6 +8,8 @@ import pytest
 
 from core.scenario import load_and_expand_scenario
 from core.env_builder import build_env_kwargs
+from core.feature_requirements import derive_environment_feature_requirements
+from core.setup import create_training_setup
 from env.centerline_state import (
     CenterlineProgressTracker,
     build_relative_frenet_facts,
@@ -291,3 +293,159 @@ def test_complete_4_frenet_neighbors_is_a_separate_privileged_arm() -> None:
         scenario["environment"],
     )
     assert composer.obs_dim == 108 + 10 + 2 * 20 + 5 * 3
+
+
+@pytest.mark.parametrize(
+    ("scenario_path", "preview", "neighbors"),
+    [
+        ("scenarios/complete_4.yaml", (), ()),
+        (
+            "scenarios/complete_4_frenet.yaml",
+            ("car_0", "car_1", "car_2", "car_3"),
+            (),
+        ),
+        (
+            "scenarios/complete_4_frenet_neighbors.yaml",
+            ("car_0", "car_1", "car_2", "car_3"),
+            ("car_0", "car_1", "car_2", "car_3"),
+        ),
+    ],
+)
+def test_complete_4_feature_requirements_match_observation_arms(
+    scenario_path: str,
+    preview: tuple[str, ...],
+    neighbors: tuple[str, ...],
+) -> None:
+    scenario = load_and_expand_scenario(scenario_path)
+    requirements = derive_environment_feature_requirements(
+        scenario["agents"],
+        scenario_dir=Path(scenario_path).resolve().parent,
+        centerline_render=scenario["environment"].get("centerline_render", False),
+    )
+
+    assert requirements.centerline_progress_agents == (
+        "car_0", "car_1", "car_2", "car_3"
+    )
+    assert requirements.track_preview_agents == preview
+    assert requirements.frenet_neighbor_agents == neighbors
+
+
+def test_feature_requirements_aggregate_heterogeneous_agents(tmp_path: Path) -> None:
+    requirements = derive_environment_feature_requirements(
+        {
+            "car_0": {
+                "observation": {
+                    "observation": {"progress": {"enabled": True}}
+                }
+            },
+            "car_1": {
+                "observation": {
+                    "observation": {
+                        "frenet_vehicle_track": {"enabled": True}
+                    }
+                }
+            },
+            "car_2": {
+                "observation": {
+                    "observation": {"frenet_neighbors": {"enabled": True}}
+                }
+            },
+            "car_3": {
+                "reward": {
+                    "reward": {"wrong_way_penalty": {"enabled": True}}
+                }
+            },
+        },
+        scenario_dir=tmp_path,
+    )
+
+    assert requirements.centerline_progress_agents == (
+        "car_0", "car_1", "car_2", "car_3"
+    )
+    assert requirements.frenet_vehicle_state_agents == ("car_1",)
+    assert requirements.track_preview_agents == ("car_1",)
+    assert requirements.frenet_neighbor_agents == ("car_2",)
+
+
+def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
+    geometry = TrackPreviewGeometry.build(
+        _circle(10.0),
+        {0: _circle(9.0), 1: _circle(11.0)},
+        spacing=0.3,
+    )
+    assert geometry is not None
+
+    env = F110ParallelEnv.__new__(F110ParallelEnv)
+    env._track_preview_geometry = geometry
+    env._track_preview_agents = frozenset({"car_0"})
+    env._frenet_neighbor_agents = frozenset({"car_0"})
+    env._track_preview_points = 8
+    env._track_preview_last_indices = {"car_0": -1, "car_1": -1}
+    env.possible_agents = ["car_0", "car_1"]
+    env._agent_id_to_index = {"car_0": 0, "car_1": 1}
+    env.poses_x = np.array([10.0, 0.0], dtype=np.float32)
+    env.poses_y = np.array([0.0, 10.0], dtype=np.float32)
+    env._last_centerline_facts = {
+        "car_0": {"s": 0.0, "d": 0.0, "vs": 4.0, "vd": 0.0},
+        "car_1": {"s": 3.0, "d": 0.5, "vs": 5.0, "vd": -0.5},
+    }
+    env._centerline_progress_tracker = SimpleNamespace(
+        track_length=geometry.projection_geometry.total_length,
+        closed=geometry.closed,
+    )
+
+    infos = {"car_0": {}, "car_1": {}}
+    env._inject_track_previews(infos)
+    env._inject_frenet_neighbors(infos)
+
+    direct_index = geometry.nearest_index(np.array([10.0, 0.0], dtype=np.float32))
+    direct_preview = geometry.preview(
+        np.array([10.0, 0.0], dtype=np.float32),
+        8,
+        start_index=direct_index,
+    )
+    assert infos["car_0"]["track_preview"]["curvature"] == pytest.approx(
+        direct_preview["curvature"]
+    )
+    assert infos["car_0"]["track_preview"]["width"] == pytest.approx(
+        direct_preview["width"]
+    )
+    direct_neighbors = build_relative_frenet_facts(
+        env._last_centerline_facts,
+        track_length=geometry.projection_geometry.total_length,
+        closed=geometry.closed,
+    )
+    assert infos["car_0"]["frenet_neighbors"] == direct_neighbors["car_0"]
+    assert "track_preview" not in infos["car_1"]
+    assert "frenet_neighbors" not in infos["car_1"]
+
+
+@pytest.mark.parametrize(
+    ("scenario_path", "has_preview", "has_neighbors"),
+    [
+        ("scenarios/complete_4.yaml", False, False),
+        ("scenarios/complete_4_frenet.yaml", True, False),
+        ("scenarios/complete_4_frenet_neighbors.yaml", True, True),
+    ],
+)
+def test_complete_4_reset_emits_only_required_frenet_payloads(
+    scenario_path: str,
+    has_preview: bool,
+    has_neighbors: bool,
+) -> None:
+    scenario = load_and_expand_scenario(scenario_path)
+    scenario_dir = Path(scenario_path).resolve().parent
+    env, _, _ = create_training_setup(
+        scenario,
+        mode="train",
+        scenario_dir=scenario_dir,
+    )
+    try:
+        _, infos = env.reset(seed=42)
+        for agent_id in env.possible_agents:
+            assert "centerline" in infos[agent_id]
+            assert ("track_preview" in infos[agent_id]) is has_preview
+            assert ("frenet_neighbors" in infos[agent_id]) is has_neighbors
+        assert (env._track_preview_geometry is not None) is has_preview
+    finally:
+        env.close()
