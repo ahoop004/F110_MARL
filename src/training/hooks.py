@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import json
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
 
 import numpy as np
@@ -313,6 +315,7 @@ class CheckpointHook(TrainingHook):
         output_dir: str,
         save_every: int = 100,
         provenance: Optional[Dict[str, Any]] = None,
+        save_best_training_reward: bool = True,
     ) -> None:
         from pathlib import Path
         self._agent = agent
@@ -322,10 +325,11 @@ class CheckpointHook(TrainingHook):
         self._best_reward = float("-inf")
         self._recent_rewards: Deque[float] = deque(maxlen=50)
         self._provenance = dict(provenance or {})
+        self._save_best_training_reward = bool(save_best_training_reward)
 
-    def _save(self, path: Any) -> None:
+    def _save(self, path: Any, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Save atomically enough to preserve the original agent checkpoint on error."""
-        if not self._provenance:
+        if not self._provenance and not metadata:
             self._agent.save(str(path))
             return
 
@@ -341,7 +345,10 @@ class CheckpointHook(TrainingHook):
             checkpoint = safe_load(str(unannotated), map_location="cpu")
             if not isinstance(checkpoint, dict):
                 raise TypeError("Agent checkpoint must be a dictionary to attach provenance.")
-            checkpoint["provenance"] = dict(self._provenance)
+            if self._provenance:
+                checkpoint["provenance"] = dict(self._provenance)
+            if metadata:
+                checkpoint.update(metadata)
             torch.save(checkpoint, annotated)
             annotated.replace(target)
         finally:
@@ -355,6 +362,103 @@ class CheckpointHook(TrainingHook):
         if episode % self._save_every == 0:
             self._save(self._dir / f"checkpoint_ep{episode:06d}.pt")
 
-        if mean > self._best_reward and len(self._recent_rewards) >= 10:
+        if (
+            self._save_best_training_reward
+            and mean > self._best_reward
+            and len(self._recent_rewards) >= 10
+        ):
             self._best_reward = mean
             self._save(self._dir / "best_model.pt")
+
+
+class EvaluationCheckpointHook(CheckpointHook):
+    """Select ``best_model.pt`` using deterministic racing outcomes.
+
+    Candidate policies are ranked lexicographically by completion rate,
+    inverse collision rate, mean progress, and (only after those) finish speed.
+    This keeps reward shaping out of model selection.
+    """
+
+    def __init__(
+        self,
+        agent: Any,
+        output_dir: str,
+        evaluator: Any,
+        evaluate_every: int,
+        provenance: Optional[Dict[str, Any]] = None,
+        console: Optional[ConsoleLogger] = None,
+        wandb_logger: Optional[WandbLogger] = None,
+    ) -> None:
+        super().__init__(
+            agent=agent,
+            output_dir=output_dir,
+            save_every=2**63 - 1,
+            provenance=provenance,
+            save_best_training_reward=False,
+        )
+        self._evaluator = evaluator
+        self._evaluate_every = max(1, int(evaluate_every))
+        self._console = console
+        self._wandb = wandb_logger
+        self._best_score: Optional[tuple[float, float, float, float]] = None
+        self._history_path = self._dir / "evaluation_history.jsonl"
+
+    @staticmethod
+    def selection_score(summary: Dict[str, Any]) -> tuple[float, float, float, float]:
+        completion = float(summary.get("completion_rate", 0.0))
+        collision = float(summary.get("collision_rate", 1.0))
+        progress = float(summary.get("mean_progress", 0.0))
+        finish_steps = summary.get("mean_finish_steps")
+        finish_speed_score = (
+            -float(finish_steps) if finish_steps is not None else float("-inf")
+        )
+        return (completion, -collision, progress, finish_speed_score)
+
+    def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
+        if (episode + 1) % self._evaluate_every != 0:
+            return
+
+        summary = dict(self._evaluator.evaluate())
+        score = self.selection_score(summary)
+        is_best = self._best_score is None or score > self._best_score
+        record = {
+            "training_episode": episode + 1,
+            "selection_score": [
+                score[0],
+                score[1],
+                score[2],
+                score[3] if np.isfinite(score[3]) else None,
+            ],
+            "is_best": is_best,
+            **summary,
+        }
+        with self._history_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+        if self._wandb is not None:
+            scalar_metrics = {
+                f"eval/{key}": value
+                for key, value in summary.items()
+                if isinstance(value, (int, float)) and value is not None
+            }
+            scalar_metrics["eval/training_episode"] = episode + 1
+            self._wandb.log_metrics(scalar_metrics)
+
+        if self._console is not None:
+            finish = summary.get("mean_finish_steps")
+            finish_text = "n/a" if finish is None else f"{float(finish):.1f}"
+            self._console.print_info(
+                "checkpoint eval  "
+                f"episode={episode + 1}  "
+                f"completion={float(summary.get('completion_rate', 0.0)):.1%}  "
+                f"collision={float(summary.get('collision_rate', 0.0)):.1%}  "
+                f"progress={float(summary.get('mean_progress', 0.0)):.3f}  "
+                f"finish_steps={finish_text}  best={is_best}"
+            )
+
+        if is_best:
+            self._best_score = score
+            self._save(
+                self._dir / "best_model.pt",
+                metadata={"checkpoint_selection": record},
+            )

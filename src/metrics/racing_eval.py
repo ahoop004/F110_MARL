@@ -240,6 +240,18 @@ def aggregate_eval_episodes(
         any(ep.agents[aid].collided for aid in trainable_ids if aid in ep.agents)
         for ep in episodes
     )
+    finish_steps = [
+        float(facts.finish_step)
+        for ep in episodes
+        for aid in trainable_ids
+        if (facts := ep.agents.get(aid)) is not None and facts.finish_step is not None
+    ]
+    # ``None`` distinguishes "no finish" from a genuinely immediate finish and
+    # lets checkpoint selection rank incomplete policies without a false speed
+    # advantage.
+    summary["mean_finish_steps"] = (
+        float(np.mean(finish_steps)) if finish_steps else None
+    )
     summary["self_crash_rate"] = summary["collision_rate"]
     summary["mean_progress"] = _mean(
         _team_mean_progress(ep, trainable_ids) for ep in episodes

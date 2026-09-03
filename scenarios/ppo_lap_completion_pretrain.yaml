@@ -1,0 +1,93 @@
+# Train a single local-observation PPO actor for later MAPPO initialization.
+# The actor architecture, observation, and physical action contracts match the
+# complete_4 MAPPO scenarios. Best-model selection uses held-out deterministic
+# evaluation rather than shaped training return.
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/default.yaml
+  - ../configs/training/on_policy.yaml
+  - ../configs/wandb.yaml
+
+experiment:
+  name: ppo_lap_completion_pretrain
+  episodes: 10000
+  seed: 42
+
+environment:
+  map_bundles:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  map_bundles_train:
+    - Budapest_map
+    - circle_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Spielberg_map
+  map_bundles_eval:
+    - Silverstone_map
+    - Spa_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  target_laps: 1
+  lap_counting:
+    count_initial_crossing_as_lap: false
+  max_steps: 80000
+  action_repeat: 2
+  centerline_autoload: true
+  centerline_features: true
+  walls_autoload: true
+  episode_termination:
+    mode: any_agent
+  random_spawn:
+    enabled: true
+    allow_reuse: true
+  vehicle_params:
+    v_switch: 0.8
+    a_max: 2.0
+    v_min: -20.0
+    v_max: 20.0
+
+# Every evaluation replays the same seeds on held-out maps. Checkpoints are
+# ranked by completion rate, lower collision rate, progress, then finish steps.
+evaluation:
+  enabled: true
+  every_episodes: 100
+  episodes: 8
+  seed: 10042
+  max_steps: 40000
+
+agents:
+  car_0:
+    algorithm: ppo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer.yaml
+    reward: ../configs/reward/tasks/lap_completion_pretraining.yaml
+    params:
+      learning_rate: 0.0003
+      hidden_dims: [256, 256]
+      activation: tanh
+      gamma: 0.99
+      checkpoint_every: 500
+      device: cuda
+    action_constraints:
+      prevent_reverse: false
+      speed_index: 1
+
+wandb:
+  enabled: true
+  project: marl-f110-complete
+  entity: ahoop004-old-dominion-university
+  name: null
+  group: ppo-lap-completion-pretrain
+  job_type: actor-pretraining
+  tags: [ppo, single-agent, lap-completion, actor-pretraining]
+  notes: "Single-agent PPO actor pretraining with held-out completion-based checkpoint selection"
+  mode: online

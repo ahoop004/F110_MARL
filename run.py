@@ -2,7 +2,10 @@
 """Unified training entry point — dispatches to the right trainer based on scenario algorithm."""
 
 import argparse
+import copy
+import hashlib
 import os
+import random
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,7 +28,14 @@ from loggers.wandb_logger import WandbLogger
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
 from wrappers.actions.composer import ActionComposer
-from training.hooks import CSVHook, CheckpointHook, ConsoleHook, CurriculumHook, WandbHook
+from training.hooks import (
+    CSVHook,
+    CheckpointHook,
+    ConsoleHook,
+    CurriculumHook,
+    EvaluationCheckpointHook,
+    WandbHook,
+)
 
 ON_POLICY_ALGOS = {"ppo", "a2c"}
 OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn"}
@@ -170,6 +180,12 @@ def resolve_training_params(agent_cfg: Dict, scenario: Dict) -> Dict:
     defaults = scenario.get("training_defaults", {})
     params = agent_cfg.get("params", {})
     return {**defaults, **params}
+
+
+def _resolve_scenario_relative_path(value: str, scenario_dir: Path) -> Path:
+    """Resolve checkpoint/config paths relative to the declaring scenario."""
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (scenario_dir / path).resolve()
 
 
 def _run_heuristic(
@@ -432,8 +448,22 @@ def main() -> None:
                 f"got {obs_dims}."
             )
 
+    pretrained_actor_path: Optional[Path] = None
+    pretrained_actor_value = params.get("pretrained_actor_checkpoint")
+    if algorithm in MARL_ALGOS and pretrained_actor_value:
+        pretrained_actor_path = _resolve_scenario_relative_path(
+            str(pretrained_actor_value), scenario_dir
+        )
+        if not pretrained_actor_path.is_file():
+            raise FileNotFoundError(
+                f"Pretrained PPO actor checkpoint not found: {pretrained_actor_path}"
+            )
+        params["_resolved_pretrained_actor_checkpoint"] = str(pretrained_actor_path)
+
     # --- Startup banner ---
-    maps_raw = env_cfg.get("maps", env_cfg.get("map", "?"))
+    maps_raw = env_cfg.get(
+        "maps", env_cfg.get("map_bundles", env_cfg.get("map", "?"))
+    )
     maps_str = ", ".join(maps_raw) if isinstance(maps_raw, list) else str(maps_raw)
     seed_str = str(exp_cfg.get("seed", "random"))
     from utils.torch_io import resolve_device
@@ -468,6 +498,12 @@ def main() -> None:
         algorithm=algorithm,
         trainable_agents=trainable_ids,
     )
+    if pretrained_actor_path is not None:
+        provenance["pretrained_actor"] = {
+            "path": str(pretrained_actor_path),
+            "sha256": hashlib.sha256(pretrained_actor_path.read_bytes()).hexdigest(),
+            "load_scope": "actor_only",
+        }
     csv_logger = CSVLogger(
         output_dir=output_dir,
         scenario_config=scenario,
@@ -475,6 +511,11 @@ def main() -> None:
     )
 
     # Hooks
+    eval_cfg = scenario.get("evaluation", {}) or {}
+    if not isinstance(eval_cfg, dict):
+        raise ValueError("Scenario 'evaluation' must be a mapping when provided.")
+    evaluation_selection_enabled = bool(eval_cfg.get("enabled", False)) and algorithm == "ppo"
+
     hooks = [
         ConsoleHook(
             logger=console,
@@ -487,6 +528,7 @@ def main() -> None:
             output_dir=output_dir,
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
             provenance=provenance,
+            save_best_training_reward=not evaluation_selection_enabled,
         ),  # agent set below
     ]
     if wandb_logger:
@@ -591,6 +633,10 @@ def main() -> None:
                 action_repeat, render, hooks, exp_cfg, output_dir, console,
                 run_id=run_id,
                 spawn_plan_fn=spawn_plan_fn,
+                scenario=scenario,
+                scenario_dir=scenario_dir,
+                provenance=provenance,
+                wandb_logger=wandb_logger,
             )
         elif algorithm in OFF_POLICY_ALGOS:
             _run_off_policy(
@@ -1051,6 +1097,10 @@ def _run_on_policy(
     action_repeat, render, hooks, exp_cfg, output_dir, console,
     run_id: str = "run",
     spawn_plan_fn=None,
+    scenario: Optional[Dict[str, Any]] = None,
+    scenario_dir: Optional[Path] = None,
+    provenance: Optional[Dict[str, Any]] = None,
+    wandb_logger: Optional[WandbLogger] = None,
 ) -> None:
     from agents.ppo import PPOAgent
     from training.on_policy_trainer import OnPolicyTrainer
@@ -1058,6 +1108,79 @@ def _run_on_policy(
     n_episodes = int(exp_cfg.get("episodes", 1000))
 
     action_space = env.action_spaces.get(rl_agent_id)
+    evaluator = None
+    eval_cfg = (scenario or {}).get("evaluation", {}) or {}
+    if bool(eval_cfg.get("enabled", False)):
+        from training.ppo_evaluator import DeterministicPPOEvaluator
+
+        if scenario_dir is None:
+            raise ValueError("Evaluation checkpoint selection requires a scenario directory.")
+        eval_scenario = copy.deepcopy(scenario)
+        eval_seed = int(
+            eval_cfg.get("seed", int(exp_cfg.get("seed", 0) or 0) + 10_000)
+        )
+        eval_scenario.setdefault("experiment", {})["seed"] = eval_seed
+        if eval_cfg.get("max_steps") is not None:
+            eval_scenario.setdefault("environment", {})["max_steps"] = int(
+                eval_cfg["max_steps"]
+            )
+        # Setup seeds process-global RNGs. Preserve the training streams while
+        # still giving the evaluation environment its own deterministic seed.
+        numpy_rng_state = np.random.get_state()
+        python_rng_state = random.getstate()
+        import torch
+        torch_rng_state = torch.random.get_rng_state()
+        cuda_rng_states = (
+            torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        )
+        try:
+            eval_env, eval_agents, _ = create_training_setup(
+                eval_scenario, mode="eval", scenario_dir=scenario_dir
+            )
+        finally:
+            np.random.set_state(numpy_rng_state)
+            random.setstate(python_rng_state)
+            torch.random.set_rng_state(torch_rng_state)
+            if cuda_rng_states is not None:
+                torch.cuda.set_rng_state_all(cuda_rng_states)
+        eval_action_space = eval_env.action_spaces.get(rl_agent_id)
+        if eval_action_space is None:
+            raise ValueError(f"Evaluation env has no action space for '{rl_agent_id}'.")
+        if not (
+            np.allclose(eval_action_space.low, action_space.low)
+            and np.allclose(eval_action_space.high, action_space.high)
+        ):
+            raise ValueError("Training and evaluation action bounds must match.")
+        eval_obs_composer = build_obs_composer(
+            agent_cfg,
+            eval_scenario["environment"],
+            scenario_dir,
+            action_dim=len(eval_action_space.low),
+        )
+        if eval_obs_composer.obs_dim != obs_composer.obs_dim:
+            raise ValueError("Training and evaluation observation dimensions must match.")
+        eval_action_composer = ActionComposer.from_config(
+            eval_action_space.low,
+            eval_action_space.high,
+            agent_cfg.get("action_constraints", {}),
+        )
+        eval_other_agents = {
+            aid: controller for aid, controller in eval_agents.items() if aid != rl_agent_id
+        }
+        for controller in eval_other_agents.values():
+            if hasattr(controller, "set_env"):
+                controller.set_env(eval_env)
+        evaluator = DeterministicPPOEvaluator(
+            env=eval_env,
+            rl_agent_id=rl_agent_id,
+            other_agents=eval_other_agents,
+            obs_composer=eval_obs_composer,
+            action_composer=eval_action_composer,
+            episodes=int(eval_cfg.get("episodes", 8)),
+            base_seed=eval_seed,
+            action_repeat=int(eval_scenario["environment"].get("action_repeat", 1)),
+        )
+
     agent = PPOAgent(
         obs_dim=obs_composer.obs_dim,
         action_low=action_space.low,
@@ -1069,6 +1192,25 @@ def _run_on_policy(
     for hook in hooks:
         if hasattr(hook, "_agent") and hook._agent is None:
             hook._agent = agent
+
+    if evaluator is not None:
+        evaluator.bind_agent(agent)
+        hooks.append(
+            EvaluationCheckpointHook(
+                agent=agent,
+                output_dir=output_dir,
+                evaluator=evaluator,
+                evaluate_every=int(eval_cfg.get("every_episodes", 100)),
+                provenance=provenance,
+                console=console,
+                wandb_logger=wandb_logger,
+            )
+        )
+        console.print_info(
+            "Best-model selection: deterministic lap-completion evaluation "
+            f"every {int(eval_cfg.get('every_episodes', 100))} episodes "
+            f"over {int(eval_cfg.get('episodes', 8))} fixed-seed episodes."
+        )
 
     trainer = OnPolicyTrainer(
         env=env,
@@ -1086,7 +1228,11 @@ def _run_on_policy(
     )
 
     console.print_info(f"Starting PPO training for {n_episodes} episodes...")
-    trainer.train(n_episodes=n_episodes)
+    try:
+        trainer.train(n_episodes=n_episodes)
+    finally:
+        if evaluator is not None:
+            evaluator.close()
 
 
 def _run_off_policy(
@@ -1200,6 +1346,12 @@ def _run_mappo(
         agent_ids=trainable_ids,
         params=params,
     )
+    pretrained_actor = params.get("_resolved_pretrained_actor_checkpoint")
+    if pretrained_actor:
+        agent.load_pretrained_actor(str(pretrained_actor))
+        console.print_info(
+            f"Initialized MAPPO shared actor from PPO checkpoint: {pretrained_actor}"
+        )
 
     # Wire checkpoint hook (same pattern as single-agent trainers)
     for hook in hooks:

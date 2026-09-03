@@ -124,6 +124,8 @@ class PPOAgent:
             params.get("vf_hidden_dims", params.get("hidden_dims", [64, 64]))
         )
         activation: str = str(params.get("activation", "tanh"))
+        self.actor_hidden_dims = list(hidden_dims)
+        self.activation = activation
 
         device_str = str(params.get("device", "cpu"))
         self.device = resolve_device([device_str])
@@ -249,6 +251,13 @@ class PPOAgent:
                 "actor": self.actor.state_dict(),
                 "critic": self.critic.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "algorithm": "ppo",
+                "obs_dim": self.obs_dim,
+                "action_dim": self.action_dim,
+                "action_low": self.action_low,
+                "action_high": self.action_high,
+                "actor_hidden_dims": self.actor_hidden_dims,
+                "activation": self.activation,
             },
             path,
         )

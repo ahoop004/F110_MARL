@@ -1,0 +1,32 @@
+task:
+  name: lap_completion_pretraining
+  description: Single-agent one-lap completion reward for MAPPO actor pretraining.
+
+includes:
+  - ../components/progress_delta_bonus.yaml
+  - ../components/lap_completion_clean.yaml
+  - ../components/collision_penalty.yaml
+  - ../components/timeout_penalty_50.yaml
+  - ../components/step_time_penalty.yaml
+  - ../components/reverse_velocity_penalty.yaml
+
+reward:
+  # Normalize progress by one circuit so maps of different lengths contribute
+  # comparable return scales.
+  progress_delta_bonus:
+    weight: 100.0
+    positive_only: false
+    max_delta: 0.025
+
+  wrong_way_penalty:
+    enabled: true
+    penalty: -0.05
+
+  lap_completion:
+    bonus: 200.0
+
+  collision:
+    penalty: -200.0
+
+  step_time_penalty:
+    penalty: -0.005

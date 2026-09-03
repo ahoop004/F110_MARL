@@ -279,6 +279,8 @@ class MAPPOAgent:
             params.get("vf_hidden_dims", params.get("hidden_dims", [256, 256]))
         )
         activation: str = str(params.get("activation", "tanh"))
+        self.actor_hidden_dims = list(hidden_dims)
+        self.activation = activation
 
         device_str = str(params.get("device", "cpu"))
         self.device = resolve_device([device_str])
@@ -730,6 +732,52 @@ class MAPPOAgent:
     # ------------------------------------------------------------------
     # Checkpoint I/O
     # ------------------------------------------------------------------
+
+    def load_pretrained_actor(self, path: str) -> None:
+        """Initialize only the shared actor from a PPO checkpoint.
+
+        MAPPO's centralized critic and fresh optimizer state are intentionally
+        retained.  Local observation and physical action contracts must match.
+        """
+        from utils.torch_io import safe_load
+
+        ckpt = safe_load(path, map_location=self.device)
+        if not isinstance(ckpt, dict) or "actor" not in ckpt:
+            raise ValueError(f"Pretrained PPO checkpoint has no actor state: {path}")
+        if "algorithm" in ckpt and str(ckpt["algorithm"]).lower() != "ppo":
+            raise ValueError(
+                "Pretrained actor checkpoint must come from PPO; "
+                f"found algorithm={ckpt['algorithm']!r}."
+            )
+
+        checks = {
+            "obs_dim": self.obs_dim,
+            "action_dim": self.action_dim,
+            "actor_hidden_dims": self.actor_hidden_dims,
+            "activation": self.activation,
+        }
+        for key, expected in checks.items():
+            if key in ckpt and ckpt[key] != expected:
+                raise ValueError(
+                    f"Incompatible pretrained PPO actor {key}: "
+                    f"checkpoint={ckpt[key]!r}, MAPPO={expected!r}."
+                )
+        for key, expected in (
+            ("action_low", self.action_low),
+            ("action_high", self.action_high),
+        ):
+            if key in ckpt and not np.allclose(
+                np.asarray(ckpt[key], dtype=np.float32), expected
+            ):
+                raise ValueError(
+                    f"Incompatible pretrained PPO actor {key}: physical action bounds differ."
+                )
+        try:
+            self.actor.load_state_dict(ckpt["actor"], strict=True)
+        except RuntimeError as exc:
+            raise ValueError(
+                "Incompatible pretrained PPO actor network architecture: " + str(exc)
+            ) from exc
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
