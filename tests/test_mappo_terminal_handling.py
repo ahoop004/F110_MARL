@@ -402,13 +402,77 @@ def test_shared_team_critic_uses_unmodified_global_state() -> None:
         action_low=np.array([-1.0, -1.0], dtype=np.float32),
         action_high=np.array([1.0, 1.0], dtype=np.float32),
         agent_ids=["car_0", "car_1"],
-        params={"hidden_dims": [4], "critic_mode": "shared_team"},
+        params={
+            "hidden_dims": [4],
+            "critic_mode": "shared_team",
+            "reward_mode": "team_shared",
+        },
     )
     state = np.array([3.0, 4.0], dtype=np.float32)
 
     assert agent.critic_input_dim == 2
     assert agent._critic_input(state, "car_0").tolist() == [3.0, 4.0]
     assert agent._critic_input(state, "car_1").tolist() == [3.0, 4.0]
+
+
+def test_mappo_rejects_duplicate_agent_ids() -> None:
+    with pytest.raises(ValueError, match="unique and ordered"):
+        MAPPOAgent(
+            obs_dim=1,
+            global_state_dim=2,
+            action_low=np.array([-1.0, -1.0], dtype=np.float32),
+            action_high=np.array([1.0, 1.0], dtype=np.float32),
+            agent_ids=["car_0", "car_0"],
+            params={"hidden_dims": [4]},
+        )
+
+
+def test_mappo_rejects_reordered_agent_conditioned_checkpoint(tmp_path) -> None:
+    original = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0", "car_1"],
+        params={"hidden_dims": [4]},
+    )
+    path = tmp_path / "ordered.pt"
+    original.save(str(path))
+    reordered = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_1", "car_0"],
+        params={"hidden_dims": [4]},
+    )
+
+    with pytest.raises(ValueError, match="checkpoint contract"):
+        reordered.load(str(path))
+
+
+def test_mappo_rejects_checkpoint_with_different_action_bounds(tmp_path) -> None:
+    original = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4]},
+    )
+    path = tmp_path / "bounds.pt"
+    original.save(str(path))
+    incompatible = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=2,
+        action_low=np.array([-0.5, -1.0], dtype=np.float32),
+        action_high=np.array([0.5, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4]},
+    )
+
+    with pytest.raises(ValueError, match="action bounds differ"):
+        incompatible.load(str(path))
 
 
 def test_batched_deterministic_inference_matches_scalar_and_forwards_once() -> None:

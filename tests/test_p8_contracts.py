@@ -210,6 +210,20 @@ def test_individual_rewards_reject_shared_team_critic() -> None:
         validate_scenario(scenario)
 
 
+@pytest.mark.parametrize("field", ["observation", "params", "action_constraints"])
+def test_shared_mappo_agents_reject_inconsistent_policy_contracts(field: str) -> None:
+    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    if field == "observation":
+        scenario["agents"]["car_1"][field] = "different_observation.yaml"
+    elif field == "params":
+        scenario["agents"]["car_1"][field]["hidden_dims"] = [128, 128]
+    else:
+        scenario["agents"]["car_1"][field]["prevent_reverse"] = False
+
+    with pytest.raises(ScenarioError, match=f"identical '{field}'"):
+        validate_scenario(scenario)
+
+
 def test_global_state_exposes_distinct_lifecycle_masks() -> None:
     lifecycle = RaceLifecycle(["car_0", "car_1", "car_2"], 1)
     lifecycle.record_lap_crossing("car_0", step=1)

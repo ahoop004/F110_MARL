@@ -26,6 +26,9 @@ def _make_agent(
             "n_epochs": 2,
             "batch_size": 8,
             "critic_mode": critic_mode,
+            "reward_mode": (
+                "team_shared" if critic_mode == "shared_team" else "individual"
+            ),
         },
     )
 

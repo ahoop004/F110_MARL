@@ -122,6 +122,19 @@ class MARLTrainer:
                 "MAPPO team_reward_reduction must be 'mean' or 'sum', "
                 f"got {self.team_reward_reduction!r}."
             )
+        agent_ids = getattr(agent, "agent_ids", None)
+        if agent_ids is not None and list(agent_ids) != self.trainable_ids:
+            raise ValueError(
+                "MARLTrainer trainable_ids must exactly match the MAPPO agent ID order."
+            )
+        for field in ("reward_mode", "team_reward_reduction"):
+            agent_value = getattr(agent, field, None)
+            trainer_value = getattr(self, field)
+            if agent_value is not None and agent_value != trainer_value:
+                raise ValueError(
+                    f"MARLTrainer {field}={trainer_value!r} does not match "
+                    f"MAPPOAgent {field}={agent_value!r}."
+                )
 
     # ------------------------------------------------------------------
     # Action assembly

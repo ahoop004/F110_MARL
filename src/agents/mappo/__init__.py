@@ -241,6 +241,10 @@ class MAPPOAgent:
         agent_ids: List[str],
         params: Dict,
     ) -> None:
+        if not agent_ids:
+            raise ValueError("MAPPO requires at least one trainable agent ID.")
+        if len(set(agent_ids)) != len(agent_ids):
+            raise ValueError("MAPPO trainable agent IDs must be unique and ordered.")
         self.obs_dim = obs_dim
         self.global_state_dim = global_state_dim
         self.action_low = np.asarray(action_low, dtype=np.float32)
@@ -259,6 +263,20 @@ class MAPPOAgent:
         self.team_reward_reduction = str(
             params.get("team_reward_reduction", "mean")
         ).strip().lower()
+        if self.reward_mode not in {"individual", "team_shared"}:
+            raise ValueError(
+                "MAPPO reward_mode must be 'individual' or 'team_shared', "
+                f"got {self.reward_mode!r}."
+            )
+        if self.team_reward_reduction not in {"mean", "sum"}:
+            raise ValueError(
+                "MAPPO team_reward_reduction must be 'mean' or 'sum', "
+                f"got {self.team_reward_reduction!r}."
+            )
+        if self.reward_mode == "individual" and self.critic_mode == "shared_team":
+            raise ValueError(
+                "MAPPO individual rewards require critic_mode='agent_conditioned'."
+            )
 
         # Hyperparameters
         self.lr = float(params.get("learning_rate", 3e-4))
@@ -280,6 +298,7 @@ class MAPPOAgent:
         )
         activation: str = str(params.get("activation", "tanh"))
         self.actor_hidden_dims = list(hidden_dims)
+        self.critic_hidden_dims = list(vf_dims)
         self.activation = activation
 
         device_str = str(params.get("device", "cpu"))
@@ -435,7 +454,9 @@ class MAPPOAgent:
             Flat numpy array from ``env.get_global_state().vector``.
         """
         critic_input = self._critic_input(global_state, agent_id)
-        gs_t = torch.as_tensor(
+        # GlobalState vectors are intentionally read-only. Copy into owned
+        # tensor storage rather than aliasing immutable NumPy memory.
+        gs_t = torch.tensor(
             critic_input, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
         return float(self.critic(gs_t).squeeze())
@@ -455,7 +476,9 @@ class MAPPOAgent:
             raise ValueError(
                 f"Expected global state dimension {self.global_state_dim}, got {state.size}."
             )
-        states_t = torch.as_tensor(
+        # GlobalState vectors are intentionally read-only. Copy into owned
+        # tensor storage rather than aliasing immutable NumPy memory.
+        states_t = torch.tensor(
             state, dtype=torch.float32, device=self.device
         ).unsqueeze(0).expand(len(ordered_ids), -1)
         if self.critic_mode == "agent_conditioned":
@@ -786,13 +809,20 @@ class MAPPOAgent:
                 "actor": self.actor.state_dict(),
                 "critic": self.critic.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "algorithm": "mappo",
                 "agent_ids": self.agent_ids,
                 "obs_dim": self.obs_dim,
+                "action_dim": self.action_dim,
+                "action_low": self.action_low,
+                "action_high": self.action_high,
                 "global_state_dim": self.global_state_dim,
                 "critic_input_dim": self.critic_input_dim,
                 "critic_mode": self.critic_mode,
                 "reward_mode": self.reward_mode,
                 "team_reward_reduction": self.team_reward_reduction,
+                "actor_hidden_dims": self.actor_hidden_dims,
+                "critic_hidden_dims": self.critic_hidden_dims,
+                "activation": self.activation,
             },
             path,
         )
@@ -812,9 +842,11 @@ class MAPPOAgent:
         checkpoint_critic_mode = str(ckpt["critic_mode"])
         checkpoint_reward_mode = str(ckpt["reward_mode"])
         checkpoint_reduction = str(ckpt.get("team_reward_reduction", "mean"))
+        checkpoint_agent_ids = list(ckpt.get("agent_ids", self.agent_ids))
         if (
             checkpoint_obs_dim != self.obs_dim
             or checkpoint_global_dim != self.global_state_dim
+            or checkpoint_agent_ids != self.agent_ids
             or checkpoint_critic_mode != self.critic_mode
             or checkpoint_reward_mode != self.reward_mode
             or checkpoint_reduction != self.team_reward_reduction
@@ -823,6 +855,8 @@ class MAPPOAgent:
                 "Incompatible MAPPO checkpoint contract: "
                 f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
                 f"current={self.obs_dim}/{self.global_state_dim}; "
+                f"checkpoint agents={checkpoint_agent_ids!r}, "
+                f"current={self.agent_ids!r}; "
                 f"checkpoint critic_mode={checkpoint_critic_mode!r}, "
                 f"current={self.critic_mode!r}; "
                 f"checkpoint reward={checkpoint_reward_mode}/{checkpoint_reduction}, "
@@ -830,6 +864,29 @@ class MAPPOAgent:
                 "Use a checkpoint created with the same lifecycle-state dimensions "
                 "and MAPPO reward/critic contract."
             )
+        scalar_checks = {
+            "algorithm": "mappo",
+            "action_dim": self.action_dim,
+            "actor_hidden_dims": self.actor_hidden_dims,
+            "critic_hidden_dims": self.critic_hidden_dims,
+            "activation": self.activation,
+        }
+        for key, expected in scalar_checks.items():
+            if key in ckpt and ckpt[key] != expected:
+                raise ValueError(
+                    f"Incompatible MAPPO checkpoint {key}: "
+                    f"checkpoint={ckpt[key]!r}, current={expected!r}."
+                )
+        for key, expected in (
+            ("action_low", self.action_low),
+            ("action_high", self.action_high),
+        ):
+            if key in ckpt:
+                actual = np.asarray(ckpt[key], dtype=np.float32)
+                if actual.shape != expected.shape or not np.allclose(actual, expected):
+                    raise ValueError(
+                        f"Incompatible MAPPO checkpoint {key}: action bounds differ."
+                    )
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         if "optimizer" in ckpt:

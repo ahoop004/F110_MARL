@@ -295,6 +295,22 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                 "a shared team critic cannot represent distinct per-agent returns."
             )
 
+        # One MAPPO object owns one shared actor and optimizer. Per-agent
+        # reward configs may differ, but policy inputs, action processing, and
+        # optimizer/model parameters must not depend on which agent happened
+        # to be selected as the focal agent in run.py.
+        reference_id = trainable_mappo[0]
+        reference = agents[reference_id]
+        shared_fields = ("observation", "params", "action_constraints")
+        for agent_id in trainable_mappo[1:]:
+            for field in shared_fields:
+                if agents[agent_id].get(field, {}) != reference.get(field, {}):
+                    raise ScenarioError(
+                        "Shared MAPPO agents require identical "
+                        f"'{field}' configuration; agents '{reference_id}' and "
+                        f"'{agent_id}' differ."
+                    )
+
 
 def resolve_target_ids(scenario: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve target_id for agents based on roles.

@@ -447,6 +447,19 @@ def main() -> None:
                 "Shared MAPPO actor requires identical local observation dimensions; "
                 f"got {obs_dims}."
             )
+        for aid in trainable_ids:
+            agent_action_space = env.action_spaces.get(aid)
+            if agent_action_space is None:
+                raise ValueError(f"MAPPO agent '{aid}' has no environment action space.")
+            if (
+                agent_action_space.n != action_dim
+                or not np.allclose(agent_action_space.low, action_low)
+                or not np.allclose(agent_action_space.high, action_high)
+            ):
+                raise ValueError(
+                    "Shared MAPPO actor requires identical normalized-to-physical "
+                    f"action contracts; agent '{aid}' differs from '{rl_agent_id}'."
+                )
 
     pretrained_actor_path: Optional[Path] = None
     pretrained_actor_value = params.get("pretrained_actor_checkpoint")
