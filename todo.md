@@ -380,23 +380,29 @@ tests/test_centerline_projection.py
 tests/test_frenet_vehicle_track_observation.py
 ```
 
-- [ ] Confirm whether preview projection can reuse the already-computed
+- [x] Confirm whether preview projection can reuse the already-computed
   centerline/Frenet projection for each agent.
-- [ ] Avoid duplicate nearest-index search when the preview and progress
+- [x] Avoid duplicate nearest-index search when the preview and progress
   geometries have a proven index mapping.
-- [ ] Reuse interpolation arrays for closed tracks rather than appending them on
+- [x] Reuse interpolation arrays for closed tracks rather than appending them on
   every preview call.
-- [ ] Profile NumPy allocation hot spots before introducing new kernels.
-- [ ] Evaluate existing Numba paths and warm-up behavior before adding any new
+- [x] Profile NumPy allocation hot spots before introducing new kernels.
+- [x] Evaluate existing Numba paths and warm-up behavior before adding any new
   dependency or implementation.
-- [ ] Preserve seam handling, search windows, wrong-way detection, and uniform
+- [x] Preserve seam handling, search windows, wrong-way detection, and uniform
   arc-length sampling exactly.
+
+Review result: the original progress centerline and uniformly resampled preview
+polyline do not have an exact index or arc-length mapping. Reusing the progress
+projection, or dropping the preview-specific nearest-index search, changes
+off-track and seam-adjacent results. Those searches intentionally remain
+separate.
 
 Exit criteria:
 
-- [ ] Projection results match the baseline across every configured map,
+- [x] Projection results match the baseline across every configured map,
   including seam-adjacent, off-track, reverse-heading, and invalid-input cases.
-- [ ] No map-specific tolerance adjustment is required.
+- [x] No map-specific tolerance adjustment is required.
 
 ---
 

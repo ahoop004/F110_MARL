@@ -136,6 +136,45 @@ class MAPPORolloutBuffer:
         gae_lambda: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         n = self.size()
+        if self.device.type == "cuda":
+            # Preserve the existing Python-double recurrence while replacing
+            # thousands of individual CUDA scalar reads with one bulk copy.
+            rollout = torch.stack(
+                (
+                    self.rewards[:n],
+                    self.values[:n],
+                    self.terminated[:n],
+                    self.truncated[:n],
+                ),
+                dim=1,
+            ).cpu().numpy()
+            advantages_host = np.zeros(n, dtype=np.float32)
+            last_gae = 0.0
+            next_val = float(next_value)
+            for t in reversed(range(n)):
+                terminated = float(rollout[t, 2])
+                truncated = float(rollout[t, 3])
+                bootstrap_mask = 1.0 - terminated
+                continuation_mask = 1.0 - float(
+                    bool(terminated) or bool(truncated)
+                )
+                nv = next_val if t == n - 1 else float(rollout[t + 1, 1])
+                delta = (
+                    float(rollout[t, 0])
+                    + gamma * nv * bootstrap_mask
+                    - float(rollout[t, 1])
+                )
+                last_gae = (
+                    delta
+                    + gamma * gae_lambda * continuation_mask * last_gae
+                )
+                advantages_host[t] = last_gae
+            advantages = torch.as_tensor(
+                advantages_host, dtype=torch.float32, device=self.device
+            )
+            returns = advantages + self.values[:n]
+            return advantages, returns
+
         advantages = torch.zeros(n, device=self.device)
         last_gae = 0.0
         next_val = float(next_value)
@@ -258,10 +297,10 @@ class MAPPOAgent:
             len(self.agent_ids), dtype=torch.float32, device=self.device
         )
 
-        self.optimizer = optim.Adam(
-            list(self.actor.parameters()) + list(self.critic.parameters()),
-            lr=self.lr,
+        self._optim_parameters = tuple(self.actor.parameters()) + tuple(
+            self.critic.parameters()
         )
+        self.optimizer = optim.Adam(self._optim_parameters, lr=self.lr)
 
         # Per-agent rollout buffers
         rollout_row_dim = obs_dim + global_state_dim + self.action_dim + 5
@@ -570,61 +609,67 @@ class MAPPOAgent:
         -------
         Dict with average training losses across all minibatch updates.
         """
-        # Collect per-agent advantages and returns
-        all_obs: List[torch.Tensor] = []
-        all_gs: List[torch.Tensor] = []
-        all_acts: List[torch.Tensor] = []
-        all_old_lp: List[torch.Tensor] = []
-        all_adv: List[torch.Tensor] = []
-        all_ret: List[torch.Tensor] = []
-
         rollout_agent_ids = [
             aid for aid in self.agent_ids if self.buffers[aid].size() > 0
         ]
+        if not rollout_agent_ids:
+            return {}
+
+        # Assemble one packed update tensor. Every minibatch then needs one
+        # advanced-index gather instead of six independent gathers, and the
+        # preallocated identity basis is copied directly into critic inputs.
+        n_pool = sum(self.buffers[aid].size() for aid in rollout_agent_ids)
+        obs_end = self.obs_dim
+        gs_end = obs_end + self.critic_input_dim
+        acts_end = gs_end + self.action_dim
+        old_lp_index = acts_end
+        adv_index = acts_end + 1
+        ret_index = acts_end + 2
+        update_pool = torch.empty(
+            (n_pool, ret_index + 1), dtype=torch.float32, device=self.device
+        )
+
         next_values = self.evaluate_states(next_global_state, rollout_agent_ids)
+        row_start = 0
         for aid in rollout_agent_ids:
             buf = self.buffers[aid]
             n = buf.size()
             next_value = next_values[aid]
             adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
-
-            all_obs.append(buf.obs[:n])
-            all_gs.append(self._critic_batch(buf.global_states[:n], aid))
-            all_acts.append(buf.actions[:n])
-            all_old_lp.append(buf.log_probs[:n])
-            all_adv.append(adv)
-            all_ret.append(ret)
-
-        if not all_obs:
-            return {}
-
-        # Pool all agents' data
-        obs_pool = torch.cat(all_obs, dim=0)
-        gs_pool = torch.cat(all_gs, dim=0)
-        acts_pool = torch.cat(all_acts, dim=0)
-        old_lp_pool = torch.cat(all_old_lp, dim=0)
-        adv_pool = torch.cat(all_adv, dim=0)
-        ret_pool = torch.cat(all_ret, dim=0)
+            rows = update_pool[row_start : row_start + n]
+            rows[:, :obs_end] = buf.obs[:n]
+            rows[:, obs_end : obs_end + self.global_state_dim] = (
+                buf.global_states[:n]
+            )
+            if self.critic_mode == "agent_conditioned":
+                identity = self._agent_identity[self._agent_index[aid]]
+                rows[:, obs_end + self.global_state_dim : gs_end] = identity
+            rows[:, gs_end:acts_end] = buf.actions[:n]
+            rows[:, old_lp_index] = buf.log_probs[:n]
+            rows[:, adv_index] = adv
+            rows[:, ret_index] = ret
+            row_start += n
 
         # Normalize advantages over the pooled set
+        adv_pool = update_pool[:, adv_index]
         adv_std = adv_pool.std(correction=0)
-        adv_pool = (adv_pool - adv_pool.mean()) / (adv_std + 1e-8)
+        update_pool[:, adv_index] = (
+            adv_pool - adv_pool.mean()
+        ) / (adv_std + 1e-8)
 
-        total_pi_loss = total_vf_loss = total_ent = total_kl = 0.0
-        n_updates = 0
-        n_pool = obs_pool.shape[0]
+        metric_rows: List[torch.Tensor] = []
 
         for _ in range(self.n_epochs):
             idx_all = torch.randperm(n_pool, device=self.device)
             for start in range(0, n_pool, self.batch_size):
                 idx = idx_all[start:start + self.batch_size]
-
-                obs_b = obs_pool[idx]
-                gs_b = gs_pool[idx]
-                acts_b = acts_pool[idx]
-                old_lp_b = old_lp_pool[idx]
-                adv_b = adv_pool[idx]
-                ret_b = ret_pool[idx]
+                batch = update_pool[idx]
+                obs_b = batch[:, :obs_end]
+                gs_b = batch[:, obs_end:gs_end]
+                acts_b = batch[:, gs_end:acts_end]
+                old_lp_b = batch[:, old_lp_index]
+                adv_b = batch[:, adv_index]
+                ret_b = batch[:, ret_index]
 
                 # PPO compares the current policy probability with the
                 # probability recorded for the same rollout action.  Sampling
@@ -649,26 +694,30 @@ class MAPPOAgent:
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
-                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    self._optim_parameters,
                     self.max_grad_norm,
                 )
                 self.optimizer.step()
 
                 with torch.no_grad():
-                    approx_kl = ((old_lp_b - new_lp_b).mean()).abs().item()
+                    approx_kl = ((old_lp_b - new_lp_b).mean()).abs()
+                    metric_rows.append(
+                        torch.stack(
+                            (
+                                pi_loss.detach(),
+                                vf_loss.detach(),
+                                entropy.detach(),
+                                approx_kl,
+                            )
+                        )
+                    )
 
-                total_pi_loss += pi_loss.item()
-                total_vf_loss += vf_loss.item()
-                total_ent += entropy.item()
-                total_kl += approx_kl
-                n_updates += 1
-
-        denom = max(n_updates, 1)
+        averages = torch.stack(metric_rows).mean(dim=0).cpu().tolist()
         return {
-            "train/policy_loss": total_pi_loss / denom,
-            "train/value_loss": total_vf_loss / denom,
-            "train/entropy": total_ent / denom,
-            "train/approx_kl": total_kl / denom,
+            "train/policy_loss": averages[0],
+            "train/value_loss": averages[1],
+            "train/entropy": averages[2],
+            "train/approx_kl": averages[3],
         }
 
     # ------------------------------------------------------------------

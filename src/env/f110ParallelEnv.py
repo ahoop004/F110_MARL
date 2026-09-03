@@ -1443,6 +1443,10 @@ class F110ParallelEnv:
             position = np.array(
                 [self.poses_x[index], self.poses_y[index]], dtype=np.float32
             )
+            # Progress facts use the original map centerline, while previews
+            # use a uniformly resampled polyline. Their indices and continuous
+            # arc lengths are not exactly interchangeable, especially near
+            # seams and off track, so keep this preview-specific cursor/search.
             preview_index = geometry.nearest_index(
                 position,
                 last_index=self._track_preview_last_indices.get(agent_id, -1),

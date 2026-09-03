@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -113,6 +113,31 @@ class TrackPreviewGeometry:
     curvature_max: float
     width_max: float
     projection_geometry: CenterlineGeometry
+    _interpolation_arc: np.ndarray = field(init=False, repr=False)
+    _interpolation_curvature: np.ndarray = field(init=False, repr=False)
+    _interpolation_width: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Precompute the closed-track interpolation tails once per map."""
+        if self.closed:
+            interpolation_arc = self.projection_geometry.arc_lengths
+            interpolation_curvature = np.append(self.curvature, self.curvature[0])
+            interpolation_width = np.append(self.width, self.width[0])
+        else:
+            interpolation_arc = self.projection_geometry.arc_lengths
+            interpolation_curvature = self.curvature
+            interpolation_width = self.width
+        for array in (
+            interpolation_arc,
+            interpolation_curvature,
+            interpolation_width,
+        ):
+            array.setflags(write=False)
+        object.__setattr__(self, "_interpolation_arc", interpolation_arc)
+        object.__setattr__(
+            self, "_interpolation_curvature", interpolation_curvature
+        )
+        object.__setattr__(self, "_interpolation_width", interpolation_width)
 
     @classmethod
     def build(
@@ -189,28 +214,22 @@ class TrackPreviewGeometry:
         distances = projection.arc_length + self.spacing * np.arange(
             1, count + 1, dtype=np.float32
         )
-        sample_arc = self.projection_geometry.arc_lengths
         if self.closed:
-            sample_arc = sample_arc[:-1]
             distances %= self.projection_geometry.total_length
-            interpolation_arc = np.append(
-                sample_arc, self.projection_geometry.total_length
-            )
-            curvature_values = np.append(self.curvature, self.curvature[0])
-            width_values = np.append(self.width, self.width[0])
         else:
             distances = np.clip(
                 distances, 0.0, self.projection_geometry.total_length
             )
-            interpolation_arc = sample_arc
-            curvature_values = self.curvature
-            width_values = self.width
         return {
             "curvature": np.interp(
-                distances, interpolation_arc, curvature_values
+                distances,
+                self._interpolation_arc,
+                self._interpolation_curvature,
             ).astype(np.float32),
             "width": np.interp(
-                distances, interpolation_arc, width_values
+                distances,
+                self._interpolation_arc,
+                self._interpolation_width,
             ).astype(np.float32),
             "curvature_max": self.curvature_max,
             "width_max": self.width_max,

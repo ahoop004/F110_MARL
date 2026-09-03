@@ -66,3 +66,24 @@ one nearest-index-plus-preview sample. Geometry is cached only in memory for
 the lifetime of an environment. Disk persistence is intentionally deferred:
 the one-time build cost does not currently justify adding a persistent schema
 and another source-invalidation boundary.
+
+### Projection allocation review
+
+P6 compared 2,600 Budapest preview calls under `cProfile` and `tracemalloc`.
+The baseline rebuilt three closed-track interpolation tails per call: 7,800
+`numpy.append` calls consumed 0.109 cumulative seconds. Precomputing those
+immutable arrays removed all 7,800 calls; diagnostic runtime changed from
+2.509 s to 2.295 s and traced peak memory from 60,583 to 49,967 bytes. These
+instrumented numbers identify allocation sources and are not primary
+throughput measurements.
+
+Progress projection cannot safely seed or replace preview projection. Progress
+uses the original map centerline, while preview uses a uniformly resampled
+polyline; map-wide and off-track checks found different segment indices and arc
+lengths. The preview-specific nearest-index cursor therefore remains in place.
+
+Numba is already used and warmed in the physics and LiDAR paths, but there is
+no existing centerline-projection kernel to reuse. A new JIT kernel was not
+introduced because it would add compilation latency and a new numerical
+equivalence surface. Revisit that option only with a separately warmed,
+map-wide benchmark if projection remains dominant after the allocation change.
