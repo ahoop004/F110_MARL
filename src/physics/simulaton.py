@@ -97,7 +97,10 @@ class Simulator(object):
         self.collision_idx = -1 * np.ones((self.num_agents,), dtype=np.int32)
         
 
-        # initializing agents
+        # Cars within one environment share a scanner/distance transform. Each
+        # Simulator owns a distinct scanner so an evaluation map cannot replace
+        # the concurrently active training map.
+        shared_scan_simulator = None
         for i in range(self.num_agents):
             agent = RaceCar(
                 params,
@@ -106,8 +109,12 @@ class Simulator(object):
                 num_beams=self.num_beams,
                 integrator=self.integrator,
                 lidar_dist=lidar_dist,
+                scan_simulator=shared_scan_simulator,
             )
+            if shared_scan_simulator is None:
+                shared_scan_simulator = agent.scan_simulator
             self.agents.append(agent)
+        self.scan_simulator = shared_scan_simulator
 
         self._state_dim = self.agents[0].state.shape[0] if self.agents else 0
         self._state_buffer = np.zeros((self.num_agents, self._state_dim), dtype=np.float64)

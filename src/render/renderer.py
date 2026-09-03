@@ -58,6 +58,11 @@ MAP_COLOR = _rgba255(255, 193, 50)
 LIDAR_COLOR_HIT = (1.0, 0.0, 0.0, 1.0)
 LIDAR_COLOR_MAX = _rgba255(180, 180, 180)
 
+# Centerline uses a cyclic colour ramp keyed by normalised arc length.  Red is
+# s=0, with green/cyan/blue/magenta showing increasing s before wrapping back
+# to red at the start/finish seam.
+CENTERLINE_ALPHA = 0.95
+
 # Per-agent color palette — 8 visually distinct colors.
 # Indices 0-2 are cool (defenders), 3-5 are warm (attackers) by convention.
 # Wraps modulo for >8 agents.
@@ -146,6 +151,8 @@ else:
             self.map_points = None
             self.map_vlist = None
             self._map_vertex_count = 0
+            self.centerline_vlist = None
+            self._centerline_connect = True
 
             # Per-agent drawables and cached state
             self.cars_vlist = {}  # aid -> vertex_list (GL_QUADS)
@@ -737,8 +744,72 @@ else:
         # ---------- Compatibility Stubs (for v1 features not yet implemented as extensions) ----------
 
         def update_centerline(self, centerline_points, *, connect: bool = True) -> None:
-            """Stub for centerline rendering (can be implemented as extension later)."""
-            pass
+            """Draw a map centerline, colouring it by normalised arc length.
+
+            Connected centerlines use a closed line loop.  Disconnected input
+            is rendered as points, which preserves the existing
+            ``centerline_render_progress`` marker contract.
+            """
+            if self.centerline_vlist is not None:
+                try:
+                    self.centerline_vlist.delete()
+                except Exception:
+                    pass
+                self.centerline_vlist = None
+
+            if centerline_points is None:
+                return
+
+            points = np.asarray(centerline_points, dtype=np.float32)
+            if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
+                return
+            points = points[np.isfinite(points[:, :2]).all(axis=1), :2]
+            if points.shape[0] == 0:
+                return
+
+            positions = (points * self.render_scale).ravel().tolist()
+            if points.shape[0] == 1:
+                progress = np.zeros(1, dtype=np.float32)
+            else:
+                segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+                arc_lengths = np.concatenate(
+                    (np.zeros(1, dtype=np.float32), np.cumsum(segment_lengths, dtype=np.float32))
+                )
+                total_length = float(arc_lengths[-1])
+                progress = arc_lengths / total_length if total_length > 0.0 else np.zeros_like(arc_lengths)
+
+            # HSV hue wheel, vectorised to avoid per-waypoint colour objects.
+            hue = (progress % 1.0) * 6.0
+            sector = np.floor(hue).astype(np.int32)
+            fraction = hue - sector
+            one = np.ones_like(fraction)
+            zero = np.zeros_like(fraction)
+            rgb_choices = (
+                np.column_stack((one, fraction, zero)),
+                np.column_stack((one - fraction, one, zero)),
+                np.column_stack((zero, one, fraction)),
+                np.column_stack((zero, one - fraction, one)),
+                np.column_stack((fraction, zero, one)),
+                np.column_stack((one, zero, one - fraction)),
+            )
+            rgb = np.empty((points.shape[0], 3), dtype=np.float32)
+            for index, choice in enumerate(rgb_choices):
+                mask = (sector % 6) == index
+                rgb[mask] = choice[mask]
+            colors = np.column_stack(
+                (rgb, np.full(points.shape[0], CENTERLINE_ALPHA, dtype=np.float32))
+            ).ravel().tolist()
+
+            self._centerline_connect = bool(connect)
+            mode = pyglet.gl.GL_LINE_LOOP if connect and points.shape[0] > 1 else pyglet.gl.GL_POINTS
+            self.centerline_vlist = self.shader.vertex_list(
+                points.shape[0],
+                mode,
+                batch=self.batch,
+                group=self.shader_group,
+                position=('f', positions),
+                color=('f', colors),
+            )
 
         def configure_reward_ring(self, **kwargs) -> None:
             """Stub for reward ring configuration (can be implemented as extension later)."""

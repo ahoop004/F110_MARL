@@ -27,13 +27,17 @@ class RaceCar(object):
 
     """
 
-    # static objects that don't need to be stored in class instances
-    scan_simulator = None
-    cosines = None
-    scan_angles = None
-    side_distances = None
-
-    def __init__(self, params, seed, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.RK4, lidar_dist=0.0):
+    def __init__(
+        self,
+        params,
+        seed,
+        time_step=0.01,
+        num_beams=1080,
+        fov=4.7,
+        integrator=Integrator.RK4,
+        lidar_dist=0.0,
+        scan_simulator=None,
+    ):
         """
         Init function
 
@@ -44,6 +48,7 @@ class RaceCar(object):
             num_beams (int, default=1080): number of beams in the laser scan
             fov (float, default=4.7): field of view of the laser
             lidar_dist (float, default=0): vertical distance between LiDAR and backshaft
+            scan_simulator: optional scanner shared by cars in the same environment
 
         Returns:
             None
@@ -60,6 +65,9 @@ class RaceCar(object):
         self.fov = fov
         self.integrator = integrator
         self.lidar_dist = lidar_dist
+        # Share the expensive distance transform between cars in one
+        # Simulator, but never between concurrently active environments.
+        self.scan_simulator = scan_simulator or ScanSimulator2D(self.num_beams, fov)
         if self.integrator is Integrator.RK4:
             warnings.warn(f"Chosen integrator is RK4. This is different from previous versions of the gym.")
 
@@ -96,59 +104,45 @@ class RaceCar(object):
 
         self._refresh_param_cache()
 
-        regenerate_scan = (
-            RaceCar.scan_simulator is None
-            or getattr(RaceCar, "_scan_beam_count", None) != self.num_beams
-            or getattr(RaceCar, "_scan_fov", None) != fov
-        )
+        self.scan_rng = np.random.default_rng(seed=self.seed)
+        scan_ang_incr = self.scan_simulator.get_increment()
 
-        # initialize scan sim
-        if regenerate_scan:
-            self.scan_rng = np.random.default_rng(seed=self.seed)
-            RaceCar.scan_simulator = ScanSimulator2D(self.num_beams, fov)
+        # Beam geometry is environment-specific too: another environment may
+        # use a different beam count or field of view.
+        self.cosines = np.zeros((self.num_beams, ))
+        self.scan_angles = np.zeros((self.num_beams, ))
+        self.side_distances = np.zeros((self.num_beams, ))
 
-            scan_ang_incr = RaceCar.scan_simulator.get_increment()
+        dist_sides = params['width']/2.
+        dist_fr = (params['lf']+params['lr'])/2.
 
-            # angles of each scan beam, distance from lidar to edge of car at each beam, and precomputed cosines of each angle
-            RaceCar.cosines = np.zeros((self.num_beams, ))
-            RaceCar.scan_angles = np.zeros((self.num_beams, ))
-            RaceCar.side_distances = np.zeros((self.num_beams, ))
+        for i in range(self.num_beams):
+            angle = -fov/2. + i*scan_ang_incr
+            self.scan_angles[i] = angle
+            self.cosines[i] = np.cos(angle)
 
-            dist_sides = params['width']/2.
-            dist_fr = (params['lf']+params['lr'])/2.
-
-            for i in range(self.num_beams):
-                angle = -fov/2. + i*scan_ang_incr
-                RaceCar.scan_angles[i] = angle
-                RaceCar.cosines[i] = np.cos(angle)
-
-                if angle > 0:
-                    if angle < np.pi/2:
-                        # between 0 and pi/2
-                        to_side = dist_sides / np.sin(angle)
-                        to_fr = dist_fr / np.cos(angle)
-                        RaceCar.side_distances[i] = min(to_side, to_fr)
-                    else:
-                        # between pi/2 and pi
-                        to_side = dist_sides / np.cos(angle - np.pi/2.)
-                        to_fr = dist_fr / np.sin(angle - np.pi/2.)
-                        RaceCar.side_distances[i] = min(to_side, to_fr)
+            if angle > 0:
+                if angle < np.pi/2:
+                    # between 0 and pi/2
+                    to_side = dist_sides / np.sin(angle)
+                    to_fr = dist_fr / np.cos(angle)
+                    self.side_distances[i] = min(to_side, to_fr)
                 else:
-                    if angle > -np.pi/2:
-                        # between 0 and -pi/2
-                        to_side = dist_sides / np.sin(-angle)
-                        to_fr = dist_fr / np.cos(-angle)
-                        RaceCar.side_distances[i] = min(to_side, to_fr)
-                    else:
-                        # between -pi/2 and -pi
-                        to_side = dist_sides / np.cos(-angle - np.pi/2)
-                        to_fr = dist_fr / np.sin(-angle - np.pi/2)
-                        RaceCar.side_distances[i] = min(to_side, to_fr)
-
-            RaceCar._scan_beam_count = self.num_beams
-            RaceCar._scan_fov = fov
-        else:
-            self.scan_rng = np.random.default_rng(seed=self.seed)
+                    # between pi/2 and pi
+                    to_side = dist_sides / np.cos(angle - np.pi/2.)
+                    to_fr = dist_fr / np.sin(angle - np.pi/2.)
+                    self.side_distances[i] = min(to_side, to_fr)
+            else:
+                if angle > -np.pi/2:
+                    # between 0 and -pi/2
+                    to_side = dist_sides / np.sin(-angle)
+                    to_fr = dist_fr / np.cos(-angle)
+                    self.side_distances[i] = min(to_side, to_fr)
+                else:
+                    # between -pi/2 and -pi
+                    to_side = dist_sides / np.cos(-angle - np.pi/2)
+                    to_fr = dist_fr / np.sin(-angle - np.pi/2)
+                    self.side_distances[i] = min(to_side, to_fr)
 
     def _refresh_param_cache(self) -> None:
         params = self.params
@@ -217,7 +211,7 @@ class RaceCar(object):
     
     def set_map(self, map_path: str, map_ext: str):
         """
-        Configure the shared scan simulator only if the map asset changed.
+        Configure this environment's scan simulator if the map asset changed.
 
         Args:
             map_path (str): absolute path to the map yaml file
@@ -225,12 +219,12 @@ class RaceCar(object):
         """
 
         cache_key = (str(map_path), str(map_ext))
-        cached_key = getattr(RaceCar, "_map_cache_key", None)
+        cached_key = getattr(self.scan_simulator, "_map_cache_key", None)
         if cached_key == cache_key:
             return
 
-        RaceCar.scan_simulator.set_map(map_path, map_ext)
-        RaceCar._map_cache_key = cache_key
+        self.scan_simulator.set_map(map_path, map_ext)
+        self.scan_simulator._map_cache_key = cache_key
 
     def reset(self, pose):
         """
@@ -290,7 +284,7 @@ class RaceCar(object):
             if idx == agent_index:
                 continue
             verts = np.asarray(all_verts[idx], dtype=np.float32)
-            ray_cast(scan_pose, scan_view, RaceCar.scan_angles, verts)
+            ray_cast(scan_pose, scan_view, self.scan_angles, verts)
 
         self.scan = scan_view
 
@@ -302,7 +296,7 @@ class RaceCar(object):
         scan_pose[1] = self.state[1] + self.lidar_dist * np.sin(self.state[4])
         scan_pose[2] = self.state[4]
 
-        current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng)
+        current_scan = self.scan_simulator.scan(scan_pose, self.scan_rng)
         if current_scan is None:
             self.scan = np.zeros((self.num_beams,), dtype=np.float32)
             self.in_collision = False
@@ -448,8 +442,7 @@ class RaceCar(object):
         scan_pose[0] = self.state[0] + self.lidar_dist * np.cos(self.state[4])
         scan_pose[1] = self.state[1] + self.lidar_dist * np.sin(self.state[4])
         scan_pose[2] = self.state[4]
-        current_scan = RaceCar.scan_simulator.scan(scan_pose, self.scan_rng)
-        # current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2],  self.state[4]), self.scan_rng)
+        current_scan = self.scan_simulator.scan(scan_pose, self.scan_rng)
         self.check_ttc(current_scan)
 
         self.scan = current_scan.astype(np.float32, copy=False)

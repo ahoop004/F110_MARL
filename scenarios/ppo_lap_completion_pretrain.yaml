@@ -42,6 +42,9 @@ environment:
   action_repeat: 2
   centerline_autoload: true
   centerline_features: true
+  # Render-only diagnostic: hue advances with normalized Frenet s and wraps
+  # to red at the start/finish seam.
+  centerline_render: true
   walls_autoload: true
   episode_termination:
     mode: any_agent
@@ -78,7 +81,7 @@ agents:
       checkpoint_every: 500
       device: cuda
     action_constraints:
-      prevent_reverse: false
+      prevent_reverse: true
       speed_index: 1
 
 wandb:
