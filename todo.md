@@ -418,27 +418,27 @@ src/agents/mappo/__init__.py
 configs/training/mappo.yaml
 ```
 
-- [ ] Use `torch.profiler` to measure CPU launch time, CUDA kernels, memory
+- [x] Use `torch.profiler` to measure CPU launch time, CUDA kernels, memory
   copies, and synchronization during `MAPPOAgent.update`.
-- [ ] Benchmark batch sizes 64, 128, 256, and 512 with the same stored rollout.
-- [ ] Report optimizer samples/s and peak CUDA memory.
-- [ ] Keep `n_steps`, `n_epochs`, shuffling, loss definitions, advantage
+- [x] Benchmark batch sizes 64, 128, 256, and 512 with the same stored rollout.
+- [x] Report optimizer samples/s and peak CUDA memory.
+- [x] Keep `n_steps`, `n_epochs`, shuffling, loss definitions, advantage
   normalization, clipping, and coefficients unchanged during the batch-size
   implementation study.
-- [ ] Check whether preallocated agent-identity tensors reduce update overhead.
-- [ ] Check whether pooled tensors can be assembled without repeated temporary
+- [x] Check whether preallocated agent-identity tensors reduce update overhead.
+- [x] Check whether pooled tensors can be assembled without repeated temporary
   allocations.
-- [ ] Consider AMP only as a separate research/configuration arm with numerical
+- [x] Consider AMP only as a separate research/configuration arm with numerical
   validation; do not silently enable it.
-- [ ] Do not use `torch.compile` by default until compile latency, dynamic active
+- [x] Do not use `torch.compile` by default until compile latency, dynamic active
   sets, checkpoint behavior, and reproducibility are measured.
 
 Exit criteria:
 
-- [ ] Selected defaults improve update throughput on the target GPU.
-- [ ] Losses, gradients, KL, entropy, and parameter updates match within defined
+- [x] Selected defaults improve update throughput on the target GPU.
+- [x] Losses, gradients, KL, entropy, and parameter updates match within defined
   tolerances for the same rollout and minibatch ordering.
-- [ ] Any batch-size default change is recorded as an experiment-version change,
+- [x] Any batch-size default change is recorded as an experiment-version change,
   because minibatch composition can affect learning even with the same data.
 
 ---

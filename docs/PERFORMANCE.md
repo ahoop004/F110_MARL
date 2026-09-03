@@ -87,3 +87,41 @@ no existing centerline-projection kernel to reuse. A new JIT kernel was not
 introduced because it would add compilation latency and a new numerical
 equivalence surface. Revisit that option only with a separately warmed,
 map-wide benchmark if projection remains dominant after the allocation change.
+
+## MAPPO update benchmark
+
+P7 uses one synthetic but shape-accurate four-agent rollout for every batch
+size. The rollout contains 2,048 steps per agent, and every candidate performs
+the configured 10 PPO epochs. Model weights, rollout bytes, shuffle seed, loss
+definitions, clipping, and coefficients remain fixed.
+
+```bash
+python3 scripts/benchmark_mappo_update.py \
+  --device cuda --batch-sizes 64 128 256 512 \
+  --n-steps 2048 --n-epochs 10 --repetitions 3 \
+  --profile-batch-size 512 \
+  --output /tmp/f110_mappo_update_benchmark.json
+```
+
+The profiler trace and readable CPU/CUDA tables are written beside the JSON
+result. On the Quadro RTX 5000 target, the optimized update measured:
+
+| Batch | Median samples/s | Median time | Peak CUDA MiB |
+| ---: | ---: | ---: | ---: |
+| 64 | 17,235 | 4.753 s | 38.3 |
+| 128 | 36,512 | 2.244 s | 38.3 |
+| 256 | 68,459 | 1.197 s | 38.7 |
+| 512 | 133,716 | 0.613 s | 39.8 |
+
+The implementation also replaces per-scalar CUDA GAE reads with one bulk copy
+per agent, gathers each minibatch from one packed tensor, reuses the optimizer
+parameter tuple and agent-identity basis, and transfers aggregate metrics only
+once. Against the legacy implementation at batch size 64, the initial study
+improved throughput from approximately 13,525 to 15,653 samples/s before any
+batch-size change.
+
+Batch size 512 is now the default under update version
+`p7-packed-batch512-v1`. It uses the same samples and epochs but reduces the
+number of optimizer steps and changes minibatch composition. Existing learning
+curves are therefore not seed-trajectory comparable; start new runs when using
+this default. AMP and `torch.compile` remain disabled.

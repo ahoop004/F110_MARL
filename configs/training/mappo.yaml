@@ -8,6 +8,10 @@ mappo:
   team_reward_reduction: mean
 
 training_defaults:
+  # Incremented because the P7 batch-size selection changes minibatch
+  # composition and therefore requires new learning curves. This field is
+  # retained in resolved-config provenance and ignored by the agent itself.
+  update_version: p7-packed-batch512-v1
   progress_unit: episodes
 
   # Rollout collection
@@ -21,7 +25,7 @@ training_defaults:
   ent_coef: 0.01
   vf_coef: 0.5
   max_grad_norm: 0.5
-  batch_size: 64
+  batch_size: 512
   learning_rate: 3.0e-4
   gamma: 0.99
 

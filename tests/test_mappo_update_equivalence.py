@@ -10,7 +10,9 @@ import torch.nn as nn
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
 
 
-def _make_agent(device: str = "cpu") -> MAPPOAgent:
+def _make_agent(
+    device: str = "cpu", critic_mode: str = "agent_conditioned"
+) -> MAPPOAgent:
     return MAPPOAgent(
         obs_dim=5,
         global_state_dim=4,
@@ -23,7 +25,7 @@ def _make_agent(device: str = "cpu") -> MAPPOAgent:
             "n_steps": 8,
             "n_epochs": 2,
             "batch_size": 8,
-            "critic_mode": "agent_conditioned",
+            "critic_mode": critic_mode,
         },
     )
 
@@ -127,10 +129,25 @@ def _legacy_update(
     }
 
 
-def test_packed_update_matches_legacy_losses_gradients_and_parameters() -> None:
+@pytest.mark.parametrize("critic_mode", ["agent_conditioned", "shared_team"])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="CUDA is unavailable"
+            ),
+        ),
+    ],
+)
+def test_packed_update_matches_legacy_losses_gradients_and_parameters(
+    critic_mode: str, device: str,
+) -> None:
     torch.manual_seed(123)
-    legacy = _make_agent()
-    optimized = _make_agent()
+    legacy = _make_agent(device=device, critic_mode=critic_mode)
+    optimized = _make_agent(device=device, critic_mode=critic_mode)
     optimized.actor.load_state_dict(copy.deepcopy(legacy.actor.state_dict()))
     optimized.critic.load_state_dict(copy.deepcopy(legacy.critic.state_dict()))
     optimized.optimizer.load_state_dict(copy.deepcopy(legacy.optimizer.state_dict()))
@@ -151,10 +168,12 @@ def test_packed_update_matches_legacy_losses_gradients_and_parameters() -> None:
     for expected, actual in zip(
         legacy._optim_parameters, optimized._optim_parameters
     ):
-        assert torch.equal(actual, expected)
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-7)
         assert expected.grad is not None
         assert actual.grad is not None
-        assert torch.equal(actual.grad, expected.grad)
+        torch.testing.assert_close(
+            actual.grad, expected.grad, rtol=1e-6, atol=1e-7
+        )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")

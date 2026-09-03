@@ -712,6 +712,13 @@ class MAPPOAgent:
                         )
                     )
 
+        if not metric_rows:
+            return {
+                "train/policy_loss": 0.0,
+                "train/value_loss": 0.0,
+                "train/entropy": 0.0,
+                "train/approx_kl": 0.0,
+            }
         averages = torch.stack(metric_rows).mean(dim=0).cpu().tolist()
         return {
             "train/policy_loss": averages[0],
