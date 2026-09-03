@@ -237,14 +237,24 @@ class OnPolicyTrainer:
                         hook.on_step(record)
                 step_idx += 1
 
-                self.agent.buffer.add(obs, action_norm, reward, log_prob, value, done)
+                self.agent.buffer.add(
+                    obs,
+                    action_norm,
+                    reward,
+                    log_prob,
+                    value,
+                    terminated=rl_term,
+                    truncated=rl_trunc,
+                )
 
                 if self.agent.buffer.is_full() or done:
-                    if not done:
+                    # Time-limit truncations have a valid final observation and
+                    # should bootstrap. Only true terminal states force V=0.
+                    if not rl_term:
                         _, _, next_value = self.agent.act(next_obs)
                     else:
                         next_value = 0.0
-                    update_metrics = self.agent.update(next_value, done)
+                    update_metrics = self.agent.update(next_value)
                     self.agent.buffer.clear()
                     for hook in self.hooks:
                         hook.on_update(update_metrics)

@@ -559,3 +559,226 @@ Each delivery should include:
 
 These remain worthwhile, but should not be mixed into performance patches or
 benchmarks because they make attribution and reproducibility harder.
+
+---
+
+# Model Architecture and Pretraining Plan
+
+## Objective
+
+Make PPO and MAPPO policy architectures configurable, support reproducible
+encoder pretraining, and compare alternative models without changing the
+environment, observation values, action bounds, rewards, or MAPPO CTDE
+contract.
+
+The active local observation is a flat vector containing ordered LiDAR beams
+and scalar features. Generic ImageNet and language-model checkpoints are not a
+direct match. Prefer project-native LiDAR pretraining first; use external
+PyTorch or Hugging Face weights only when their input modality and
+normalization are compatible.
+
+## A0 - Stabilize PPO Before Architecture Comparisons
+
+- [x] Evaluate stored rollout actions when computing the PPO importance ratio.
+- [x] Use the current policy entropy for those stored actions.
+- [x] Store termination and truncation separately in the PPO rollout buffer.
+- [x] Bootstrap time-limit truncations from the final observation while
+  blocking bootstrap after true termination.
+- [x] Allow one-transition rollouts to update instead of discarding them.
+- [x] Add focused tests for action evaluation, GAE lifecycle handling,
+  single-transition updates, and trainer truncation bootstrapping.
+- [ ] Resolve the unrelated scan-isolation test assumption that the locally
+  edited pretraining scenario always starts on `Budapest_map`.
+
+Research implication:
+
+PPO learning behavior intentionally changed. New training runs are more
+algorithmically correct, but should not be presented as direct continuations
+of learning curves produced before these fixes.
+
+## A1 - Expose a Stable Observation Layout Contract
+
+- [ ] Add immutable component names, offsets, dimensions, and shapes to
+  `ObservationComposer` without changing its flat `float32` output.
+- [ ] Give each observation component a stable layout identifier.
+- [ ] Validate that component slices cover the complete observation exactly and
+  do not overlap.
+- [ ] Pass the layout metadata into trainable-agent construction.
+- [ ] Add tests for the existing 115-, 158-, and 173-dimensional observation
+  variants.
+- [ ] Include the resolved observation layout and normalization contract in
+  checkpoint provenance.
+
+Exit criteria:
+
+- Existing scenarios produce byte-for-byte equivalent observations.
+- Structured encoders can locate LiDAR and scalar fields without hard-coded
+  offsets or agent IDs.
+
+## A2 - Add a Backward-Compatible Model Factory
+
+- [ ] Add `src/agents/common/encoders.py` for reusable feature encoders.
+- [ ] Add `src/agents/common/model_factory.py` for validated construction from
+  scenario parameters.
+- [ ] Represent architecture configuration explicitly under
+  `agents.<id>.params.architecture`.
+- [ ] Keep omitted architecture configuration equivalent to the current MLP.
+- [ ] Configure actor and critic architectures independently.
+- [ ] Preserve the MAPPO rule that the actor receives local observations only
+  and the centralized critic receives global state only.
+- [ ] Validate unknown architecture names and incompatible parameters before
+  training begins.
+- [ ] Add construction, forward-shape, device, gradient, save/load, and legacy
+  configuration tests.
+
+Initial configuration shape:
+
+```yaml
+params:
+  architecture:
+    actor:
+      name: mlp
+      hidden_dims: [256, 256]
+      activation: tanh
+    critic:
+      name: mlp
+      hidden_dims: [256, 256]
+      activation: tanh
+```
+
+## A3 - Implement Architecture Families
+
+- [ ] Register the existing network as the `mlp` reference architecture.
+- [ ] Add `residual_mlp` with configurable width, depth, normalization, and
+  activation.
+- [ ] Add `lidar_fusion_cnn`:
+  - 1D convolutional encoder over ordered LiDAR beams.
+  - Separate MLP encoder for non-LiDAR scalar components.
+  - Configurable fusion trunk and actor head.
+- [ ] Add a small `lidar_transformer` only after the CNN baseline is validated.
+- [ ] Defer `temporal_gru` until recurrent hidden-state lifecycle, rollout
+  storage, batching, evaluation, and episode-boundary tests are designed.
+- [ ] Record parameter count and inference latency for each architecture.
+- [ ] Add separate scenario YAML files for each experiment rather than changing
+  known-good scenarios.
+
+Recommended delivery order:
+
+```text
+mlp -> residual_mlp -> lidar_fusion_cnn -> lidar_transformer -> temporal_gru
+```
+
+## A4 - Add Project-Native Pretraining
+
+- [ ] Audit `TransitionRecord` and `DatasetWriter` coverage for PPO and MAPPO
+  before consuming offline data.
+- [ ] Define a versioned encoder-pretraining dataset contract containing the
+  observation layout and normalization metadata.
+- [ ] Add behavior-cloning pretraining from fixed-policy controller datasets.
+- [ ] Add masked-LiDAR reconstruction as the first self-supervised objective.
+- [ ] Evaluate next-observation, progress, or contrastive objectives only as
+  separate experiment arms.
+- [ ] Save encoder-only checkpoints independently from RL optimizer state.
+- [ ] Support encoder freezing for a configured number of optimizer steps and
+  explicit later unfreezing.
+- [ ] Compare random initialization, frozen pretrained encoders, and full
+  fine-tuning under the same online-training budget.
+
+## A5 - Support External PyTorch and Hugging Face Models
+
+- [ ] Identify candidate checkpoints whose modality, tensor shape, scale, and
+  pretraining objective are compatible with 1D LiDAR observations.
+- [ ] Document why each candidate is expected to transfer before integrating
+  it.
+- [ ] Add optional loader adapters for:
+  - Local PyTorch state dictionaries.
+  - PyTorch Hub checkpoints when a compatible model exists.
+  - Hugging Face Hub checkpoints pinned to an immutable revision.
+- [ ] Keep external integrations optional so the core pure-PyTorch MLP path
+  works without network access or additional packages.
+- [ ] Ask before adding `torchvision`, `transformers`, `huggingface_hub`, or any
+  other dependency.
+- [ ] Cache downloaded artifacts and verify hashes for repeatable offline runs.
+- [ ] Fail clearly when weights, revisions, input contracts, or dependencies do
+  not match.
+- [ ] Consider Hugging Face Hub as a registry for project-trained LiDAR
+  encoders, even if generic public checkpoints do not transfer well.
+
+External vision checkpoints should remain deferred unless a camera or raster
+observation is introduced as an explicit new observation contract and research
+condition.
+
+## A6 - Strengthen Checkpoint and Transfer Contracts
+
+- [ ] Store architecture name and fully resolved parameters in PPO and MAPPO
+  checkpoints.
+- [ ] Store observation layout, action bounds, algorithm, normalization, and
+  library versions.
+- [ ] Store pretrained source, identifier, immutable revision, artifact hash,
+  loaded submodule, and freeze schedule.
+- [ ] Support explicit load modes: `full`, `actor`, and `encoder_only`.
+- [ ] Reject incompatible architecture, observation, action, or normalization
+  contracts before loading weights.
+- [ ] Preserve loading of current MLP PPO checkpoints where contracts match.
+- [ ] Extend PPO-to-MAPPO transfer tests to every shared-actor architecture.
+
+Proposed configuration:
+
+```yaml
+params:
+  pretrained:
+    source: local  # local | pytorch_hub | huggingface
+    identifier: outputs/pretraining/lidar_encoder.pt
+    revision: null
+    load: encoder_only
+    freeze_steps: 0
+    strict: true
+```
+
+## A7 - Run Controlled Architecture Comparisons
+
+- [ ] Establish the current `[256, 256]` MLP with random initialization as the
+  reference run.
+- [ ] Compare random-initialized MLP, residual MLP, LiDAR CNN, and LiDAR
+  Transformer policies.
+- [ ] Compare random initialization, behavior cloning, and self-supervised
+  initialization for the same architecture.
+- [ ] Pretrain single-agent PPO actors before transferring compatible actors to
+  MAPPO.
+- [ ] Hold maps, seeds, spawn plans, observations, rewards, action bounds,
+  transition budgets, evaluation episodes, and opponents fixed.
+- [ ] Run both parameter-matched and best-practical-capacity comparisons.
+- [ ] Report completion, collision, progress, return, sample efficiency,
+  decisions/s, update samples/s, inference latency, memory, and parameter count.
+- [ ] Use held-out deterministic evaluation for checkpoint selection.
+- [ ] Run enough seeds to report dispersion rather than selecting one favorable
+  run.
+
+## A8 - Validation Sequence
+
+- [ ] Run focused architecture and checkpoint tests after every implementation
+  slice.
+- [ ] Run `venv/bin/python -m compileall -q run.py src tests`.
+- [ ] Run `venv/bin/python -m pytest tests/ -q`.
+- [ ] Run the dependency guard from this document.
+- [ ] Run headless PPO and MAPPO smoke tests for every registered architecture.
+- [ ] Verify actor input contains no MAPPO global-state features.
+- [ ] Verify observation values, rewards, actions, terminations, truncations,
+  seeds, and dataset records remain unchanged for fixed trajectories.
+- [ ] Record architecture experiment commands and findings under `docs/`.
+
+## Architecture Delivery Order
+
+```text
+1. Observation layout metadata
+2. Backward-compatible MLP model factory
+3. Residual MLP
+4. LiDAR fusion CNN
+5. Project-native behavior-cloning and self-supervised pretraining
+6. Checkpoint/provenance hardening
+7. Controlled PPO comparisons
+8. PPO-to-MAPPO transfer comparisons
+9. Lightweight LiDAR Transformer
+10. Compatible external PyTorch/Hugging Face integration, if justified
+11. Recurrent policies only after feed-forward experiments are stable
+```

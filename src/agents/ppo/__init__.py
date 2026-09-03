@@ -24,7 +24,8 @@ class RolloutBuffer:
         self.rewards = torch.zeros(n_steps, device=device)
         self.log_probs = torch.zeros(n_steps, device=device)
         self.values = torch.zeros(n_steps, device=device)
-        self.dones = torch.zeros(n_steps, device=device)
+        self.terminated = torch.zeros(n_steps, device=device)
+        self.truncated = torch.zeros(n_steps, device=device)
         self.ptr = 0
 
     def add(
@@ -34,7 +35,8 @@ class RolloutBuffer:
         reward: float,
         log_prob: float,
         value: float,
-        done: bool,
+        terminated: bool,
+        truncated: bool,
     ) -> None:
         i = self.ptr % self.n_steps
         self.obs[i] = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -42,7 +44,8 @@ class RolloutBuffer:
         self.rewards[i] = float(reward)
         self.log_probs[i] = float(log_prob)
         self.values[i] = float(value)
-        self.dones[i] = float(done)
+        self.terminated[i] = float(terminated)
+        self.truncated[i] = float(truncated)
         self.ptr += 1
 
     def is_full(self) -> bool:
@@ -66,10 +69,20 @@ class RolloutBuffer:
         next_val = float(next_value)
 
         for t in reversed(range(n)):
-            next_non_terminal = 1.0 - float(self.dones[t])
+            # A true terminal state has no successor value. A time-limit
+            # truncation still bootstraps from its final observation, but it
+            # must stop GAE from leaking into the next episode.
+            bootstrap_mask = 1.0 - float(self.terminated[t])
+            continuation_mask = 1.0 - float(
+                bool(self.terminated[t]) or bool(self.truncated[t])
+            )
             nv = next_val if t == n - 1 else float(self.values[t + 1])
-            delta = float(self.rewards[t]) + gamma * nv * next_non_terminal - float(self.values[t])
-            last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
+            delta = (
+                float(self.rewards[t])
+                + gamma * nv * bootstrap_mask
+                - float(self.values[t])
+            )
+            last_gae = delta + gamma * gae_lambda * continuation_mask * last_gae
             advantages[t] = last_gae
 
         returns = advantages + self.values[:n]
@@ -177,16 +190,16 @@ class PPOAgent:
             float(value_t.squeeze()),
         )
 
-    def update(self, next_value: float, done: bool) -> Dict[str, float]:
+    def update(self, next_value: float) -> Dict[str, float]:
         """Compute GAE and run PPO update epochs.
 
         Returns dict of training metrics (empty dict if buffer too small to update).
         """
-        if self.buffer.size() < 2:
+        if self.buffer.size() < 1:
             return {}
 
         advantages, returns = self.buffer.compute_gae(
-            next_value if not done else 0.0,
+            next_value,
             self.gamma,
             self.gae_lambda,
         )
@@ -203,7 +216,10 @@ class PPOAgent:
                 adv_b = advantages[idx]
                 ret_b = returns[idx]
 
-                action_t, new_lp_t = self.actor.get_action(obs_b)
+                # PPO's importance ratio must score the exact action collected
+                # during rollout; sampling a replacement action makes the ratio
+                # unrelated to the stored transition.
+                new_lp_t, entropy_t = self.actor.evaluate_actions(obs_b, act_b)
                 value_pred = self.critic(obs_b)
 
                 ratio = (new_lp_t - old_lp_b).exp()
@@ -213,9 +229,7 @@ class PPOAgent:
 
                 vf_loss = nn.functional.mse_loss(value_pred, ret_b)
 
-                _, std = self.actor(obs_b)
-                dist = torch.distributions.Normal(action_t, std)
-                entropy = dist.entropy().sum(-1).mean()
+                entropy = entropy_t.mean()
 
                 loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
 

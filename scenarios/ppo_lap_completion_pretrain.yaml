@@ -15,31 +15,39 @@ experiment:
 
 environment:
   map_bundles:
-    - Budapest_map
+    # - Budapest_map
     - circle_map
-    - Melbourne_map
-    - Montreal_map
-    - Shanghai_map
-    - Silverstone_map
-    - Spa_map
-    - Spielberg_map
+    # - Melbourne_map
+    # - Montreal_map
+    # - Shanghai_map
+    # - Silverstone_map
+    # - Spa_map
+    # - Spielberg_map
   map_bundles_train:
-    - Budapest_map
+    # - Budapest_map
     - circle_map
-    - Melbourne_map
-    - Montreal_map
-    - Shanghai_map
-    - Spielberg_map
+    # - Melbourne_map
+    # - Montreal_map
+    # - Shanghai_map
+    # - Silverstone_map
+    # - Spa_map
+    # - Spielberg_map
   map_bundles_eval:
-    - Silverstone_map
-    - Spa_map
+    # - Budapest_map
+    - circle_map
+    # - Melbourne_map
+    # - Montreal_map
+    # - Shanghai_map
+    # - Silverstone_map
+    # - Spa_map
+    # - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
   target_laps: 1
   lap_counting:
     count_initial_crossing_as_lap: false
   max_steps: 80000
-  action_repeat: 2
+  action_repeat: 1
   centerline_autoload: true
   centerline_features: true
   # Render-only diagnostic: hue advances with normalized Frenet s and wraps
