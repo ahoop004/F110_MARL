@@ -6,7 +6,7 @@ includes:
   - ../components/progress_delta_bonus.yaml
   - ../components/lap_completion_clean.yaml
   - ../components/collision_penalty.yaml
-  - ../components/timeout_penalty_50.yaml
+  - ../components/timeout_penalty_200.yaml
   - ../components/step_time_penalty.yaml
   - ../components/reverse_velocity_penalty.yaml
 
@@ -29,4 +29,4 @@ reward:
     penalty: -200.0
 
   step_time_penalty:
-    penalty: -0.005
+    penalty: -0.025

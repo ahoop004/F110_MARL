@@ -10,7 +10,7 @@ includes:
 
 experiment:
   name: ppo_lap_completion_pretrain
-  episodes: 10000
+  episodes: 1000
   seed: 42
 
 environment:
@@ -69,7 +69,7 @@ agents:
     trainable: true
     role: racer
     observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/lap_completion_pretraining.yaml
+    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

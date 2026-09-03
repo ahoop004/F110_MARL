@@ -107,6 +107,52 @@ def test_signed_progress_delta_clamps_projection_jumps_symmetrically() -> None:
     assert negative["progress_delta/bonus"] == pytest.approx(-2.5)
 
 
+def test_ppo_pretraining_uses_lap_normalized_progress_reward() -> None:
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    assert scenario["agents"]["car_0"]["reward"].endswith(
+        "configs/reward/tasks/lap_completion_normalized_progress.yaml"
+    )
+
+    composer = RewardComposer.from_file(
+        "configs/reward/tasks/lap_completion_normalized_progress.yaml"
+    )
+    component_names = {type(component).__name__ for component in composer._components}
+    assert "ReverseVelocityPenaltyComponent" not in component_names
+    assert "WrongWayPenaltyComponent" not in component_names
+
+    active_info = {
+        "terminal_reason": None,
+        "lap_crossed": False,
+        "race_completed": False,
+        "collision": False,
+    }
+    forward_total, forward = composer.compute(
+        {"info": {**active_info, "centerline": {"progress_delta": 0.01}}}
+    )
+    reverse_total, reverse = composer.compute(
+        {"info": {**active_info, "centerline": {"progress_delta": -0.01}}}
+    )
+    crash_total, crash = composer.compute(
+        {
+            "done": True,
+            "terminated": True,
+            "info": {
+                **active_info,
+                "terminal_reason": "collision",
+                "collision": True,
+                "centerline": {"progress_delta": 0.0},
+            },
+        }
+    )
+
+    assert forward["progress_delta/bonus"] == pytest.approx(0.01)
+    assert reverse["progress_delta/bonus"] == pytest.approx(-0.01)
+    assert forward_total == pytest.approx(0.01 - 1.0 / 80_000)
+    assert reverse_total == pytest.approx(-0.01 - 1.0 / 80_000)
+    assert crash["collision/penalty"] == pytest.approx(-1.0)
+    assert crash_total == pytest.approx(-1.0 - 1.0 / 80_000)
+
+
 def test_reward_context_exposes_active_centerline_track_length() -> None:
     env = SimpleNamespace(
         centerline_track_length=402.5,

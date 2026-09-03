@@ -1,0 +1,32 @@
+task:
+  name: lap_completion_normalized_progress
+  description: One-lap completion using signed normalized Frenet progress.
+
+# One full forward lap contributes approximately +1 from progress. Reverse
+# travel contributes the corresponding negative delta, while a crash or a
+# timeout costs one lap-equivalent. The per-substep time cost sums to -1 only
+# when the environment consumes its full 80,000-substep horizon.
+reward:
+  progress_delta_bonus:
+    enabled: true
+    weight: 1.0
+    positive_only: false
+    max_delta: 0.025
+
+  collision:
+    enabled: true
+    penalty: -1.0
+
+  timeout_penalty:
+    enabled: true
+    penalty: -1.0
+
+  lap_completion:
+    enabled: true
+    bonus: 1.0
+    require_clean: true
+
+  step_time_penalty:
+    enabled: true
+    penalty: -0.0000125
+    apply_on_terminal: true
