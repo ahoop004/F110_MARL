@@ -1,0 +1,55 @@
+# Four trainable MAPPO racers completing one lap on circle_map.
+# The shared actor is initialized from the completion-selected PPO actor;
+# MAPPO's centralized critic and optimizer are initialized from scratch.
+includes:
+  - complete_4_individual.yaml
+
+experiment:
+  name: mappo_4car_1lap_circle_ppo_pretrained
+  episodes: 5000
+  seed: 42
+
+training_defaults:
+  # This file is created by ppo_lap_completion_pretrain's first deterministic
+  # evaluation (episode 100) and may improve at later evaluation intervals.
+  # Start this scenario only after the PPO run is finished so the selected
+  # initialization remains fixed and reproducible.
+  pretrained_actor_checkpoint: ../outputs/ppo_lap_completion_pretrain/ppo_lap_completion_pretrain_ppo_s42_1788470802_0c13/best_model.pt
+  device: cuda
+
+environment:
+  map_bundles:
+    - circle_map
+  map_bundles_train:
+    - circle_map
+  map_bundles_eval:
+    - circle_map
+  target_laps: 1
+  # Match the PPO actor's control frequency during initial MAPPO fine-tuning.
+  action_repeat: 1
+
+# Match the PPO pretraining action-processing contract. Shared MAPPO agents
+# must use identical observation, parameter, and action-constraint configs.
+agents:
+  car_0:
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+  car_1:
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+  car_2:
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+  car_3:
+    action_constraints:
+      prevent_reverse: true
+      speed_index: 1
+
+wandb:
+  group: mappo-4car-1lap-circle-ppo-pretrained
+  job_type: pretrained-mappo
+  tags: [mappo, racing, completion, 4car, 1lap, circle, ppo-pretrained, individual-reward, agent-conditioned-critic]
+  notes: "Four-agent one-lap circle MAPPO initialized from the completion-selected PPO actor"

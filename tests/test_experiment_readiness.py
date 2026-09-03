@@ -153,6 +153,33 @@ def test_ppo_pretraining_uses_lap_normalized_progress_reward() -> None:
     assert crash_total == pytest.approx(-1.0 - 1.0 / 80_000)
 
 
+def test_circle_mappo_scenario_uses_ppo_actor_contract() -> None:
+    scenario = load_and_expand_scenario(
+        "scenarios/mappo_4car_1lap_circle_ppo_pretrained.yaml"
+    )
+    environment = scenario["environment"]
+
+    assert environment["map_bundles"] == ["circle_map"]
+    assert environment["map_bundles_train"] == ["circle_map"]
+    assert environment["map_bundles_eval"] == ["circle_map"]
+    assert environment["target_laps"] == 1
+    assert environment["action_repeat"] == 1
+    assert scenario["mappo"] == {
+        "reward_mode": "individual",
+        "critic_mode": "agent_conditioned",
+        "team_reward_reduction": "mean",
+    }
+    assert len(scenario["agents"]) == 4
+    assert all(agent["algorithm"] == "mappo" for agent in scenario["agents"].values())
+    assert all(
+        agent["action_constraints"]["prevent_reverse"] is True
+        for agent in scenario["agents"].values()
+    )
+    assert scenario["training_defaults"]["pretrained_actor_checkpoint"].endswith(
+        "/best_model.pt"
+    )
+
+
 def test_reward_context_exposes_active_centerline_track_length() -> None:
     env = SimpleNamespace(
         centerline_track_length=402.5,
