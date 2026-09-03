@@ -879,13 +879,34 @@ def _run_eval(
 
                 actions_norm: Dict[str, np.ndarray] = {}
                 actions_phys: Dict[str, np.ndarray] = {}
-                for aid in trainable_ids:
-                    if aid not in active_agents or aid not in wrapped_obs:
-                        continue
-                    act_result = agent.act(wrapped_obs[aid], deterministic=True)
-                    action_norm = np.asarray(act_result[0], dtype=np.float32)
-                    actions_norm[aid] = action_norm
-                    actions_phys[aid] = action_composers[aid].process(action_norm)
+                active_trainable_ids = [
+                    aid
+                    for aid in trainable_ids
+                    if aid in active_agents and aid in wrapped_obs
+                ]
+                if active_trainable_ids and hasattr(agent, "act_batch"):
+                    stacked_observations = np.stack(
+                        [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
+                    )
+                    actions_norm, _ = agent.act_batch(
+                        active_trainable_ids,
+                        stacked_observations,
+                        deterministic=True,
+                    )
+                    actions_phys = {
+                        aid: action_composers[aid].process(action)
+                        for aid, action in actions_norm.items()
+                    }
+                else:
+                    for aid in active_trainable_ids:
+                        act_result = agent.act(
+                            wrapped_obs[aid], deterministic=True
+                        )
+                        action_norm = np.asarray(act_result[0], dtype=np.float32)
+                        actions_norm[aid] = action_norm
+                        actions_phys[aid] = action_composers[aid].process(
+                            action_norm
+                        )
 
                 actions = _build_eval_actions(
                     actions_phys,

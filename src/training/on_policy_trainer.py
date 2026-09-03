@@ -9,7 +9,7 @@ import numpy as np
 from agents.ppo import PPOAgent
 from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
-from training.hooks import TrainingHook
+from training.hooks import TrainingHook, transition_record_hooks
 from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
@@ -53,6 +53,7 @@ class OnPolicyTrainer:
         self.action_composer = action_composer
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
+        self._transition_hooks = transition_record_hooks(self.hooks)
         self.render = render
         self.run_id = run_id
         self.spawn_plan_fn = spawn_plan_fn
@@ -209,30 +210,31 @@ class OnPolicyTrainer:
                     if post_step_global_snapshot is not None
                     else np.zeros(0, dtype=np.float32)
                 )
-                record = TransitionRecord(
-                    obs=obs,
-                    action_norm=action_norm,
-                    action_phys=action_phys,
-                    reward=reward,
-                    reward_components={},  # breakdown available via reward_composer if needed
-                    next_obs=next_obs,
-                    terminated=rl_term if done else False,
-                    truncated=rl_trunc if done else False,
-                    info=last_info,
-                    global_state=global_state,
-                    map_id=map_id,
-                    spawn_id=spawn_id,
-                    episode_id=episode_id,
-                    step_idx=step_idx,
-                    agent_id=self.rl_agent_id,
-                    **transition_lifecycle_fields(
-                        self.env,
-                        last_info,
-                        global_state=post_step_global_snapshot,
-                    ),
-                )
-                for hook in self.hooks:
-                    hook.on_step(record)
+                if self._transition_hooks:
+                    record = TransitionRecord(
+                        obs=obs,
+                        action_norm=action_norm,
+                        action_phys=action_phys,
+                        reward=reward,
+                        reward_components={},
+                        next_obs=next_obs,
+                        terminated=rl_term if done else False,
+                        truncated=rl_trunc if done else False,
+                        info=last_info,
+                        global_state=global_state,
+                        map_id=map_id,
+                        spawn_id=spawn_id,
+                        episode_id=episode_id,
+                        step_idx=step_idx,
+                        agent_id=self.rl_agent_id,
+                        **transition_lifecycle_fields(
+                            self.env,
+                            last_info,
+                            global_state=post_step_global_snapshot,
+                        ),
+                    )
+                    for hook in self._transition_hooks:
+                        hook.on_step(record)
                 step_idx += 1
 
                 self.agent.buffer.add(obs, action_norm, reward, log_prob, value, done)

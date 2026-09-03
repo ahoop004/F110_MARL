@@ -21,6 +21,8 @@ _log = logging.getLogger(__name__)
 class TrainingHook:
     """Base class — all methods are no-ops by default."""
 
+    requires_transition_record: Optional[bool] = None
+
     def on_step(self, record: "TransitionRecord") -> None:
         """Called after each agent decision with the full transition record.
 
@@ -43,6 +45,26 @@ class TrainingHook:
 
     def on_training_end(self) -> None:
         pass
+
+
+def transition_record_hooks(hooks: List[Any]) -> List[Any]:
+    """Return hooks that consume full per-agent transition records.
+
+    Explicit ``requires_transition_record`` declarations take priority.  For
+    custom hooks without a declaration, an overridden ``on_step`` method is
+    treated as requiring the full stable record contract.
+    """
+    consumers: List[Any] = []
+    for hook in hooks:
+        explicit = getattr(hook, "requires_transition_record", None)
+        if explicit is not None:
+            if bool(explicit):
+                consumers.append(hook)
+            continue
+        on_step = getattr(type(hook), "on_step", None)
+        if on_step is not None and on_step is not TrainingHook.on_step:
+            consumers.append(hook)
+    return consumers
 
 
 class ConsoleHook(TrainingHook):
@@ -119,6 +141,8 @@ class ConsoleHook(TrainingHook):
 
 class WandbHook(TrainingHook):
     """Logs episode and update metrics to Weights & Biases."""
+
+    requires_transition_record = True
 
     def __init__(self, wandb_logger: WandbLogger) -> None:
         self._wandb = wandb_logger

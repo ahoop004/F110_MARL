@@ -78,6 +78,8 @@ class StageTimer:
 
 
 class CaptureHook(TrainingHook):
+    requires_transition_record = False
+
     def __init__(self) -> None:
         self.transitions = 0
         self.episode_metrics: Dict[str, Any] = {}
@@ -173,10 +175,13 @@ def _warm_inference(
     global_state: np.ndarray,
     iterations: int,
 ) -> None:
+    agent_ids = list(observations)
+    stacked_observations = np.stack(
+        [observations[agent_id] for agent_id in agent_ids], axis=0
+    )
     for _ in range(max(iterations, 0)):
-        for agent_id, observation in observations.items():
-            agent.act(observation, deterministic=True)
-            agent.evaluate_state(global_state, agent_id)
+        agent.act_batch(agent_ids, stacked_observations, deterministic=True)
+        agent.evaluate_states(global_state, agent_ids)
     if agent.device.type == "cuda":
         torch.cuda.synchronize(agent.device)
 
@@ -241,6 +246,7 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
     timer = StageTimer(agent.device)
     action_digest = hashlib.sha256()
     optimizer_samples = 0
+    capture = CaptureHook()
 
     def reset_transform(original: Callable[..., Any], call_args: tuple, kwargs: dict) -> Any:
         kwargs = dict(kwargs)
@@ -249,9 +255,13 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
         return original(*call_args, **kwargs)
 
     def act_transform(original: Callable[..., Any], call_args: tuple, kwargs: dict) -> Any:
-        action, log_probability = original(*call_args, deterministic=True)
-        action_digest.update(np.asarray(action, dtype=np.float32).tobytes())
-        return action, log_probability
+        kwargs = {**kwargs, "deterministic": True}
+        actions, log_probabilities = original(*call_args, **kwargs)
+        for agent_id in call_args[0]:
+            action_digest.update(
+                np.asarray(actions[agent_id], dtype=np.float32).tobytes()
+            )
+        return actions, log_probabilities
 
     def update_transform(original: Callable[..., Any], call_args: tuple, kwargs: dict) -> Any:
         nonlocal optimizer_samples
@@ -259,11 +269,21 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
         optimizer_samples += pooled * agent.n_epochs
         return original(*call_args, **kwargs)
 
+    def store_transform(original: Callable[..., Any], call_args: tuple, kwargs: dict) -> Any:
+        capture.transitions += len(call_args[0])
+        return original(*call_args, **kwargs)
+
     _wrap_method(env, "reset", timer, "environment_reset", transform=reset_transform)
     _wrap_method(env, "step", timer, "environment_step")
-    _wrap_method(agent, "act", timer, "policy_action", transform=act_transform)
-    _wrap_method(agent, "evaluate_state", timer, "centralized_value")
-    _wrap_method(agent, "store", timer, "rollout_storage")
+    _wrap_method(agent, "act_batch", timer, "policy_action", transform=act_transform)
+    _wrap_method(agent, "evaluate_states", timer, "centralized_value")
+    _wrap_method(
+        agent,
+        "store_batch",
+        timer,
+        "rollout_storage",
+        transform=store_transform,
+    )
     _wrap_method(agent, "update", timer, "ppo_update", transform=update_transform)
     for composer in obs_composers.values():
         _wrap_method(composer, "wrap", timer, "observation_composition")
@@ -279,7 +299,6 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
             "reward_context", original_reward_context, *call_args, **kwargs
         )
 
-    capture = CaptureHook()
     trainer = MARLTrainer(
         env=env,
         agent=agent,

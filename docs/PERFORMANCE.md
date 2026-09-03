@@ -50,3 +50,19 @@ both be true before comparing runs. The workload intentionally disables
 collision termination and uses an unreachable lap target so every repetition
 executes the requested number of physics substeps; this is a throughput
 benchmark, not an episode-outcome evaluation.
+
+## Track-preview geometry
+
+Measure preview preprocessing separately from the per-step sampling path:
+
+```bash
+python3 scripts/benchmark_track_geometry.py \
+  --repetitions 3 --sample-calls 100 \
+  --output /tmp/f110_track_geometry_benchmark.json
+```
+
+The report separates uncached construction, content-keyed cache lookup, and
+one nearest-index-plus-preview sample. Geometry is cached only in memory for
+the lifetime of an environment. Disk persistence is intentionally deferred:
+the one-time build cost does not currently justify adding a persistent schema
+and another source-invalidation boundary.

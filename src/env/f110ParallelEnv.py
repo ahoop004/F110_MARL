@@ -43,7 +43,11 @@ from src.env.render_adapter import (
 from src.env.spawn_manager import SpawnManager
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
 from src.env.state_views import build_agent_state, build_global_state, central_state_tensor
-from src.utils.track_preview import TrackPreviewGeometry
+from src.utils.track_preview import (
+    TrackPreviewGeometry,
+    TrackPreviewGeometryCache,
+    build_track_preview_cache_key,
+)
 from src.env.state_buffer import (
     StateBuffers,
     TerminalAgentConfig,
@@ -224,6 +228,9 @@ class F110ParallelEnv:
             # contract. Preserve its legacy payload behavior.
             self._track_preview_agents = frozenset(self.possible_agents)
             self._frenet_neighbor_agents = frozenset(self.possible_agents)
+        self._track_preview_geometry_cache = TrackPreviewGeometryCache(
+            self._map_scheduler.configured_bundle_count
+        )
         self._track_preview_geometry: Optional[TrackPreviewGeometry] = None
         self._track_preview_last_indices = {
             agent_id: -1 for agent_id in self.possible_agents
@@ -1189,10 +1196,16 @@ class F110ParallelEnv:
     ) -> Optional[TrackPreviewGeometry]:
         if not self._track_preview_agents:
             return None
-        return TrackPreviewGeometry.build(
+        cache_key = build_track_preview_cache_key(
+            map_identity=self.yaml_path,
+            centerline=centerline,
+            walls=self.walls,
+            spacing=self._track_preview_spacing,
+        )
+        return self._track_preview_geometry_cache.get_or_build(
+            cache_key,
             centerline,
             self.walls,
-            spacing=self._track_preview_spacing,
         )
 
     @property

@@ -27,7 +27,7 @@ Update
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -69,17 +69,31 @@ class MAPPORolloutBuffer:
         global_state_dim: int,
         action_dim: int,
         device: torch.device,
+        packed_storage: Optional[torch.Tensor] = None,
     ) -> None:
         self.n_steps = n_steps
         self.device = device
-        self.obs = torch.zeros(n_steps, obs_dim, device=device)
-        self.global_states = torch.zeros(n_steps, global_state_dim, device=device)
-        self.actions = torch.zeros(n_steps, action_dim, device=device)
-        self.rewards = torch.zeros(n_steps, device=device)
-        self.log_probs = torch.zeros(n_steps, device=device)
-        self.values = torch.zeros(n_steps, device=device)
-        self.terminated = torch.zeros(n_steps, device=device)
-        self.truncated = torch.zeros(n_steps, device=device)
+        row_dim = obs_dim + global_state_dim + action_dim + 5
+        storage = packed_storage
+        if storage is None:
+            storage = torch.zeros(n_steps, row_dim, device=device)
+        if storage.shape != (n_steps, row_dim):
+            raise ValueError(
+                f"Expected packed rollout storage shape {(n_steps, row_dim)}, "
+                f"got {tuple(storage.shape)}."
+            )
+        self._packed = storage
+        obs_end = obs_dim
+        global_state_end = obs_end + global_state_dim
+        action_end = global_state_end + action_dim
+        self.obs = storage[:, :obs_end]
+        self.global_states = storage[:, obs_end:global_state_end]
+        self.actions = storage[:, global_state_end:action_end]
+        self.rewards = storage[:, action_end]
+        self.log_probs = storage[:, action_end + 1]
+        self.values = storage[:, action_end + 2]
+        self.terminated = storage[:, action_end + 3]
+        self.truncated = storage[:, action_end + 4]
         self.ptr = 0
 
     def add(
@@ -240,6 +254,9 @@ class MAPPOAgent:
             len(self.agent_ids) if self.critic_mode == "agent_conditioned" else 0
         )
         self.critic = Critic(self.critic_input_dim, vf_dims, activation).to(self.device)
+        self._agent_identity = torch.eye(
+            len(self.agent_ids), dtype=torch.float32, device=self.device
+        )
 
         self.optimizer = optim.Adam(
             list(self.actor.parameters()) + list(self.critic.parameters()),
@@ -247,11 +264,25 @@ class MAPPOAgent:
         )
 
         # Per-agent rollout buffers
+        rollout_row_dim = obs_dim + global_state_dim + self.action_dim + 5
+        self._rollout_storage = torch.zeros(
+            len(self.agent_ids), self.n_steps, rollout_row_dim, device=self.device
+        )
+        self._rollout_agent_indices: Dict[Tuple[str, ...], torch.Tensor] = {
+            tuple(self.agent_ids): torch.arange(
+                len(self.agent_ids), dtype=torch.long, device=self.device
+            )
+        }
         self.buffers: Dict[str, MAPPORolloutBuffer] = {
             aid: MAPPORolloutBuffer(
-                self.n_steps, obs_dim, global_state_dim, self.action_dim, self.device
+                self.n_steps,
+                obs_dim,
+                global_state_dim,
+                self.action_dim,
+                self.device,
+                packed_storage=self._rollout_storage[index],
             )
-            for aid in self.agent_ids
+            for index, aid in enumerate(self.agent_ids)
         }
 
     # ------------------------------------------------------------------
@@ -278,6 +309,48 @@ class MAPPOAgent:
             float(log_prob_t.squeeze()),
         )
 
+    @torch.no_grad()
+    def act_batch(
+        self,
+        agent_ids: Sequence[str],
+        observations: np.ndarray,
+        deterministic: bool = False,
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, float]]:
+        """Select actions for an ordered active-agent batch with one actor call."""
+        ordered_ids = self._validate_agent_batch(agent_ids)
+        if not ordered_ids:
+            return {}, {}
+        obs = np.asarray(observations, dtype=np.float32)
+        if obs.shape != (len(ordered_ids), self.obs_dim):
+            raise ValueError(
+                "Expected batched local observations with shape "
+                f"({len(ordered_ids)}, {self.obs_dim}), got {obs.shape}."
+            )
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        action_t, log_prob_t = self.actor.get_action(
+            obs_t, deterministic=deterministic
+        )
+        # One device-to-host transfer for the complete joint decision.
+        result = torch.cat((action_t, log_prob_t.unsqueeze(-1)), dim=-1).cpu().numpy()
+        actions = {
+            agent_id: result[index, : self.action_dim].copy()
+            for index, agent_id in enumerate(ordered_ids)
+        }
+        log_probs = {
+            agent_id: float(result[index, self.action_dim])
+            for index, agent_id in enumerate(ordered_ids)
+        }
+        return actions, log_probs
+
+    def _validate_agent_batch(self, agent_ids: Sequence[str]) -> List[str]:
+        ordered_ids = [str(agent_id) for agent_id in agent_ids]
+        if len(set(ordered_ids)) != len(ordered_ids):
+            raise ValueError("MAPPO inference batches cannot contain duplicate agent IDs.")
+        unknown = [agent_id for agent_id in ordered_ids if agent_id not in self._agent_index]
+        if unknown:
+            raise ValueError(f"MAPPO inference batch contains unknown agent IDs: {unknown}.")
+        return ordered_ids
+
     def _critic_input(
         self,
         global_state: np.ndarray,
@@ -302,12 +375,9 @@ class MAPPOAgent:
     def _critic_batch(self, global_states: torch.Tensor, agent_id: str) -> torch.Tensor:
         if self.critic_mode == "shared_team":
             return global_states
-        identity = torch.zeros(
-            (global_states.shape[0], len(self.agent_ids)),
-            dtype=global_states.dtype,
-            device=global_states.device,
+        identity = self._agent_identity[self._agent_index[agent_id]].expand(
+            global_states.shape[0], -1
         )
-        identity[:, self._agent_index[agent_id]] = 1.0
         return torch.cat((global_states, identity), dim=-1)
 
     @torch.no_grad()
@@ -328,6 +398,38 @@ class MAPPOAgent:
             critic_input, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
         return float(self.critic(gs_t).squeeze())
+
+    @torch.no_grad()
+    def evaluate_states(
+        self,
+        global_state: np.ndarray,
+        agent_ids: Sequence[str],
+    ) -> Dict[str, float]:
+        """Estimate ordered per-agent centralized values with one critic call."""
+        ordered_ids = self._validate_agent_batch(agent_ids)
+        if not ordered_ids:
+            return {}
+        state = np.asarray(global_state, dtype=np.float32).reshape(-1)
+        if state.size != self.global_state_dim:
+            raise ValueError(
+                f"Expected global state dimension {self.global_state_dim}, got {state.size}."
+            )
+        states_t = torch.as_tensor(
+            state, dtype=torch.float32, device=self.device
+        ).unsqueeze(0).expand(len(ordered_ids), -1)
+        if self.critic_mode == "agent_conditioned":
+            indices = torch.as_tensor(
+                [self._agent_index[agent_id] for agent_id in ordered_ids],
+                dtype=torch.long,
+                device=self.device,
+            )
+            identities = self._agent_identity.index_select(0, indices)
+            states_t = torch.cat((states_t, identities), dim=-1)
+        values = self.critic(states_t).cpu().numpy()
+        return {
+            agent_id: float(values[index])
+            for index, agent_id in enumerate(ordered_ids)
+        }
 
     # ------------------------------------------------------------------
     # Experience storage
@@ -356,6 +458,91 @@ class MAPPOAgent:
             terminated,
             truncated,
         )
+
+    def store_batch(
+        self,
+        agent_ids: Sequence[str],
+        *,
+        observations: Mapping[str, np.ndarray],
+        global_state: np.ndarray,
+        actions: Mapping[str, np.ndarray],
+        rewards: Mapping[str, float],
+        log_probs: Mapping[str, float],
+        values: Mapping[str, float],
+        terminated: Mapping[str, bool],
+        truncated: Mapping[str, bool],
+    ) -> None:
+        """Insert one transition per ordered active agent with one tensor transfer."""
+        ordered_ids = self._validate_agent_batch(agent_ids)
+        if not ordered_ids:
+            return
+        state = np.asarray(global_state, dtype=np.float32).reshape(-1)
+        if state.size != self.global_state_dim:
+            raise ValueError(
+                f"Expected global state dimension {self.global_state_dim}, got {state.size}."
+            )
+        obs_batch = np.stack(
+            [np.asarray(observations[aid], dtype=np.float32) for aid in ordered_ids]
+        )
+        action_batch = np.stack(
+            [np.asarray(actions[aid], dtype=np.float32) for aid in ordered_ids]
+        )
+        if obs_batch.shape != (len(ordered_ids), self.obs_dim):
+            raise ValueError(
+                f"Expected observation batch shape ({len(ordered_ids)}, {self.obs_dim}), "
+                f"got {obs_batch.shape}."
+            )
+        if action_batch.shape != (len(ordered_ids), self.action_dim):
+            raise ValueError(
+                f"Expected action batch shape ({len(ordered_ids)}, {self.action_dim}), "
+                f"got {action_batch.shape}."
+            )
+        scalars = np.asarray(
+            [
+                [
+                    rewards[aid],
+                    log_probs[aid],
+                    values[aid],
+                    terminated[aid],
+                    truncated[aid],
+                ]
+                for aid in ordered_ids
+            ],
+            dtype=np.float32,
+        )
+        packed = np.concatenate(
+            (
+                obs_batch,
+                np.broadcast_to(state, (len(ordered_ids), state.size)),
+                action_batch,
+                scalars,
+            ),
+            axis=1,
+        )
+        packed_t = torch.as_tensor(
+            packed, dtype=torch.float32, device=self.device
+        )
+        id_key = tuple(ordered_ids)
+        agent_indices = self._rollout_agent_indices.get(id_key)
+        if agent_indices is None:
+            agent_indices = torch.as_tensor(
+                [self._agent_index[agent_id] for agent_id in ordered_ids],
+                dtype=torch.long,
+                device=self.device,
+            )
+            self._rollout_agent_indices[id_key] = agent_indices
+        buffer_indices = [
+            self.buffers[agent_id].ptr % self.n_steps for agent_id in ordered_ids
+        ]
+        if len(set(buffer_indices)) == 1:
+            self._rollout_storage[agent_indices, buffer_indices[0]] = packed_t
+        else:
+            step_indices = torch.as_tensor(
+                buffer_indices, dtype=torch.long, device=self.device
+            )
+            self._rollout_storage[agent_indices, step_indices] = packed_t
+        for agent_id in ordered_ids:
+            self.buffers[agent_id].ptr += 1
 
     def any_buffer_full(self) -> bool:
         """True when any agent's buffer has reached ``n_steps``."""
@@ -391,13 +578,14 @@ class MAPPOAgent:
         all_adv: List[torch.Tensor] = []
         all_ret: List[torch.Tensor] = []
 
-        for aid in self.agent_ids:
+        rollout_agent_ids = [
+            aid for aid in self.agent_ids if self.buffers[aid].size() > 0
+        ]
+        next_values = self.evaluate_states(next_global_state, rollout_agent_ids)
+        for aid in rollout_agent_ids:
             buf = self.buffers[aid]
             n = buf.size()
-            if n == 0:
-                continue
-
-            next_value = self.evaluate_state(next_global_state, aid)
+            next_value = next_values[aid]
             adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
 
             all_obs.append(buf.obs[:n])

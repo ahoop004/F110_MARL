@@ -59,6 +59,7 @@ class MapScheduler:
             "train": bundles_train,
             "eval": bundles_eval,
         }
+        configured = [*bundles_all, *bundles_train, *bundles_eval]
         self._cycle_indices: Dict[str, int] = {"train": 0, "eval": 0}
 
         if self._epoch_shuffle:
@@ -71,6 +72,9 @@ class MapScheduler:
         self._active_bundle: Optional[str] = (
             cfg.get("map_bundle_active") or cfg.get("map_bundle") or None
         )
+        if self._active_bundle is not None:
+            configured.append(str(self._active_bundle))
+        self._configured_bundles = tuple(dict.fromkeys(map(str, configured)))
 
         # Static map-load config (centerline / walls autoload policy)
         self._map_ext: str = str(cfg.get("map_ext", ".png"))
@@ -98,6 +102,11 @@ class MapScheduler:
     @active_bundle.setter
     def active_bundle(self, value: Optional[str]) -> None:
         self._active_bundle = value
+
+    @property
+    def configured_bundle_count(self) -> int:
+        """Number of unique configured maps that may need cached geometry."""
+        return max(len(self._configured_bundles), 1)
 
     # ------------------------------------------------------------------
     # Bundle selection
@@ -183,13 +192,11 @@ class MapScheduler:
     ) -> MapData:
         """Load *bundle* and return a populated :class:`~src.utils.map_loader.MapData`.
 
-        Results are cached by ``(bundle, map_ext, centerline_render,
-        centerline_features)`` so revisiting the same bundle within a run
-        does not re-parse YAML / image / centerline from disk.
+        ``MapLoader`` performs the underlying parsed-data caching and source
+        mtime validation. Re-enter it on every revisit so changed centerline
+        or wall sources cannot be hidden by this scheduler-level cache.
         """
         cache_key = (bundle, map_ext, centerline_render, centerline_features)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
         cfg = self.build_load_config(
             bundle,
             map_ext=map_ext,

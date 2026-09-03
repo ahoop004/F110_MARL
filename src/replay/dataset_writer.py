@@ -286,6 +286,8 @@ class DatasetHook:
         writer.close()
     """
 
+    requires_transition_record = True
+
     def __init__(self, writer: DatasetWriter) -> None:
         self._writer = writer
 

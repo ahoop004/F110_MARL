@@ -261,29 +261,29 @@ src/agents/common/networks.py
 src/training/marl_trainer.py
 ```
 
-- [ ] Add a batched action API accepting ordered agent IDs and stacked local
+- [x] Add a batched action API accepting ordered agent IDs and stacked local
   observations.
-- [ ] Run the shared actor once per joint decision.
-- [ ] Return actions and log probabilities mapped back to the original agent
+- [x] Run the shared actor once per joint decision.
+- [x] Return actions and log probabilities mapped back to the original agent
   IDs without reordering transitions.
-- [ ] Add a batched centralized-value API.
-- [ ] For `agent_conditioned`, append the correct one-hot identity to each
+- [x] Add a batched centralized-value API.
+- [x] For `agent_conditioned`, append the correct one-hot identity to each
   repeated global state before the single critic call.
-- [ ] Preserve `shared_team` critic behavior.
-- [ ] Transfer the action/log-probability batch to CPU once per joint decision,
+- [x] Preserve `shared_team` critic behavior.
+- [x] Transfer the action/log-probability batch to CPU once per joint decision,
   not once per agent.
-- [ ] Keep deterministic evaluation supported by the batched API.
-- [ ] Handle shrinking active-agent sets and one-agent batches.
-- [ ] Add fixed-seed equivalence tests using controlled PyTorch RNG state.
+- [x] Keep deterministic evaluation supported by the batched API.
+- [x] Handle shrinking active-agent sets and one-agent batches.
+- [x] Add fixed-seed equivalence tests using controlled PyTorch RNG state.
 
 Exit criteria:
 
-- [ ] One actor forward and one critic forward occur per joint decision.
-- [ ] Agent IDs, actions, log probabilities, values, and stored transitions stay
+- [x] One actor forward and one critic forward occur per joint decision.
+- [x] Agent IDs, actions, log probabilities, values, and stored transitions stay
   correctly aligned.
-- [ ] Batched and scalar inference agree within floating-point tolerance when
+- [x] Batched and scalar inference agree within floating-point tolerance when
   given identical samples.
-- [ ] CTDE remains intact: actor input contains no global state.
+- [x] CTDE remains intact: actor input contains no global state.
 
 Research implication:
 
@@ -310,23 +310,23 @@ src/replay/dataset_writer.py
 src/env/types.py
 ```
 
-- [ ] Add batched rollout-buffer insertion for all active trainable agents.
-- [ ] Minimize repeated `torch.as_tensor` calls and scalar device assignments.
-- [ ] Avoid implicit CUDA synchronization from repeated Python `float(tensor)`
+- [x] Add batched rollout-buffer insertion for all active trainable agents.
+- [x] Minimize repeated `torch.as_tensor` calls and scalar device assignments.
+- [x] Avoid implicit CUDA synchronization from repeated Python `float(tensor)`
   conversions in the hot path.
-- [ ] Determine which hooks require full `TransitionRecord` objects.
-- [ ] Skip dataset-only copies and lifecycle payload construction when dataset
+- [x] Determine which hooks require full `TransitionRecord` objects.
+- [x] Skip dataset-only copies and lifecycle payload construction when dataset
   recording is disabled, while preserving generic hook behavior.
-- [ ] Do not weaken the dataset schema or omit required transition fields when
+- [x] Do not weaken the dataset schema or omit required transition fields when
   recording is enabled.
-- [ ] Measure host allocations and CUDA memory before and after the change.
+- [x] Measure host allocations and CUDA memory before and after the change.
 
 Exit criteria:
 
-- [ ] Buffer contents match the baseline for every agent and timestep.
-- [ ] Dataset-enabled runs remain schema-compatible and complete.
-- [ ] Dataset-disabled runs avoid dataset-specific state copies.
-- [ ] Terminal and truncated transitions remain correct.
+- [x] Buffer contents match the baseline for every agent and timestep.
+- [x] Dataset-enabled runs remain schema-compatible and complete.
+- [x] Dataset-disabled runs avoid dataset-specific state copies.
+- [x] Terminal and truncated transitions remain correct.
 
 ---
 
@@ -345,22 +345,22 @@ src/env/map_schedule.py
 src/utils/map_loader.py
 ```
 
-- [ ] Key cached geometry by map identity plus centerline, wall, spacing, and
+- [x] Key cached geometry by map identity plus centerline, wall, spacing, and
   preprocessing version.
-- [ ] Reuse immutable preview geometry when returning to an unchanged map.
-- [ ] Bound cache size to the configured map set.
-- [ ] Keep per-agent nearest-index cursors outside the shared geometry cache and
+- [x] Reuse immutable preview geometry when returning to an unchanged map.
+- [x] Bound cache size to the configured map set.
+- [x] Keep per-agent nearest-index cursors outside the shared geometry cache and
   reset them every episode.
-- [ ] Invalidate cached geometry when source files or relevant config change.
-- [ ] Consider persisting preprocessed geometry only if invalidation remains
+- [x] Invalidate cached geometry when source files or relevant config change.
+- [x] Consider persisting preprocessed geometry only if invalidation remains
   explicit and auditable.
-- [ ] Benchmark construction separately from per-step preview sampling.
+- [x] Benchmark construction separately from per-step preview sampling.
 
 Exit criteria:
 
-- [ ] The first load builds geometry once per unique cache key.
-- [ ] Later resets reuse it without changing preview values.
-- [ ] Map switching cannot leak indices or geometry between maps.
+- [x] The first load builds geometry once per unique cache key.
+- [x] Later resets reuse it without changing preview values.
+- [x] Map switching cannot leak indices or geometry between maps.
 
 ---
 

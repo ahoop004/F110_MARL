@@ -1,8 +1,11 @@
 """Uniform arc-length track previews for Frenet observations."""
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Mapping, Optional
+import hashlib
+from pathlib import Path
+from typing import Callable, Mapping, Optional
 
 import numpy as np
 
@@ -11,6 +14,91 @@ from .centerline import (
     prepare_centerline_geometry,
     project_to_centerline,
 )
+
+
+TRACK_PREVIEW_PREPROCESSING_VERSION = 1
+
+
+@dataclass(frozen=True)
+class TrackPreviewCacheKey:
+    """Identity of every input that can affect preview preprocessing."""
+
+    map_identity: str
+    centerline_digest: str
+    walls_digest: str
+    spacing: float
+    preprocessing_version: int = TRACK_PREVIEW_PREPROCESSING_VERSION
+
+
+def _array_digest(array: Optional[np.ndarray]) -> str:
+    digest = hashlib.sha256()
+    if array is None:
+        digest.update(b"none")
+        return digest.hexdigest()
+    canonical = np.ascontiguousarray(np.asarray(array, dtype=np.float32))
+    digest.update(str(canonical.shape).encode("ascii"))
+    digest.update(canonical.tobytes())
+    return digest.hexdigest()
+
+
+def build_track_preview_cache_key(
+    *,
+    map_identity: str | Path,
+    centerline: Optional[np.ndarray],
+    walls: Optional[Mapping[int, np.ndarray]],
+    spacing: float,
+) -> TrackPreviewCacheKey:
+    """Return a deterministic content key for preview geometry inputs."""
+    wall_digest = hashlib.sha256()
+    for wall_id, wall in sorted((walls or {}).items(), key=lambda item: str(item[0])):
+        wall_digest.update(str(wall_id).encode("utf-8"))
+        wall_digest.update(_array_digest(wall).encode("ascii"))
+    return TrackPreviewCacheKey(
+        map_identity=str(Path(map_identity).expanduser().resolve()),
+        centerline_digest=_array_digest(centerline),
+        walls_digest=wall_digest.hexdigest(),
+        spacing=max(float(spacing), 1e-3),
+    )
+
+
+class TrackPreviewGeometryCache:
+    """Bounded per-environment LRU cache of immutable preview geometry."""
+
+    def __init__(self, max_entries: int) -> None:
+        self.max_entries = max(int(max_entries), 1)
+        self._entries: OrderedDict[TrackPreviewCacheKey, TrackPreviewGeometry] = (
+            OrderedDict()
+        )
+
+    def get_or_build(
+        self,
+        key: TrackPreviewCacheKey,
+        centerline: Optional[np.ndarray],
+        walls: Optional[Mapping[int, np.ndarray]],
+        *,
+        builder: Optional[
+            Callable[..., Optional["TrackPreviewGeometry"]]
+        ] = None,
+    ) -> Optional["TrackPreviewGeometry"]:
+        geometry = self._entries.get(key)
+        if geometry is not None:
+            self._entries.move_to_end(key)
+            return geometry
+        build = builder or TrackPreviewGeometry.build
+        geometry = build(centerline, walls, spacing=key.spacing)
+        if geometry is None:
+            return None
+        self._entries[key] = geometry
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+        return geometry
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+    def __len__(self) -> int:
+        return len(self._entries)
 
 
 @dataclass(frozen=True)
@@ -227,4 +315,10 @@ def _cross_2d(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
 
-__all__ = ["TrackPreviewGeometry"]
+__all__ = [
+    "TRACK_PREVIEW_PREPROCESSING_VERSION",
+    "TrackPreviewCacheKey",
+    "TrackPreviewGeometry",
+    "TrackPreviewGeometryCache",
+    "build_track_preview_cache_key",
+]

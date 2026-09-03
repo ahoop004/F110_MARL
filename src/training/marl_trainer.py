@@ -23,7 +23,7 @@ import numpy as np
 from agents.mappo import MAPPOAgent
 from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
-from training.hooks import TrainingHook
+from training.hooks import TrainingHook, transition_record_hooks
 from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
@@ -106,6 +106,7 @@ class MARLTrainer:
         self.action_composer = action_composer
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
+        self._transition_hooks = transition_record_hooks(self.hooks)
         self.render = render
         self.focal_id = focal_agent_id or (trainable_ids[0] if trainable_ids else "")
         self.run_id = run_id
@@ -241,23 +242,27 @@ class MARLTrainer:
             while not episode_done:
                 # --- Act: all trainable agents via shared actor ---
                 active_before = set(getattr(self.env, "agents", obs_dict))
-                actions_norm: Dict[str, np.ndarray] = {}
+                active_trainable_ids = [
+                    aid for aid in self.trainable_ids if aid in active_before
+                ]
+                if active_trainable_ids:
+                    stacked_observations = np.stack(
+                        [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
+                    )
+                    actions_norm, log_probs = self.agent.act_batch(
+                        active_trainable_ids,
+                        stacked_observations,
+                    )
+                else:
+                    actions_norm, log_probs = {}, {}
                 actions_phys: Dict[str, np.ndarray] = {}
-                log_probs: Dict[str, float] = {}
-
-                for aid in self.trainable_ids:
-                    if aid in active_before:
-                        a_norm, lp = self.agent.act(wrapped_obs[aid])
-                        a_phys = self.action_composer.process(a_norm)
-                        actions_norm[aid] = a_norm
-                        actions_phys[aid] = a_phys
-                        log_probs[aid] = lp
+                for aid, action in actions_norm.items():
+                    actions_phys[aid] = self.action_composer.process(action)
 
                 # Centralized value estimate from current global state
-                values = {
-                    aid: self.agent.evaluate_state(global_state, aid)
-                    for aid in actions_norm
-                }
+                values = self.agent.evaluate_states(
+                    global_state, active_trainable_ids
+                )
 
                 all_actions = self._build_actions(actions_phys, obs_dict)
 
@@ -359,6 +364,7 @@ class MARLTrainer:
                 # --- Store transitions with accumulated rewards ---
                 step_reward = 0.0
                 next_wrapped_obs: Dict[str, np.ndarray] = {}
+                agent_infos: Dict[str, Dict[str, Any]] = {}
                 for aid in actions_norm:
                     reward = accumulated_learning_rewards.get(aid, 0.0)
                     individual_reward = accumulated_individual_rewards.get(aid, 0.0)
@@ -378,43 +384,7 @@ class MARLTrainer:
                         obs_dict.get(aid, {}), agent_info
                     )
                     next_wrapped_obs[aid] = next_obs
-
-                    self.agent.store(
-                        agent_id=aid,
-                        obs=wrapped_obs[aid],
-                        global_state=global_state,
-                        action=actions_norm[aid],
-                        reward=reward,
-                        log_prob=log_probs[aid],
-                        value=values[aid],
-                        terminated=decision_terminated[aid],
-                        truncated=decision_truncated[aid],
-                    )
-
-                    record = TransitionRecord(
-                        obs=wrapped_obs[aid],
-                        action_norm=actions_norm[aid],
-                        action_phys=actions_phys[aid],
-                        reward=reward,
-                        reward_components=reward_breakdowns[aid],
-                        next_obs=next_obs,
-                        terminated=decision_terminated[aid],
-                        truncated=decision_truncated[aid],
-                        info=agent_info,
-                        global_state=np.asarray(global_state, dtype=np.float32).copy(),
-                        map_id=map_id,
-                        spawn_id=self._spawn_id(aid),
-                        episode_id=episode_id,
-                        step_idx=step_idx,
-                        agent_id=aid,
-                        **transition_lifecycle_fields(
-                            self.env,
-                            agent_info,
-                            global_state=post_step_global_snapshot,
-                        ),
-                    )
-                    for hook in self.hooks:
-                        hook.on_step(record)
+                    agent_infos[aid] = agent_info
 
                     agent_episode_rewards[aid] += reward
                     agent_individual_rewards[aid] += individual_reward
@@ -422,6 +392,48 @@ class MARLTrainer:
                     agent_truncated[aid] = (
                         agent_truncated[aid] or decision_truncated[aid]
                     )
+
+                ordered_ids = list(actions_norm)
+                self.agent.store_batch(
+                    ordered_ids,
+                    observations=wrapped_obs,
+                    global_state=global_state,
+                    actions=actions_norm,
+                    rewards=accumulated_learning_rewards,
+                    log_probs=log_probs,
+                    values=values,
+                    terminated=decision_terminated,
+                    truncated=decision_truncated,
+                )
+
+                if self._transition_hooks:
+                    for aid in ordered_ids:
+                        record = TransitionRecord(
+                            obs=wrapped_obs[aid],
+                            action_norm=actions_norm[aid],
+                            action_phys=actions_phys[aid],
+                            reward=accumulated_learning_rewards[aid],
+                            reward_components=reward_breakdowns[aid],
+                            next_obs=next_wrapped_obs[aid],
+                            terminated=decision_terminated[aid],
+                            truncated=decision_truncated[aid],
+                            info=agent_infos[aid],
+                            global_state=np.asarray(
+                                global_state, dtype=np.float32
+                            ).copy(),
+                            map_id=map_id,
+                            spawn_id=self._spawn_id(aid),
+                            episode_id=episode_id,
+                            step_idx=step_idx,
+                            agent_id=aid,
+                            **transition_lifecycle_fields(
+                                self.env,
+                                agent_infos[aid],
+                                global_state=post_step_global_snapshot,
+                            ),
+                        )
+                        for hook in self._transition_hooks:
+                            hook.on_step(record)
 
                 episode_reward += step_reward
 

@@ -541,6 +541,7 @@ def test_complete_4_reset_emits_only_required_frenet_payloads(
             assert ("track_preview" in infos[agent_id]) is has_preview
             assert ("frenet_neighbors" in infos[agent_id]) is has_neighbors
         assert (env._track_preview_geometry is not None) is has_preview
+        assert len(env._track_preview_geometry_cache) == int(has_preview)
     finally:
         env.close()
 
