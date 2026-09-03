@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
-from env.types import TransitionRecord
+from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
 from src.replay.replay_buffer import ReplayBuffer
 from training.hooks import TrainingHook
@@ -100,6 +100,7 @@ class OffPolicyTrainer:
         info_dict: Dict,
         obs_dict: Dict,
         actions: Dict[str, np.ndarray],
+        global_state: Optional[GlobalState] = None,
     ) -> Dict[str, Any]:
         return build_reward_context(
             env=self.env,
@@ -107,6 +108,7 @@ class OffPolicyTrainer:
             info_dict=info_dict,
             obs_dict=obs_dict,
             actions=actions,
+            global_state=global_state,
         )
 
     def train(
@@ -150,8 +152,15 @@ class OffPolicyTrainer:
             rl_term = False
             rl_trunc = False
             reward = 0.0
+            post_step_global_snapshot: Optional[GlobalState] = None
             for _ in range(self.action_repeat):
                 obs_dict, _, term_dict, trunc_dict, info_dict = self.env.step(actions)
+                step_facts = getattr(self.env, "last_step_facts", None)
+                post_step_global_snapshot = getattr(
+                    step_facts, "global_state", None
+                )
+                if post_step_global_snapshot is None:
+                    post_step_global_snapshot = self.env.get_global_state()
                 if self.render:
                     try:
                         self.env.render()
@@ -177,6 +186,7 @@ class OffPolicyTrainer:
                         info_dict=info_dict,
                         obs_dict=obs_dict,
                         actions=actions,
+                        global_state=post_step_global_snapshot,
                     )
                 )
                 sub_reward, _ = self.reward_composer.compute(sub_step_info)
@@ -198,10 +208,11 @@ class OffPolicyTrainer:
             next_obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), last_info)
 
             # --- Emit transition record ---
-            try:
-                global_state = self.env.get_global_state().vector
-            except Exception:
-                global_state = np.zeros(0, dtype=np.float32)
+            global_state = (
+                post_step_global_snapshot.vector
+                if post_step_global_snapshot is not None
+                else np.zeros(0, dtype=np.float32)
+            )
             record = TransitionRecord(
                 obs=obs,
                 action_norm=action,
@@ -218,7 +229,11 @@ class OffPolicyTrainer:
                 episode_id=episode_id,
                 step_idx=step_idx,
                 agent_id=self.rl_agent_id,
-                **transition_lifecycle_fields(self.env, last_info),
+                **transition_lifecycle_fields(
+                    self.env,
+                    last_info,
+                    global_state=post_step_global_snapshot,
+                ),
             )
             for hook in self.hooks:
                 hook.on_step(record)

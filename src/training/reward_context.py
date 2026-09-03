@@ -1,9 +1,11 @@
 """Shared reward-context assembly for training loops."""
 from __future__ import annotations
 
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
+
+from env.types import GlobalState
 
 
 def build_reward_context(
@@ -13,11 +15,18 @@ def build_reward_context(
     info_dict: Dict[str, Any],
     obs_dict: Dict[str, Any],
     actions: Dict[str, np.ndarray],
+    global_state: Optional[GlobalState] = None,
 ) -> Dict[str, Any]:
-    try:
-        global_state = env.get_global_state().vector
-    except Exception:
-        global_state = np.zeros(0, dtype=np.float32)
+    if global_state is None:
+        try:
+            global_state = env.get_global_state()
+        except Exception:
+            global_state = None
+    global_vector = (
+        global_state.vector
+        if global_state is not None
+        else np.zeros(0, dtype=np.float32)
+    )
 
     trainable_agent_ids = _string_list(getattr(env, "trainable_agents", []) or [])
     fixed_policy_agent_ids = _string_list(getattr(env, "fixed_policy_agents", []) or [])
@@ -43,7 +52,7 @@ def build_reward_context(
         "all_infos": info_dict or {},
         "all_obs": obs_dict or {},
         "all_actions": actions or {},
-        "global_state": global_state,
+        "global_state": global_vector,
         "last_step_facts": getattr(env, "last_step_facts", None),
         "track_length": getattr(env, "centerline_track_length", None),
     }
@@ -53,12 +62,19 @@ def _string_list(values: Sequence[Any]) -> list[str]:
     return [str(value) for value in values]
 
 
-def transition_lifecycle_fields(env: Any, info: Dict[str, Any]) -> Dict[str, Any]:
+def transition_lifecycle_fields(
+    env: Any,
+    info: Dict[str, Any],
+    *,
+    global_state: Optional[GlobalState] = None,
+) -> Dict[str, Any]:
     """Build dataset lifecycle fields from one post-decision environment view."""
-    try:
-        masks = getattr(env.get_global_state(), "masks", {})
-    except Exception:
-        masks = {}
+    if global_state is None:
+        try:
+            global_state = env.get_global_state()
+        except Exception:
+            global_state = None
+    masks = getattr(global_state, "masks", {})
     return {
         "lap_crossed": bool(info.get("lap_crossed", False)),
         "lap_count": int(info.get("lap_count", 0)),

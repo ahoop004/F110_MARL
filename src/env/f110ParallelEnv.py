@@ -241,6 +241,7 @@ class F110ParallelEnv:
         self.lidar_dist: float = float(merged.get("lidar_dist", 0.0))
         
         self.state_buffers = StateBuffers.build(self.n_agents)
+        self._global_state_cache: Optional[GlobalState] = None
         self._bind_state_views()
 
         default_terminate = bool(merged.get("terminate_on_collision", True))
@@ -542,6 +543,7 @@ class F110ParallelEnv:
         if bundle is not None:
             self._map_bundle_active = bundle
             self._map_scheduler.active_bundle = bundle
+        self._invalidate_global_state_cache()
 
     def _maybe_cycle_map(self) -> None:
         bundle = self._map_scheduler.select_next_bundle(self._map_split_mode)
@@ -559,6 +561,7 @@ class F110ParallelEnv:
         return self.action_spaces[agent]
 
     def _update_state(self, obs_dict):
+        self._invalidate_global_state_cache()
         self.state_buffers.update(obs_dict)
 
     def _refresh_render_observations(self, obs: Dict[str, Dict[str, Any]]) -> None:
@@ -738,6 +741,8 @@ class F110ParallelEnv:
         self.start_poses = np.asarray(poses, dtype=np.float32)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
+        self._invalidate_global_state_cache()
+        self.last_step_facts = None
         if seed is not None:
             seed_value = int(seed)
             self.seed = seed_value
@@ -980,24 +985,26 @@ class F110ParallelEnv:
             self._last_centerline_facts = {}
 
         infos = filter_info_payloads(infos, info_level=self.info_level)
+
+        # Advance and cull before freezing the authoritative post-step state so
+        # active masks agree with the public environment state returned here.
+        self._elapsed_steps += 1
+        self.agents = list(self.lifecycle.active_agents)
+        if self.episode_done:
+            self.agents = []
+        post_step_global_state = self.get_global_state()
         self.last_step_facts = build_step_facts(
             agent_ids=self.possible_agents,
             agent_states={
                 agent_id: self.get_agent_state(agent_id)
                 for agent_id in self.possible_agents
             },
-            global_state=self.get_global_state(),
+            global_state=post_step_global_state,
             collision_flags=self._collision_flags,
             terminations=terminations,
             truncations=truncations,
             infos=infos,
         )
-
-        # advance and cull finished agents
-        self._elapsed_steps += 1
-        self.agents = list(self.lifecycle.active_agents)
-        if self.episode_done:
-            self.agents = []
 
         return obs, rewards, terminations, truncations, infos
 
@@ -1170,6 +1177,7 @@ class F110ParallelEnv:
             self._update_renderer_centerline()
 
     def set_centerline(self, centerline: Optional[np.ndarray], *, path: Optional[Path] = None) -> None:
+        self._invalidate_global_state_cache()
         self._centerline_state.set_centerline(centerline, path=path)
         self._track_preview_geometry = self._build_track_preview_geometry(centerline)
         for agent_id in self.possible_agents:
@@ -1202,6 +1210,11 @@ class F110ParallelEnv:
     @property
     def centerline_features_enabled(self) -> bool:
         return self._centerline_state.features_enabled
+
+    @property
+    def track_preview_available(self) -> bool:
+        """Whether valid immutable preview geometry exists for the active map."""
+        return self._track_preview_geometry is not None
 
     @property
     def centerline_track_length(self) -> float:
@@ -1311,9 +1324,11 @@ class F110ParallelEnv:
         )
 
     def get_global_state(self) -> GlobalState:
+        if self._global_state_cache is not None:
+            return self._global_state_cache
         joint = self.sim.current_observation()
         central = self._central_state_tensor(joint)
-        return build_global_state(
+        self._global_state_cache = build_global_state(
             possible_agents=self.possible_agents,
             active_agents=self.agents,
             central_vector=central,
@@ -1325,6 +1340,11 @@ class F110ParallelEnv:
                 **self._spawn_manager.last_spawn_metadata,
             },
         )
+        return self._global_state_cache
+
+    def _invalidate_global_state_cache(self) -> None:
+        """Invalidate the immutable snapshot after any environment mutation."""
+        self._global_state_cache = None
 
     def apply_initial_speeds(self, speed_map: Mapping[str, float]) -> Optional[Dict[str, Dict[str, np.ndarray]]]:
         """Adjust simulator state to honour per-agent initial speed requests."""

@@ -7,8 +7,14 @@ import numpy as np
 import pytest
 
 from core.scenario import load_and_expand_scenario
-from core.env_builder import build_env_kwargs
+from core.env_builder import (
+    build_env_kwargs,
+    create_environment,
+    validate_environment_feature_requirements,
+)
+from core.agent_builder import get_trainable_agent_ids
 from core.feature_requirements import derive_environment_feature_requirements
+from core.map_selection import apply_map_split
 from core.setup import create_training_setup
 from env.centerline_state import (
     CenterlineProgressTracker,
@@ -17,9 +23,11 @@ from env.centerline_state import (
 from env.f110ParallelEnv import F110ParallelEnv
 from physics.simulaton import Simulator
 from utils.track_preview import TrackPreviewGeometry
+from training.reward_context import build_reward_context
 from wrappers.observations.composer import ObservationComposer
 from wrappers.observations.frenet_neighbors import FrenetNeighborsComponent
 from wrappers.observations.frenet_vehicle_track import FrenetVehicleTrackComponent
+from wrappers.rewards.composer import RewardComposer
 
 
 def _circle(radius: float, count: int = 240) -> np.ndarray:
@@ -367,6 +375,92 @@ def test_feature_requirements_aggregate_heterogeneous_agents(tmp_path: Path) -> 
     assert requirements.frenet_neighbor_agents == ("car_2",)
 
 
+def _geometry_env(
+    *,
+    centerline: bool = True,
+    features: bool = True,
+    preview: bool = True,
+    render: bool = True,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        centerline_points=np.zeros((3, 2), dtype=np.float32) if centerline else None,
+        centerline_features_enabled=features,
+        track_preview_available=preview,
+        centerline_render_enabled=render,
+    )
+
+
+def test_feature_setup_rejects_missing_centerline_for_reward_consumer() -> None:
+    with pytest.raises(ValueError, match=r"centerline facts for agents \('car_0',\)"):
+        validate_environment_feature_requirements(
+            _geometry_env(centerline=False),
+            {"centerline_progress_agents": ["car_0"]},
+        )
+
+
+def test_feature_setup_rejects_disabled_centerline_facts() -> None:
+    with pytest.raises(ValueError, match="centerline_features: true"):
+        validate_environment_feature_requirements(
+            _geometry_env(features=False),
+            {"centerline_progress_agents": ["car_0", "car_2"]},
+        )
+
+
+def test_feature_setup_rejects_unconstructable_preview_geometry() -> None:
+    with pytest.raises(ValueError, match=r"track-preview geometry.*\('car_1',\)"):
+        validate_environment_feature_requirements(
+            _geometry_env(preview=False),
+            {"track_preview_agents": ["car_1"]},
+        )
+
+
+def test_feature_setup_rejects_disabled_neighbor_facts() -> None:
+    with pytest.raises(ValueError, match=r"Frenet-neighbor agents \('car_2',\)"):
+        validate_environment_feature_requirements(
+            _geometry_env(features=False),
+            {"frenet_neighbor_agents": ["car_2"]},
+        )
+
+
+def test_feature_setup_rejects_unavailable_centerline_rendering() -> None:
+    with pytest.raises(ValueError, match="centerline rendering"):
+        validate_environment_feature_requirements(
+            _geometry_env(render=False),
+            {"centerline_render": True},
+        )
+
+
+def test_feature_setup_accepts_all_available_geometry() -> None:
+    validate_environment_feature_requirements(
+        _geometry_env(),
+        {
+            "centerline_progress_agents": ["car_0"],
+            "track_preview_agents": ["car_1"],
+            "frenet_neighbor_agents": ["car_2"],
+            "centerline_render": True,
+        },
+    )
+
+
+def test_setup_enables_centerline_facts_required_by_inherited_reward() -> None:
+    scenario_path = Path("scenarios/sac.yaml").resolve()
+    scenario = load_and_expand_scenario(str(scenario_path))
+    assert scenario["environment"]["centerline_autoload"] is False
+
+    env, _, _ = create_training_setup(
+        scenario,
+        mode="train",
+        scenario_dir=scenario_path.parent,
+    )
+    try:
+        assert env.centerline_points is not None
+        assert env.centerline_features_enabled
+        _, infos = env.reset(seed=42)
+        assert "centerline" in infos["car_0"]
+    finally:
+        env.close()
+
+
 def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
     geometry = TrackPreviewGeometry.build(
         _circle(10.0),
@@ -449,3 +543,156 @@ def test_complete_4_reset_emits_only_required_frenet_payloads(
         assert (env._track_preview_geometry is not None) is has_preview
     finally:
         env.close()
+
+
+@pytest.mark.parametrize(
+    "scenario_path",
+    [
+        "scenarios/complete_4.yaml",
+        "scenarios/complete_4_frenet.yaml",
+        "scenarios/complete_4_frenet_neighbors.yaml",
+    ],
+)
+def test_complete_4_feature_gating_preserves_fixed_trajectory(
+    scenario_path: str,
+) -> None:
+    """Compare gated payload work with the legacy all-payload execution path."""
+
+    scenario = load_and_expand_scenario(scenario_path)
+    scenario_dir = Path(scenario_path).resolve().parent
+    scenario["environment"]["max_steps"] = 5
+    scenario["environment"]["target_laps"] = 1_000_000
+    scenario["environment"]["terminate_on_collision"] = False
+    scenario["environment"]["episode_termination"] = {"mode": "all_agents"}
+    agent_ids = get_trainable_agent_ids(scenario["agents"])
+
+    gated_env, _, _ = create_training_setup(
+        scenario,
+        mode="train",
+        scenario_dir=scenario_dir,
+    )
+    legacy_config = apply_map_split(
+        scenario["environment"], scenario["experiment"], "train"
+    )
+    legacy_config = dict(legacy_config)
+    legacy_config["trainable_agents"] = agent_ids
+    legacy_config.pop("feature_requirements", None)
+    legacy_env = create_environment(legacy_config, scenario["agents"], seed=42)
+
+    def composers() -> tuple[
+        dict[str, ObservationComposer], dict[str, RewardComposer]
+    ]:
+        observations = {
+            agent_id: ObservationComposer.from_file(
+                str((scenario_dir / scenario["agents"][agent_id]["observation"]).resolve()),
+                scenario["environment"],
+            )
+            for agent_id in agent_ids
+        }
+        rewards = {
+            agent_id: RewardComposer.from_file(
+                str((scenario_dir / scenario["agents"][agent_id]["reward"]).resolve())
+            )
+            for agent_id in agent_ids
+        }
+        return observations, rewards
+
+    gated_observations, gated_rewards = composers()
+    legacy_observations, legacy_rewards = composers()
+    gated_reward_totals = {agent_id: 0.0 for agent_id in agent_ids}
+    legacy_reward_totals = {agent_id: 0.0 for agent_id in agent_ids}
+    try:
+        gated_raw, gated_info = gated_env.reset(seed=42)
+        legacy_raw, legacy_info = legacy_env.reset(seed=42)
+        for agent_id in agent_ids:
+            np.testing.assert_array_equal(
+                gated_observations[agent_id].wrap(
+                    gated_raw[agent_id], gated_info[agent_id]
+                ),
+                legacy_observations[agent_id].wrap(
+                    legacy_raw[agent_id], legacy_info[agent_id]
+                ),
+            )
+
+        for step in range(5):
+            actions = {
+                agent_id: np.array(
+                    [0.03 * ((index + step) % 3 - 1), 1.0 + 0.1 * index],
+                    dtype=np.float32,
+                )
+                for index, agent_id in enumerate(agent_ids)
+            }
+            gated_step = gated_env.step(actions)
+            legacy_step = legacy_env.step(actions)
+            gated_raw, _, gated_term, gated_trunc, gated_info = gated_step
+            legacy_raw, _, legacy_term, legacy_trunc, legacy_info = legacy_step
+
+            assert gated_term == legacy_term
+            assert gated_trunc == legacy_trunc
+            np.testing.assert_array_equal(
+                gated_env.get_global_state().vector,
+                legacy_env.get_global_state().vector,
+            )
+            for mask_name, gated_mask in gated_env.get_global_state().masks.items():
+                np.testing.assert_array_equal(
+                    gated_mask, legacy_env.get_global_state().masks[mask_name]
+                )
+
+            for agent_id in agent_ids:
+                np.testing.assert_array_equal(
+                    gated_observations[agent_id].wrap(
+                        gated_raw[agent_id], gated_info[agent_id]
+                    ),
+                    legacy_observations[agent_id].wrap(
+                        legacy_raw[agent_id], legacy_info[agent_id]
+                    ),
+                )
+                for key in (
+                    "centerline",
+                    "lap_crossed",
+                    "lap_count",
+                    "race_completed",
+                    "status",
+                    "terminal_reason",
+                ):
+                    assert gated_info[agent_id].get(key) == legacy_info[agent_id].get(key)
+
+                def reward_result(env, info, raw, composer):
+                    step_info = {
+                        "obs": {},
+                        "next_obs": raw[agent_id],
+                        "info": info[agent_id],
+                        "done": gated_term[agent_id] or gated_trunc[agent_id],
+                        "terminated": gated_term[agent_id],
+                        "truncated": gated_trunc[agent_id],
+                        "action": actions[agent_id],
+                        "timestep": env.timestep,
+                    }
+                    step_info.update(
+                        build_reward_context(
+                            env=env,
+                            agent_id=agent_id,
+                            info_dict=info,
+                            obs_dict=raw,
+                            actions=actions,
+                        )
+                    )
+                    return composer.compute(step_info)
+
+                gated_total, gated_breakdown = reward_result(
+                    gated_env, gated_info, gated_raw, gated_rewards[agent_id]
+                )
+                legacy_total, legacy_breakdown = reward_result(
+                    legacy_env, legacy_info, legacy_raw, legacy_rewards[agent_id]
+                )
+                assert gated_total == legacy_total
+                assert gated_breakdown == legacy_breakdown
+                gated_reward_totals[agent_id] += gated_total
+                legacy_reward_totals[agent_id] += legacy_total
+
+        assert gated_env.episode_done == legacy_env.episode_done
+        assert gated_env.lifecycle.records == legacy_env.lifecycle.records
+        assert gated_reward_totals == legacy_reward_totals
+    finally:
+        gated_env.close()
+        legacy_env.close()

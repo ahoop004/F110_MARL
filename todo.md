@@ -180,7 +180,7 @@ src/wrappers/observations/frenet_neighbors.py
   and lap-completion reward depend on them.
 - [x] Keep requirements aggregated across all agents so heterogeneous scenarios
   remain valid.
-- [ ] Fail clearly during setup when an enabled component requires unavailable
+- [x] Fail clearly during setup when an enabled component requires unavailable
   geometry.
 - [x] Add contract tests proving each scenario requests the intended features.
 - [x] Add numerical-equivalence tests for Frenet preview and neighbor payloads.
@@ -192,7 +192,7 @@ Exit criteria:
   neighbor payload.
 - [x] `complete_4_frenet_neighbors.yaml` receives unchanged preview and neighbor
   payloads.
-- [ ] Reward totals, lap facts, observations, and terminal outcomes are
+- [x] Reward totals, lap facts, observations, and terminal outcomes are
   unchanged for fixed trajectories.
 
 Research implication:
@@ -219,27 +219,27 @@ src/training/on_policy_trainer.py
 src/training/off_policy_trainer.py
 ```
 
-- [ ] Define one authoritative post-step `GlobalState` snapshot.
-- [ ] Reuse that snapshot when building `StepFacts`.
-- [ ] Pass the snapshot into reward-context assembly rather than calling the
+- [x] Define one authoritative post-step `GlobalState` snapshot.
+- [x] Reuse that snapshot when building `StepFacts`.
+- [x] Pass the snapshot into reward-context assembly rather than calling the
   environment once per agent.
-- [ ] Pass its lifecycle masks into transition construction rather than calling
+- [x] Pass its lifecycle masks into transition construction rather than calling
   the environment again per transition.
-- [ ] Reuse one pre-decision and one post-decision global vector in MAPPO.
-- [ ] Avoid exposing mutable internal arrays; cached public state must remain an
+- [x] Reuse one pre-decision and one post-decision global vector in MAPPO.
+- [x] Avoid exposing mutable internal arrays; cached public state must remain an
   immutable snapshot for the current step.
-- [ ] Invalidate the cache on reset, step, map change, lifecycle transition, and
+- [x] Invalidate the cache on reset, step, map change, lifecycle transition, and
   any public state mutation such as initial-speed application.
-- [ ] Apply the same safe reuse pattern to single-agent trainers where useful.
-- [ ] Add call-count instrumentation to prevent accidental regressions.
+- [x] Apply the same safe reuse pattern to single-agent trainers where useful.
+- [x] Add call-count instrumentation to prevent accidental regressions.
 
 Exit criteria:
 
-- [ ] Global-state reconstruction is O(1) per environment substep, not O(number
+- [x] Global-state reconstruction is O(1) per environment substep, not O(number
   of trainable agents).
-- [ ] `GlobalState.vector`, masks, metadata, and per-agent lifecycle fields are
+- [x] `GlobalState.vector`, masks, metadata, and per-agent lifecycle fields are
   byte-for-byte or numerically identical to the baseline at each fixed step.
-- [ ] Dataset records retain independent copies where required by schema.
+- [x] Dataset records retain independent copies where required by schema.
 
 Research implication:
 

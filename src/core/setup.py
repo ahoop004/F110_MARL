@@ -52,6 +52,20 @@ def create_training_setup(
             centerline_render=bool(env_config.get("centerline_render", False)),
         )
         env_config["feature_requirements"] = requirements.as_dict()
+        geometry_required = bool(
+            requirements.requires_centerline_facts
+            or requirements.requires_track_preview
+            or requirements.requires_frenet_neighbors
+            or requirements.centerline_render
+        )
+        if geometry_required:
+            env_config["centerline_autoload"] = True
+        if (
+            requirements.requires_centerline_facts
+            or requirements.requires_track_preview
+            or requirements.requires_frenet_neighbors
+        ):
+            env_config["centerline_features"] = True
 
     # Set random seed if specified
     seed = experiment_config.get('seed')

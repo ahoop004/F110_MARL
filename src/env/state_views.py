@@ -1,11 +1,32 @@
 """Public state views for centralized critics, datasets, and diagnostics."""
 from __future__ import annotations
 
+import copy
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 
 from src.env.types import AgentLifecycleRecord, AgentRaceStatus, AgentState, GlobalState, ProgressState
+
+
+def _freeze_snapshot_value(value: Any) -> Any:
+    """Detach and recursively freeze metadata stored in a cached state view."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_snapshot_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, np.ndarray):
+        array = value.copy()
+        array.setflags(write=False)
+        return array
+    if isinstance(value, list):
+        return tuple(_freeze_snapshot_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_snapshot_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_snapshot_value(item) for item in value)
+    return copy.deepcopy(value)
 
 
 def central_state_tensor(
@@ -146,15 +167,20 @@ def build_global_state(
     metadata: Optional[Mapping[str, Any]] = None,
     lifecycle_records: Optional[Mapping[str, AgentLifecycleRecord]] = None,
 ) -> GlobalState:
+    vector = np.asarray(central_vector, dtype=np.float32).copy()
+    vector.setflags(write=False)
+    masks = build_masks(
+        possible_agents,
+        active_agents,
+        controlled_agents=controlled_agents,
+        trainable_agents=trainable_agents,
+        lifecycle_records=lifecycle_records,
+    )
+    for mask in masks.values():
+        mask.setflags(write=False)
     return GlobalState(
         agent_ids=tuple(possible_agents),
-        vector=np.asarray(central_vector, dtype=np.float32).copy(),
-        masks=build_masks(
-            possible_agents,
-            active_agents,
-            controlled_agents=controlled_agents,
-            trainable_agents=trainable_agents,
-            lifecycle_records=lifecycle_records,
-        ),
-        metadata=dict(metadata or {}),
+        vector=vector,
+        masks=MappingProxyType(masks),
+        metadata=_freeze_snapshot_value(dict(metadata or {})),
     )

@@ -641,17 +641,24 @@ def _build_eval_reward_context(
     info_dict: Dict[str, Any],
     obs_dict: Dict[str, Any],
     actions: Dict[str, np.ndarray],
+    global_state: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    try:
-        global_state = env.get_global_state().vector
-    except Exception:
-        global_state = np.zeros(0, dtype=np.float32)
+    if global_state is None:
+        try:
+            global_state = env.get_global_state()
+        except Exception:
+            global_state = None
+    global_vector = (
+        global_state.vector
+        if global_state is not None
+        else np.zeros(0, dtype=np.float32)
+    )
     return {
         "agent_id": agent_id,
         "all_infos": info_dict or {},
         "all_obs": obs_dict or {},
         "all_actions": actions or {},
-        "global_state": global_state,
+        "global_state": global_vector,
         "last_step_facts": getattr(env, "last_step_facts", None),
     }
 
@@ -891,6 +898,12 @@ def _run_eval(
 
                 for _ in range(max(1, action_repeat)):
                     obs_dict, _rew_dict, term_dict, trunc_dict, info_dict = env.step(actions)
+                    step_facts = getattr(env, "last_step_facts", None)
+                    post_step_global_state = getattr(
+                        step_facts, "global_state", None
+                    )
+                    if post_step_global_state is None:
+                        post_step_global_state = env.get_global_state()
                     env_steps += 1
                     if render:
                         try:
@@ -929,6 +942,7 @@ def _run_eval(
                                 info_dict=info_dict,
                                 obs_dict=obs_dict,
                                 actions=actions,
+                                global_state=post_step_global_state,
                             )
                         )
                         sub_reward, breakdown = reward_composers[aid].compute(sub_step_info)

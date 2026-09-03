@@ -211,6 +211,7 @@ class _MixedEndingEnv:
 
     def __init__(self) -> None:
         self.actions_seen = []
+        self.global_state_calls = 0
         self._step = 0
         self.agents = []
         self.episode_done = False
@@ -228,6 +229,7 @@ class _MixedEndingEnv:
         }
 
     def get_global_state(self):
+        self.global_state_calls += 1
         return SimpleNamespace(vector=np.array([float(self._step)], dtype=np.float32))
 
     def step(self, actions):
@@ -267,6 +269,7 @@ def test_trainer_stops_collecting_after_individual_agent_termination() -> None:
     trainer.train(n_episodes=1)
 
     assert env.actions_seen == [{"car_0", "car_1"}, {"car_0"}]
+    assert env.global_state_calls == 3  # initial state plus one per environment step
     assert [record.agent_id for record in hook.records] == ["car_0", "car_1", "car_0"]
     car_1_records = [record for record in hook.records if record.agent_id == "car_1"]
     assert len(car_1_records) == 1

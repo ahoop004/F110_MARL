@@ -158,6 +158,64 @@ def maybe_load_map_data(env_config: Mapping[str, Any]) -> Any:
         return None
 
 
+def validate_environment_feature_requirements(
+    env: F110ParallelEnv,
+    requirements: Mapping[str, Any],
+) -> None:
+    """Fail setup when configured consumers cannot receive required geometry."""
+
+    centerline_agents = tuple(requirements.get("centerline_progress_agents", ()))
+    preview_agents = tuple(requirements.get("track_preview_agents", ()))
+    neighbor_agents = tuple(requirements.get("frenet_neighbor_agents", ()))
+    render_requested = bool(requirements.get("centerline_render", False))
+
+    centerline_available = env.centerline_points is not None
+    geometry_required = bool(
+        centerline_agents or preview_agents or neighbor_agents or render_requested
+    )
+    if geometry_required and not centerline_available:
+        consumers = []
+        if centerline_agents:
+            consumers.append(f"centerline facts for agents {centerline_agents}")
+        if preview_agents:
+            consumers.append(f"track preview for agents {preview_agents}")
+        if neighbor_agents:
+            consumers.append(f"Frenet neighbors for agents {neighbor_agents}")
+        if render_requested:
+            consumers.append("centerline rendering")
+        raise ValueError(
+            "Environment feature setup requires centerline geometry for "
+            f"{'; '.join(consumers)}, but the active map has no loadable "
+            "centerline. Configure environment.centerline_autoload/centerline_csv "
+            "and provide a valid centerline file."
+        )
+
+    if centerline_agents and not env.centerline_features_enabled:
+        raise ValueError(
+            "Environment feature setup requires enabled centerline facts for "
+            f"agents {centerline_agents}. Set environment.centerline_features: true."
+        )
+
+    if preview_agents and not env.track_preview_available:
+        raise ValueError(
+            "Environment feature setup could not construct track-preview geometry "
+            f"for agents {preview_agents}; verify that the centerline contains at "
+            "least three finite points."
+        )
+
+    if neighbor_agents and not env.centerline_features_enabled:
+        raise ValueError(
+            "Environment feature setup requires enabled centerline facts for "
+            f"Frenet-neighbor agents {neighbor_agents}. Set "
+            "environment.centerline_features: true."
+        )
+
+    if render_requested and not env.centerline_render_enabled:
+        raise ValueError(
+            "Environment feature setup requires centerline rendering, but it is "
+            "not enabled. Set environment.centerline_render: true."
+        )
+
 def create_environment(
     env_config: Mapping[str, Any],
     agent_configs: Mapping[str, Any],
@@ -194,18 +252,9 @@ def create_environment(
         )
     requirements = env_config.get("feature_requirements")
     if isinstance(requirements, Mapping):
-        preview_agents = tuple(requirements.get("track_preview_agents", ()))
-        neighbor_agents = tuple(requirements.get("frenet_neighbor_agents", ()))
-        if preview_agents and env._track_preview_geometry is None:
-            raise ValueError(
-                "Frenet track-preview observation requires available centerline "
-                f"geometry; requested by agents {preview_agents}."
-            )
-        if neighbor_agents and (
-            env.centerline_points is None or not env.centerline_features_enabled
-        ):
-            raise ValueError(
-                "Frenet-neighbor observation requires enabled centerline facts; "
-                f"requested by agents {neighbor_agents}."
-            )
+        try:
+            validate_environment_feature_requirements(env, requirements)
+        except Exception:
+            env.close()
+            raise
     return env
