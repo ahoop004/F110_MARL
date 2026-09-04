@@ -247,6 +247,9 @@ class MAPPOAgent:
             raise ValueError("MAPPO trainable agent IDs must be unique and ordered.")
         self.obs_dim = obs_dim
         self.global_state_dim = global_state_dim
+        self.global_state_contract_version = str(
+            params.get("_global_state_contract_version", "legacy_unspecified")
+        )
         self.action_low = np.asarray(action_low, dtype=np.float32)
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
@@ -816,6 +819,7 @@ class MAPPOAgent:
                 "action_low": self.action_low,
                 "action_high": self.action_high,
                 "global_state_dim": self.global_state_dim,
+                "global_state_contract_version": self.global_state_contract_version,
                 "critic_input_dim": self.critic_input_dim,
                 "critic_mode": self.critic_mode,
                 "reward_mode": self.reward_mode,
@@ -839,6 +843,9 @@ class MAPPOAgent:
         checkpoint_global_dim = int(
             ckpt.get("global_state_dim", self.global_state_dim)
         )
+        checkpoint_global_contract = str(
+            ckpt.get("global_state_contract_version", "legacy_unspecified")
+        )
         checkpoint_critic_mode = str(ckpt["critic_mode"])
         checkpoint_reward_mode = str(ckpt["reward_mode"])
         checkpoint_reduction = str(ckpt.get("team_reward_reduction", "mean"))
@@ -846,6 +853,7 @@ class MAPPOAgent:
         if (
             checkpoint_obs_dim != self.obs_dim
             or checkpoint_global_dim != self.global_state_dim
+            or checkpoint_global_contract != self.global_state_contract_version
             or checkpoint_agent_ids != self.agent_ids
             or checkpoint_critic_mode != self.critic_mode
             or checkpoint_reward_mode != self.reward_mode
@@ -855,6 +863,8 @@ class MAPPOAgent:
                 "Incompatible MAPPO checkpoint contract: "
                 f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
                 f"current={self.obs_dim}/{self.global_state_dim}; "
+                f"checkpoint global contract={checkpoint_global_contract!r}, "
+                f"current={self.global_state_contract_version!r}; "
                 f"checkpoint agents={checkpoint_agent_ids!r}, "
                 f"current={self.agent_ids!r}; "
                 f"checkpoint critic_mode={checkpoint_critic_mode!r}, "

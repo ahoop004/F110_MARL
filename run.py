@@ -572,6 +572,12 @@ def main() -> None:
                 "map_protocols": provenance["map_protocols"],
                 "provenance": provenance,
                 "global_state_dim": len(env.get_global_state().vector),
+                "global_state_contract_version": env.get_global_state().metadata.get(
+                    "vector_contract_version"
+                ),
+                "global_state_centerline_fields": list(
+                    env.get_global_state().metadata.get("centerline_fields", ())
+                ),
                 "observation_dims": {
                     aid: composer.obs_dim for aid, composer in obs_composers.items()
                 },
@@ -828,7 +834,8 @@ def _run_eval(
     # Probe the env once so MAPPO can size the centralized critic before
     # loading the checkpoint.  Episode 0 is reset again below with the same seed.
     env.reset(seed=base_seed)
-    global_state_dim = int(env.get_global_state().vector.shape[0])
+    global_snapshot = env.get_global_state()
+    global_state_dim = int(global_snapshot.vector.shape[0])
 
     if algorithm == "ppo":
         agent = PPOAgent(
@@ -838,6 +845,12 @@ def _run_eval(
             params=params,
         )
     else:
+        params = {
+            **params,
+            "_global_state_contract_version": global_snapshot.metadata.get(
+                "vector_contract_version", "legacy_unspecified"
+            ),
+        }
         agent = MAPPOAgent(
             obs_dim=obs_composers[focal_agent_id].obs_dim,
             global_state_dim=global_state_dim,
@@ -1052,12 +1065,12 @@ def _run_eval(
                 for aid in trainable_ids:
                     if aid not in getattr(env, "agents", []):
                         continue
+                    if aid in actions_norm:
+                        obs_composers[aid].update_prev_action(actions_norm[aid])
                     wrapped_obs[aid] = obs_composers[aid].wrap(
                         obs_dict.get(aid, {}),
                         info_dict.get(aid, {}),
                     )
-                    if aid in actions_norm:
-                        obs_composers[aid].update_prev_action(actions_norm[aid])
 
             finalize_episode_facts(episode_facts)
             eval_episodes_facts.append(episode_facts)
@@ -1347,7 +1360,14 @@ def _run_mappo(
 
     # Probe global state dimension via one env reset (MARLTrainer will reset again per episode)
     _obs_dict, _info_dict = env.reset()
-    global_state_dim = len(env.get_global_state().vector)
+    global_snapshot = env.get_global_state()
+    global_state_dim = len(global_snapshot.vector)
+    params = {
+        **params,
+        "_global_state_contract_version": global_snapshot.metadata.get(
+            "vector_contract_version", "legacy_unspecified"
+        ),
+    }
 
     # Merge training params for focal agent (already done by caller, but resolve again
     # to give MAPPOAgent the final merged dict).

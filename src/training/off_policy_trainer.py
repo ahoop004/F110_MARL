@@ -206,6 +206,7 @@ class OffPolicyTrainer:
             last_info = info_dict.get(self.rl_agent_id, {})
             episode_reward += reward
 
+            self.obs_composer.update_prev_action(action)
             next_obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), last_info)
 
             # --- Emit transition record ---

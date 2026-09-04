@@ -111,6 +111,42 @@ def test_global_state_reconstructs_once_per_mutation(monkeypatch) -> None:
         env.close()
 
 
+def test_complete4_global_state_contains_current_centerline_context() -> None:
+    env = _complete4_env()
+    try:
+        _, infos = env.reset(seed=42)
+        state = env.get_global_state()
+
+        assert state.vector.shape == (68,)
+        assert state.metadata["vector_contract_version"] == "2.0"
+        assert state.metadata["centerline_fields"] == (
+            "progress",
+            "d",
+            "vs",
+            "vd",
+            "heading_error",
+        )
+        np.testing.assert_array_equal(
+            env._central_state_tensor(env.sim.current_observation()), state.vector
+        )
+
+        # Seven physical fields and five lifecycle fields occupy the first
+        # 48 values. Each following block contains one centerline field for
+        # all four agents in stable possible-agent order.
+        centerline_start = 48
+        for field_index, field in enumerate(state.metadata["centerline_fields"]):
+            start = centerline_start + field_index * len(env.possible_agents)
+            expected = np.asarray(
+                [infos[agent_id]["centerline"][field] for agent_id in env.possible_agents],
+                dtype=np.float32,
+            )
+            np.testing.assert_allclose(
+                state.vector[start : start + len(env.possible_agents)], expected
+            )
+    finally:
+        env.close()
+
+
 def test_supplied_snapshot_avoids_reward_and_lifecycle_state_calls() -> None:
     snapshot = build_global_state(
         possible_agents=["car_0"],

@@ -158,14 +158,19 @@ class _OneStepTruncationEnv:
 
 
 class _ObservationComposer:
+    def __init__(self) -> None:
+        self.previous_action = np.zeros(2, dtype=np.float32)
+        self.actions_seen_while_wrapping = []
+
     def reset(self) -> None:
-        pass
+        self.previous_action.fill(0.0)
 
     def wrap(self, obs, _info):
+        self.actions_seen_while_wrapping.append(self.previous_action.copy())
         return np.array([obs["value"]], dtype=np.float32)
 
-    def update_prev_action(self, _action) -> None:
-        pass
+    def update_prev_action(self, action) -> None:
+        self.previous_action[:] = np.asarray(action, dtype=np.float32)
 
 
 class _RewardComposer:
@@ -183,12 +188,13 @@ class _ActionComposer:
 
 def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
     agent = _RecordingAgent()
+    composer = _ObservationComposer()
     trainer = OnPolicyTrainer(
         env=_OneStepTruncationEnv(),
         rl_agent_id="car_0",
         agent=agent,
         other_agents={},
-        obs_composer=_ObservationComposer(),
+        obs_composer=composer,
         reward_composer=_RewardComposer(),
         action_composer=_ActionComposer(),
     )
@@ -199,3 +205,32 @@ def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
     _, lifecycle = agent.buffer.transitions[0]
     assert lifecycle["terminated"] is False
     assert lifecycle["truncated"] is True
+
+
+def test_on_policy_next_observation_uses_current_previous_action() -> None:
+    class FixedActionAgent(_RecordingAgent):
+        ACTION = np.array([0.25, -0.5], dtype=np.float32)
+
+        def act(self, obs):
+            return self.ACTION.copy(), 0.0, float(obs[0])
+
+    agent = FixedActionAgent()
+    composer = _ObservationComposer()
+    trainer = OnPolicyTrainer(
+        env=_OneStepTruncationEnv(),
+        rl_agent_id="car_0",
+        agent=agent,
+        other_agents={},
+        obs_composer=composer,
+        reward_composer=_RewardComposer(),
+        action_composer=_ActionComposer(),
+    )
+
+    trainer.train(n_episodes=1)
+
+    np.testing.assert_array_equal(
+        composer.actions_seen_while_wrapping[0], np.zeros(2, dtype=np.float32)
+    )
+    np.testing.assert_array_equal(
+        composer.actions_seen_while_wrapping[1], FixedActionAgent.ACTION
+    )

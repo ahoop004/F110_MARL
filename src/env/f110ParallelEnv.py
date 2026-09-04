@@ -61,6 +61,16 @@ if TYPE_CHECKING:
     from src.render import EnvRenderer
 
 
+GLOBAL_STATE_VECTOR_VERSION = "2.0"
+_CENTERLINE_GLOBAL_STATE_KEYS = (
+    "progress",
+    "d",
+    "vs",
+    "vd",
+    "heading_error",
+)
+
+
 def _default_vehicle_params() -> Dict[str, float]:
     """Default vehicle dynamics parameters used across experiments."""
     return {
@@ -415,9 +425,16 @@ class F110ParallelEnv:
             "ang_vels_z",
             "collisions",
         )
-        # Physical state plus active/finished/crashed/truncated masks and
-        # normalized lap progress for the centralized critic.
-        self._central_state_dim = self.n_agents * (len(self._central_state_keys) + 5)
+        # Physical state, lifecycle facts, and map-invariant centerline facts.
+        # Keeping the centerline block fixed-size preserves a stable critic
+        # input shape across maps, including environments where the values are
+        # unavailable and therefore represented by zeros.
+        lifecycle_dims = 5  # active, finished, crashed, truncated, completed laps
+        self._central_state_dim = self.n_agents * (
+            len(self._central_state_keys)
+            + lifecycle_dims
+            + len(_CENTERLINE_GLOBAL_STATE_KEYS)
+        )
         self.possible_agents = [f"car_{i}" for i in range(self.n_agents)]
         self.physical_agents = tuple(self.possible_agents)
         self._agent_id_to_index = {aid: idx for idx, aid in enumerate(self.possible_agents)}
@@ -819,9 +836,7 @@ class F110ParallelEnv:
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
         obs_joint = self.sim.reset(poses, velocities=velocities)
         obs = self._split_obs(obs_joint)
-        self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        self._refresh_render_observations(obs)
         self._reset_finish_line_tracking()
 
         infos = build_reset_info_payloads(
@@ -836,6 +851,8 @@ class F110ParallelEnv:
             info_level=self.info_level,
         )
         self._update_centerline_observation_facts(infos)
+        self._attach_central_state(obs, obs_joint)
+        self._refresh_render_observations(obs)
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -873,9 +890,7 @@ class F110ParallelEnv:
             obs_joint = self.sim.current_observation()
 
         obs = self._split_obs(obs_joint)
-        self._attach_central_state(obs, obs_joint)
         self._update_state(obs_joint)
-        self._refresh_render_observations(obs)
         self.current_time += self.timestep
         if self._lap_tracker is not None:
             lap_crossings = self._lap_tracker.update(
@@ -990,6 +1005,11 @@ class F110ParallelEnv:
             self._inject_track_previews(infos)
         else:
             self._last_centerline_facts = {}
+
+        # Attach the same-step centralized vector only after updating the
+        # centerline projection facts used by its map-relative block.
+        self._attach_central_state(obs, obs_joint)
+        self._refresh_render_observations(obs)
 
         infos = filter_info_payloads(infos, info_level=self.info_level)
 
@@ -1302,7 +1322,24 @@ class F110ParallelEnv:
                 ],
                 dtype=np.float32,
             )
-        return np.concatenate((physical, active, *terminal, lap_progress)).astype(
+
+        centerline = np.zeros(
+            (len(_CENTERLINE_GLOBAL_STATE_KEYS), self.n_agents), dtype=np.float32
+        )
+        for agent_index, agent_id in enumerate(self.possible_agents):
+            facts = self._last_centerline_facts.get(agent_id, {})
+            for field_index, field in enumerate(_CENTERLINE_GLOBAL_STATE_KEYS):
+                try:
+                    value = float(facts.get(field, 0.0))
+                except (TypeError, ValueError):
+                    value = 0.0
+                centerline[field_index, agent_index] = (
+                    value if np.isfinite(value) else 0.0
+                )
+
+        return np.concatenate(
+            (physical, active, *terminal, lap_progress, *centerline)
+        ).astype(
             np.float32, copy=False
         )
 
@@ -1350,6 +1387,8 @@ class F110ParallelEnv:
             lifecycle_records=self.lifecycle.records,
             metadata={
                 "map_bundle": self._map_bundle_active,
+                "vector_contract_version": GLOBAL_STATE_VECTOR_VERSION,
+                "centerline_fields": _CENTERLINE_GLOBAL_STATE_KEYS,
                 **self._spawn_manager.last_spawn_metadata,
             },
         )
@@ -1380,6 +1419,10 @@ class F110ParallelEnv:
         joint = self.sim.current_observation()
         self._update_state(joint)
         obs = self._split_obs(joint)
+        centerline_infos: Dict[str, Dict[str, Any]] = {
+            agent_id: {} for agent_id in self.possible_agents
+        }
+        self._update_centerline_observation_facts(centerline_infos)
         self._attach_central_state(obs, joint)
         self._refresh_render_observations(obs)
         return obs

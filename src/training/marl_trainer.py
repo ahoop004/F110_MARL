@@ -393,6 +393,10 @@ class MARLTrainer:
                             "team_reward_reduction": self.team_reward_reduction,
                         }
                     )
+                    # The next observation must expose the action that produced
+                    # the next environment state. Updating after composition
+                    # leaves PrevActionComponent one decision behind.
+                    self.obs_composers[aid].update_prev_action(actions_norm[aid])
                     next_obs = self.obs_composers[aid].wrap(
                         obs_dict.get(aid, {}), agent_info
                     )
@@ -454,9 +458,6 @@ class MARLTrainer:
                 for aid in self.trainable_ids:
                     if aid in getattr(self.env, "agents", []):
                         wrapped_obs[aid] = next_wrapped_obs[aid]
-                        self.obs_composers[aid].update_prev_action(
-                            actions_norm.get(aid, np.zeros(2, dtype=np.float32))
-                        )
 
                 global_state = next_global_state
                 step_idx += 1

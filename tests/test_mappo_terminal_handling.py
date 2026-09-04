@@ -107,6 +107,30 @@ def test_mappo_rejects_pre_lifecycle_global_state_checkpoint(tmp_path) -> None:
         lifecycle_agent.load(str(path))
 
 
+def test_mappo_rejects_same_size_different_global_state_contract(tmp_path) -> None:
+    original = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=17,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4], "_global_state_contract_version": "1.0"},
+    )
+    path = tmp_path / "global-contract.pt"
+    original.save(str(path))
+    current = MAPPOAgent(
+        obs_dim=1,
+        global_state_dim=17,
+        action_low=np.array([-1.0, -1.0], dtype=np.float32),
+        action_high=np.array([1.0, 1.0], dtype=np.float32),
+        agent_ids=["car_0"],
+        params={"hidden_dims": [4], "_global_state_contract_version": "2.0"},
+    )
+
+    with pytest.raises(ValueError, match="global contract"):
+        current.load(str(path))
+
+
 def test_mappo_rejects_checkpoint_from_different_reward_critic_contract(tmp_path) -> None:
     team_agent = MAPPOAgent(
         obs_dim=1,
@@ -148,6 +172,20 @@ class _ObservationComposer:
 
     def update_prev_action(self, _action) -> None:
         pass
+
+
+class _PrevActionObservationComposer:
+    def __init__(self) -> None:
+        self.previous_action = np.zeros(2, dtype=np.float32)
+
+    def reset(self) -> None:
+        self.previous_action.fill(0.0)
+
+    def wrap(self, _obs, _info) -> np.ndarray:
+        return self.previous_action.copy()
+
+    def update_prev_action(self, action) -> None:
+        self.previous_action[:] = np.asarray(action, dtype=np.float32)
 
 
 class _RewardComposer:
@@ -246,6 +284,17 @@ class _FakeMAPPOAgent:
         return {"updated": float(len(next_global_state))}
 
 
+class _FixedActionMAPPOAgent(_FakeMAPPOAgent):
+    ACTION = np.array([0.25, -0.5], dtype=np.float32)
+
+    def act_batch(self, agent_ids, observations, deterministic=False):
+        self.act_batch_calls.append(tuple(agent_ids))
+        return (
+            {aid: self.ACTION.copy() for aid in agent_ids},
+            {aid: 0.0 for aid in agent_ids},
+        )
+
+
 class _MixedEndingEnv:
     possible_agents = ["car_0", "car_1"]
     map_name = "test_map"
@@ -322,6 +371,30 @@ def test_trainer_stops_collecting_after_individual_agent_termination() -> None:
     assert hook.records[-1].terminated is False
     assert hook.records[-1].truncated is True
     assert hook.records[-1].episode_id == "terminal-test_ep000000"
+
+
+def test_mappo_next_observation_contains_action_that_produced_it() -> None:
+    env = _MixedEndingEnv()
+    agent = _FixedActionMAPPOAgent()
+    hook = _RecordingHook()
+    trainer = MARLTrainer(
+        env=env,
+        agent=agent,
+        trainable_ids=["car_0", "car_1"],
+        other_agents={},
+        obs_composers={
+            aid: _PrevActionObservationComposer() for aid in env.possible_agents
+        },
+        reward_composers={aid: _RewardComposer() for aid in env.possible_agents},
+        action_composer=_ActionComposer(),
+        hooks=[hook],
+    )
+
+    trainer.train(n_episodes=1)
+
+    assert hook.records
+    for record in hook.records:
+        np.testing.assert_array_equal(record.next_obs, agent.ACTION)
 
 
 def test_team_reward_mean_uses_fixed_configured_team_size() -> None:
