@@ -698,8 +698,14 @@ class MAPPOAgent:
         ckpt = safe_load(path, map_location=self.device)
         if not isinstance(ckpt, dict) or "actor" not in ckpt:
             raise ValueError(f"Pretrained PPO checkpoint has no actor state: {path}")
-        if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
-            raise ValueError("Incompatible pretrained PPO action contract (speed control semantics differ).")
+        checkpoint_contract = ckpt.get("action_contract", {"speed_control": "direct"})
+        if checkpoint_contract != self.action_contract:
+            raise ValueError(
+                "Incompatible pretrained PPO action contract (speed control semantics differ): "
+                f"checkpoint={checkpoint_contract!r}, MAPPO={self.action_contract!r}. "
+                "Match the MAPPO action_constraints and decision interval to the PPO "
+                "training configuration, or select a compatible checkpoint."
+            )
         if "algorithm" in ckpt and str(ckpt["algorithm"]).lower() != "ppo":
             raise ValueError(
                 "Pretrained actor checkpoint must come from PPO; "

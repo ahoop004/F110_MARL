@@ -77,7 +77,8 @@ class ActionComposer:
     """Applies a sequence of ActionComponents to transform a normalized action.
 
     Built from the action_constraints block in the scenario agent config and
-    the physical action bounds from the environment.
+    the physical action bounds from the environment. Reverse prevention defaults
+    to enabled for both direct and integrated speed commands.
 
     The first component in the pipeline (e.g. :class:`DenormalizeComponent`)
     always produces a freshly-allocated float32 array, so subsequent components
@@ -112,7 +113,7 @@ class ActionComposer:
             "speed_control": mode,
             **{name: float(value) for name, value in values.items()},
             "speed_index": int(constraints.get("speed_index", 1)),
-            "prevent_reverse": bool(constraints.get("prevent_reverse", False)),
+            "prevent_reverse": bool(constraints.get("prevent_reverse", True)),
         }
 
     def process(self, action: np.ndarray) -> np.ndarray:
@@ -157,7 +158,7 @@ class ActionComposer:
         components: List[ActionComponent] = [DenormalizeComponent(low, high)]
         if integrated is not None:
             components.append(integrated)
-        if constraints.get("prevent_reverse", False):
+        if constraints.get("prevent_reverse", True):
             speed_index = int(constraints.get("speed_index", 1))
             components.append(PreventReverseComponent(speed_index))
         return cls(components)

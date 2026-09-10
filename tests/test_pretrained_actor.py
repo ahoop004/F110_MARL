@@ -14,7 +14,11 @@ ACTION_LOW = np.array([-0.4, -5.0], dtype=np.float32)
 ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 
 
-def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
+@pytest.mark.parametrize("scenario_name", [
+    "mappo_2v2_frenet_ppo_pretrained",
+    "mappo_2v2_frenet_ppo_pretrained_combined",
+])
+def test_forward_only_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path, scenario_name):
     from pathlib import Path
     from core.agent_builder import get_trainable_agent_ids
     from core.scenario import load_and_expand_scenario, resolve_mappo_config
@@ -22,7 +26,7 @@ def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
     from run import build_obs_composers, resolve_training_params
     from wrappers.actions.composer import ActionComposer
 
-    scenario = load_and_expand_scenario("scenarios/mappo_2v2_frenet_ppo_pretrained.yaml")
+    scenario = load_and_expand_scenario(f"scenarios/{scenario_name}.yaml")
     pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
     baseline = load_and_expand_scenario("scenarios/mappo_2v2_team_shared.yaml")
     ids = get_trainable_agent_ids(scenario["agents"])
@@ -33,7 +37,7 @@ def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
     for aid in ["car_2", "car_3"]:
         assert scenario["agents"][aid] == baseline["agents"][aid]
     for aid in ids:
-        assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is False
+        assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is True
         assert scenario["agents"][aid]["observation"] == pretraining["agents"]["car_0"]["observation"]
     assert scenario["agents"]["car_0"]["params"] == scenario["agents"]["car_1"]["params"]
 
@@ -51,7 +55,7 @@ def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
         assert params["learning_rate"] == 1e-4
         assert params["gamma"] == source_params["gamma"]
         source = PPOAgent(158, space.low, space.high, {**source_params, "device": "cpu"})
-        checkpoint = tmp_path / "reverse_frenet.pt"
+        checkpoint = tmp_path / "forward_frenet.pt"
         source.save(str(checkpoint))
         recipient = MAPPOAgent(
             158, len(env.get_global_state().vector), space.low, space.high, ids,
@@ -71,16 +75,18 @@ def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
         controls = [ActionComposer.from_config(
             space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.01,
         ) for aid in ids]
-        assert controls[0].process([0, -1])[1] == pytest.approx(-0.05)
+        assert controls[0].process([0, -1])[1] == pytest.approx(0.0)
         assert controls[1].process([0, 0])[1] == 0
         controls[0].reset()
         assert controls[0].process([0, 0])[1] == 0
 
-        # A same-size forward-only checkpoint must still be rejected.
-        source.action_contract = {**source.action_contract, "prevent_reverse": True}
+        # A same-size reverse-enabled checkpoint must still be rejected.
+        source.action_contract = {**source.action_contract, "prevent_reverse": False}
         source.save(str(checkpoint))
-        with pytest.raises(ValueError, match="action contract"):
+        with pytest.raises(ValueError, match="action contract") as error:
             recipient.load_pretrained_actor(str(checkpoint))
+        assert f"checkpoint={source.action_contract!r}" in str(error.value)
+        assert f"MAPPO={recipient.action_contract!r}" in str(error.value)
     finally:
         env.close()
 

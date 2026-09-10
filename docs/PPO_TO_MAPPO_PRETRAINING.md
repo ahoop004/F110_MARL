@@ -198,7 +198,7 @@ action dimension or bounds, hidden layers, activation, or actor state shapes
 do not match. The source path and SHA-256 digest are recorded in run
 provenance.
 
-## Reverse-enabled Frenet transfer to a 2v2 team
+## Forward-only Frenet transfer to a 2v2 team
 
 `scenarios/mappo_2v2_frenet_ppo_pretrained.yaml` defines two trainable MAPPO
 teammates (`car_0`, `car_1`) against the existing fixed hybrid PP+FTG opponents
@@ -206,14 +206,14 @@ teammates (`car_0`, `car_1`) against the existing fixed hybrid PP+FTG opponents
 critic. The 158-value local actor input remains unchanged; LiDAR sees traffic,
 but no explicit teammate/opponent identity inputs are added.
 
-This variant requires a PPO checkpoint trained with `prevent_reverse: false`.
-Its acceleration integrators allow references from -20 to +20 m/s, with signed
+This variant requires a PPO checkpoint trained with `prevent_reverse: true`.
+Its acceleration integrators allow references from 0 to 20 m/s, with signed
 reference rates of up to 5 m/s², at a 0.01 s decision interval. Negative action
-first reduces a positive reference, then commands reverse after crossing zero.
-The earlier forward-only contract described above is incompatible even though
-the network dimensions match. The current reverse-enabled pretraining scenario
-must be used to generate this initialization; changing only the receiving YAML
-cannot convert a forward-only checkpoint.
+reduces a positive reference and holds at zero under continued braking.
+Reverse-enabled checkpoints are incompatible even when the network dimensions
+match. Use the current forward-only PPO pretraining scenario to generate a
+compatible initialization; changing only the receiving YAML cannot convert an
+existing checkpoint.
 
 The new scenario snapshots the vehicle dynamics, actor architecture and action
 contract instead of including the entire mutable PPO experiment. Its training
@@ -222,13 +222,15 @@ laps, and an 80,000-step horizon. MAPPO uses one environment, a fresh
 `[512, 512]` centralized critic, a fresh optimizer with constant learning rate
 `0.0001`, and the physical discount `gamma = 0.9979919516614258`. The base
 scenario now averages the exact local reward from Frenet PPO pretraining.
-Reverse commands are permitted; signed progress penalizes travel backward
-along the track. Fixed opponents remain unchanged.
+Reverse commands are prevented in all current scenarios and by default in the
+action composer. Vehicle bounds and reward formulas are unchanged. Experiments
+previously allowing reverse need new learning curves because the controls differ.
+Fixed opponents remain unchanged.
 
-The configured initialization path is the completion-selected `best_model.pt`
-from run `ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d`. Wait for
-that PPO run to finish before using its selected checkpoint. If using another
-run, change `training_defaults.pretrained_actor_checkpoint` in the new scenario;
+The historical initialization path points to `best_model.pt` from reverse-enabled
+run `ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d`, which is now
+incompatible. Set `training_defaults.pretrained_actor_checkpoint` to the selected
+`best_model.pt` from a completed forward-only Frenet PPO run before training;
 the path is relative to `scenarios/`, and its digest is captured in provenance.
 The episode-zero checkpoint is useful for an integration smoke test, not as
 evidence that the source actor has learned to finish laps. A missing selected

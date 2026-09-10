@@ -1,4 +1,4 @@
-# Reverse-enabled Frenet PPO actor transfer to two MAPPO teammates.
+# Forward-only Frenet PPO actor transfer to two MAPPO teammates.
 # Average the Frenet PPO lap-completion reward and reuse fixed opponents; snapshot the
 # PPO observation/control/dynamics contract so later pretraining edits cannot
 # silently change this experiment. The critic and optimizer start fresh.
@@ -9,15 +9,16 @@ experiment:
   name: mappo_2v2_frenet_ppo_pretrained
   episodes: 5000
   seed: 42
-  num_envs: 4
+  num_envs: 1  # Parallel rollout workers currently support PPO only.
   torch_threads: 1
 
 training_defaults:
   # GAE follows the joint team timeline after a teammate finishes/crashes.
   # Race timeouts are terminal for this finite-horizon team task.
   team_return_mode: joint
-  # Requires the selected checkpoint from the completed reverse-enabled run.
-  # Do not substitute the older direct-speed or forward-only PPO checkpoints.
+  # Requires a PPO checkpoint trained with prevent_reverse: true.
+  # The historical path below is reverse-enabled; replace it with a compatible
+  # forward-only best_model.pt before running. Checkpoint metadata is not rewritten.
   pretrained_actor_checkpoint: ../outputs/ppo_lap_completion_pretrain_frenet/ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d/best_model.pt
   device: cuda
 
@@ -95,7 +96,7 @@ agents:
       speed_control: acceleration
       max_acceleration: 5.0
       max_deceleration: 5.0
-      prevent_reverse: true
+      prevent_reverse: true  # Brake to zero without commanding reverse.
       speed_index: 1
 
   car_1:
@@ -125,5 +126,5 @@ wandb:
   project: marl-f110-complete
   group: mappo-2v2-frenet-ppo-pretrained
   job_type: pretrained-mappo-team
-  tags: [mappo, 2v2, ppo-pretrained, frenet, acceleration-control, reverse-enabled, team-reward, hybrid_pp_ftg]
-  notes: "Three-lap reverse-enabled PPO actor transfer; mean Frenet PPO reward with joint team returns; Budapest/circle training, circle evaluation; inherited 2.5 m/s hybrid opponents"
+  tags: [mappo, 2v2, ppo-pretrained, frenet, acceleration-control, forward-only, team-reward, hybrid_pp_ftg]
+  notes: "Three-lap forward-only PPO actor transfer; mean Frenet PPO reward with joint team returns; Budapest/circle training, circle evaluation; inherited 2.5 m/s hybrid opponents"

@@ -82,7 +82,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: false
+      prevent_reverse: true
       speed_index: 1
 
   car_1:
@@ -97,7 +97,7 @@ agents:
       hidden_dims: [256, 256]
       gamma: 0.99
     action_constraints:
-      prevent_reverse: false
+      prevent_reverse: true
       speed_index: 1
 
   # --- Fixed non-ML opponents ---

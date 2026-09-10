@@ -50,10 +50,21 @@ def test_integration_uses_decision_interval(dt, decisions):
     assert speed == pytest.approx(5.0)
 
 
-def test_direct_speed_mode_retains_existing_mapping():
-    actions = ActionComposer.from_config(LOW, HIGH, {"prevent_reverse": True})
+@pytest.mark.parametrize("constraints", [{}, {"prevent_reverse": True}])
+def test_direct_speed_mode_retains_existing_mapping(constraints):
+    actions = ActionComposer.from_config(LOW, HIGH, constraints)
     for command, expected in [(-1, 0), (0, 0), (.5, 10), (1, 20), (.5, 10)]:
         assert actions.process([0, command])[1] == expected
+
+
+def test_acceleration_defaults_to_braking_at_zero_without_windup():
+    constraints = {key: value for key, value in CONSTRAINTS.items() if key != "prevent_reverse"}
+    contract = ActionComposer.contract_from_config(constraints, decision_dt=.01)
+    assert contract["prevent_reverse"] is True
+    actions = ActionComposer.from_config(LOW, HIGH, constraints, decision_dt=.01)
+    for _ in range(4):
+        assert actions.process([0, -1])[1] == 0
+    assert actions.process([0, 1])[1] == pytest.approx(.05)
 
 
 @pytest.mark.parametrize("overrides,dt", [({"speed_control": "typo"}, .01),
@@ -79,7 +90,7 @@ def test_frenet_environment_observes_applied_reference_rate(mode, repeat):
         env.reset(seed=42)
         for command, expected_speed, expected_rate in [(1, 5*dt, 5), (1, 10*dt, 5),
                 (0, 10*dt, 0), (-1, 5*dt, -5), (-1, 0, -5),
-                (-1, -5*dt, -5), (0, -5*dt, 0)]:
+                (-1, 0, 0), (0, 0, 0), (1, 5*dt, 5)]:
             physical = actions.process([0, command])
             assert physical[1] == pytest.approx(expected_speed, abs=1e-7)
             for _ in range(repeat):

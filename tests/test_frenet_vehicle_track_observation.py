@@ -369,7 +369,7 @@ def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
     )
     assert variant["agents"]["car_0"]["action_constraints"] == {
         "speed_control": "acceleration", "max_acceleration": 5.0,
-        "max_deceleration": 5.0, "prevent_reverse": False, "speed_index": 1,
+        "max_deceleration": 5.0, "prevent_reverse": True, "speed_index": 1,
     }
     for key, expected in (("a_max", 5.0), ("v_switch", 20.0)):
         assert variant["environment"]["vehicle_params"][key] == expected
