@@ -6,6 +6,9 @@ includes:
 
 experiment:
   name: ppo_lap_completion_pretrain_frenet
+  # Preserve the single-environment collection used at 43ffaaf (clean up).
+  # Four workers split n_steps=2048 into 512-step fragments per environment.
+  num_envs: 1
 
 environment:
   vehicle_params:

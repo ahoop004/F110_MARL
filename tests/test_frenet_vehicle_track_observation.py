@@ -363,6 +363,9 @@ def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     variant = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
     assert variant["experiment"]["name"] != baseline["experiment"]["name"]
+    # Keep the pre-2v2 collection protocol even if the parent uses workers.
+    assert variant["experiment"]["num_envs"] == 1
+    assert variant["training_defaults"]["n_steps"] == 2048
     assert variant["wandb"]["group"] != baseline["wandb"]["group"]
     assert variant["agents"]["car_0"]["observation"].endswith(
         "/rl_racer_vehicle_track_frenet_acceleration.yaml"
@@ -377,6 +380,7 @@ def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
     variant["agents"]["car_0"]["action_constraints"] = baseline["agents"]["car_0"]["action_constraints"]
     # All remaining settings stay paired with the baseline.
     variant["experiment"]["name"] = baseline["experiment"]["name"]
+    variant["experiment"]["num_envs"] = baseline["experiment"]["num_envs"]
     for key in ("group", "tags", "notes"):
         variant["wandb"][key] = baseline["wandb"][key]
     variant["agents"]["car_0"]["observation"] = baseline["agents"]["car_0"]["observation"]
