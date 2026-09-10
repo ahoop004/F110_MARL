@@ -577,6 +577,8 @@ def main() -> None:
                     aid: composer.obs_dim for aid, composer in obs_composers.items()
                 },
                 "lifecycle_contract_version": "1.0",
+                "team_return_mode": params.get("team_return_mode", "per_agent"),
+                "team_reward_contract": reward_composer.team_contract,
                 "transition_contract": {
                     "version": "1.0",
                     "global_state": "pre_decision",
@@ -699,24 +701,11 @@ def _build_eval_reward_context(
     actions: Dict[str, np.ndarray],
     global_state: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    if global_state is None:
-        try:
-            global_state = env.get_global_state()
-        except Exception:
-            global_state = None
-    global_vector = (
-        global_state.vector
-        if global_state is not None
-        else np.zeros(0, dtype=np.float32)
+    from training.reward_context import build_reward_context
+    return build_reward_context(
+        env=env, agent_id=agent_id, info_dict=info_dict, obs_dict=obs_dict,
+        actions=actions, global_state=global_state,
     )
-    return {
-        "agent_id": agent_id,
-        "all_infos": info_dict or {},
-        "all_obs": obs_dict or {},
-        "all_actions": actions or {},
-        "global_state": global_vector,
-        "last_step_facts": getattr(env, "last_step_facts", None),
-    }
 
 
 def _collect_eval_agent_states(env: Any, agent_ids: List[str]) -> Dict[str, Any]:
@@ -830,6 +819,16 @@ def _run_eval(
         )
         for aid in trainable_ids
     }
+    from training.reward_context import validate_team_reward_composers
+    from metrics.racing_eval import team_finish_result
+    has_team_rewards = validate_team_reward_composers(
+        reward_composers, trainable_ids=trainable_ids,
+        opponent_ids=[aid for aid in agent_configs if aid not in trainable_ids],
+        reward_mode=params.get("reward_mode", "individual"),
+        critic_mode=params.get("critic_mode", "agent_conditioned"),
+        team_return_mode=params.get("team_return_mode", "per_agent"),
+        action_repeat=action_repeat,
+    )
 
     # Probe the env once so MAPPO can size the centralized critic before
     # loading the checkpoint.  Episode 0 is reset again below with the same seed.
@@ -921,6 +920,7 @@ def _run_eval(
     target_id = str(focal_cfg.get("target_id", "") or "")
     opponent_agent_id = target_id if target_id in opponent_ids else (opponent_ids[0] if opponent_ids else None)
     eval_episodes_facts = []
+    team_results = []
 
     try:
         for episode in range(eval_episodes):
@@ -952,6 +952,7 @@ def _run_eval(
                 opponent_ids=opponent_ids,
             )
             env_steps = 0
+            episode_team_reward = 0.0
 
             while True:
                 active_agents = set(getattr(env, "agents", list(obs_dict)))
@@ -1061,6 +1062,17 @@ def _run_eval(
                             params.get("team_reward_reduction", "mean")
                         ),
                     )
+                    if has_team_rewards:
+                        team_context = _build_eval_reward_context(
+                            env, agent_id=focal_agent_id, info_dict=info_dict,
+                            obs_dict=obs_dict, actions=actions,
+                            global_state=post_step_global_state,
+                        )
+                        bonus, _ = reward_composers[focal_agent_id].compute(team_context, team=True)
+                        for aid in learning_rewards:
+                            learning_rewards[aid] += bonus
+                    if learning_rewards and params.get("team_return_mode") == "joint":
+                        episode_team_reward += next(iter(learning_rewards.values()))
                     for aid, learning_reward in learning_rewards.items():
                         episode_facts.agents[aid].reward_total += learning_reward
 
@@ -1079,6 +1091,11 @@ def _run_eval(
                     )
 
             finalize_episode_facts(episode_facts)
+            if has_team_rewards:
+                team_results.append({
+                    **team_finish_result(info_dict, trainable_ids, opponent_ids),
+                    "team_episode_reward": episode_team_reward,
+                })
             eval_episodes_facts.append(episode_facts)
             episode_summary = aggregate_eval_episodes(
                 [episode_facts],
@@ -1097,6 +1114,9 @@ def _run_eval(
                 win_value = episode_summary.get(
                     "team_win_rate", episode_summary.get("win_rate", 0.0)
                 )
+            if has_team_rewards:
+                objective = reward_composers[focal_agent_id].team_contract[0]["objective"]
+                win_value = team_results[-1]["both_finished" if objective == "combined" else objective]
 
             console.print_info(
                 f"eval ep {episode + 1:4d}/{eval_episodes}  "
@@ -1120,6 +1140,16 @@ def _run_eval(
         summary["success_rate"] = summary["team_win_rate"]
     elif "win_rate" in summary:
         summary["success_rate"] = summary["win_rate"]
+    if has_team_rewards:
+        objective = reward_composers[focal_agent_id].team_contract[0]["objective"]
+        summary["team_objective"] = objective
+        summary["team_result_means"] = {
+            key: float(np.mean([row[key] for row in team_results])) for key in team_results[0]
+        }
+        summary["team_results_by_episode"] = team_results
+        summary["success_rate"] = summary["team_result_means"][
+            "both_finished" if objective == "combined" else objective
+        ]
 
     console.print_summary(summary)
     run_id = args.run_id or resolve_run_id(

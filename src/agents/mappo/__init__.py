@@ -194,6 +194,15 @@ class MAPPOAgent:
                 f"got {self.critic_mode!r}."
             )
         self.reward_mode = str(params.get("reward_mode", "individual")).strip().lower()
+        self.team_return_mode = str(params.get("team_return_mode", "per_agent"))
+        if self.team_return_mode not in {"per_agent", "joint"}:
+            raise ValueError("team_return_mode must be per_agent or joint")
+        if self.team_return_mode == "joint" and (
+            self.reward_mode != "team_shared" or self.critic_mode != "shared_team"
+        ):
+            raise ValueError("Joint team returns require team_shared rewards and shared_team critic")
+        self._team_rollout: List[Tuple[float, float, bool]] = []
+        self._team_step_indices: Dict[str, List[int]] = {aid: [] for aid in agent_ids}
         self.team_reward_reduction = str(
             params.get("team_reward_reduction", "mean")
         ).strip().lower()
@@ -544,11 +553,39 @@ class MAPPOAgent:
 
     def any_buffer_full(self) -> bool:
         """True when any agent's buffer has reached ``n_steps``."""
-        return any(buf.is_full() for buf in self.buffers.values())
+        return len(self._team_rollout) >= self.n_steps or any(buf.is_full() for buf in self.buffers.values())
+
+    def store_team_step(self, agent_ids: Sequence[str], *, reward: float,
+                        value: float, terminal: bool) -> None:
+        """Record one joint reward/value, with indices only for actual decisions."""
+        if self.team_return_mode != "joint" or len(self._team_rollout) >= self.n_steps:
+            raise ValueError("Joint team rollout is disabled or full")
+        for aid in agent_ids:
+            if self.buffers[aid].size() != len(self._team_step_indices[aid]) + 1:
+                raise ValueError("Store each agent decision before its joint team step")
+            self._team_step_indices[aid].append(len(self._team_rollout))
+        self._team_rollout.append((float(reward), float(value), bool(terminal)))
+
+    def compute_team_gae(self, next_value: float) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Continue shared credit after an individual car finishes or crashes.
+
+        Rollout cuts bootstrap V(s); the finite race horizon (including timeout)
+        is terminal only when no teammate can act. No inactive actor samples
+        are manufactured. Earlier rollout fragments receive continuation through
+        the shared critic, as in ordinary truncated PPO collection.
+        """
+        if not self._team_rollout:
+            raise ValueError("Missing joint team rollout")
+        rows = torch.tensor(self._team_rollout, dtype=torch.float32, device=self.device)
+        return compute_gae(rows[:, 0], rows[:, 1], rows[:, 2], torch.zeros_like(rows[:, 2]),
+                           next_value, self.gamma, self.gae_lambda)
 
     def clear_buffers(self) -> None:
         for buf in self.buffers.values():
             buf.clear()
+        self._team_rollout.clear()
+        for indices in self._team_step_indices.values():
+            indices.clear()
 
     # ------------------------------------------------------------------
     # PPO update — all agents' data pooled into shared actor + critic update
@@ -589,12 +626,22 @@ class MAPPOAgent:
         )
 
         next_values = self.evaluate_states(next_global_state, rollout_agent_ids)
+        team_gae = (
+            self.compute_team_gae(next_values[rollout_agent_ids[0]])
+            if self.team_return_mode == "joint" else None
+        )
         row_start = 0
         for aid in rollout_agent_ids:
             buf = self.buffers[aid]
             n = buf.size()
             next_value = next_values[aid]
-            adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
+            if team_gae is None:
+                adv, ret = buf.compute_gae(next_value, self.gamma, self.gae_lambda)
+            else:
+                indices = self._team_step_indices[aid]
+                if len(indices) != n:
+                    raise ValueError("Joint team return indices must match actual agent decisions")
+                adv, ret = (values[indices] for values in team_gae)
             rows = update_pool[row_start : row_start + n]
             rows[:, :obs_end] = buf.obs[:n]
             rows[:, obs_end : obs_end + self.global_state_dim] = (
@@ -708,6 +755,7 @@ class MAPPOAgent:
                 "critic_mode": self.critic_mode,
                 "reward_mode": self.reward_mode,
                 "team_reward_reduction": self.team_reward_reduction,
+                "team_return_mode": self.team_return_mode,
                 "actor_hidden_dims": self.actor_hidden_dims,
                 "critic_hidden_dims": self.critic_hidden_dims,
                 "activation": self.activation,
@@ -718,6 +766,8 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if ckpt.get("team_return_mode", "per_agent") != self.team_return_mode:
+            raise ValueError("Incompatible MAPPO checkpoint team return contract")
         if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
             raise ValueError("Incompatible MAPPO checkpoint action contract (speed control semantics differ).")
         if "critic_mode" not in ckpt or "reward_mode" not in ckpt:

@@ -37,10 +37,12 @@ from wrappers.rewards.completion import (
     StepTimePenaltyComponent,
     TeamProgressBonusComponent,
     TeamRelativeProgressBonusComponent,
+    TeamRaceResultComponent,
 )
 
 
 COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
+    "team_race_result": TeamRaceResultComponent,
     "centerline": CenterlineRewardComponent,
     "centerline_progress": CenterlineProgressComponent,
     "centerline_lateral_velocity_penalty": CenterlineLateralVelocityPenaltyComponent,
@@ -110,9 +112,16 @@ class RewardComposer:
         for c in self._components:
             c.reset()
 
-    def compute(self, step_info: dict) -> Tuple[float, Dict[str, float]]:
+    @property
+    def team_contract(self) -> List[Dict]:
+        return [dict(c.contract) for c in self._components if getattr(c, "scope", None) == "team"]
+
+    def compute(self, step_info: dict, *, team: bool = False) -> Tuple[float, Dict[str, float]]:
+        """Compute local rewards by default, or shared components once per step."""
         breakdown: Dict[str, float] = {}
         for component in self._components:
+            if (getattr(component, "scope", None) == "team") != team:
+                continue
             breakdown.update(component.compute(step_info))
         total = sum(breakdown.values())
         return total, breakdown

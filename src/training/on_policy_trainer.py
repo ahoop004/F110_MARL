@@ -50,6 +50,8 @@ class OnPolicyTrainer:
         self.other_agents = other_agents
         self.obs_composer = obs_composer
         self.reward_composer = reward_composer
+        if getattr(reward_composer, "team_contract", []):
+            raise ValueError("Team race rewards require MAPPO joint team returns")
         self.action_composer = action_composer
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []

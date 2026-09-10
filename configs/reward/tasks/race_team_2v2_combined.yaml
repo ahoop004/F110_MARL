@@ -1,0 +1,15 @@
+includes:
+  - lap_completion_normalized_progress.yaml
+
+task:
+  name: race_team_2v2_combined
+  description: Mean Frenet PPO reward plus clean team completion and finish-rank points.
+
+reward:
+  team_race_result:
+    enabled: true
+    objective: combined
+    # Each finisher earns (4-position)/3 points, averaged over two teammates.
+    # DNF earns zero. First+fourth and second+third therefore tie at 0.5.
+    rank_bonus: 1.0
+    both_finish_bonus: 1.0

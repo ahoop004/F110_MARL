@@ -1,0 +1,15 @@
+includes:
+  - mappo_2v2_frenet_ppo_pretrained.yaml
+
+experiment:
+  name: mappo_2v2_frenet_ppo_pretrained_first_place
+
+agents:
+  car_0:
+    reward: ../configs/reward/tasks/race_team_2v2_first_place.yaml
+  car_1:
+    reward: ../configs/reward/tasks/race_team_2v2_first_place.yaml
+
+wandb:
+  group: mappo-2v2-frenet-ppo-first-place
+  notes: "Mean Frenet PPO reward plus first-place team bonus; supporter completion remains a secondary incentive"

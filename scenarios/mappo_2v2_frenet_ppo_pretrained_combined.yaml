@@ -1,0 +1,15 @@
+includes:
+  - mappo_2v2_frenet_ppo_pretrained.yaml
+
+experiment:
+  name: mappo_2v2_frenet_ppo_pretrained_combined
+
+agents:
+  car_0:
+    reward: ../configs/reward/tasks/race_team_2v2_combined.yaml
+  car_1:
+    reward: ../configs/reward/tasks/race_team_2v2_combined.yaml
+
+wandb:
+  group: mappo-2v2-frenet-ppo-combined
+  notes: "Mean Frenet PPO reward plus clean combined finishing-position score and both-finished bonus"

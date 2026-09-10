@@ -20,6 +20,37 @@ DEFERRED_COLLISION_PAIR_METRICS = (
 )
 
 
+def team_finish_result(infos: Mapping[str, Any], team_ids: Sequence[str],
+                       opponent_ids: Sequence[str]) -> Dict[str, float]:
+    """2v2 result from immutable finish facts; unfinished/DNF cars earn no points.
+
+    Rank points are (4-position)/3, averaged over the configured two teammates.
+    Thus 1st+4th and 2nd+3rd tie. Clean finishers rank ahead of DNFs; no finish
+    produces neither a first-place win nor a sweep. Later contact with a parked
+    finisher does not undo its authoritative race-complete terminal cause.
+    """
+    ids = [*team_ids, *opponent_ids]
+    if len(team_ids) != 2 or len(opponent_ids) != 2 or len(set(ids)) != 4:
+        raise ValueError("Team race results require two teammates and two opponents")
+    if any(aid not in infos for aid in ids):
+        raise ValueError("Team race results require lifecycle info for all four cars")
+    positions = []
+    for aid in team_ids:
+        info = infos[aid]
+        if info.get("terminal_reason") != "race_complete":
+            continue
+        position = info.get("finish_position")
+        if position not in (1, 2, 3, 4):
+            raise ValueError("Completed racers require a finish position from 1 to 4")
+        positions.append(position)
+    return {
+        "both_finished": float(len(positions) == 2),
+        "rank_score": sum((4 - p) / 3 for p in positions) / 2,
+        "first_place": float(1 in positions),
+        "sweep": float(sorted(positions) == [1, 2]),
+    }
+
+
 @dataclass
 class AgentEpisodeFacts:
     agent_id: str

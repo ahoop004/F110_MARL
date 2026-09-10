@@ -1,0 +1,15 @@
+includes:
+  - mappo_2v2_frenet_ppo_pretrained.yaml
+
+experiment:
+  name: mappo_2v2_frenet_ppo_pretrained_sweep
+
+agents:
+  car_0:
+    reward: ../configs/reward/tasks/race_team_2v2_sweep.yaml
+  car_1:
+    reward: ../configs/reward/tasks/race_team_2v2_sweep.yaml
+
+wandb:
+  group: mappo-2v2-frenet-ppo-sweep
+  notes: "Mean Frenet PPO reward plus a clean first-and-second team sweep bonus"

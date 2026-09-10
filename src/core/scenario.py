@@ -296,6 +296,16 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         reward_mode = mappo["reward_mode"]
         critic_mode = mappo["critic_mode"]
         reduction = mappo["team_reward_reduction"]
+        params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
+        team_return_mode = params.get("team_return_mode", "per_agent")
+        if team_return_mode not in {"per_agent", "joint"}:
+            raise ScenarioError("team_return_mode must be per_agent or joint")
+        if team_return_mode == "joint" and (
+            reward_mode != "team_shared" or critic_mode != "shared_team"
+            or int(environment.get("action_repeat", 1)) != 1
+            or (environment.get("episode_termination", {}) or {}).get("mode") not in {"all_agents", "all_trainable"}
+        ):
+            raise ScenarioError("Joint team returns require team_shared/shared_team, action_repeat=1, and all_agents/all_trainable termination")
         if reward_mode not in {"individual", "team_shared"}:
             raise ScenarioError(
                 "'mappo.reward_mode' must be 'individual' or 'team_shared'."

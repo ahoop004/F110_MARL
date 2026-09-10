@@ -1,0 +1,12 @@
+includes:
+  - lap_completion_normalized_progress.yaml
+
+task:
+  name: race_team_2v2_sweep
+  description: Mean Frenet PPO reward plus a shared bonus for clean first and second places.
+
+reward:
+  team_race_result:
+    enabled: true
+    objective: sweep
+    win_bonus: 2.0

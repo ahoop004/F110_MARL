@@ -1,0 +1,12 @@
+includes:
+  - lap_completion_normalized_progress.yaml
+
+task:
+  name: race_team_2v2_first_place
+  description: Mean Frenet PPO reward plus a shared bonus when a teammate finishes first.
+
+reward:
+  team_race_result:
+    enabled: true
+    objective: first_place
+    win_bonus: 2.0

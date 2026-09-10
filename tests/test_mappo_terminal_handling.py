@@ -12,6 +12,149 @@ from src.replay.dataset_writer import DatasetHook, DatasetWriter
 from training.marl_trainer import MARLTrainer
 
 
+@pytest.mark.parametrize("terminal,next_value,expected", [(True, 10., 1.), (False, 10., 10.)])
+def test_joint_returns_use_team_boundary_instead_of_individual_terminal(terminal, next_value, expected, tmp_path, monkeypatch):
+    import agents.mappo as module
+    params = dict(hidden_dims=[4], n_steps=4, n_epochs=1, batch_size=8, gamma=.9,
+                  gae_lambda=1., critic_mode="shared_team", reward_mode="team_shared",
+                  team_return_mode="joint")
+    agent = MAPPOAgent(1, 1, -np.ones(2), np.ones(2), ["a", "b"], params)
+    ids = agent.agent_ids
+    agent.store_batch(ids, observations={a: np.array([i]) for i, a in enumerate(ids)},
+        global_state=np.zeros(1), actions={a: np.zeros(2) for a in ids},
+        rewards={a: 1. for a in ids}, log_probs={a: 0. for a in ids}, values={a: 0. for a in ids},
+        terminated={"a": True, "b": terminal}, truncated={a: False for a in ids})
+    agent.store_team_step(ids, reward=1., value=0., terminal=terminal)
+    assert agent.buffers["a"].terminated[0] == 1  # factual lifecycle is retained
+    advantages, returns = agent.compute_team_gae(next_value)
+    assert returns.tolist() == pytest.approx([expected])
+    captured = []
+    monkeypatch.setattr(agent, "evaluate_states", lambda state, ids: {a: next_value for a in ids})
+    def capture(*args):
+        captured.extend(args[-1].tolist())
+        return torch.zeros(4)
+    monkeypatch.setattr(module, "ppo_minibatch_step", capture)
+    agent.update(np.zeros(1))
+    assert captured == pytest.approx([expected, expected])
+    checkpoint = tmp_path / "joint.pt"
+    agent.save(str(checkpoint))
+    recipient = MAPPOAgent(1, 1, -np.ones(2), np.ones(2), ids, params)
+    recipient.load(str(checkpoint))
+    legacy = MAPPOAgent(1, 1, -np.ones(2), np.ones(2), ids, {**params, "team_return_mode": "per_agent"})
+    with pytest.raises(ValueError, match="team return contract"):
+        legacy.load(str(checkpoint))
+    agent.clear_buffers()
+    assert not agent._team_rollout
+    assert not any(agent._team_step_indices.values())
+
+
+def test_delayed_sweep_reward_reaches_early_finisher_without_dummy_decisions(tmp_path, monkeypatch):
+    from wrappers.rewards.composer import RewardComposer
+
+    class Env:
+        possible_agents = ["car_0", "car_1", "car_2", "car_3"]
+        trainable_agents = ["car_0", "car_1"]
+        fixed_policy_agents = ["car_2", "car_3"]
+        timestep = .01
+        max_steps = 3
+        action_spaces = {aid: SimpleNamespace(low=-np.ones(2), high=np.ones(2))
+                         for aid in possible_agents}
+
+        def reset(self, seed=None, options=None):
+            self.step_idx = 0
+            self.agents = self.possible_agents.copy()
+            self.episode_done = False
+            self.infos = {aid: {"status": "active"} for aid in self.agents}
+            return self.obs(), self.infos
+
+        def obs(self):
+            return {aid: {"value": float(self.step_idx)} for aid in self.possible_agents}
+
+        def get_global_state(self):
+            return SimpleNamespace(vector=np.array([self.step_idx], dtype=np.float32), masks={}, metadata={})
+
+        def get_agent_state(self, aid):
+            raise KeyError(aid)
+
+        def step(self, actions):
+            assert set(actions) == set(self.agents)
+            self.step_idx += 1
+            finished = [self.possible_agents[self.step_idx-1]] if self.step_idx <= 2 else self.agents.copy()
+            for aid in self.possible_agents:
+                self.infos[aid]["lap_crossed"] = False
+            for aid in finished:
+                self.agents.remove(aid)
+                self.infos[aid] = dict(status="finished", terminal_reason="race_complete",
+                    race_completed=True, lap_crossed=True, finish_position=self.possible_agents.index(aid)+1)
+            self.episode_done = not self.agents
+            return self.obs(), {}, {aid: aid in finished for aid in self.possible_agents}, {}, self.infos
+
+    env = Env()
+    ids = env.trainable_agents
+    agent = MAPPOAgent(1, 1, -np.ones(2), np.ones(2), ids,
+        dict(hidden_dims=[4], n_steps=8, n_epochs=1, batch_size=8, gamma=.9, gae_lambda=1.,
+             team_return_mode="joint", reward_mode="team_shared", critic_mode="shared_team"))
+    with torch.no_grad():
+        for parameter in agent.critic.parameters():
+            parameter.zero_()
+    returns = []
+    compute = agent.compute_team_gae
+    def capture(next_value):
+        result = compute(next_value)
+        returns.extend(result[1].tolist())
+        return result
+    agent.compute_team_gae = capture
+    hook = _RecordingHook()
+    writer = DatasetWriter(tmp_path / "dataset")
+    MARLTrainer(env, agent, ids,
+        {aid: SimpleNamespace(act=lambda obs: np.zeros(2)) for aid in env.fixed_policy_agents},
+        {aid: _ObservationComposer() for aid in ids},
+        {aid: RewardComposer.from_file("configs/reward/tasks/race_team_2v2_sweep.yaml") for aid in ids},
+        _ActionComposer(), hooks=[hook, DatasetHook(writer)], reward_mode="team_shared").train(1)
+    assert [r.agent_id for r in hook.records] == ["car_0", "car_1", "car_1"]
+    first, last = .5 - .0000125, 2.5 - .0000125/2
+    assert [r.reward for r in hook.records] == pytest.approx([first, first, last])
+    assert hook.records[-1].reward_components["team_result/sweep"] == 2.
+    assert returns == pytest.approx([first + .9*last, last])
+    with np.load(tmp_path / "dataset/transitions_000000.npz", allow_pickle=True) as chunk:
+        assert chunk["terminated"].tolist() == [True, False, True]
+        assert chunk["step_idx"].tolist() == [0, 0, 1]
+        assert chunk["obs"].shape[0] == 3
+
+    # Exercise the CLI evaluation path on the same nonzero delayed team bonus.
+    import json
+    from pathlib import Path
+    import run
+    from core.scenario import load_and_expand_scenario
+
+    scenario_path = Path("scenarios/mappo_2v2_frenet_ppo_pretrained_sweep.yaml").resolve()
+    scenario = load_and_expand_scenario(str(scenario_path))
+    scenario["training_defaults"]["device"] = "cpu"
+    for aid in ids:
+        scenario["agents"][aid]["params"].update(
+            pi_hidden_dims=[4], vf_hidden_dims=[4], activation="tanh")
+        scenario["agents"][aid]["action_constraints"] = {}
+    monkeypatch.setattr(run, "create_training_setup", lambda *a, **kw: (
+        Env(), {aid: SimpleNamespace(act=lambda obs: np.zeros(2))
+                for aid in env.fixed_policy_agents}, None))
+    composers = {aid: _ObservationComposer() for aid in ids}
+    for composer in composers.values():
+        composer.obs_dim = 1
+    monkeypatch.setattr(run, "build_obs_composers", lambda *a, **kw: composers)
+    checkpoint = tmp_path / "evaluation.pt"
+    agent.save(str(checkpoint))
+    console = SimpleNamespace(**{name: lambda *a, **kw: None for name in (
+        "print_error", "print_warning", "print_info", "print_header", "print_summary")})
+    run._run_eval(scenario, SimpleNamespace(
+        checkpoint=str(checkpoint), eval_protocol=None, eval_episodes=1,
+        scenario=str(scenario_path), allow_provenance_mismatch=False,
+        output_dir=str(tmp_path / "eval"), run_id="reward-parity"), console, scenario_path.parent)
+    summary = json.loads((tmp_path / "eval/evaluation_report.json").read_text())["summary"]
+    assert summary["team_objective"] == "sweep"
+    assert summary["success_rate"] == 1.
+    assert summary["team_result_means"]["team_episode_reward"] == pytest.approx(first + last)
+
+
 def _one_step_advantage(*, terminated: bool, truncated: bool) -> float:
     buffer = MAPPORolloutBuffer(
         n_steps=2,

@@ -30,7 +30,58 @@ from wrappers.rewards.completion import (
     LapCompletionComponent,
     PerLapBonusComponent,
     FinishAheadBonusComponent,
+    TeamRaceResultComponent,
 )
+
+
+@pytest.mark.parametrize("positions,expected", [
+    ([1, 2], (11/6, 2, 2)),
+    ([1, 4], (1.5, 2, 0)),
+    ([2, 3], (1.5, 0, 0)),
+    ([3, 4], (7/6, 0, 0)),
+    ([1, None], (.5, 2, 0)),
+    ([None, None], (0, 0, 0)),
+])
+def test_team_result_rewards_cover_rank_ties_dnfs_and_sweeps(positions, expected):
+    from metrics.racing_eval import team_finish_result
+    team, opponents = ["red", "blue"], ["green", "yellow"]
+    infos = {aid: {"terminal_reason": "time_limit"} for aid in [*team, *opponents]}
+    context = {"all_infos": infos, "trainable_agent_ids": team, "opponent_agent_ids": opponents}
+    for objective, bonus in zip(("combined", "first_place", "sweep"), expected):
+        component = TeamRaceResultComponent({"objective": objective, "rank_bonus": 1, "both_finish_bonus": 1, "win_bonus": 2})
+        for aid in team:
+            infos[aid] = {"terminal_reason": "time_limit"}
+        assert component.compute(context) == {}
+        total = 0.0
+        for aid, position in zip(team, positions):
+            if position is not None:
+                infos[aid] = {"terminal_reason": "race_complete", "finish_position": position}
+            total += sum(component.compute(context).values())
+        assert total == pytest.approx(bonus)
+        assert component.compute(context) == {}  # completed cars remain in infos
+        component.reset()
+        assert sum(component.compute(context).values()) == pytest.approx(bonus)
+    result = team_finish_result(infos, team, opponents)
+    assert result["both_finished"] == float(None not in positions)
+    with pytest.raises(ValueError, match="all four"):
+        team_finish_result({}, team, opponents)
+
+
+@pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])
+def test_2v2_reward_presets_preserve_every_frenet_ppo_term(objective):
+    from core.scenario import load_yaml_config
+    from wrappers.rewards.composer import RewardComposer
+    path = f"configs/reward/tasks/race_team_2v2_{objective}.yaml"
+    reference = load_yaml_config("configs/reward/tasks/lap_completion_normalized_progress.yaml")
+    preset = load_yaml_config(path)
+    shared = preset["reward"].pop("team_race_result")
+    assert shared["objective"] == objective
+    assert preset["reward"] == reference["reward"]
+    reference_composer = RewardComposer.from_config(reference)
+    composer = RewardComposer.from_file(path)
+    for delta, reason in [(.01, None), (-.01, None), (.04, None), (0, "collision"), (0, "time_limit")]:
+        context = {"info": {"centerline": {"progress_delta": delta}, "terminal_reason": reason}}
+        assert composer.compute(context) == reference_composer.compute(context)
 
 
 def test_terminal_vehicle_controller_is_deterministic() -> None:

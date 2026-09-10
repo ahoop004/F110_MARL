@@ -332,6 +332,25 @@ def test_circle_mappo_scenario_uses_ppo_actor_contract() -> None:
     )
 
 
+@pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])
+def test_frenet_team_variants_only_change_reward_and_experiment_labels(objective):
+    baseline = load_and_expand_scenario("scenarios/mappo_2v2_frenet_ppo_pretrained.yaml")
+    variant = load_and_expand_scenario(f"scenarios/mappo_2v2_frenet_ppo_pretrained_{objective}.yaml")
+    assert variant["experiment"]["name"] != baseline["experiment"]["name"]
+    assert variant["environment"] == baseline["environment"]
+    assert variant["training_defaults"] == baseline["training_defaults"]
+    assert variant["training_defaults"]["team_return_mode"] == "joint"
+    for aid in ("car_0", "car_1"):
+        assert variant["agents"][aid]["reward"].endswith(f"race_team_2v2_{objective}.yaml")
+        variant["agents"][aid]["reward"] = baseline["agents"][aid]["reward"]
+    variant["experiment"]["name"] = baseline["experiment"]["name"]
+    variant["wandb"] = baseline["wandb"]
+    assert variant == baseline
+    variant["mappo"]["critic_mode"] = "agent_conditioned"
+    with pytest.raises(ScenarioError, match="Joint team returns"):
+        validate_scenario(variant)
+
+
 def test_reward_context_exposes_active_centerline_track_length() -> None:
     env = SimpleNamespace(
         centerline_track_length=402.5,

@@ -220,10 +220,10 @@ contract instead of including the entire mutable PPO experiment. Its training
 maps are explicitly Budapest and circle, with circle evaluation, three full
 laps, and an 80,000-step horizon. MAPPO uses one environment, a fresh
 `[512, 512]` centralized critic, a fresh optimizer with constant learning rate
-`0.0001`, and the physical discount `gamma = 0.9979919516614258`. Shared reward
-and critic settings come from the established 2v2 team experiment. Reverse
-commands are permitted; the inherited racing reward still penalizes backward
-progress. Neither the reward nor the opponent settings were retuned here.
+`0.0001`, and the physical discount `gamma = 0.9979919516614258`. The base
+scenario now averages the exact local reward from Frenet PPO pretraining.
+Reverse commands are permitted; signed progress penalizes travel backward
+along the track. Fixed opponents remain unchanged.
 
 The configured initialization path is the completion-selected `best_model.pt`
 from run `ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d`. Wait for
@@ -259,3 +259,73 @@ The fixed opponents retain their 2.5 m/s pace while the learners can command
 comparison. Evaluation on circle is not a held-out-map result. Before making
 competitive claims, calibrate the opponents and compare against scratch MAPPO
 with the same team reward, physics, maps, seeds, horizon, and training budget.
+
+### Three team reward variants
+
+The base `mappo_2v2_frenet_ppo_pretrained.yaml` is the mean-PPO-reward control.
+Three thin scenario variants add competitive objectives while preserving maps,
+seeds, actors, critics, control, opponents, and optimizer settings:
+
+| Scenario suffix | New reward task | Shared additions |
+|---|---|---|
+| `_combined.yaml` | `race_team_2v2_combined.yaml` | +1 when both teammates finish cleanly, plus normalized finish-rank points |
+| `_first_place.yaml` | `race_team_2v2_first_place.yaml` | +2 when a teammate takes first place |
+| `_sweep.yaml` | `race_team_2v2_sweep.yaml` | +2 when teammates take first and second |
+
+All three task files include `lap_completion_normalized_progress.yaml`, the
+reward used by `ppo_lap_completion_pretrain_frenet.yaml`. The original PPO task
+is unchanged: signed progress of approximately +1 per forward lap (clamped to
+±0.025 per physics step), +1 clean race completion, -1 collision, -1 timeout,
+and -0.0000125 per physics step. For two active teammates these local terms are
+averaged; an inactive teammate contributes zero with the denominator fixed at
+two. The shared additions are then added once, without dividing a late bonus
+by two when only one teammate remains active.
+
+Combined rank points are `((4-position_0)/3 + (4-position_1)/3)/2`; a DNF earns
+zero points. Each finisher's contribution is paid as its position becomes known.
+First+fourth and second+third tie at 0.5 points; a sweep earns 5/6 points plus
+the +1 both-finished bonus. Opponent DNFs rank behind clean finishers. No finish
+earns no first-place/sweep bonus, and no collision earns a competitive bonus
+by itself. These are additive objectives, not guarantees that a win always
+outweighs every possible difference in accumulated local rewards.
+
+CLI reports `team_objective`, `team_result_means`, and `team_results_by_episode`.
+For combined results, `success_rate` is both-finished rate, with rank score
+reported separately. For the other variants it is first-place or sweep rate.
+These explicit results should be used instead of the older generic
+`team_win_rate`, which can award a progress-based win without a race finish.
+
+The four Frenet team scenarios opt into `training_defaults.team_return_mode:
+joint`. GAE is computed on the common reward/value timeline and gathered only
+for real per-agent decisions. Finishing or crashing one car does not end the
+team return: a later teammate result contributes to earlier decisions within
+the rollout; across rollout cuts, continuation bootstraps through the shared
+critic. There are no extra actor decisions for inactive cars. Team returns end
+when no learner can act, including a race timeout: this finite-horizon timeout
+is terminal for learning. Opponents may finish later for full-race reporting,
+but the configured team bonuses are already decided at the last learner exit.
+This mode requires shared rewards, a shared team critic, action repeat one,
+and all-agent or all-trainable episode termination. Other scenarios retain the
+legacy per-agent GAE and truncation behavior.
+
+MAPPO checkpoints record the return mode and reject incompatible loads; PPO
+actor-only initialization remains compatible. Dataset schema stays at 2.0 and
+records one row per actual learner decision. Terminated/truncated flags remain
+the individual car's factual flags, not the shared-return boundary. Metadata
+records `team_return_mode` and the shared reward contract. To reconstruct joint
+returns, group rows by episode/step, use the shared reward once per joint step,
+and use trainable lifecycle masks for the team boundary; do not stop at the
+first teammate's termination. Per-row component breakdowns separate local terms
+from shared additions, so their sum need not equal the row's averaged reward.
+
+For example, after the PPO checkpoint is available:
+
+```bash
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_2v2_frenet_ppo_pretrained_combined.yaml --no-wandb
+```
+
+Use the same suffix when evaluating its checkpoints. Run each variant with the
+same training seeds and compare the factual team result metrics, not raw reward
+totals across objectives. Historical runs using the old 2v2 shaped reward or
+per-agent return boundaries are a different experimental condition.

@@ -25,7 +25,8 @@ from agents.mappo import MAPPOAgent
 from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
 from training.hooks import TrainingHook, transition_record_hooks
-from training.reward_context import build_reward_context, transition_lifecycle_fields
+from training.reward_context import build_reward_context, transition_lifecycle_fields, validate_team_reward_composers
+from metrics.racing_eval import team_finish_result
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
@@ -114,6 +115,15 @@ class MARLTrainer:
         self.run_id = run_id
         self.reward_mode = str(reward_mode).strip().lower()
         self.team_reward_reduction = str(team_reward_reduction).strip().lower()
+        self.team_return_mode = getattr(agent, "team_return_mode", "per_agent")
+        self._has_team_rewards = validate_team_reward_composers(
+            reward_composers, trainable_ids=self.trainable_ids,
+            opponent_ids=list(other_agents), reward_mode=self.reward_mode,
+            critic_mode=getattr(agent, "critic_mode", "agent_conditioned"),
+            team_return_mode=self.team_return_mode, action_repeat=self.action_repeat,
+        )
+        if self.team_return_mode == "joint" and self.action_repeat != 1:
+            raise ValueError("Joint team returns currently require action_repeat=1")
         if self.reward_mode not in {"individual", "team_shared"}:
             raise ValueError(
                 "MAPPO reward_mode must be 'individual' or 'team_shared', "
@@ -304,6 +314,8 @@ class MARLTrainer:
                 decision_terminated = {aid: False for aid in actions_norm}
                 decision_truncated = {aid: False for aid in actions_norm}
                 post_step_global_snapshot: Optional[GlobalState] = None
+                team_step_reward = 0.0
+                team_breakdowns: Dict[str, float] = {}
 
                 for _ in range(self.action_repeat):
                     obs_dict, rew_dict, term_dict, trunc_dict, info_dict = self.env.step(
@@ -361,6 +373,19 @@ class MARLTrainer:
                     substep_learning_rewards = self._learning_rewards(
                         substep_individual_rewards
                     )
+                    if self._has_team_rewards:
+                        # Shared components have one stateful composer and are
+                        # added after the local mean, even with one survivor.
+                        team_context = self._reward_context(
+                            agent_id=self.focal_id, info_dict=info_dict,
+                            obs_dict=obs_dict, actions=all_actions,
+                            global_state=post_step_global_snapshot,
+                        )
+                        bonus, team_breakdowns = self.reward_composers[self.focal_id].compute(team_context, team=True)
+                        for aid in substep_learning_rewards:
+                            substep_learning_rewards[aid] += bonus
+                    if self.team_return_mode == "joint" and substep_learning_rewards:
+                        team_step_reward += next(iter(substep_learning_rewards.values()))
                     for aid, learning_reward in substep_learning_rewards.items():
                         accumulated_learning_rewards[aid] += learning_reward
 
@@ -399,6 +424,7 @@ class MARLTrainer:
                             "learning_reward": reward,
                             "reward_mode": self.reward_mode,
                             "team_reward_reduction": self.team_reward_reduction,
+                            "team_return_mode": self.team_return_mode,
                         }
                     )
                     # The next observation must expose the action that produced
@@ -430,6 +456,12 @@ class MARLTrainer:
                     terminated=decision_terminated,
                     truncated=decision_truncated,
                 )
+                if self.team_return_mode == "joint" and ordered_ids:
+                    self.agent.store_team_step(
+                        ordered_ids, reward=team_step_reward,
+                        value=values[ordered_ids[0]],
+                        terminal=not any(aid in getattr(self.env, "agents", []) for aid in self.trainable_ids),
+                    )
 
                 if self._transition_hooks:
                     for aid in ordered_ids:
@@ -438,7 +470,7 @@ class MARLTrainer:
                             action_norm=actions_norm[aid],
                             action_phys=actions_phys[aid],
                             reward=accumulated_learning_rewards[aid],
-                            reward_components=reward_breakdowns[aid],
+                            reward_components={**reward_breakdowns[aid], **team_breakdowns},
                             next_obs=next_wrapped_obs[aid],
                             terminated=decision_terminated[aid],
                             truncated=decision_truncated[aid],
@@ -460,7 +492,7 @@ class MARLTrainer:
                         for hook in self._transition_hooks:
                             hook.on_step(record)
 
-                episode_reward += step_reward
+                episode_reward += team_step_reward if self.team_return_mode == "joint" else step_reward
 
                 # --- Update observation wrappers ---
                 for aid in self.trainable_ids:
@@ -500,6 +532,14 @@ class MARLTrainer:
             )
             episode_metrics["reward_mode"] = self.reward_mode
             episode_metrics["team_reward_reduction"] = self.team_reward_reduction
+            if self.team_return_mode == "joint":
+                episode_metrics["team_episode_reward"] = episode_reward
+            if self._has_team_rewards:
+                episode_metrics.update({
+                    f"team_result/{key}": value for key, value in team_finish_result(
+                        info_dict, self.trainable_ids, list(self.other_agents)
+                    ).items()
+                })
             episode_metrics["agent_outcomes"] = agent_outcomes
             episode_metrics["agent_terminal_reasons"] = {
                 aid: agent_last_info.get(aid, {}).get("terminal_reason")

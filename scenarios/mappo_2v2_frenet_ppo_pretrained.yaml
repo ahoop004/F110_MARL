@@ -1,5 +1,5 @@
 # Reverse-enabled Frenet PPO actor transfer to two MAPPO teammates.
-# Reuse the established team reward and fixed hybrid opponents; snapshot the
+# Average the Frenet PPO lap-completion reward and reuse fixed opponents; snapshot the
 # PPO observation/control/dynamics contract so later pretraining edits cannot
 # silently change this experiment. The critic and optimizer start fresh.
 includes:
@@ -13,6 +13,9 @@ experiment:
   torch_threads: 1
 
 training_defaults:
+  # GAE follows the joint team timeline after a teammate finishes/crashes.
+  # Race timeouts are terminal for this finite-horizon team task.
+  team_return_mode: joint
   # Requires the selected checkpoint from the completed reverse-enabled run.
   # Do not substitute the older direct-speed or forward-only PPO checkpoints.
   pretrained_actor_checkpoint: ../outputs/ppo_lap_completion_pretrain_frenet/ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d/best_model.pt
@@ -80,7 +83,7 @@ agents:
     role: racer
     target_id: car_2
     observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
-    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
     params: &learner_params
       learning_rate: 0.0001
       pi_hidden_dims: [256, 256]
@@ -101,7 +104,7 @@ agents:
     role: racer
     target_id: car_3
     observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
-    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
     params: *learner_params
     action_constraints: *learner_actions
 
@@ -122,4 +125,4 @@ wandb:
   group: mappo-2v2-frenet-ppo-pretrained
   job_type: pretrained-mappo-team
   tags: [mappo, 2v2, ppo-pretrained, frenet, acceleration-control, reverse-enabled, team-reward, hybrid_pp_ftg]
-  notes: "Three-lap reverse-enabled PPO actor transfer; Budapest/circle training, circle evaluation; shared team critic/reward; inherited 2.5 m/s hybrid opponents"
+  notes: "Three-lap reverse-enabled PPO actor transfer; mean Frenet PPO reward with joint team returns; Budapest/circle training, circle evaluation; inherited 2.5 m/s hybrid opponents"

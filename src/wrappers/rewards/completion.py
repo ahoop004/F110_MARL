@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
+import math
 
 from wrappers.rewards.base import RewardComponent
+from metrics.racing_eval import team_finish_result
 
 
 def _centerline_info(step_info: dict) -> dict:
@@ -300,3 +302,46 @@ class PerLapBonusComponent(RewardComponent):
         if bool(info.get("race_completed", False)) and not self.include_final_lap:
             return {}
         return {"per_lap/bonus": self.bonus}
+
+
+class TeamRaceResultComponent(RewardComponent):
+    """Shared result increments, computed once per joint step before distribution.
+
+    Combined rank points are paid when each clean finish becomes known, and the
+    both-finished bonus when the second teammate finishes. First/sweep bonuses
+    are likewise paid as soon as decided; they never wait for parked opponents.
+    """
+
+    scope = "team"
+
+    def __init__(self, config: dict) -> None:
+        self.objective = str(config.get("objective", "combined"))
+        if self.objective not in {"combined", "first_place", "sweep"}:
+            raise ValueError("team_race_result objective must be combined, first_place, or sweep")
+        self.contract = {"objective": self.objective}
+        keys = ("rank_bonus", "both_finish_bonus") if self.objective == "combined" else ("win_bonus",)
+        for key in keys:
+            value = float(config[key])
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"team_race_result {key} must be finite and nonnegative")
+            self.contract[key] = value
+        self.reset()
+
+    def reset(self) -> None:
+        self._paid: Dict[str, float] = {}
+
+    def compute(self, step_info: dict) -> Dict[str, float]:
+        result = team_finish_result(
+            step_info["all_infos"], step_info["trainable_agent_ids"],
+            step_info["opponent_agent_ids"],
+        )
+        if self.objective == "combined":
+            scores = {
+                "team_result/rank": self.contract["rank_bonus"] * result["rank_score"],
+                "team_result/both_finished": self.contract["both_finish_bonus"] * result["both_finished"],
+            }
+        else:
+            scores = {f"team_result/{self.objective}": self.contract["win_bonus"] * result[self.objective]}
+        increments = {key: value - self._paid.get(key, 0.0) for key, value in scores.items()}
+        self._paid = scores
+        return {key: value for key, value in increments.items() if value != 0.0}
