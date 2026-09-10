@@ -179,33 +179,33 @@ def test_packed_update_matches_legacy_losses_gradients_and_parameters(
         )
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
-def test_bulk_cuda_gae_matches_scalar_cpu_recurrence_exactly() -> None:
-    packed = torch.tensor(
-        [
-            [1.0, 0.2, 0.0, 0.0],
-            [2.0, 0.4, 0.0, 0.0],
-            [3.0, 0.6, 1.0, 0.0],
-            [4.0, 0.8, 0.0, 1.0],
-        ],
-        dtype=torch.float32,
-    )
+@pytest.mark.parametrize("algorithm", ["ppo", "mappo"])
+@pytest.mark.parametrize("n", [0, 1, 4, 2048])
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+)])
+def test_gae_matches_scalar_recurrence_exactly(algorithm, n, device) -> None:
+    from agents.ppo import RolloutBuffer
 
-    def make_buffer(device: torch.device) -> MAPPORolloutBuffer:
-        buffer = MAPPORolloutBuffer(4, 0, 0, 0, device)
-        buffer.rewards.copy_(packed[:, 0].to(device))
-        buffer.values.copy_(packed[:, 1].to(device))
-        buffer.terminated.copy_(packed[:, 2].to(device))
-        buffer.truncated.copy_(packed[:, 3].to(device))
-        buffer.ptr = 4
-        return buffer
+    rng = np.random.default_rng(42)
+    data = rng.normal(size=(n, 4)).astype(np.float32)
+    data[:, 2:] = data[:, 2:] > 1.0
+    if n:
+        data[-1, 2:] = [0.0, 1.0]
+    buffer = (RolloutBuffer(n + 1, 0, 0, torch.device(device)) if algorithm == "ppo"
+              else MAPPORolloutBuffer(n + 1, 0, 0, 0, torch.device(device)))
+    for column, name in enumerate(("rewards", "values", "terminated", "truncated")):
+        getattr(buffer, name)[:n].copy_(torch.as_tensor(data[:, column], device=device))
+    buffer.ptr = n  # Exercise partially filled buffers as well as empty ones.
 
-    expected_adv, expected_ret = make_buffer(torch.device("cpu")).compute_gae(
-        1.25, 0.99, 0.95
-    )
-    actual_adv, actual_ret = make_buffer(torch.device("cuda")).compute_gae(
-        1.25, 0.99, 0.95
-    )
-
-    assert torch.equal(actual_adv.cpu(), expected_adv)
-    assert torch.equal(actual_ret.cpu(), expected_ret)
+    expected = np.zeros(n, dtype=np.float32)
+    carry = 0.0
+    for t in reversed(range(n)):
+        reward, value, terminal, truncation = map(float, data[t])
+        successor = 1.25 if t == n - 1 else float(data[t + 1, 1])
+        delta = reward + 0.99 * successor * (1.0 - terminal) - value
+        carry = delta + 0.99 * 0.95 * (not (terminal or truncation)) * carry
+        expected[t] = carry
+    advantages, returns = buffer.compute_gae(1.25, 0.99, 0.95)
+    assert torch.equal(advantages.cpu(), torch.from_numpy(expected))
+    assert torch.equal(returns.cpu(), torch.from_numpy(expected + data[:, 1]))

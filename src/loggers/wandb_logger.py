@@ -15,26 +15,7 @@ class WandbLogger:
     Handles W&B initialization, configuration tracking, and metrics logging
     for training runs. Supports both per-episode and rolling statistics.
 
-    Example:
-        >>> from loggers import WandbLogger
-        >>> from metrics import MetricsTracker, determine_outcome
-        >>>
-        >>> # Initialize logger
-        >>> logger = WandbLogger(
-        ...     project="f110-gaplock",
-        ...     config={"algorithm": "ppo", "lr": 0.0005},
-        ...     tags=["baseline", "gaplock"],
-        ... )
-        >>>
-        >>> # After episode
-        >>> logger.log_episode(
-        ...     episode=0,
-        ...     metrics=tracker.get_latest(1)[0],
-        ...     rolling_stats=tracker.get_rolling_stats(window=100),
-        ... )
-        >>>
-        >>> # Finish run
-        >>> logger.finish()
+    Training hooks send scalar dictionaries through ``log_metrics``.
     """
 
     def __init__(
@@ -185,7 +166,7 @@ class WandbLogger:
     def log_episode(
         self,
         episode: int,
-        metrics: Any,  # EpisodeMetrics
+        metrics: Any,
         rolling_stats: Optional[Dict[str, float]] = None,
         extra: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
@@ -194,7 +175,7 @@ class WandbLogger:
 
         Args:
             episode: Episode number
-            metrics: EpisodeMetrics instance
+            metrics: Object exposing to_dict()
             rolling_stats: Optional dict of rolling statistics
             extra: Optional extra metrics to log
             agent_id: Optional agent ID for namespacing metrics
@@ -293,11 +274,10 @@ class WandbLogger:
 
         Args:
             component_stats: Dict mapping component names to their stats
-                (from MetricsAggregator.aggregate_components)
             step: Optional step number
 
         Example:
-            >>> stats = aggregator.aggregate_components(episodes, window=100)
+            >>> stats = {"progress": {"mean": 0.5, "std": 0.1}}
             >>> logger.log_component_stats(stats, step=500)
         """
         if not self.enabled:

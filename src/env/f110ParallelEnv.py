@@ -851,7 +851,7 @@ class F110ParallelEnv:
             info_level=self.info_level,
         )
         self._update_centerline_observation_facts(infos)
-        self._attach_central_state(obs, obs_joint)
+        self._attach_central_state(obs)
         self._refresh_render_observations(obs)
         return obs, infos
 
@@ -1006,9 +1006,6 @@ class F110ParallelEnv:
         else:
             self._last_centerline_facts = {}
 
-        # Attach the same-step centralized vector only after updating the
-        # centerline projection facts used by its map-relative block.
-        self._attach_central_state(obs, obs_joint)
         self._refresh_render_observations(obs)
 
         infos = filter_info_payloads(infos, info_level=self.info_level)
@@ -1019,6 +1016,7 @@ class F110ParallelEnv:
         self.agents = list(self.lifecycle.active_agents)
         if self.episode_done:
             self.agents = []
+        self._attach_central_state(obs)
         post_step_global_state = self.get_global_state()
         self.last_step_facts = build_step_facts(
             agent_ids=self.possible_agents,
@@ -1343,8 +1341,9 @@ class F110ParallelEnv:
             np.float32, copy=False
         )
 
-    def _attach_central_state(self, obs: Dict[str, Dict[str, np.ndarray]], joint: Dict[str, np.ndarray]) -> None:
-        central_state = self._central_state_tensor(joint)
+    def _attach_central_state(self, obs: Dict[str, Dict[str, np.ndarray]]) -> None:
+        # Observations stay writable without exposing the immutable snapshot.
+        central_state = self.get_global_state().vector.copy()
         for aid in self.possible_agents:
             if aid in obs:
                 obs[aid]["state"] = central_state
@@ -1423,7 +1422,7 @@ class F110ParallelEnv:
             agent_id: {} for agent_id in self.possible_agents
         }
         self._update_centerline_observation_facts(centerline_infos)
-        self._attach_central_state(obs, joint)
+        self._attach_central_state(obs)
         self._refresh_render_observations(obs)
         return obs
 

@@ -125,3 +125,29 @@ Batch size 512 is now the default under update version
 number of optimizer steps and changes minibatch composition. Existing learning
 curves are therefore not seed-trajectory comparable; start new runs when using
 this default. AMP and `torch.compile` remain disabled.
+
+
+## PPO/MAPPO cleanup measurements
+
+The September 2026 cleanup shares one Python-double GAE recurrence in
+`agents.common` on CPU and CUDA. For 2,048 seeded transitions, five warmed
+measurements against revision `cfd19fb` gave median PPO GAE times of 42.07 to
+2.56 ms on CPU and 217.89 to 2.62 ms on a Quadro RTX 5000 (PyTorch 2.8.0).
+Advantages and returns were exactly equal, including terminal and truncation
+boundaries. These are isolated GAE timings, not full-training speedups.
+
+Waypoint controllers cache the original closure and curvature calculations,
+checking centerline contents to detect replacements and in-place edits. Three
+full Budapest traversals (2,016 actions each) measured median per-action times
+of 559.7 to 101.1 microseconds for pure pursuit and 397.2 to 76.9 microseconds
+for Stanley. Action arrays matched the previous implementation exactly at every
+waypoint on Budapest, Silverstone, and circle maps. Closure thresholds, curvature
+horizons, and nearest-point cursors retain their existing behavior.
+
+The environment now copies observation state vectors from its immutable global
+snapshot after lifecycle updates. This removes the second centralized-vector
+construction while keeping observations writable and snapshot masks current.
+For 128 physics steps plus reset, profiling confirmed 258 to 129 vector
+constructions with the original MAPPO action sequence and workload preserved.
+Regression coverage includes time-limit termination and observation mutation.
+No reward, action, observation dimension, seed, or optimizer settings changed.

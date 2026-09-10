@@ -10,7 +10,7 @@ Observation dict keys used:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, NamedTuple, Optional
 
 import numpy as np
 
@@ -31,7 +31,10 @@ def _is_closed_path(pts: np.ndarray) -> bool:
     return endpoint_gap <= 1.25 * float(np.median(positive))
 
 
-def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int = 60) -> int:
+def _find_nearest(
+    pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int = 60,
+    *, closed: Optional[bool] = None,
+) -> int:
     """Return the index of the centerline point closest to pos.
 
     Uses a sliding window around last_idx for O(window) cost when the agent
@@ -42,7 +45,8 @@ def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int =
     if last_idx < 0 or last_idx >= n:
         dists = np.sum((pts - pos) ** 2, axis=1)
         return int(np.argmin(dists))
-    if _is_closed_path(pts):
+    closed = _is_closed_path(pts) if closed is None else closed
+    if closed:
         # Modular candidates let the incremental search cross N-1 -> 0 at
         # the start/finish seam without abandoning its O(window) behavior.
         candidates = np.arange(last_idx - window, last_idx + window + 1) % n
@@ -54,7 +58,9 @@ def _find_nearest(pts: np.ndarray, pos: np.ndarray, last_idx: int, window: int =
     return int(lo + np.argmin(dists))
 
 
-def _lookahead_point(pts: np.ndarray, start: int, dist: float) -> tuple[np.ndarray, int]:
+def _lookahead_point(
+    pts: np.ndarray, start: int, dist: float, *, closed: Optional[bool] = None,
+) -> tuple[np.ndarray, int]:
     """Walk forward along centerline until arc length >= dist from pts[start].
 
     Returns (goal_xy, goal_idx). Closed centerlines wrap at the seam; open
@@ -63,7 +69,7 @@ def _lookahead_point(pts: np.ndarray, start: int, dist: float) -> tuple[np.ndarr
     n = len(pts)
     idx = start
     accumulated = 0.0
-    closed = _is_closed_path(pts)
+    closed = _is_closed_path(pts) if closed is None else closed
     max_segments = n if closed else max(n - 1 - start, 0)
     for _ in range(max_segments):
         next_idx = (idx + 1) % n if closed else idx + 1
@@ -78,18 +84,36 @@ def _lookahead_point(pts: np.ndarray, start: int, dist: float) -> tuple[np.ndarr
     return pts[-1].copy(), n - 1
 
 
-def _path_curvature(pts: np.ndarray, start: int, horizon_m: float) -> float:
+class _PathGeometry(NamedTuple):
+    points: np.ndarray
+    closed: bool
+    segment_lengths: np.ndarray
+    curvature: np.ndarray
+
+
+def _path_geometry(pts: np.ndarray, cached: Optional[_PathGeometry] = None) -> _PathGeometry:
+    # A copy plus a cheap equality check also detects in-place centerline edits.
+    if cached is not None and np.array_equal(pts, cached.points):
+        return cached
+    dx = np.diff(pts[:, 0].astype(np.float64))
+    dy = np.diff(pts[:, 1].astype(np.float64))
+    seg_len = np.hypot(dx, dy)
+    heading = np.unwrap(np.arctan2(dy, dx))
+    dtheta = np.abs(np.diff(np.append(heading, heading[-1])))
+    curvature = dtheta / np.maximum(seg_len, 1e-6)
+    return _PathGeometry(pts.copy(), _is_closed_path(pts), seg_len, curvature)
+
+
+def _path_curvature(
+    pts: np.ndarray, start: int, horizon_m: float,
+    *, geometry: Optional[_PathGeometry] = None,
+) -> float:
     """Mean absolute curvature (rad/m) over horizon_m ahead of pts[start]."""
     n = len(pts)
     if n < 3:
         return 0.0
-    dx = np.diff(pts[:, 0].astype(np.float64))
-    dy = np.diff(pts[:, 1].astype(np.float64))
-    seg_len = np.hypot(dx, dy)
-    heading = np.arctan2(dy, np.maximum(np.abs(dx), 1e-12) * np.sign(dx + 1e-12))
-    heading = np.unwrap(np.arctan2(dy, dx))
-    dtheta = np.abs(np.diff(np.append(heading, heading[-1])))
-    curvature = dtheta / np.maximum(seg_len, 1e-6)  # rad/m per segment
+    geometry = _path_geometry(pts) if geometry is None else geometry
+    seg_len, curvature = geometry.segment_lengths, geometry.curvature
 
     acc = 0.0
     total_curv = 0.0
@@ -166,6 +190,7 @@ class PurePursuitPolicy:
         self.action_space = action_space
 
         self._last_idx: int = -1
+        self._path_cache: Optional[_PathGeometry] = None
 
     def reset(self) -> None:
         """Call on each episode reset to restart the nearest-point search."""
@@ -188,12 +213,17 @@ class PurePursuitPolicy:
         x, y, theta = float(pose[0]), float(pose[1]), float(pose[2])
         pos = np.array([x, y], dtype=np.float32)
         pts = np.asarray(cl[:, :2], dtype=np.float32)
+        self._path_cache = _path_geometry(pts, self._path_cache)
 
         # 1. Nearest centerline point (windowed search)
-        self._last_idx = _find_nearest(pts, pos, self._last_idx, self.search_window)
+        self._last_idx = _find_nearest(
+            pts, pos, self._last_idx, self.search_window, closed=self._path_cache.closed
+        )
 
         # 2. Lookahead goal point
-        goal, goal_idx = _lookahead_point(pts, self._last_idx, self.lookahead)
+        goal, goal_idx = _lookahead_point(
+            pts, self._last_idx, self.lookahead, closed=self._path_cache.closed
+        )
 
         # 3. Pure pursuit steering
         dx = goal[0] - x
@@ -209,7 +239,7 @@ class PurePursuitPolicy:
         steer = float(np.clip(steer, -self.max_steer, self.max_steer))
 
         # 4. Speed: drop linearly as curvature exceeds threshold
-        curv = _path_curvature(pts, goal_idx, self.speed_horizon)
+        curv = _path_curvature(pts, goal_idx, self.speed_horizon, geometry=self._path_cache)
         t = np.clip(
             (curv - self.curvature_slowdown_threshold) / max(self.curvature_slowdown_threshold, 1e-3),
             0.0, 1.0,
@@ -306,6 +336,7 @@ class StanleyPolicy:
         self.action_space = action_space
 
         self._last_idx: int = -1
+        self._path_cache: Optional[_PathGeometry] = None
 
     def reset(self) -> None:
         self._last_idx = -1
@@ -327,8 +358,11 @@ class StanleyPolicy:
         x, y, theta = float(pose[0]), float(pose[1]), float(pose[2])
         pos = np.array([x, y], dtype=np.float32)
         pts = np.asarray(cl[:, :2], dtype=np.float32)
+        self._path_cache = _path_geometry(pts, self._path_cache)
 
-        self._last_idx = _find_nearest(pts, pos, self._last_idx, self.search_window)
+        self._last_idx = _find_nearest(
+            pts, pos, self._last_idx, self.search_window, closed=self._path_cache.closed
+        )
         nearest = pts[self._last_idx]
 
         # Tangent heading at nearest point (position-derived)
@@ -355,7 +389,7 @@ class StanleyPolicy:
         steer = float(np.clip(steer, -self.max_steer, self.max_steer))
 
         # Speed: curvature-based
-        curv = _path_curvature(pts, self._last_idx, self.speed_horizon)
+        curv = _path_curvature(pts, self._last_idx, self.speed_horizon, geometry=self._path_cache)
         t = np.clip(
             (curv - self.curvature_slowdown_threshold) / max(self.curvature_slowdown_threshold, 1e-3),
             0.0, 1.0,

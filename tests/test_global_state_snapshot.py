@@ -181,3 +181,30 @@ def test_supplied_snapshot_avoids_reward_and_lifecycle_state_calls() -> None:
     )
     assert fields["lifecycle_masks"]["active_mask"].tolist() == [False]
     assert fields["lifecycle_masks"]["active_mask"].flags.writeable
+
+
+def test_observation_state_reuses_one_vector_per_step_without_exposing_snapshot(monkeypatch):
+    env = _complete4_env()
+    original = env._central_state_tensor
+    calls = []
+
+    def counted(joint):
+        calls.append(None)
+        return original(joint)
+
+    monkeypatch.setattr(env, "_central_state_tensor", counted)
+    try:
+        obs, _ = env.reset(seed=42)
+        assert len(calls) == 1
+        for step in range(3):
+            obs, _, _, _, _ = env.step({aid: np.zeros(2) for aid in env.decision_agents})
+            state = env.get_global_state()
+            assert len(calls) == step + 2
+            for agent_obs in obs.values():
+                np.testing.assert_array_equal(agent_obs["state"], state.vector)
+            assert not np.shares_memory(obs["car_0"]["state"], state.vector)
+            obs["car_0"]["state"][:] = -123.0
+            np.testing.assert_array_equal(state.vector, original(env.sim.current_observation()))
+        assert not state.masks["active_mask"].any()
+    finally:
+        env.close()

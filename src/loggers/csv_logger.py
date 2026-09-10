@@ -27,7 +27,7 @@ class CSVLogger:
         ...     output_dir="outputs/gaplock_ppo/run_001",
         ...     scenario_config=scenario,
         ... )
-        >>> logger.log_episode(episode=0, metrics=episode_metrics, agent_metrics=agent_metrics)
+        >>> logger.log_training_episode(episode=0, reward=1.0, info={}, metrics={})
         >>> logger.save_summary(summary_stats)
     """
 
@@ -77,7 +77,7 @@ class CSVLogger:
     def log_episode(
         self,
         episode: int,
-        metrics: Any,  # EpisodeMetrics
+        metrics: Any,
         agent_metrics: Optional[Dict[str, Any]] = None,
         rolling_stats: Optional[Dict[str, float]] = None,
         extra: Optional[Dict[str, Any]] = None,
@@ -86,7 +86,7 @@ class CSVLogger:
 
         Args:
             episode: Episode number
-            metrics: EpisodeMetrics instance (primary agent)
+            metrics: Object exposing to_dict() (primary agent)
             agent_metrics: Dict mapping agent_id -> per-agent metrics (optional)
             rolling_stats: Rolling statistics dict (optional)
             extra: Additional fields to include in episode metrics (optional)

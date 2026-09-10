@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from agents.common.networks import Actor, Critic
+from agents.common import Actor, Critic, compute_gae
 from utils.torch_io import resolve_device
 
 
@@ -64,29 +64,10 @@ class RolloutBuffer:
         gae_lambda: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         n = self.size()
-        advantages = torch.zeros(n, device=self.device)
-        last_gae = 0.0
-        next_val = float(next_value)
-
-        for t in reversed(range(n)):
-            # A true terminal state has no successor value. A time-limit
-            # truncation still bootstraps from its final observation, but it
-            # must stop GAE from leaking into the next episode.
-            bootstrap_mask = 1.0 - float(self.terminated[t])
-            continuation_mask = 1.0 - float(
-                bool(self.terminated[t]) or bool(self.truncated[t])
-            )
-            nv = next_val if t == n - 1 else float(self.values[t + 1])
-            delta = (
-                float(self.rewards[t])
-                + gamma * nv * bootstrap_mask
-                - float(self.values[t])
-            )
-            last_gae = delta + gamma * gae_lambda * continuation_mask * last_gae
-            advantages[t] = last_gae
-
-        returns = advantages + self.values[:n]
-        return advantages, returns
+        return compute_gae(
+            self.rewards[:n], self.values[:n], self.terminated[:n], self.truncated[:n],
+            next_value, gamma, gae_lambda,
+        )
 
     def iterate_batches(
         self, batch_size: int

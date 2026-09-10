@@ -92,6 +92,12 @@ run.py
 | `src/replay/dataset_writer.py` | Transition datasets used by PPO and MAPPO |
 | `configs/`, `scenarios/`, `sweeps/` | Shared fragments, experiments, and sweep definitions |
 
+PPO and MAPPO share advantage calculation in `src/agents/common/__init__.py`.
+Curriculum uses `src/training/curriculum.py`; logging uses training hooks,
+`ConsoleLogger`, and the CSV/W&B loggers. Unused alternate curriculum, metrics,
+console, and checkpoint utilities were retired from `src/` and remain available
+at Git revision `cfd19fb20cf4762dccaa1613bcb3ec7487ee461c`.
+
 Keep changes small and prefer reusing existing files. `run.py` stays the single
 training entry point. To implement another trainable algorithm later:
 

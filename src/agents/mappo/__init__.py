@@ -34,7 +34,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from agents.common.networks import Actor, Critic
+from agents.common import Actor, Critic, compute_gae
 from utils.torch_io import resolve_device
 
 
@@ -136,65 +136,10 @@ class MAPPORolloutBuffer:
         gae_lambda: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         n = self.size()
-        if self.device.type == "cuda":
-            # Preserve the existing Python-double recurrence while replacing
-            # thousands of individual CUDA scalar reads with one bulk copy.
-            rollout = torch.stack(
-                (
-                    self.rewards[:n],
-                    self.values[:n],
-                    self.terminated[:n],
-                    self.truncated[:n],
-                ),
-                dim=1,
-            ).cpu().numpy()
-            advantages_host = np.zeros(n, dtype=np.float32)
-            last_gae = 0.0
-            next_val = float(next_value)
-            for t in reversed(range(n)):
-                terminated = float(rollout[t, 2])
-                truncated = float(rollout[t, 3])
-                bootstrap_mask = 1.0 - terminated
-                continuation_mask = 1.0 - float(
-                    bool(terminated) or bool(truncated)
-                )
-                nv = next_val if t == n - 1 else float(rollout[t + 1, 1])
-                delta = (
-                    float(rollout[t, 0])
-                    + gamma * nv * bootstrap_mask
-                    - float(rollout[t, 1])
-                )
-                last_gae = (
-                    delta
-                    + gamma * gae_lambda * continuation_mask * last_gae
-                )
-                advantages_host[t] = last_gae
-            advantages = torch.as_tensor(
-                advantages_host, dtype=torch.float32, device=self.device
-            )
-            returns = advantages + self.values[:n]
-            return advantages, returns
-
-        advantages = torch.zeros(n, device=self.device)
-        last_gae = 0.0
-        next_val = float(next_value)
-
-        for t in reversed(range(n)):
-            bootstrap_mask = 1.0 - float(self.terminated[t])
-            continuation_mask = 1.0 - float(
-                bool(self.terminated[t]) or bool(self.truncated[t])
-            )
-            nv = next_val if t == n - 1 else float(self.values[t + 1])
-            delta = (
-                float(self.rewards[t])
-                + gamma * nv * bootstrap_mask
-                - float(self.values[t])
-            )
-            last_gae = delta + gamma * gae_lambda * continuation_mask * last_gae
-            advantages[t] = last_gae
-
-        returns = advantages + self.values[:n]
-        return advantages, returns
+        return compute_gae(
+            self.rewards[:n], self.values[:n], self.terminated[:n], self.truncated[:n],
+            next_value, gamma, gae_lambda,
+        )
 
     def iterate_batches(self, batch_size: int):
         n = self.size()
