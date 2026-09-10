@@ -69,20 +69,6 @@ class RolloutBuffer:
             next_value, gamma, gae_lambda,
         )
 
-    def iterate_batches(
-        self, batch_size: int
-    ):
-        n = self.size()
-        indices = torch.randperm(n, device=self.device)
-        for start in range(0, n, batch_size):
-            idx = indices[start : start + batch_size]
-            yield (
-                self.obs[idx],
-                self.actions[idx],
-                self.log_probs[idx],
-                self.values[idx],
-            ), idx
-
 
 class PPOAgent:
     """Proximal Policy Optimization — pure PyTorch, no SB3."""
@@ -126,10 +112,8 @@ class PPOAgent:
 
         self.actor = Actor(obs_dim, self.action_dim, hidden_dims, activation).to(self.device)
         self.critic = Critic(obs_dim, vf_dims, activation).to(self.device)
-        self.optimizer = optim.Adam(
-            list(self.actor.parameters()) + list(self.critic.parameters()),
-            lr=self.lr,
-        )
+        self._optim_parameters = tuple(self.actor.parameters()) + tuple(self.critic.parameters())
+        self.optimizer = optim.Adam(self._optim_parameters, lr=self.lr)
 
         self.buffer = RolloutBuffer(self.n_steps, obs_dim, self.action_dim, self.device)
 
@@ -162,14 +146,17 @@ class PPOAgent:
             (action_normalized, log_prob, value)
             action_normalized is in [-1, 1] — caller denormalizes for env.step()
         """
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        action_t, log_prob_t = self.actor.get_action(obs_t, deterministic=deterministic)
-        value_t = self.critic(obs_t)
-        return (
-            action_t.squeeze(0).cpu().numpy(),
-            float(log_prob_t.squeeze()),
-            float(value_t.squeeze()),
-        )
+        actions, log_probs, values = self.act_batch(np.asarray(obs)[None], deterministic)
+        return actions[0], float(log_probs[0]), float(values[0])
+
+    @torch.no_grad()
+    def act_batch(self, observations: np.ndarray, deterministic: bool = False):
+        obs_t = torch.as_tensor(observations, dtype=torch.float32, device=self.device)
+        actions, log_probs = self.actor.get_action(obs_t, deterministic=deterministic)
+        values = self.critic(obs_t)
+        # One device-to-host transfer for all environments and policy outputs.
+        outputs = torch.cat((actions, log_probs[:, None], values[:, None]), dim=1).cpu().numpy()
+        return outputs[:, :self.action_dim], outputs[:, -2], outputs[:, -1]
 
     def update(self, next_value: float) -> Dict[str, float]:
         """Compute GAE and run PPO update epochs.
@@ -184,16 +171,32 @@ class PPOAgent:
             self.gamma,
             self.gae_lambda,
         )
+        n = self.buffer.size()
+        return self._update(
+            self.buffer.obs[:n], self.buffer.actions[:n], self.buffer.log_probs[:n],
+            advantages, returns,
+        )
+
+    def update_rollouts(self, rollouts) -> Dict[str, float]:
+        """Pool independently bootstrapped worker rollouts from one frozen policy."""
+        tensors = [
+            torch.as_tensor(np.concatenate(parts), dtype=torch.float32, device=self.device)
+            for parts in zip(*rollouts)
+        ]
+        return self._update(*tensors)
+
+    def _update(self, observations, actions, log_probs, advantages, returns) -> Dict[str, float]:
         # Normalize advantages — use correction=0 so std is always valid for n>=1
         adv_std = advantages.std(correction=0)
         advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
 
-        n = self.buffer.size()
-        total_pi_loss = total_vf_loss = total_ent = total_kl = 0.0
-        n_updates = 0
-
+        n = len(observations)
+        metric_rows = []
         for _ in range(self.n_epochs):
-            for (obs_b, act_b, old_lp_b, _), idx in self.buffer.iterate_batches(self.batch_size):
+            indices = torch.randperm(n, device=self.device)
+            for start in range(0, n, self.batch_size):
+                idx = indices[start:start + self.batch_size]
+                obs_b, act_b, old_lp_b = observations[idx], actions[idx], log_probs[idx]
                 adv_b = advantages[idx]
                 ret_b = returns[idx]
 
@@ -217,27 +220,18 @@ class PPOAgent:
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
-                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    self._optim_parameters,
                     self.max_grad_norm,
                 )
                 self.optimizer.step()
 
                 with torch.no_grad():
-                    approx_kl = ((old_lp_b - new_lp_t).mean()).abs().item()
+                    approx_kl = ((old_lp_b - new_lp_t).mean()).abs()
+                    metric_rows.append(torch.stack((pi_loss, vf_loss, entropy, approx_kl)))
 
-                total_pi_loss += pi_loss.item()
-                total_vf_loss += vf_loss.item()
-                total_ent += entropy.item()
-                total_kl += approx_kl
-                n_updates += 1
-
-        denom = max(n_updates, 1)
-        return {
-            "train/policy_loss": total_pi_loss / denom,
-            "train/value_loss": total_vf_loss / denom,
-            "train/entropy": total_ent / denom,
-            "train/approx_kl": total_kl / denom,
-        }
+        names = ("train/policy_loss", "train/value_loss", "train/entropy", "train/approx_kl")
+        means = torch.stack(metric_rows).mean(dim=0).cpu().tolist() if metric_rows else [0.0] * len(names)
+        return dict(zip(names, means))
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

@@ -234,3 +234,155 @@ def test_on_policy_next_observation_uses_current_previous_action() -> None:
     np.testing.assert_array_equal(
         composer.actions_seen_while_wrapping[1], FixedActionAgent.ACTION
     )
+
+
+def test_batched_ppo_inference_and_independent_worker_bootstraps():
+    from training.on_policy_trainer import _RemotePolicy
+
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {"hidden_dims": [4], "device": "cpu"})
+    observations = np.array([[0.0], [1.0]], dtype=np.float32)
+    actions, log_probs, values = agent.act_batch(observations, deterministic=True)
+    assert actions.shape == (2, 2)
+    assert log_probs.shape == values.shape == (2,)
+    for i, obs in enumerate(observations):
+        action, log_prob, value = agent.act(obs, deterministic=True)
+        np.testing.assert_allclose(actions[i], action, atol=1e-7)
+        assert values[i] == pytest.approx(value)
+        assert log_probs[i] == log_prob
+
+    class Connection:
+        def send(self, message):
+            self.message = message
+
+        def recv(self):
+            return {}
+
+    rollouts = []
+    for reward, terminal in [(1.0, False), (100.0, True)]:
+        connection = Connection()
+        worker = _RemotePolicy(connection, 2, 1, 2, 0.9, 0.95)
+        worker.buffer.add(np.zeros(1), np.zeros(2), reward, 0.0, 0.0, terminal, not terminal)
+        worker.update(next_value=10.0)
+        assert connection.message[0] == "rollout"
+        rollouts.append(connection.message[1])
+    captured = []
+    agent._update = lambda *tensors: captured.extend(tensors) or {}
+    agent.update_rollouts(rollouts)
+    # Each environment bootstraps independently before pooling; a terminal
+    # transition cannot contribute its reward/value to another worker's GAE.
+    torch.testing.assert_close(captured[3], torch.tensor([10.0, 100.0]))
+    torch.testing.assert_close(captured[4], torch.tensor([10.0, 100.0]))
+
+
+def _parallel_test_setup(device="cpu"):
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario
+    from core.setup import create_training_setup
+    from run import build_obs_composer, build_reward_composer
+    from wrappers.actions.composer import ActionComposer
+
+    path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
+    scenario = load_and_expand_scenario(str(path))
+    scenario["experiment"].update(num_envs=2, episodes=3, seed=42)
+    scenario["environment"].update(max_steps=4)
+    for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
+        scenario["environment"][key] = ["circle_map"]
+    cfg = scenario["agents"]["car_0"]
+    cfg["params"].update(device=device, n_steps=8, n_epochs=1, batch_size=4, hidden_dims=[4])
+    env, opponents, _ = create_training_setup(scenario, scenario_dir=path.parent)
+    space = env.action_spaces["car_0"]
+    obs = build_obs_composer(cfg, scenario["environment"], path.parent)
+    agent = PPOAgent(obs.obs_dim, space.low, space.high, cfg["params"])
+    trainer = OnPolicyTrainer(
+        env, "car_0", agent, opponents, obs, build_reward_composer(cfg, path.parent),
+        ActionComposer.from_config(space.low, space.high, cfg["action_constraints"]),
+        run_id="parallel-test",
+    )
+    return trainer, scenario, path.parent
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+)])
+def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
+    from collections import defaultdict
+    from training.hooks import TrainingHook
+
+    class Capture(TrainingHook):
+        def __init__(self):
+            self.records, self.episodes, self.updates, self.ends = [], [], [], 0
+
+        def on_step(self, record):
+            self.records.append(record)
+
+        def on_episode_end(self, episode, reward, info, metrics):
+            self.episodes.append((episode, reward, info, metrics))
+
+        def on_update(self, metrics):
+            self.updates.append(metrics)
+
+        def on_training_end(self):
+            self.ends += 1
+
+    runs = []
+    for _ in range(2):
+        trainer, scenario, directory = _parallel_test_setup(device)
+        capture = Capture()
+        trainer.hooks = trainer._transition_hooks = [capture]
+        try:
+            trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=3)
+        finally:
+            trainer.env.close()
+        assert len(capture.records) == 12
+        assert [episode[0] for episode in capture.episodes] == [0, 1, 2]
+        assert len(capture.updates) == 2
+        assert capture.ends == 1
+        episodes = defaultdict(list)
+        for record in capture.records:
+            episodes[record.episode_id].append(record)
+            assert record.info["worker_seed"] == 42 + record.info["worker_id"]
+            np.testing.assert_array_equal(record.next_obs[-2:], record.action_norm)
+        assert len(episodes) == 3
+        for records in episodes.values():
+            assert [record.step_idx for record in records] == list(range(4))
+            np.testing.assert_array_equal(records[0].obs[-2:], np.zeros(2))
+            assert records[-1].truncated and not records[-1].terminated
+            for previous, current in zip(records, records[1:]):
+                np.testing.assert_array_equal(previous.next_obs, current.obs)
+        runs.append(capture)
+    for first, second in zip(runs[0].records, runs[1].records):
+        assert first.episode_id == second.episode_id
+        np.testing.assert_array_equal(first.action_norm, second.action_norm)
+        assert first.reward == second.reward
+
+
+def test_parallel_worker_failure_is_reported_and_children_are_reaped():
+    import multiprocessing as mp
+
+    existing = {child.pid for child in mp.active_children()}
+    trainer, scenario, directory = _parallel_test_setup()
+    scenario["agents"]["car_0"]["observation"] = "/nonexistent/ppo-observation.yaml"
+    try:
+        with pytest.raises(RuntimeError, match="PPO worker .* failed"):
+            trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=3)
+    finally:
+        trainer.env.close()
+    assert {child.pid for child in mp.active_children()} == existing
+
+
+def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch):
+    import sys
+    import run
+
+    trainer, scenario, directory = _parallel_test_setup()
+    checkpoint = tmp_path / "ppo.pt"
+    trainer.agent.save(str(checkpoint))
+    trainer.env.close()
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "--scenario", str(directory / "ppo_lap_completion_pretrain.yaml"),
+        "--eval", "--checkpoint", str(checkpoint), "--eval-episodes", "1",
+        "--output-dir", str(tmp_path / "eval"), "--run-id", "ppo-eval-test",
+        "--no-render", "--no-wandb", "--quiet",
+    ])
+    run.main()

@@ -92,6 +92,11 @@ run.py
 | `src/replay/dataset_writer.py` | Transition datasets used by PPO and MAPPO |
 | `configs/`, `scenarios/`, `sweeps/` | Shared fragments, experiments, and sweep definitions |
 
+For headless PPO on multiple CPU cores, use `--num-envs 8 --torch-threads 1`
+with one GPU. Single-environment training remains the default. See
+[HPC collection and reproducibility](docs/PERFORMANCE.md#headless-ppo-on-hpc)
+for allocation, rollout-size, seed, and evaluation details.
+
 PPO and MAPPO share advantage calculation in `src/agents/common/__init__.py`.
 Curriculum uses `src/training/curriculum.py`; logging uses training hooks,
 `ConsoleLogger`, and the CSV/W&B loggers. Unused alternate curriculum, metrics,

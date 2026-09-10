@@ -334,3 +334,35 @@ def test_frenet_observations_are_bounded_for_experiment_configs() -> None:
         assert all(
             getattr(component, "clip", True) for component in composer.components
         )
+
+
+@pytest.mark.parametrize("field,value", [("num_envs", 0), ("num_envs", True),
+                                         ("torch_threads", 0), ("torch_threads", 1.5)])
+def test_parallel_settings_require_positive_integers(field, value):
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["experiment"][field] = value
+    with pytest.raises(ScenarioError, match="positive integer"):
+        validate_scenario(scenario)
+
+
+@pytest.mark.parametrize("change,match", [
+    ({"environment": {"render": True}}, "headless"),
+    ({"experiment": {"seed": None}}, "seeds"),
+    ({"experiment": {"episodes": 1}}, "total episodes"),
+    ({"training_defaults": {"n_steps": 3}}, "multiple"),
+    ({"curriculum": {"phases": [{}]}}, "curriculum"),
+])
+def test_parallel_ppo_rejects_unsupported_contracts(change, match):
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["experiment"]["num_envs"] = 2
+    for key, fields in change.items():
+        scenario.setdefault(key, {}).update(fields)
+    with pytest.raises(ScenarioError, match=match):
+        validate_scenario(scenario)
+
+
+def test_parallel_mappo_is_explicitly_rejected():
+    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    scenario["experiment"]["num_envs"] = 2
+    with pytest.raises(ScenarioError, match="PPO only"):
+        validate_scenario(scenario)

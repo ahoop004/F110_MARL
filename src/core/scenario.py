@@ -285,6 +285,30 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("Mixed trainable algorithms are unsupported; use one PPO agent or a MAPPO team.")
     if trainable_algos == {"ppo"} and len(trainable_ids) > 1:
         raise ScenarioError("PPO requires exactly one trainable agent; use MAPPO for a trainable team.")
+    num_envs = experiment.get("num_envs", 1)
+    for name in ("num_envs", "torch_threads"):
+        value = experiment.get(name, 1)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ScenarioError(f"'experiment.{name}' must be a positive integer.")
+    if num_envs > 1:
+        if trainable_algos != {"ppo"}:
+            raise ScenarioError("Parallel environments currently support PPO only; MAPPO uses num_envs=1.")
+        if environment.get("render") or scenario.get("curriculum"):
+            raise ScenarioError("Parallel PPO requires headless training without curriculum.")
+        seed = experiment.get("seed")
+        env_seed = environment.get("seed", seed)
+        if env_seed is None:
+            env_seed = seed
+        if any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < 2 ** 32
+               for v in (seed, env_seed)):
+            raise ScenarioError("Parallel PPO requires explicit integer seeds in [0, 2**32).")
+        if int(experiment.get("episodes", 1000)) < num_envs:
+            raise ScenarioError("Parallel PPO requires at least num_envs total episodes.")
+        params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
+        n_steps = params.get("n_steps", 2048)
+        if (isinstance(n_steps, bool) or not isinstance(n_steps, int)
+                or n_steps < num_envs or n_steps % num_envs):
+            raise ScenarioError("Parallel PPO n_steps must be a positive multiple of num_envs.")
     trainable_mappo = trainable_ids if trainable_algos == {"mappo"} else []
     if trainable_mappo:
         if scenario.get("curriculum"):

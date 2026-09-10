@@ -149,16 +149,16 @@ class WandbHook(TrainingHook):
     def __init__(self, wandb_logger: WandbLogger) -> None:
         self._wandb = wandb_logger
         self._update = 0
-        self._episode_agents: set[str] = set()
-        self._reward_components: Dict[str, Dict[str, float]] = {}
-        self._map_id: Optional[str] = None
+        self._episodes: Dict[Any, Dict[str, Any]] = {}
 
     def on_step(self, record: "TransitionRecord") -> None:
+        worker_id = getattr(record, "info", {}).get("worker_id")
+        state = self._episodes.setdefault(worker_id, {"agents": set(), "components": {}, "map_id": None})
         aid = str(record.agent_id)
-        self._episode_agents.add(aid)
+        state["agents"].add(aid)
         if record.map_id:
-            self._map_id = str(record.map_id)
-        agent_components = self._reward_components.setdefault(aid, {})
+            state["map_id"] = str(record.map_id)
+        agent_components = state["components"].setdefault(aid, {})
         for component, value in (record.reward_components or {}).items():
             try:
                 component_value = float(value)
@@ -170,11 +170,16 @@ class WandbHook(TrainingHook):
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         log = {"episode/reward": reward, "episode/number": episode}
+        worker_id = info.get("worker_id") if isinstance(info, dict) else None
+        state = self._episodes.pop(worker_id, {"agents": set(), "components": {}, "map_id": None})
         if isinstance(info, dict):
+            for key in ("worker_id", "worker_seed", "worker_episode"):
+                if key in info:
+                    log[f"episode/{key}"] = info[key]
             outcome = info.get("outcome")
             if outcome:
                 log["episode/outcome"] = str(outcome)
-            map_id = info.get("map_bundle") or self._map_id
+            map_id = info.get("map_bundle") or state["map_id"]
             if map_id:
                 log["episode/map_bundle"] = str(map_id)
 
@@ -227,18 +232,15 @@ class WandbHook(TrainingHook):
 
         # Persist per-agent and team-mean component totals for reward debugging.
         component_totals: Dict[str, float] = {}
-        for aid, components in self._reward_components.items():
+        for aid, components in state["components"].items():
             for component, value in components.items():
                 log[f"episode/reward_component/{component}/{aid}"] = value
                 component_totals[component] = component_totals.get(component, 0.0) + value
-        denominator = max(len(self._episode_agents), 1)
+        denominator = max(len(state["agents"]), 1)
         for component, total in component_totals.items():
             log[f"episode/reward_component_mean/{component}"] = total / denominator
 
         self._wandb.log_metrics(log)
-        self._episode_agents.clear()
-        self._reward_components.clear()
-        self._map_id = None
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._update += 1

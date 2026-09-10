@@ -90,3 +90,20 @@ def test_wandb_hook_clears_reward_components_between_episodes() -> None:
 
     assert "episode/reward_component_mean/progress/bonus" in logger.payloads[0][0]
     assert "episode/reward_component_mean/progress/bonus" not in logger.payloads[1][0]
+
+
+def test_wandb_hook_keeps_parallel_worker_episodes_separate():
+    logger = _RecordingWandbLogger()
+    hook = WandbHook(logger)
+    for worker_id, reward in [(0, 2.0), (1, 7.0)]:
+        hook.on_step(SimpleNamespace(
+            agent_id="car_0", map_id=f"map-{worker_id}",
+            info={"worker_id": worker_id}, reward_components={"progress": reward},
+        ))
+    for worker_id in (0, 1):
+        hook.on_episode_end(worker_id, 0.0, {"worker_id": worker_id, "worker_seed": 42 + worker_id}, {})
+    for worker_id, reward in [(0, 2.0), (1, 7.0)]:
+        log, _ = logger.payloads[worker_id]
+        assert log["episode/reward_component/progress/car_0"] == reward
+        assert log["episode/map_bundle"] == f"map-{worker_id}"
+        assert log["episode/worker_seed"] == 42 + worker_id

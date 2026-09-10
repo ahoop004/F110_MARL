@@ -58,6 +58,110 @@ class OnPolicyTrainer:
         self.run_id = run_id
         self.spawn_plan_fn = spawn_plan_fn
 
+    def train_parallel(self, scenario: Dict, scenario_dir, num_envs: int, n_episodes: int) -> None:
+        """Batch CPU collector requests; update only when all live workers pause.
+
+        n_steps is the maximum pooled rollout size, divided evenly across
+        workers. Episode ends flush shorter fragments, preserving each final
+        observation's bootstrap and keeping GAE within one environment.
+        """
+        import multiprocessing as mp
+
+        context = mp.get_context("spawn")
+        connections, processes = {}, []
+        waiting = {}
+        completed = 0
+
+        def receive(worker_id):
+            connection = connections[worker_id]
+            if not connection.poll(_WORKER_TIMEOUT_SECONDS):
+                raise RuntimeError(f"PPO worker {worker_id} timed out waiting for a response.")
+            try:
+                kind, payload = connection.recv()
+            except EOFError as exc:
+                raise RuntimeError(f"PPO worker {worker_id} exited unexpectedly.") from exc
+            if kind == "error":
+                raise RuntimeError(f"PPO worker {worker_id} failed:\n{payload}")
+            return kind, payload
+
+        try:
+            for worker_id in range(num_envs):
+                parent, child = context.Pipe()
+                process = context.Process(
+                    target=_collect_ppo_worker,
+                    args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
+                          n_episodes // num_envs + (worker_id < n_episodes % num_envs),
+                          self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
+                          self.agent.gae_lambda, bool(self._transition_hooks)),
+                    name=f"ppo-collector-{worker_id}",
+                )
+                connections[worker_id] = parent
+                try:
+                    process.start()
+                finally:
+                    child.close()
+                processes.append(process)
+            for worker_id in connections:
+                kind, contract = receive(worker_id)
+                if (kind != "ready" or contract[0] != self.agent.obs_dim
+                        or not np.array_equal(contract[1], self.agent.action_low)
+                        or not np.array_equal(contract[2], self.agent.action_high)):
+                    raise ValueError(f"PPO worker {worker_id} observation/action contract mismatch.")
+
+            while connections:
+                requests = {}
+                # Fixed worker order makes sampling and episode event order
+                # independent of OS scheduling and response arrival order.
+                for worker_id in list(connections):
+                    if worker_id in waiting:
+                        continue
+                    while True:
+                        kind, payload = receive(worker_id)
+                        if kind == "transition":
+                            for hook in self._transition_hooks:
+                                hook.on_step(payload)
+                        elif kind == "episode":
+                            for hook in self.hooks:
+                                hook.on_episode_end(completed, *payload)
+                            completed += 1
+                        elif kind == "act":
+                            requests[worker_id] = payload
+                            break
+                        elif kind == "rollout":
+                            waiting[worker_id] = payload
+                            break
+                        elif kind == "done":
+                            connections.pop(worker_id).close()
+                            break
+                        else:
+                            raise RuntimeError(f"Unexpected PPO worker message: {kind}")
+                if requests:
+                    actions, log_probs, values = self.agent.act_batch(np.stack(list(requests.values())))
+                    for row, worker_id in enumerate(requests):
+                        connections[worker_id].send((actions[row], float(log_probs[row]), float(values[row])))
+                if waiting and len(waiting) == len(connections):
+                    metrics = self.agent.update_rollouts([waiting[i] for i in sorted(waiting)])
+                    for hook in self.hooks:
+                        hook.on_update(metrics)
+                    for worker_id in waiting:
+                        connections[worker_id].send(metrics)
+                    waiting.clear()
+            if completed != n_episodes:
+                raise RuntimeError(f"PPO workers completed {completed} of {n_episodes} episodes.")
+            for hook in self.hooks:
+                hook.on_training_end()
+        finally:
+            for connection in connections.values():
+                connection.close()
+            for process in processes:
+                process.join(timeout=1)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+
     def _build_actions(
         self,
         rl_action_phys: np.ndarray,
@@ -273,3 +377,103 @@ class OnPolicyTrainer:
 
         for hook in self.hooks:
             hook.on_training_end()
+
+
+# Spawned CPU collectors reuse the exact single-environment trainer above.
+# Only the parent owns a policy, optimizer, logging hooks, and CUDA context.
+_WORKER_TIMEOUT_SECONDS = 120
+_WORKER_THREADS = 1
+
+
+class _RemotePolicy:
+    def __init__(self, connection, n_steps, obs_dim, action_dim, gamma, gae_lambda):
+        import torch
+        from agents.ppo import RolloutBuffer
+
+        self.connection = connection
+        self.buffer = RolloutBuffer(n_steps, obs_dim, action_dim, torch.device("cpu"))
+        self.gamma, self.gae_lambda = gamma, gae_lambda
+
+    def act(self, obs):
+        self.connection.send(("act", obs))
+        return self.connection.recv()
+
+    def update(self, next_value):
+        buffer = self.buffer
+        n = buffer.size()
+        advantages, returns = buffer.compute_gae(next_value, self.gamma, self.gae_lambda)
+        self.connection.send(("rollout", tuple(t.numpy() for t in (
+            buffer.obs[:n], buffer.actions[:n], buffer.log_probs[:n], advantages, returns,
+        ))))
+        return self.connection.recv()
+
+
+class _WorkerHook(TrainingHook):
+    def __init__(self, connection, worker_id, seed, record_transitions):
+        self.connection = connection
+        self.worker_id = worker_id
+        self.seed = seed
+        self.requires_transition_record = record_transitions
+
+    def on_step(self, record):
+        from dataclasses import replace
+        record = replace(record, info={**record.info, "worker_id": self.worker_id,
+                                       "worker_seed": self.seed})
+        self.connection.send(("transition", record))
+
+    def on_episode_end(self, episode, reward, info, metrics):
+        info = {**info, "worker_id": self.worker_id, "worker_seed": self.seed,
+                "worker_episode": episode}
+        metrics = {**metrics, "worker_id": self.worker_id, "worker_seed": self.seed,
+                   "worker_episode": episode}
+        self.connection.send(("episode", (reward, info, metrics)))
+
+
+def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
+                        n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions):
+    import copy
+    import traceback
+    from pathlib import Path
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["PYGLET_HEADLESS"] = "true"
+    import torch
+    torch.set_num_threads(_WORKER_THREADS)
+    from core.setup import create_training_setup
+    from run import build_obs_composer, build_reward_composer
+
+    env = None
+    try:
+        scenario = copy.deepcopy(scenario)
+        base_seed = int(scenario["experiment"]["seed"])
+        seed = (base_seed + worker_id) % (2 ** 32)
+        scenario["experiment"]["seed"] = seed
+        env_cfg = scenario["environment"]
+        env_seed = env_cfg.get("seed")
+        env_cfg["seed"] = ((base_seed if env_seed is None else int(env_seed)) + worker_id) % (2 ** 32)
+        env_cfg["render"] = False
+        env, opponents, _ = create_training_setup(scenario, scenario_dir=Path(scenario_dir))
+        for opponent in opponents.values():
+            if hasattr(opponent, "set_env"):
+                opponent.set_env(env)
+        cfg = scenario["agents"][agent_id]
+        space = env.action_spaces[agent_id]
+        observations = build_obs_composer(cfg, env_cfg, Path(scenario_dir), space.n)
+        rewards = build_reward_composer(cfg, Path(scenario_dir))
+        connection.send(("ready", (observations.obs_dim, space.low, space.high)))
+        policy = _RemotePolicy(connection, n_steps, observations.obs_dim, space.n, gamma, gae_lambda)
+        trainer = OnPolicyTrainer(
+            env, agent_id, policy, opponents, observations, rewards,
+            ActionComposer.from_config(space.low, space.high, cfg.get("action_constraints", {})),
+            action_repeat=int(env_cfg.get("action_repeat", 1)),
+            hooks=[_WorkerHook(connection, worker_id, seed, record_transitions)],
+            run_id=f"{run_id}_worker{worker_id:03d}",
+        )
+        trainer.train(n_episodes)
+        connection.send(("done", None))
+    except BaseException:
+        connection.send(("error", traceback.format_exc()))
+    finally:
+        if env is not None:
+            env.close()
+        connection.close()

@@ -17,7 +17,7 @@ SRC_DIR = ROOT_DIR / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from core.scenario import ScenarioError, load_and_expand_scenario, resolve_mappo_config
+from core.scenario import ScenarioError, load_and_expand_scenario, resolve_mappo_config, validate_scenario
 from core.setup import create_training_setup
 from core.run_id import resolve_run_id, set_run_id_env
 from core.provenance import build_run_provenance, provenance_mismatches
@@ -47,6 +47,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--episodes", type=int, default=None)
+    p.add_argument("--num-envs", type=int, default=None,
+                   help="Parallel CPU environments for PPO training (default: 1)")
+    p.add_argument("--torch-threads", type=int, default=None,
+                   help="Parent PyTorch CPU threads; parallel collectors use one each")
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
     p.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path for --eval")
     p.add_argument(
@@ -82,6 +86,10 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
         scenario.setdefault("environment", {})["render"] = True
     elif args.no_render:
         scenario.setdefault("environment", {})["render"] = False
+    for name in ("num_envs", "torch_threads"):
+        value = getattr(args, name, None)
+        if value is not None:
+            scenario.setdefault("experiment", {})[name] = value
     return scenario
 
 
@@ -325,6 +333,14 @@ def main() -> None:
         sys.exit(1)
 
     scenario = apply_cli_overrides(scenario, args)
+    try:
+        validate_scenario(scenario)
+    except ScenarioError as exc:
+        console.print_error(f"Invalid scenario after CLI overrides: {exc}")
+        sys.exit(1)
+    if scenario["experiment"].get("torch_threads") is not None:
+        import torch
+        torch.set_num_threads(scenario["experiment"]["torch_threads"])
     scenario_dir = Path(args.scenario).resolve().parent
 
     agent_configs = scenario.get("agents", {})
@@ -471,6 +487,16 @@ def main() -> None:
         algorithm=algorithm,
         trainable_agents=trainable_ids,
     )
+    num_envs = int(exp_cfg.get("num_envs", 1))
+    if num_envs > 1:
+        env_seed = env_cfg.get("seed")
+        env_seed = exp_cfg["seed"] if env_seed is None else env_seed
+        provenance["ppo_collection"] = {
+            "mode": "synchronous_workers_v1", "num_envs": num_envs, "worker_threads": 1,
+            "worker_seeds": [(exp_cfg["seed"] + i) % (2 ** 32) for i in range(num_envs)],
+            "environment_seeds": [(env_seed + i) % (2 ** 32) for i in range(num_envs)],
+            "max_steps_per_worker_rollout": int(params.get("n_steps", 2048)) // num_envs,
+        }
     if pretrained_actor_path is not None:
         provenance["pretrained_actor"] = {
             "path": str(pretrained_actor_path),
@@ -618,6 +644,8 @@ def main() -> None:
             console.print_error(f"Unknown algorithm: '{algorithm}'")
             sys.exit(1)
     finally:
+        if dataset_writer is not None:
+            dataset_writer.close()
         csv_logger.close()
         if wandb_logger:
             wandb_logger.finish()
@@ -904,7 +932,7 @@ def _run_eval(
                     for aid in trainable_ids
                     if aid in active_agents and aid in wrapped_obs
                 ]
-                if active_trainable_ids and hasattr(agent, "act_batch"):
+                if active_trainable_ids and algorithm == "mappo":
                     stacked_observations = np.stack(
                         [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
                     )
@@ -1201,10 +1229,15 @@ def _run_on_policy(
         spawn_plan_fn=spawn_plan_fn,
     )
 
-    console.print_info(f"Starting PPO training for {n_episodes} episodes...")
+    num_envs = int(exp_cfg.get("num_envs", 1))
+    console.print_info(f"Starting PPO training for {n_episodes} total episodes | num_envs={num_envs}")
     try:
-        trainer.train(n_episodes=n_episodes)
+        if num_envs > 1:
+            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes)
+        else:
+            trainer.train(n_episodes=n_episodes)
     finally:
+        env.close()
         if evaluator is not None:
             evaluator.close()
 

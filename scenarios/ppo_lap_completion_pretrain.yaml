@@ -43,7 +43,7 @@ environment:
     # - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
-  target_laps: 1
+  target_laps: 3
   lap_counting:
     count_initial_crossing_as_lap: false
   max_steps: 80000
