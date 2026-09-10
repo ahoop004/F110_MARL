@@ -24,7 +24,7 @@ class CSVLogger:
 
     Example:
         >>> logger = CSVLogger(
-        ...     output_dir="outputs/gaplock_sac/run_001",
+        ...     output_dir="outputs/gaplock_ppo/run_001",
         ...     scenario_config=scenario,
         ... )
         >>> logger.log_episode(episode=0, metrics=episode_metrics, agent_metrics=agent_metrics)

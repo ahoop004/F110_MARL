@@ -4,7 +4,7 @@
 
 This repository is for F1TENTH-style autonomous racing experiments using reinforcement learning, multi-agent reinforcement learning, classical fixed-policy controllers, and future MPC-based opponents.
 
-The current branch is focused on a pure PyTorch training stack for adversarial and cooperative racing experiments.
+The current branch is focused on pure PyTorch PPO and MAPPO experiments with fixed-policy opponents.
 
 Primary research goals:
 
@@ -27,7 +27,6 @@ run.py
   -> wrappers.rewards.RewardComposer
   -> wrappers.actions.ActionComposer
   -> training.on_policy_trainer.OnPolicyTrainer
-     or training.off_policy_trainer.OffPolicyTrainer
      or training.marl_trainer.MARLTrainer
 ```
 
@@ -37,8 +36,8 @@ Important directories:
 src/agents/                  Pure PyTorch RL agents and fixed-policy agents
 src/agents/common/           Shared neural network modules
 src/env/                     F110 parallel environment and state contracts
-src/replay/                  Replay buffer and offline dataset writer
-src/training/                On-policy, off-policy, MARL, hooks, curriculum
+src/replay/                  Offline dataset writer for PPO/MAPPO
+src/training/                PPO, MAPPO, evaluation, hooks, curriculum
 src/wrappers/actions/        Action processing components
 src/wrappers/observations/   Observation components and composer
 src/wrappers/rewards/        Reward components and composer
@@ -68,15 +67,10 @@ Preserve these unless the user explicitly asks otherwise:
 
 ## Agent and controller conventions
 
-Trainable algorithms currently include names such as:
+Supported trainable algorithms:
 
 ```text
 ppo
-a2c
-sac
-td3
-ddpg
-dqn
 mappo
 ```
 
@@ -125,9 +119,11 @@ Do not create a separate controller framework unless the task explicitly asks fo
 
 * Inspect relevant files before editing.
 * Prefer minimal, testable changes.
+* Prefer deletion and reuse over expanding the codebase; document extensions in existing files.
+* Add algorithm infrastructure only when implementing an algorithm that requires it.
 * Keep training, evaluation, environment, wrappers, agents, and logging concerns separate.
 * Avoid broad rewrites unless explicitly requested.
-* Preserve existing scenario compatibility.
+* Preserve supported PPO/MAPPO scenario compatibility; reject unsupported algorithms and training roles explicitly.
 * Do not silently change observation dimensions.
 * Do not silently change action bounds.
 * Do not silently change reward semantics.
@@ -243,18 +239,15 @@ After most changes, run the smallest relevant validation first.
 Baseline checks:
 
 ```bash
-python3 -m compileall -q run.py src tests
-pytest tests/ -q
+venv/bin/python -m compileall -q run.py src tests
+PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
 ```
 
 Smoke tests:
 
 ```bash
-PYGLET_HEADLESS=true python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
-PYGLET_HEADLESS=true python3 run.py --scenario scenarios/sac.yaml --no-wandb --total-steps 10 --quiet
-PYGLET_HEADLESS=true python3 run.py --scenario scenarios/td3.yaml --no-wandb --total-steps 10 --quiet
-PYGLET_HEADLESS=true python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 10 --quiet
-PYGLET_HEADLESS=true python3 run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
 ```
 
 Dependency guard:
@@ -287,19 +280,15 @@ For this branch, prefer work in this order:
 8. Add MPCC or CBF-MPC only after evaluation is reliable.
 ```
 
-## Good first tasks
+## Current cleanup and extension guidance
 
-High-value tasks for this branch:
+The experiment catalog, historical revision, and steps for adding algorithms live
+in README.md. Keep `run.py` as the entry point and reuse the current agent, trainer,
+wrapper, and AgentFactory patterns. Legacy algorithms are archived in Git history.
 
-```text
-Add run.py --eval mode.
-Add checkpoint loading support for evaluation.
-Add baseline comparison scenarios.
-Add docs/EXPERIMENTS.md.
-Verify MAPPO per-agent dataset logging.
-Add kinematic_mpc as a fixed-policy AgentFactory controller.
-Add tests for fixed-policy role detection and controller action shape.
-```
+Before new comparisons, address the review findings listed in README.md with
+separate, reproducible behavior changes. Do not silently convert the retained
+multiple-PPO planning templates into MAPPO experiments.
 
 ## Do not do
 

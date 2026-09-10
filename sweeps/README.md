@@ -1,39 +1,25 @@
-# Hyperparameter Sweeps
+# PPO and MAPPO sweeps
 
-W&B sweep definitions for the current `run.py` entry point.
+All sweeps use `run.py` and pass their parameters through `${args}`. The runner
+accepts scenario paths, seeds, and episode budgets; it does not accept arbitrary
+hyperparameter CLI flags. Put model/reward changes in scenario configuration.
 
-## Recommended Sweeps
-
-- `algo_comparison_quick.yaml`: quick SAC, TD3, PPO comparison.
-- `algo_comparison_sweep.yaml`: baseline SAC, TD3, DDPG, PPO, A2C comparison.
-- `algo_comparison_tuning_sweep.yaml`: Bayesian tuning across SAC, TD3, PPO, A2C.
-- `ppo_sweep.yaml` and `ppo_seed_sweep.yaml`: PPO seed/hyperparameter sweeps.
-- `sac_sweep.yaml`, `td3_sweep.yaml`, `ddpg_sweep.yaml`: continuous off-policy sweeps.
-- `dqn_sweep.yaml`: discrete action DQN sweep.
-
-## Compatibility Sweeps
-
-- `qrdqn_sweep.yaml` runs `scenarios/qrdqn.yaml`, which now uses the pure PyTorch
-  DQN agent with the old QR-DQN action set. QR-DQN itself is not implemented yet.
-- `tqc_sweep.yaml` runs `scenarios/tqc.yaml`, which now uses the pure PyTorch SAC
-  agent with the old TQC sweep shape. TQC itself is not implemented yet.
-
-## Usage
+| Sweep | Experiments |
+|---|---|
+| `ppo_seed_sweep.yaml` | Existing seed list for PPO gaplock against FTG |
+| `ppo_sweep.yaml` | PPO against pure pursuit, Stanley, and hybrid PP/FTG, across seeds |
+| `mappo_sweep.yaml` | Four-car MAPPO individual/team reward and critic configurations, across seeds |
 
 ```bash
-wandb sweep sweeps/sac_sweep.yaml
+wandb sweep sweeps/mappo_sweep.yaml
 wandb agent <sweep-id>
 ```
 
-Every sweep should use:
+These are grid sweeps. They do not optimize an unavailable metric or compare
+incompatible shaped rewards. Training logs include `episode/reward` and per-agent
+MAPPO metrics. Compare checkpoints using deterministic racing evaluation with
+matched maps, seeds, race lengths, and opponents.
 
-```yaml
-program: run.py
-command:
-  - ${env}
-  - python3
-  - ${program}
-```
-
-Keep scenario paths under `parameters.scenario` or explicit `--scenario` command
-arguments pointing at files in `scenarios/`.
+Hyperparameter variants can use the same scenario parameter mechanism when an
+experiment requires them. Retired algorithm sweeps remain recoverable from the
+historical revision documented in the root README.

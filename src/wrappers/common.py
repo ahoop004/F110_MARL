@@ -38,14 +38,6 @@ def to_numpy(
     return arr
 
 
-def ensure_index(value: Any) -> int:
-    """Coerce a scalar or zero-d array to ``int`` for discrete actions."""
-
-    if np.isscalar(value):
-        return int(value)
-    return int(np.asarray(value).item())
-
-
 def downsample_lidar(
     scan: Iterable[float],
     target_beams: Optional[int],

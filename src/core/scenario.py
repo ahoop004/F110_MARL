@@ -220,6 +220,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     experiment = scenario["experiment"]
     if "name" not in experiment:
         raise ScenarioError("'experiment' section must have a 'name' field.")
+    if "total_steps" in experiment:
+        raise ScenarioError("PPO/MAPPO use 'experiment.episodes'; 'total_steps' is unsupported.")
 
     environment = scenario["environment"]
     _MAP_KEYS = {"map", "maps", "map_bundle", "map_bundles"}
@@ -257,6 +259,15 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                 f"Known heuristic algorithms: {sorted(HEURISTIC_ALGOS)}."
             )
 
+        explicit = agent_cfg.get("trainable")
+        if explicit is not None and not isinstance(explicit, bool):
+            raise ScenarioError(f"Agent '{agent_id}' trainable must be a boolean.")
+        if explicit is not None and explicit != (algo in PYTORCH_RL_ALGOS):
+            raise ScenarioError(
+                f"Agent '{agent_id}': algorithm '{algo}' does not support trainable={explicit}. "
+                "PPO/MAPPO are trainable; fixed opponents must use a registered controller."
+            )
+
         # Trainable agents need observation and reward configs
         if is_trainable_agent(agent_cfg):
             for required_key in ("observation", "reward"):
@@ -266,13 +277,18 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                         f"is missing required '{required_key}' config."
                     )
 
-    trainable_mappo = [
-        aid
-        for aid, cfg in agents.items()
-        if is_trainable_agent(cfg)
-        and str(cfg.get("algorithm", "")).strip().lower() == "mappo"
-    ]
+    trainable_ids = [aid for aid, cfg in agents.items() if is_trainable_agent(cfg)]
+    trainable_algos = {
+        str(agents[aid]["algorithm"]).strip().lower() for aid in trainable_ids
+    }
+    if len(trainable_algos) > 1:
+        raise ScenarioError("Mixed trainable algorithms are unsupported; use one PPO agent or a MAPPO team.")
+    if trainable_algos == {"ppo"} and len(trainable_ids) > 1:
+        raise ScenarioError("PPO requires exactly one trainable agent; use MAPPO for a trainable team.")
+    trainable_mappo = trainable_ids if trainable_algos == {"mappo"} else []
     if trainable_mappo:
+        if scenario.get("curriculum"):
+            raise ScenarioError("MAPPO does not yet support scenario curriculum; use PPO curriculum experiments.")
         mappo = resolve_mappo_config(scenario)
         reward_mode = mappo["reward_mode"]
         critic_mode = mappo["critic_mode"]

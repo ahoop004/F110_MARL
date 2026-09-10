@@ -9,6 +9,10 @@ from core.setup import create_training_setup
 def test_training_and_evaluation_environments_keep_independent_scan_maps() -> None:
     scenario_path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
+    # The test needs distinct maps regardless of the experiment's current split.
+    scenario["environment"]["map_bundles"] = ["Budapest_map", "Silverstone_map"]
+    scenario["environment"]["map_bundles_train"] = ["Budapest_map"]
+    scenario["environment"]["map_bundles_eval"] = ["Silverstone_map"]
 
     train_env, _, _ = create_training_setup(
         scenario, mode="train", scenario_dir=scenario_path.parent

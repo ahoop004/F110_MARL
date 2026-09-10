@@ -1,7 +1,7 @@
 """Centerline waypoint-following controllers for F110 MARL.
 
 Provides heuristic agents that follow the track centerline without learning.
-Each class implements the .act(obs) interface used by SB3RoleWrapper.
+Each class implements the .act(obs) interface used by the trainers.
 
 Observation dict keys used:
     "pose"     — np.ndarray [x, y, theta]

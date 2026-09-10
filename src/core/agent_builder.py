@@ -17,7 +17,7 @@ When ``trainable`` is absent the role is inferred from ``algorithm``:
 
 - Algorithms in :data:`PYTORCH_RL_ALGOS` → trainable.
 - Algorithms in :data:`HEURISTIC_ALGOS` → fixed.
-- Unknown algorithms default to fixed and log a warning.
+- Unknown algorithms are rejected instead of being treated as fixed policies.
 
 ``fixed_policy_agents`` may also be listed on ``environment:`` in the
 scenario; the env uses that list to set up masks.  The agent-config-level
@@ -33,9 +33,7 @@ from src.core.config import AgentFactory
 logger = logging.getLogger(__name__)
 
 
-PYTORCH_RL_ALGOS: frozenset[str] = frozenset({
-    "ppo", "a2c", "sac", "td3", "ddpg", "dqn", "mappo",
-})
+PYTORCH_RL_ALGOS: frozenset[str] = frozenset({"ppo", "mappo"})
 
 HEURISTIC_ALGOS: frozenset[str] = frozenset({
     "ftg",
@@ -68,20 +66,13 @@ def is_trainable_agent(agent_cfg: Mapping[str, Any]) -> bool:
     agent_cfg:
         A single agent's config dict (one entry under ``scenario["agents"]``).
     """
+    algo = str(agent_cfg.get("algorithm", "")).strip().lower()
+    if algo not in PYTORCH_RL_ALGOS | HEURISTIC_ALGOS:
+        raise ValueError(f"Unsupported algorithm {algo!r}; supported RL algorithms: {sorted(PYTORCH_RL_ALGOS)}.")
     explicit = agent_cfg.get("trainable")
     if explicit is not None:
         return bool(explicit)
-    algo = str(agent_cfg.get("algorithm", "")).strip().lower()
-    if algo in PYTORCH_RL_ALGOS:
-        return True
-    if algo in HEURISTIC_ALGOS:
-        return False
-    logger.warning(
-        "Unknown algorithm %r — treating as fixed policy.  "
-        "Set 'trainable: true' in the agent config to override.",
-        algo,
-    )
-    return False
+    return algo in PYTORCH_RL_ALGOS
 
 
 # ---------------------------------------------------------------------------

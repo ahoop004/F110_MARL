@@ -1,11 +1,117 @@
 from types import SimpleNamespace
+from pathlib import Path
+from itertools import product
+import copy
+import sys
 
 import pytest
+import yaml
 
-from core.scenario import load_and_expand_scenario
+from core.scenario import ScenarioError, load_and_expand_scenario, validate_scenario
+from core.agent_builder import get_trainable_agent_ids, is_trainable_agent
 from training.reward_context import build_reward_context
 from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
+
+
+@pytest.mark.parametrize("algorithm", ["a2c", "ddpg", "sac", "td3", "dqn", "qrdqn", "tqc", "typo"])
+@pytest.mark.parametrize("explicit", [None, True, False])
+def test_unsupported_algorithms_cannot_become_fixed_opponents(algorithm, explicit) -> None:
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    agent = scenario["agents"]["car_0"]
+    agent["algorithm"] = algorithm
+    if explicit is not None:
+        agent["trainable"] = explicit
+    with pytest.raises(ScenarioError, match="unknown algorithm"):
+        validate_scenario(scenario)
+    with pytest.raises(ValueError, match="Unsupported algorithm"):
+        is_trainable_agent(agent)
+
+
+@pytest.mark.parametrize("second_algorithm", ["ppo", "mappo"])
+def test_unsupported_trainable_teams_fail_during_validation(second_algorithm) -> None:
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["agents"]["car_2"] = copy.deepcopy(scenario["agents"]["car_0"])
+    scenario["agents"]["car_2"]["algorithm"] = second_algorithm
+    with pytest.raises(ScenarioError, match="exactly one|Mixed trainable"):
+        validate_scenario(scenario)
+
+
+@pytest.mark.parametrize("algorithm,trainable", [("ppo", False), ("ftg", True), ("ppo", "false")])
+def test_unsupported_explicit_roles_are_rejected(algorithm, trainable) -> None:
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["agents"]["car_0"].update(algorithm=algorithm, trainable=trainable)
+    with pytest.raises(ScenarioError, match="trainable"):
+        validate_scenario(scenario)
+
+
+def test_ignored_training_options_are_rejected() -> None:
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["experiment"]["total_steps"] = 10
+    with pytest.raises(ScenarioError, match="episodes"):
+        validate_scenario(scenario)
+    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    scenario["curriculum"] = {"phases": [{"name": "first"}]}
+    with pytest.raises(ScenarioError, match="curriculum"):
+        validate_scenario(scenario)
+
+
+def test_unsupported_algorithm_exits_before_setup_or_logging(tmp_path, monkeypatch) -> None:
+    import run
+
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["agents"]["car_0"]["algorithm"] = "sac"
+    path = tmp_path / "unsupported.yaml"
+    path.write_text(yaml.safe_dump(scenario))
+    monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", str(path), "--no-wandb"])
+
+    def reject_side_effect(*args, **kwargs):
+        pytest.fail("invalid scenarios must be rejected before setup/logging")
+
+    for name in ("create_training_setup", "CSVLogger", "WandbLogger"):
+        monkeypatch.setattr(run, name, reject_side_effect)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == 1
+
+
+@pytest.mark.parametrize("path", sorted(Path("scenarios").rglob("*.yaml")), ids=str)
+def test_retained_scenarios_and_resource_paths(path) -> None:
+    # Preserve historical planning templates without silently changing them to MAPPO.
+    if path.name in {"circle_attacker.yaml", "circle_defender.yaml", "marl_attacker.yaml"}:
+        with pytest.raises(ScenarioError, match="exactly one trainable"):
+            load_and_expand_scenario(str(path))
+        return
+    scenario = load_and_expand_scenario(str(path))
+    for agent in scenario["agents"].values():
+        for field in ("observation", "reward"):
+            resource = agent.get(field)
+            if isinstance(resource, str):
+                assert (path.parent / resource).is_file(), (path, field, resource)
+
+
+@pytest.mark.parametrize("path", sorted(Path("sweeps").glob("*.yaml")), ids=str)
+def test_sweep_parameters_reach_supported_cli_options(path, monkeypatch) -> None:
+    import run
+
+    sweep = yaml.safe_load(path.read_text())
+    parameters = sweep["parameters"]
+    choices = [spec.get("values", [spec.get("value")]) for spec in parameters.values()]
+    assert "${args}" in sweep["command"]
+    for values in product(*choices):
+        arguments = dict(zip(parameters, values))
+        argv = []
+        for token in sweep["command"]:
+            if token == "${args}":
+                argv.extend(f"--{key}={value}" for key, value in arguments.items())
+            elif token not in {"${env}", "python3", "${program}"}:
+                argv.append(token)
+        monkeypatch.setattr(sys, "argv", ["run.py", *argv])
+        args = run.parse_args()
+        scenario = run.apply_cli_overrides(load_and_expand_scenario(args.scenario), args)
+        assert scenario["experiment"]["seed"] == arguments["seed"]
+        assert scenario["wandb"]["enabled"] is True
+        assert get_trainable_agent_ids(scenario["agents"])
 
 
 def test_complete_4_has_consistent_full_circuit_contract_and_held_out_maps() -> None:

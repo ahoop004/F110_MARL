@@ -1,195 +1,148 @@
 # F110_MARL
 
-Pure PyTorch reinforcement learning experiments for adversarial F1TENTH racing.
+Pure PyTorch PPO and MAPPO experiments for F1TENTH racing. The repository supports
+single-agent learning against fixed controllers, multi-agent learning with a
+shared actor and centralized critic, checkpoint evaluation, and offline datasets.
 
-The active training path is intentionally small: scenarios are YAML files, `run.py`
-is the single entry point, and algorithm-specific agents are implemented directly
-in `src/agents/` without Stable-Baselines3, Gymnasium, or PettingZoo in the
-training loop.
+## Run an experiment
 
-## Current Capabilities
-
-- Single-agent RL against fixed-policy opponents.
-- MAPPO with a shared actor and configurable team or agent-conditioned critic.
-- Pure PyTorch PPO/A2C, SAC/DDPG, TD3, and DQN implementations.
-- Component-based observation, reward, and action pipelines.
-- Map bundle loading, random spawn support, centerline features, console logging,
-  W&B logging, and checkpoint hooks.
-- Deterministic PPO/MAPPO checkpoint evaluation and curriculum utilities.
-
-## Quick Start
-
-Install dependencies:
+Use the project virtual environment when available. Dependencies are listed in
+`requirements.txt`; development checks use pytest. Headless examples:
 
 ```bash
-python3 -m pip install -r requirements.txt
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1
 ```
 
-Run a short PPO smoke test:
+Use `--seed` for repeatability, `--output-dir` for a specific output location,
+`--dataset-dir` for transition recording, and `--render` for local visualization.
+PPO and MAPPO use `--episodes`; the retired `--total-steps` option is unsupported.
+W&B is optional and `--no-wandb` overrides scenario logging settings.
+
+Evaluate a checkpoint with the same scenario and experiment overrides used for
+training (the resolved configuration is checked against checkpoint provenance):
 
 ```bash
-python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --eval --checkpoint outputs/example/checkpoint_ep000000.pt --eval-episodes 5
 ```
 
-Run the paired four-agent MAPPO reward/critic experiments:
+Replace the example checkpoint path with the checkpoint produced by your run.
+`--allow-provenance-mismatch` is available for intentional cross-scenario evaluation.
+For fixed-controller-only scenarios, use the ordinary episode command without
+`--eval` or a checkpoint.
 
-```bash
-python3 run.py --scenario scenarios/complete_4_individual.yaml --no-wandb
-python3 run.py --scenario scenarios/complete_4_team_shared.yaml --no-wandb
-```
+## Experiment catalog
 
-The individual arm uses per-agent rewards and an agent-conditioned centralized
-critic, `V_i(s)`. The team arm averages factual per-agent rewards with a fixed
-team-size denominator and uses one shared team critic, `V(s)`. The actor remains
-decentralized in both modes and receives only its local observation.
+Scenario files retain their existing paths and experiment settings. Inspect each
+YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a run.
 
-Run off-policy agents:
+| Experiment | Scenario files under `scenarios/` |
+|---|---|
+| PPO attacker against FTG | `ppo.yaml`, `ppo_curriculum.yaml` |
+| PPO centerline racing / time trial | `ppo_centerline.yaml`, `ppo_time_trial.yaml` |
+| PPO against waypoint controllers | `ppo_vs_pure_pursuit.yaml`, `ppo_vs_stanley.yaml`, `ppo_vs_hybrid_pp_ftg.yaml` |
+| PPO actor pretraining | `ppo_lap_completion_pretrain.yaml` |
+| PPO defender against hybrid controller | `marl_defender.yaml` |
+| MAPPO gaplock | `mappo_gaplock.yaml` |
+| MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |
+| MAPPO initialized from a PPO checkpoint | `mappo_4car_1lap_circle_ppo_pretrained.yaml` (requires the configured local checkpoint) |
+| MAPPO observation variants | `complete_4.yaml`, `complete_4_frenet.yaml`, `complete_4_frenet_neighbors.yaml` |
+| MAPPO against two hybrid opponents | `mappo_2v2.yaml`, `mappo_2v2_vs_hybrid_pp_ftg.yaml`, `mappo_2v2_individual.yaml`, `mappo_2v2_team_shared.yaml` |
+| Fixed-controller baselines | `nrl_1car.yaml` through `nrl_4car.yaml` |
+| Race-duration calibration | `calibration/*.yaml` |
 
-```bash
-python3 run.py --scenario scenarios/sac.yaml --no-wandb --total-steps 1000
-python3 run.py --scenario scenarios/td3.yaml --no-wandb --total-steps 1000
-python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 1000
-```
+The historical planning templates `circle_attacker.yaml`, `circle_defender.yaml`,
+and `marl_attacker.yaml` declare multiple PPO learners and are intentionally
+rejected by validation. They require an explicit experiment redesign before use.
+A supported training scenario has one PPO learner or a homogeneous MAPPO team.
+Frozen PPO/MAPPO opponents and mixed trainable algorithms are not implemented.
+Scenario curriculum is currently supported for PPO only.
 
-Add `--render` for local visual debugging when a display is available.
+MAPPO's individual arm uses per-agent rewards and an agent-conditioned critic,
+`V_i(s)`. The team arm uses a configured team reward reduction and shared team
+critic, `V(s)`. Actors use local observations in both modes. Raw shaped rewards
+across these arms are not interchangeable evaluation scores.
 
-## Active Architecture
+The pretraining scenario currently uses `circle_map` for both train and evaluation;
+it does not measure generalization to held-out maps. The `complete_4` experiment
+has explicit disjoint splits. See [actor transfer](docs/PPO_TO_MAPPO_PRETRAINING.md),
+[duration calibration](docs/RACE_DURATION_CALIBRATION.md), and
+[performance checks](docs/PERFORMANCE.md) for their respective workflows.
+Seed and opponent comparison sweeps are described in [sweeps/README.md](sweeps/README.md).
+
+## Architecture and extension points
 
 ```text
 run.py
   -> core.scenario.load_and_expand_scenario()
   -> core.setup.create_training_setup()
-  -> wrappers.observations.ObservationComposer
-  -> wrappers.rewards.RewardComposer
-  -> wrappers.actions.ActionComposer
+  -> observation / reward / action composers
   -> training.on_policy_trainer.OnPolicyTrainer
-     or training.off_policy_trainer.OffPolicyTrainer
      or training.marl_trainer.MARLTrainer
 ```
 
-Important directories:
+| Location | Responsibility |
+|---|---|
+| `src/agents/ppo/`, `src/agents/mappo/` | Policy updates and rollout buffers |
+| `src/agents/common/` | Shared actor, critic, and MLP modules |
+| `src/agents/ftg.py`, `src/agents/waypoint.py`, `src/agents/mpc/` | Fixed-policy opponents |
+| `src/env/` | Simulation coordination, lifecycle, and public state contracts |
+| `src/wrappers/` | Observation, reward, and continuous action composition |
+| `src/training/` | Collection loops, evaluation, hooks, and curriculum |
+| `src/replay/dataset_writer.py` | Transition datasets used by PPO and MAPPO |
+| `configs/`, `scenarios/`, `sweeps/` | Shared fragments, experiments, and sweep definitions |
 
-```text
-src/agents/                  Pure PyTorch RL agents and heuristic agents
-src/agents/common/           Shared Actor/Critic/MLP networks
-src/env/                     F110 parallel environment and lightweight spaces
-src/replay/                  Pure PyTorch replay buffer
-src/training/                On-policy/off-policy trainer loops and hooks
-src/wrappers/actions/        Action processing components
-src/wrappers/observations/   Observation components and composer
-src/wrappers/rewards/        Reward components and composer
-configs/                     Env, vehicle, training, observation, reward configs
-scenarios/                   Full experiment definitions
-sweeps/                      W&B sweep definitions
-```
+Keep changes small and prefer reusing existing files. `run.py` stays the single
+training entry point. To implement another trainable algorithm later:
 
-## Scenario Shape
+1. Implement it under `src/agents/<algorithm>/`, reusing `agents/common` where appropriate.
+2. Declare its supported role in `src/core/agent_builder.py` and validation in
+   `src/core/scenario.py`; unsupported names must fail instead of changing roles.
+3. Construct it from `run.py`. Reuse a trainer only when its collection/update
+   contract fits; add replay or discrete-action support when the implementation needs it.
+4. Integrate deterministic evaluation, checkpoint metadata, explicit seeds, and
+   complete per-agent dataset transitions. Add a scenario and focused contract tests.
 
-Scenarios include shared config files and define one trainable RL agent plus any
-fixed-policy opponents:
+For another fixed opponent, use the existing `AgentFactory` adapter pattern in
+`src/core/config.py` and `HEURISTIC_ALGOS` in `src/core/agent_builder.py`.
+Preserve environment contracts, action bounds, observation dimensions, reward
+semantics, and MAPPO's decentralized actors. No additional controller framework,
+plugin system, or placeholder algorithm infrastructure is needed.
 
-```yaml
-includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/on_policy.yaml
-  - ../configs/wandb.yaml
+## Historical algorithms
 
-experiment:
-  name: ppo_gaplock
-  episodes: 2000
-  seed: 42
-
-environment:
-  maps: [line2]
-  max_steps: 1500
-  action_repeat: 2
-
-agents:
-  car_0:
-    algorithm: ppo
-    role: attacker
-    target_id: car_1
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/gaplock_attack.yaml
-    params:
-      learning_rate: 0.0003
-      hidden_dims: [256, 256]
-      gamma: 0.99
-    action_constraints:
-      prevent_reverse: true
-      speed_index: 1
-
-  car_1:
-    algorithm: ftg
-    role: defender
-    observation: ../configs/observations/ftg.yaml
-    params:
-      max_distance: 10.0
-```
-
-`run.py` dispatches from the trainable agent's `algorithm:` field. Current
-single-agent trainers expect one RL agent per scenario.
-
-## Rewards
-
-Rewards are configured in `configs/reward/*.yaml` and assembled by
-`src/wrappers/rewards/composer.py`.
-
-Available reward components include:
-
-- `centerline`
-- `collision`
-- `speed`
-- `gaplock_pressure`
-- `gaplock_forcing`
-- `terminal_success`
-- `terminal_timeout`
-- `terminal_self_crash`
-
-Example:
-
-```yaml
-reward:
-  gaplock_pressure:
-    enabled: true
-    weight: 1.0
-  terminal_success:
-    enabled: true
-    bonus: 200.0
-  terminal_timeout:
-    enabled: true
-    penalty: -100.0
-```
-
-## Observations And Actions
-
-Observation configs live in `configs/observations/*.yaml` and are composed into
-flat `float32` arrays by `ObservationComposer`.
-
-Action processing lives in `src/wrappers/actions/`:
-
-- Continuous agents output normalized actions in `[-1, 1]`; `DenormalizeComponent`
-  maps them to physical env bounds.
-- DQN outputs a discrete index; `DiscreteActionComponent` maps it to a configured
-  physical action set.
-- `PreventReverseComponent` can clamp the speed dimension to nonnegative values.
-
-## Verification
-
-Use these before and after cleanup or refactors:
+SAC, TD3, DQN, and the A2C/DDPG/QR-DQN/TQC compatibility configurations were retired
+from the active tree. Their source, scenarios, sweeps, and obsolete distributed
+replay documentation are preserved at Git revision
+`7c13266d109a797b202f1f22d5606ecb0f7f9851`.
+Use a separate historical checkout to inspect or reproduce those runs:
 
 ```bash
-python3 -m compileall -q run.py src
-python3 run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
-python3 run.py --scenario scenarios/sac.yaml --no-wandb --total-steps 10 --quiet
-python3 run.py --scenario scenarios/td3.yaml --no-wandb --total-steps 10 --quiet
-python3 run.py --scenario scenarios/dqn.yaml --no-wandb --total-steps 10 --quiet
+git worktree add --detach ../F110_MARL-legacy 7c13266d109a797b202f1f22d5606ecb0f7f9851
 ```
 
-## Roadmap
+Those names did not all identify distinct implementations: A2C used PPO, DDPG and
+TQC configurations used SAC, and QR-DQN configurations used DQN. Historical
+algorithm labels should be interpreted accordingly.
 
-- Finish cleanup after the SB3/Gymnasium/PettingZoo removal.
-- Normalize remaining scenario and sweep files around `run.py`.
-- Calibrate multi-lap episode limits with deterministic controller runs.
-- Run multi-seed MAPPO reward/critic comparisons on explicit train/eval maps.
+## Validation and remaining correctness work
+
+```bash
+venv/bin/python -m compileall -q run.py src tests
+PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
+rg "stable_baselines3|from gymnasium|from pettingzoo" run.py src configs scenarios
+```
+
+The dependency guard should produce no matches. Contract tests also check retained
+scenario resources, invalid algorithm/role combinations, and sweep CLI arguments.
+Before cleanup the suite had 147 passes and one scan-isolation failure caused by a
+scenario-dependent map fixture; that fixture now declares its own distinct maps.
+
+This cleanup preserves policy, observation, reward, and dataset semantics. The
+review identified separate correctness work before new research comparisons:
+opponent resets between training episodes, PPO dataset global-state timing,
+dataset overwrite protection, and map-scheduler
+reseeding. Fixes to these require focused regression tests and explicit contract
+metadata where existing checkpoint or dataset behavior changes.

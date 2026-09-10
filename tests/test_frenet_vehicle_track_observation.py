@@ -443,7 +443,7 @@ def test_feature_setup_accepts_all_available_geometry() -> None:
 
 
 def test_setup_enables_centerline_facts_required_by_inherited_reward() -> None:
-    scenario_path = Path("scenarios/sac.yaml").resolve()
+    scenario_path = Path("scenarios/ppo.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
     assert scenario["environment"]["centerline_autoload"] is False
 

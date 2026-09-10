@@ -2,75 +2,18 @@ program: run.py
 method: grid
 project: marl-f110
 entity: ahoop004-old-dominion-university
-metric:
-  name: eval_agg/success_rate
-  goal: maximize
+name: PPO_opponent_seeds
 parameters:
-  seed:
+  scenario:
     values:
-    - 42
-    - 23452
-    - 8675309
-    - 32456
-#   learning_rate:
-#     values:
-#     - 0.0001
-#     - 0.0003
-#   clip_range:
-#     values:
-#     - 0.15
-#     - 0.2
-  # hidden_dims:
-  #   values:
-    # - - 64
-    #   - 64
-    # - - 128
-    #   - 128
-    # - - 256
-    #   - 256
-    # - - 512
-    #   - 512
-    # - - 128
-    #   - 128
-    #   - 128
-    # - - 256
-    #   - 256
-    #   - 256
-    # - - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-    #   - 128
-
-  # activation:
-  #   values:
-  #   - relu
-  #   - silu
-  #   - tanh
-#   n_steps:
-#     values:
-#     - 1024
-#     - 2048
-  # Optional parameters (uncomment to sweep):
-  # gamma:
-  #   values:
-  #   - 0.99
-  #   - 0.995
-  #   - 0.999
-  # ent_coef:
-  #   values:
-  #   - 0.0
-  #   - 0.01
-  #   - 0.02
+      - scenarios/ppo_vs_pure_pursuit.yaml
+      - scenarios/ppo_vs_stanley.yaml
+      - scenarios/ppo_vs_hybrid_pp_ftg.yaml
+  seed:
+    values: [42, 23452, 8675309, 32456]
 command:
-- ${env}
-- python3
-- ${program}
-- --scenario
-- scenarios/ppo.yaml
-- --wandb
-name: PPO_seed_sweep
+  - ${env}
+  - python3
+  - ${program}
+  - --wandb
+  - ${args}

@@ -1,4 +1,4 @@
-"""On-policy training loop for PPO (and future A2C)."""
+"""On-policy training loop for PPO."""
 from __future__ import annotations
 
 import os

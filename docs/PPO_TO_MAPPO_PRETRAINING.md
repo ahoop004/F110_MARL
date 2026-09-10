@@ -3,19 +3,23 @@
 Train the compatible single-agent actor with:
 
 ```bash
-PYGLET_HEADLESS=true python3 run.py \
+PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/ppo_lap_completion_pretrain.yaml \
   --no-wandb
 ```
 
 The selected checkpoint is written to the run output directory as
-`best_model.pt`. Selection is based on deterministic held-out evaluation in
+`best_model.pt`. Selection is based on deterministic evaluation in
 this order: lap-completion rate, lower collision rate, mean lap progress, then
 lower mean finish steps. `evaluation_history.jsonl` records every selection
 decision.
 
-To initialize a MAPPO shared actor, add the checkpoint to the focal MAPPO
-agent's parameters. Relative paths are resolved from the scenario file:
+The current scenario uses `circle_map` for both splits. A held-out generalization
+experiment requires explicit disjoint training and evaluation maps.
+
+To initialize a MAPPO shared actor, set the same checkpoint parameter for every
+trainable agent (their shared policy parameters must match). Relative paths are
+resolved from the scenario file; for each trainable agent:
 
 ```yaml
 agents:

@@ -37,10 +37,6 @@ from training.hooks import (
     WandbHook,
 )
 
-ON_POLICY_ALGOS = {"ppo", "a2c"}
-OFF_POLICY_ALGOS = {"sac", "td3", "ddpg", "dqn"}
-MARL_ALGOS = {"mappo"}  # multi-agent algorithms — allow multiple trainable agents
-
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="F110 RL training")
@@ -59,7 +55,6 @@ def parse_args() -> argparse.Namespace:
         help="Allow --eval with a checkpoint from a different scenario/config/map contract.",
     )
     p.add_argument("--eval-episodes", type=int, default=None, help="Evaluation episodes; defaults to --episodes")
-    p.add_argument("--total-steps", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--run-id", type=str, default=None)
     p.add_argument("--output-dir", type=str, default=None)
@@ -79,8 +74,6 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
         scenario.setdefault("experiment", {})["seed"] = args.seed
     if args.episodes is not None:
         scenario.setdefault("experiment", {})["episodes"] = args.episodes
-    if args.total_steps is not None:
-        scenario.setdefault("experiment", {})["total_steps"] = args.total_steps
     if args.wandb:
         scenario.setdefault("wandb", {})["enabled"] = True
     elif args.no_wandb:
@@ -90,32 +83,6 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
     elif args.no_render:
         scenario.setdefault("environment", {})["render"] = False
     return scenario
-
-
-def find_rl_agent(scenario: Dict) -> tuple[str, str]:
-    """Return (agent_id, algorithm) for the single trainable RL agent.
-
-    Uses explicit ``trainable: true`` field when present; falls back to
-    algorithm-name inference (``ppo``/``sac``/``td3``/``dqn`` → trainable).
-    Raises ``ValueError`` when zero or multiple trainable agents are found,
-    since current single-agent trainers require exactly one.
-    """
-    agent_configs = scenario.get("agents", {})
-    trainable_ids = get_trainable_agent_ids(agent_configs)
-    if not trainable_ids:
-        raise ValueError(
-            "No trainable RL agent found in scenario. "
-            "Set 'trainable: true' or use a known RL algorithm (ppo, sac, td3, dqn)."
-        )
-    if len(trainable_ids) > 1:
-        raise ValueError(
-            f"Multiple trainable agents found: {trainable_ids}. "
-            "Current single-agent trainers require exactly one. "
-            "Use MAPPO for multi-agent training."
-        )
-    agent_id = trainable_ids[0]
-    algo = str(agent_configs[agent_id].get("algorithm", "")).strip().lower()
-    return agent_id, algo
 
 
 def build_obs_composer(
@@ -364,26 +331,19 @@ def main() -> None:
     exp_cfg = scenario.get("experiment", {})
     env_cfg = scenario.get("environment", {})
 
-    # Detect MARL scenario (any trainable agent uses a MARL algorithm)
+    # Scenario validation guarantees a single PPO agent or a homogeneous MAPPO team.
     trainable_ids = get_trainable_agent_ids(agent_configs)
-    trainable_algos = {
-        str(agent_configs[aid].get("algorithm", "")).lower() for aid in trainable_ids
-    }
 
     if args.eval:
         _run_eval(scenario, args, console, scenario_dir)
         return
 
-    # Pure heuristic scenario — no RL training, just run fixed-policy agents.
-    if not trainable_ids and not (MARL_ALGOS & trainable_algos):
+    if not trainable_ids:
         _run_heuristic(scenario, args, console)
         return
 
-    if MARL_ALGOS & trainable_algos:
-        algorithm = next(iter(MARL_ALGOS & trainable_algos))
-        rl_agent_id = trainable_ids[0]  # focal agent for logging
-    else:
-        rl_agent_id, algorithm = find_rl_agent(scenario)
+    rl_agent_id = trainable_ids[0]
+    algorithm = str(agent_configs[rl_agent_id]["algorithm"]).strip().lower()
 
     agent_cfg = agent_configs[rl_agent_id]
 
@@ -428,7 +388,7 @@ def main() -> None:
     # Wrappers — build per-agent dicts, then extract the single trainable agent's composers.
     # MAPPO consumes the full dicts; single-agent trainers use rl_agent_id's entry.
     # For MARL, keep all trainable IDs; for single-agent, restrict to one.
-    if algorithm not in MARL_ALGOS:
+    if algorithm != "mappo":
         trainable_ids = [rl_agent_id]
     # else: trainable_ids already holds the full list from get_trainable_agent_ids()
 
@@ -439,7 +399,7 @@ def main() -> None:
 
     # Training params (needed before banner so we can show device)
     params = resolve_training_params(agent_cfg, scenario)
-    if algorithm in MARL_ALGOS:
+    if algorithm == "mappo":
         params = {**params, **resolve_mappo_config(scenario)}
         obs_dims = {aid: obs_composers[aid].obs_dim for aid in trainable_ids}
         if len(set(obs_dims.values())) != 1:
@@ -463,7 +423,7 @@ def main() -> None:
 
     pretrained_actor_path: Optional[Path] = None
     pretrained_actor_value = params.get("pretrained_actor_checkpoint")
-    if algorithm in MARL_ALGOS and pretrained_actor_value:
+    if algorithm == "mappo" and pretrained_actor_value:
         pretrained_actor_path = _resolve_scenario_relative_path(
             str(pretrained_actor_value), scenario_dir
         )
@@ -584,7 +544,7 @@ def main() -> None:
                 "lifecycle_contract_version": "1.0",
                 "mappo": (
                     resolve_mappo_config(scenario)
-                    if algorithm in MARL_ALGOS
+                    if algorithm == "mappo"
                     else None
                 ),
             },
@@ -628,15 +588,12 @@ def main() -> None:
     action_repeat = int(scenario.get("environment", {}).get("action_repeat", 1))
     render = bool(scenario.get("environment", {}).get("render", False))
 
-    # DQN uses a discrete action set; all others use continuous denormalization.
-    action_set = params.get("action_set") if algorithm == "dqn" else None
     action_composer = ActionComposer.from_config(
         action_low, action_high, action_constraints,
-        action_set=np.asarray(action_set) if action_set is not None else None,
     )
 
     try:
-        if algorithm in MARL_ALGOS:
+        if algorithm == "mappo":
             _run_mappo(
                 env, trainable_ids, other_agents,
                 obs_composers, reward_composers, action_composer, params,
@@ -645,7 +602,7 @@ def main() -> None:
                 focal_agent_id=rl_agent_id,
                 run_id=run_id,
             )
-        elif algorithm in ON_POLICY_ALGOS:
+        elif algorithm == "ppo":
             _run_on_policy(
                 env, rl_agent_id, agent_cfg, other_agents,
                 obs_composer, reward_composer, action_composer, params,
@@ -656,15 +613,6 @@ def main() -> None:
                 scenario_dir=scenario_dir,
                 provenance=provenance,
                 wandb_logger=wandb_logger,
-            )
-        elif algorithm in OFF_POLICY_ALGOS:
-            _run_off_policy(
-                env, rl_agent_id, agent_cfg, other_agents,
-                obs_composer, reward_composer, action_composer, params,
-                action_low, action_high, action_repeat, render,
-                hooks, exp_cfg, output_dir, console, algorithm,
-                run_id=run_id,
-                spawn_plan_fn=spawn_plan_fn,
             )
         else:
             console.print_error(f"Unknown algorithm: '{algorithm}'")
@@ -1259,86 +1207,6 @@ def _run_on_policy(
     finally:
         if evaluator is not None:
             evaluator.close()
-
-
-def _run_off_policy(
-    env, rl_agent_id, agent_cfg, other_agents,
-    obs_composer, reward_composer, action_composer, params,
-    action_low, action_high, action_repeat, render,
-    hooks, exp_cfg, output_dir, console, algorithm,
-    run_id: str = "run",
-    spawn_plan_fn=None,
-) -> None:
-    from src.replay.replay_buffer import ReplayBuffer
-    from training.off_policy_trainer import OffPolicyTrainer
-
-    total_steps = int(exp_cfg.get("total_steps", 500_000))
-    learning_starts = int(params.get("learning_starts", 10_000))
-    train_freq = int(params.get("train_freq", 1))
-    gradient_steps = int(params.get("gradient_steps", 1))
-    batch_size = int(params.get("batch_size", 256))
-    buffer_size = int(params.get("buffer_size", 1_000_000))
-
-    from utils.torch_io import resolve_device
-    device = resolve_device([params.get("device", "cpu")])
-
-    # Action dim for replay buffer: DQN stores scalar index, others store full action vector
-    if algorithm == "dqn":
-        from agents.dqn import DQNAgent
-        action_set = params.get("action_set", [])
-        agent = DQNAgent(obs_dim=obs_composer.obs_dim, action_set=action_set, params=params)
-        agent.set_total_steps(total_steps)
-        buf_action_dim = 1
-    elif algorithm in {"sac", "ddpg"}:
-        from agents.sac import SACAgent
-        agent = SACAgent(obs_dim=obs_composer.obs_dim, action_low=action_low, action_high=action_high, params=params)
-        buf_action_dim = len(action_low)
-    elif algorithm == "td3":
-        from agents.td3 import TD3Agent
-        agent = TD3Agent(obs_dim=obs_composer.obs_dim, action_low=action_low, action_high=action_high, params=params)
-        buf_action_dim = len(action_low)
-    else:
-        console.print_error(f"Off-policy algorithm '{algorithm}' not implemented.")
-        import sys; sys.exit(1)
-
-    replay_buffer = ReplayBuffer(
-        capacity=buffer_size,
-        obs_dim=obs_composer.obs_dim,
-        action_dim=buf_action_dim,
-        device=device,
-    )
-
-    for hook in hooks:
-        if hasattr(hook, "_agent") and hook._agent is None:
-            hook._agent = agent
-
-    trainer = OffPolicyTrainer(
-        env=env,
-        rl_agent_id=rl_agent_id,
-        agent=agent,
-        other_agents=other_agents,
-        obs_composer=obs_composer,
-        reward_composer=reward_composer,
-        action_composer=action_composer,
-        replay_buffer=replay_buffer,
-        action_repeat=action_repeat,
-        hooks=hooks,
-        render=render,
-        run_id=run_id,
-        spawn_plan_fn=spawn_plan_fn,
-    )
-
-    console.print_info(
-        f"Starting {algorithm.upper()} training for {total_steps:,} steps "
-        f"(learning_starts={learning_starts:,})"
-    )
-    trainer.train(
-        total_steps=total_steps,
-        learning_starts=learning_starts,
-        train_freq=train_freq,
-        gradient_steps=gradient_steps,
-        batch_size=batch_size,
-    )
 
 
 def _run_mappo(

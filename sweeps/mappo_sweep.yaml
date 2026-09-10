@@ -1,0 +1,18 @@
+program: run.py
+method: grid
+project: marl-f110-complete
+entity: ahoop004-old-dominion-university
+name: MAPPO_reward_critic_seeds
+parameters:
+  scenario:
+    values:
+      - scenarios/complete_4_individual.yaml
+      - scenarios/complete_4_team_shared.yaml
+  seed:
+    values: [42, 123, 789]
+command:
+  - ${env}
+  - python3
+  - ${program}
+  - --wandb
+  - ${args}

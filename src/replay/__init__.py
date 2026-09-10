@@ -1,4 +1,1 @@
-"""Replay buffer utilities."""
-from .replay_buffer import ReplayBuffer
-
-__all__ = ["ReplayBuffer"]
+"""Offline transition datasets for PPO and MAPPO experiments."""
