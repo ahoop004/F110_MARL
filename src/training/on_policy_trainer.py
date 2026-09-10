@@ -58,6 +58,12 @@ class OnPolicyTrainer:
         self.run_id = run_id
         self.spawn_plan_fn = spawn_plan_fn
 
+    def _set_training_progress(self, completed: int, total: int) -> None:
+        # Remote collectors own no optimizer; the parent uses global progress.
+        setter = getattr(self.agent, "set_training_progress", None)
+        if setter is not None:
+            setter(completed / max(total, 1))
+
     def train_parallel(self, scenario: Dict, scenario_dir, num_envs: int, n_episodes: int) -> None:
         """Batch CPU collector requests; update only when all live workers pause.
 
@@ -71,6 +77,7 @@ class OnPolicyTrainer:
         connections, processes = {}, []
         waiting = {}
         completed = 0
+        self._set_training_progress(completed, n_episodes)
         # Standard W&B needs only episode totals. Dataset/custom hooks retain
         # the full transition stream, including custom WandbHook subclasses.
         record_hooks = [h for h in self._transition_hooks if type(h) is not WandbHook]
@@ -125,6 +132,7 @@ class OnPolicyTrainer:
                             for hook in record_hooks:
                                 hook.on_step(payload)
                         elif kind == "episode":
+                            self._set_training_progress(completed + 1, n_episodes)
                             for hook in self.hooks:
                                 hook.on_episode_end(completed, *payload)
                             completed += 1
@@ -225,6 +233,7 @@ class OnPolicyTrainer:
         )
 
     def train(self, n_episodes: int) -> None:
+        self._set_training_progress(0, n_episodes)
         for episode in range(n_episodes):
             obs_dict, info_dict = self._reset_env()
             self.obs_composer.reset()
@@ -376,6 +385,7 @@ class OnPolicyTrainer:
             update_metrics = dict(update_metrics)
             update_metrics["episode_steps"] = step_idx
 
+            self._set_training_progress(episode + 1, n_episodes)
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
 

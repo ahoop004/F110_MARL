@@ -1,7 +1,7 @@
 # Train a single local-observation PPO actor for later MAPPO initialization.
-# The actor architecture, observation, and physical action contracts match the
-# complete_4 MAPPO scenarios. Best-model selection uses held-out deterministic
-# evaluation rather than shaped training return.
+# Paper-inspired networks/optimization; a receiving MAPPO actor must use
+# [256, 256] hidden layers and leaky_relu (slope 0.2) for these checkpoints.
+# Best-model selection uses deterministic evaluation rather than training return.
 includes:
   - ../configs/env/default.yaml
   - ../configs/vehicle/default.yaml
@@ -84,10 +84,18 @@ agents:
     observation: ../configs/observations/rl_racer.yaml
     reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
     params:
-      learning_rate: 0.0003
-      hidden_dims: [256, 256]
-      activation: tanh
-      gamma: 0.99
+      # arXiv:2504.02420v2, Sec. III-E. Decay is linear over completed
+      # episodes here; the paper uses a fixed environment-step budget.
+      learning_rate: 0.001
+      lr_schedule: linear
+      learning_rate_end: 0.0001
+      batch_size: 1024
+      pi_hidden_dims: [256, 256]
+      vf_hidden_dims: [512, 512]
+      activation: leaky_relu  # fixed negative slope 0.2
+      # Match gamma=0.99 at 0.05 s with our 0.01 s decision interval:
+      # gamma = 0.99 ** (0.01 / 0.05). Recompute if action_repeat/dt changes.
+      gamma: 0.9979919516614258
       checkpoint_every: 500
       device: cuda
     action_constraints:

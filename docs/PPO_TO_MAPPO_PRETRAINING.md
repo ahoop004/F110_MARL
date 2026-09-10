@@ -17,6 +17,33 @@ decision.
 The current scenario uses `circle_map` for both splits. A held-out generalization
 experiment requires explicit disjoint training and evaluation maps.
 
+The pretraining network and optimizer settings follow Section III-E of
+[On learning racing policies with reinforcement learning, v2](https://arxiv.org/abs/2504.02420v2):
+actor `[256, 256]`, critic `[512, 512]`, LeakyReLU with negative slope 0.2,
+and minibatches of 1024. PPO's optional `lr_schedule: linear` interpolates
+`learning_rate: 0.001` to `learning_rate_end: 0.0001` using globally completed
+episodes divided by the episode budget. Updates use the rate set after the
+latest episode-end event; the final episode-end event sets the endpoint.
+The parent optimizer owns this schedule with parallel collectors, and
+`train/learning_rate` records the rate actually used for each update.
+Omitting the schedule retains a constant learning rate.
+
+This is an episode-based adaptation, not the paper's 120-million-step budget;
+the paper does not specify the decay curve. Collection remains four workers
+with at most 2048 pooled transitions, so early episode ends can produce batches
+smaller than 1024. PPO epochs, GAE lambda, clipping, and loss coefficients retain
+the existing defaults. At the current 0.01-second decision interval,
+`gamma = 0.99 ** (0.01 / 0.05)` matches the paper's physical discount horizon.
+This does not also match GAE's trace horizon. Recompute gamma if the decision
+interval changes. These joint changes form a new training condition; they do
+not isolate the effect of any single hyperparameter.
+
+New checkpoints require a receiving MAPPO actor with `pi_hidden_dims: [256, 256]`
+and `activation: leaky_relu`. Existing tanh MAPPO scenarios and old checkpoint
+references remain configured for their original actors; configure a matching
+MAPPO experiment when transferring a newly trained actor. Critic size does not
+need to match because the PPO critic is not transferred.
+
 To initialize a MAPPO shared actor, set the same checkpoint parameter for every
 trainable agent (their shared policy parameters must match). Relative paths are
 resolved from the scenario file; for each trainable agent:

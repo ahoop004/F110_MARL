@@ -102,6 +102,55 @@ def test_ppo_updates_a_single_transition_rollout() -> None:
     assert "train/value_loss" in metrics
 
 
+def test_pretraining_networks_and_physical_discount_contract(tmp_path):
+    from core.scenario import load_and_expand_scenario
+    from run import resolve_training_params
+    from agents.mappo import MAPPOAgent
+
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    params = resolve_training_params(scenario["agents"]["car_0"], scenario)
+    agent = PPOAgent(115, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
+    for net, expected in ((agent.actor.net, [256, 256, 2]),
+                          (agent.critic.net, [512, 512, 1])):
+        assert [layer.out_features for layer in net if isinstance(layer, torch.nn.Linear)] == expected
+        activations = [layer for layer in net if isinstance(layer, torch.nn.LeakyReLU)]
+        assert len(activations) == 2
+        for activation in activations:
+            torch.testing.assert_close(activation(torch.tensor([-1., 1.])), torch.tensor([-.2, 1.]))
+    assert agent.batch_size == 1024
+    dt = scenario["environment"]["timestep"] * scenario["environment"]["action_repeat"]
+    assert agent.gamma ** (0.05 / dt) == pytest.approx(0.99, abs=1e-12)
+
+    checkpoint = tmp_path / "leaky_ppo.pt"
+    agent.save(str(checkpoint))
+    mappo_params = {
+        "pi_hidden_dims": [256, 256], "vf_hidden_dims": [8], "device": "cpu",
+        "activation": "leaky_relu", "critic_mode": "shared_team", "reward_mode": "team_shared",
+    }
+    recipient = MAPPOAgent(115, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"], mappo_params)
+    recipient.load_pretrained_actor(str(checkpoint))
+    observations = torch.ones(2, 115)
+    torch.testing.assert_close(agent.actor.net(observations), recipient.actor.net(observations))
+    incompatible = MAPPOAgent(
+        115, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"],
+        {**mappo_params, "activation": "tanh"},
+    )
+    with pytest.raises(ValueError, match="activation"):
+        incompatible.load_pretrained_actor(str(checkpoint))
+
+
+@pytest.mark.parametrize("params", [
+    {"lr_schedule": "unknown"},
+    {"lr_schedule": "linear"},
+    {"learning_rate": float("nan")},
+    {"lr_schedule": "linear", "learning_rate_end": -1.0},
+    {"learning_rate_end": 1e-4},
+])
+def test_ppo_rejects_invalid_learning_rate_schedules(params):
+    with pytest.raises(ValueError, match="learning_rate|learning rate|lr_schedule"):
+        PPOAgent(1, -np.ones(2), np.ones(2), params)
+
+
 class _RecordingBuffer:
     def __init__(self) -> None:
         self.transitions = []
@@ -184,6 +233,38 @@ class _RewardComposer:
 class _ActionComposer:
     def process(self, action):
         return np.asarray(action, dtype=np.float32)
+
+
+@pytest.mark.parametrize("schedule", ["constant", "linear"])
+def test_single_env_learning_rate_tracks_completed_episodes(schedule, tmp_path):
+    from training.hooks import TrainingHook
+
+    class Capture(TrainingHook):
+        def __init__(self):
+            self.rates = []
+
+        def on_update(self, metrics):
+            self.rates.append(metrics["train/learning_rate"])
+
+    params = {"hidden_dims": [4], "n_steps": 2, "n_epochs": 1, "learning_rate": 0.001}
+    if schedule == "linear":
+        params.update(lr_schedule="linear", learning_rate_end=0.0001)
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), params)
+    capture = Capture()
+    trainer = OnPolicyTrainer(
+        _OneStepTruncationEnv(), "car_0", agent, {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(), hooks=[capture],
+    )
+    trainer.train(4)
+    expected = [0.001, 0.000775, 0.00055, 0.000325] if schedule == "linear" else [0.001] * 4
+    assert capture.rates == pytest.approx(expected)
+    endpoint = 0.0001 if schedule == "linear" else 0.001
+    assert agent.optimizer.param_groups[0]["lr"] == pytest.approx(endpoint)
+    checkpoint = tmp_path / "ppo.pt"
+    agent.save(str(checkpoint))
+    loaded = PPOAgent(1, -np.ones(2), np.ones(2), params)
+    loaded.load(str(checkpoint))
+    assert loaded.optimizer.param_groups[0]["lr"] == pytest.approx(endpoint)
 
 
 def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
@@ -309,7 +390,10 @@ def _parallel_test_setup(device="cpu"):
     for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
         scenario["environment"][key] = ["circle_map"]
     cfg = scenario["agents"]["car_0"]
-    cfg["params"].update(device=device, n_steps=8, n_epochs=1, batch_size=4, hidden_dims=[4])
+    cfg["params"].update(
+        device=device, n_steps=8, n_epochs=1, batch_size=4,
+        pi_hidden_dims=[4], vf_hidden_dims=[4],
+    )
     env, opponents, _ = create_training_setup(scenario, scenario_dir=path.parent)
     space = env.action_spaces["car_0"]
     obs = build_obs_composer(cfg, scenario["environment"], path.parent)
@@ -368,6 +452,11 @@ def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
         assert not wandb._episodes
         assert [episode[0] for episode in capture.episodes] == [0, 1, 2]
         assert len(capture.updates) == 2
+        # Two of three global episodes finish between the pooled updates.
+        assert [row["train/learning_rate"] for row in capture.updates] == pytest.approx(
+            [0.001, 0.0004]
+        )
+        assert trainer.agent.optimizer.param_groups[0]["lr"] == pytest.approx(0.0001)
         assert capture.ends == 1
         episodes = defaultdict(list)
         for record in capture.records:

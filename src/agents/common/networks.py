@@ -1,10 +1,14 @@
 """Shared MLP building blocks for all PyTorch RL agents."""
 from __future__ import annotations
 
+from functools import partial
 from typing import List, Optional
 
 import torch
 import torch.nn as nn
+
+# Fixed as part of the "leaky_relu" checkpoint activation contract.
+LEAKY_RELU_NEGATIVE_SLOPE = 0.2
 
 
 def make_mlp(
@@ -15,7 +19,10 @@ def make_mlp(
     output_activation: Optional[str] = None,
 ) -> nn.Sequential:
     """Build a fully-connected MLP."""
-    act_map = {"relu": nn.ReLU, "tanh": nn.Tanh, "silu": nn.SiLU, "swish": nn.SiLU}
+    act_map = {
+        "relu": nn.ReLU, "tanh": nn.Tanh, "silu": nn.SiLU, "swish": nn.SiLU,
+        "leaky_relu": partial(nn.LeakyReLU, negative_slope=LEAKY_RELU_NEGATIVE_SLOPE),
+    }
     Act = act_map.get(activation.lower(), nn.Tanh)
 
     layers: List[nn.Module] = []

@@ -86,6 +86,16 @@ class PPOAgent:
 
         # Hyperparameters (merged from training_defaults + scenario params)
         self.lr = float(params.get("learning_rate", 3e-4))
+        self.lr_schedule = str(params.get("lr_schedule", "constant"))
+        if self.lr_schedule not in {"constant", "linear"}:
+            raise ValueError("PPO lr_schedule must be 'constant' or 'linear'.")
+        if self.lr_schedule == "linear" and "learning_rate_end" not in params:
+            raise ValueError("Linear PPO lr_schedule requires learning_rate_end.")
+        self.lr_end = float(params.get("learning_rate_end", self.lr))
+        if not all(np.isfinite(rate) and rate > 0 for rate in (self.lr, self.lr_end)):
+            raise ValueError("PPO learning rates must be finite and positive.")
+        if self.lr_schedule == "constant" and self.lr_end != self.lr:
+            raise ValueError("A different learning_rate_end requires lr_schedule: linear.")
         self.gamma = float(params.get("gamma", 0.99))
         self.gae_lambda = float(params.get("gae_lambda", 0.95))
         self.clip_range = float(params.get("clip_range", 0.2))
@@ -119,6 +129,18 @@ class PPOAgent:
     # ------------------------------------------------------------------
     # Agent protocol
     # ------------------------------------------------------------------
+
+    def set_training_progress(self, progress: float) -> None:
+        """Set LR from the trainer's globally completed episode fraction.
+
+        Evaluation never advances this schedule. In parallel training only
+        the parent optimizer receives progress, not individual collectors.
+        """
+        if self.lr_schedule == "linear":
+            fraction = float(np.clip(progress, 0.0, 1.0))
+            rate = self.lr + fraction * (self.lr_end - self.lr)
+            for group in self.optimizer.param_groups:
+                group["lr"] = rate
 
     @torch.no_grad()
     def predict(self, obs: np.ndarray) -> np.ndarray:
@@ -194,7 +216,9 @@ class PPOAgent:
                     self, obs_b, obs_b, act_b, old_lp_b, adv_b, ret_b,
                 ))
 
-        return mean_update_metrics(metric_rows)
+        metrics = mean_update_metrics(metric_rows)
+        metrics["train/learning_rate"] = self.optimizer.param_groups[0]["lr"]
+        return metrics
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

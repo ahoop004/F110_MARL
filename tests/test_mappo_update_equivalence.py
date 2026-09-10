@@ -235,6 +235,9 @@ def test_shared_ppo_update_matches_reference_with_partial_minibatch(device):
     expected_metrics = _legacy_update(reference, .5)
     torch.manual_seed(999)
     actual_metrics = actual.update(.5)
+    # LR reporting is new; the legacy loss metrics and parameter update must
+    # still agree exactly within the original numerical tolerances.
+    assert actual_metrics.pop("train/learning_rate") == reference.optimizer.param_groups[0]["lr"]
     assert actual_metrics == pytest.approx(expected_metrics, rel=1e-6, abs=1e-7)
     for expected, observed in zip(reference._optim_parameters, actual._optim_parameters):
         torch.testing.assert_close(observed, expected, rtol=0, atol=0)
