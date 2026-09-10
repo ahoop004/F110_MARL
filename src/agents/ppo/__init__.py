@@ -118,23 +118,14 @@ class PPOAgent:
         self.buffer = RolloutBuffer(self.n_steps, obs_dim, self.action_dim, self.device)
 
     # ------------------------------------------------------------------
-    # Denormalize / normalize helpers
-    # ------------------------------------------------------------------
-
-    def _denormalize(self, action_norm: np.ndarray) -> np.ndarray:
-        """Map [-1, 1] → physical action space."""
-        mid = (self.action_high + self.action_low) / 2.0
-        half = (self.action_high - self.action_low) / 2.0
-        return mid + half * np.clip(action_norm, -1.0, 1.0)
-
-    def _normalize(self, action_phys: np.ndarray) -> np.ndarray:
-        mid = (self.action_high + self.action_low) / 2.0
-        half = (self.action_high - self.action_low) / 2.0
-        return np.clip((action_phys - mid) / half, -1.0, 1.0)
-
-    # ------------------------------------------------------------------
     # Agent protocol
     # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def predict(self, obs: np.ndarray) -> np.ndarray:
+        """Return a deterministic evaluation action without evaluating the critic."""
+        obs_t = torch.as_tensor(np.asarray(obs)[None], dtype=torch.float32, device=self.device)
+        return torch.tanh(self.actor.net(obs_t))[0].cpu().numpy()
 
     @torch.no_grad()
     def act(

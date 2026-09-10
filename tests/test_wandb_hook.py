@@ -107,3 +107,54 @@ def test_wandb_hook_keeps_parallel_worker_episodes_separate():
         assert log["episode/reward_component/progress/car_0"] == reward
         assert log["episode/map_bundle"] == f"map-{worker_id}"
         assert log["episode/worker_seed"] == 42 + worker_id
+
+
+@pytest.mark.parametrize("record_transitions", [False, True])
+def test_worker_wandb_summary_matches_transition_stream(record_transitions):
+    from dataclasses import replace
+    import pickle
+    import numpy as np
+    from env.types import TransitionRecord
+    from training.on_policy_trainer import _WorkerHook
+
+    messages = []
+    reference_logger, summary_logger = _RecordingWandbLogger(), _RecordingWandbLogger()
+    reference, summarized = WandbHook(reference_logger), WandbHook(summary_logger)
+    workers = [
+        _WorkerHook(SimpleNamespace(send=messages.append), i, 42 + i,
+                    record_transitions, aggregate_wandb=True)
+        for i in range(2)
+    ]
+    reference_records = []
+    for episode in range(2):
+        for step in range(2):
+            for worker_id, worker in enumerate(workers):
+                record = TransitionRecord(
+                    obs=np.zeros(115, dtype=np.float32), action_norm=np.zeros(2),
+                    action_phys=np.ones(2), reward=1.0,
+                    reward_components={"progress": float(worker_id + step)},
+                    next_obs=np.ones(115, dtype=np.float32), terminated=False,
+                    truncated=step == 1, info={}, global_state=np.zeros(16),
+                    map_id=f"map-{worker_id}", spawn_id=None,
+                    episode_id=f"worker-{worker_id}-ep-{episode}", step_idx=step,
+                    agent_id="car_0",
+                )
+                reference_record = replace(record, info={"worker_id": worker_id,
+                                                         "worker_seed": 42 + worker_id})
+                reference_records.append(reference_record)
+                reference.on_step(reference_record)
+                worker.on_step(record)
+        for worker_id, worker in enumerate(workers):
+            worker.on_episode_end(episode, 2.0, {"outcome": "timeout"}, {"episode_steps": 2})
+            _, (reward, info, metrics) = messages[-1]
+            global_episode = episode * 2 + worker_id
+            reference.on_episode_end(global_episode, reward,
+                                     {k: v for k, v in info.items() if k != "_wandb_episode_state"}, metrics)
+            summarized.on_episode_end(global_episode, reward, info, metrics)
+
+    assert summary_logger.payloads == reference_logger.payloads
+    sent_records = [payload for kind, payload in messages if kind == "transition"]
+    assert len(sent_records) == (8 if record_transitions else 0)
+    if record_transitions:
+        assert pickle.dumps(sent_records) == pickle.dumps(reference_records)
+    assert sum(kind == "episode" for kind, _ in messages) == 4

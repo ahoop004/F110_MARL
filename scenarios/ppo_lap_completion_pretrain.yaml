@@ -12,7 +12,7 @@ experiment:
   name: ppo_lap_completion_pretrain
   episodes: 1000
   seed: 42
-  num_envs: 8
+  num_envs: 4
   torch_threads: 1
 
 environment:

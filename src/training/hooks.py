@@ -146,7 +146,7 @@ class WandbHook(TrainingHook):
 
     requires_transition_record = True
 
-    def __init__(self, wandb_logger: WandbLogger) -> None:
+    def __init__(self, wandb_logger: Optional[WandbLogger]) -> None:
         self._wandb = wandb_logger
         self._update = 0
         self._episodes: Dict[Any, Dict[str, Any]] = {}
@@ -168,10 +168,16 @@ class WandbHook(TrainingHook):
                 agent_components.get(str(component), 0.0) + component_value
             )
 
+    def take_episode_state(self, worker_id=None) -> Dict[str, Any]:
+        """Drain accumulated metrics for local logging or transfer from a worker."""
+        return self._episodes.pop(worker_id, {"agents": set(), "components": {}, "map_id": None})
+
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         log = {"episode/reward": reward, "episode/number": episode}
         worker_id = info.get("worker_id") if isinstance(info, dict) else None
-        state = self._episodes.pop(worker_id, {"agents": set(), "components": {}, "map_id": None})
+        state = self.take_episode_state(worker_id)
+        if type(self) is WandbHook and isinstance(info, dict):
+            state = info.get("_wandb_episode_state", state)
         if isinstance(info, dict):
             for key in ("worker_id", "worker_seed", "worker_episode"):
                 if key in info:

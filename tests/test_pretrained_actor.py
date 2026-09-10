@@ -126,9 +126,8 @@ class _ActorOwner:
     def __init__(self):
         self.actor = torch.nn.Linear(1, 1)
 
-    def act(self, observation, deterministic=False):
-        assert deterministic is True
-        return np.zeros(2, dtype=np.float32), 0.0, 0.0
+    def predict(self, observation):
+        return np.zeros(2, dtype=np.float32)
 
 
 class _Composer:

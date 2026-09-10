@@ -141,20 +141,6 @@ class MAPPORolloutBuffer:
             next_value, gamma, gae_lambda,
         )
 
-    def iterate_batches(self, batch_size: int):
-        n = self.size()
-        indices = torch.randperm(n, device=self.device)
-        for start in range(0, n, batch_size):
-            idx = indices[start:start + batch_size]
-            yield (
-                self.obs[idx],
-                self.global_states[idx],
-                self.actions[idx],
-                self.log_probs[idx],
-                self.values[idx],
-            ), idx
-
-
 # ---------------------------------------------------------------------------
 # MAPPO agent
 # ---------------------------------------------------------------------------

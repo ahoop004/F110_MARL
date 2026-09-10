@@ -947,10 +947,7 @@ def _run_eval(
                     }
                 else:
                     for aid in active_trainable_ids:
-                        act_result = agent.act(
-                            wrapped_obs[aid], deterministic=True
-                        )
-                        action_norm = np.asarray(act_result[0], dtype=np.float32)
+                        action_norm = agent.predict(wrapped_obs[aid])
                         actions_norm[aid] = action_norm
                         actions_phys[aid] = action_composers[aid].process(
                             action_norm

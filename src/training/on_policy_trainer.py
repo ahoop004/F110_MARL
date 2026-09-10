@@ -9,7 +9,7 @@ import numpy as np
 from agents.ppo import PPOAgent
 from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
-from training.hooks import TrainingHook, transition_record_hooks
+from training.hooks import TrainingHook, WandbHook, transition_record_hooks
 from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
@@ -71,6 +71,10 @@ class OnPolicyTrainer:
         connections, processes = {}, []
         waiting = {}
         completed = 0
+        # Standard W&B needs only episode totals. Dataset/custom hooks retain
+        # the full transition stream, including custom WandbHook subclasses.
+        record_hooks = [h for h in self._transition_hooks if type(h) is not WandbHook]
+        aggregate_wandb = any(type(h) is WandbHook for h in self._transition_hooks)
 
         def receive(worker_id):
             connection = connections[worker_id]
@@ -92,7 +96,7 @@ class OnPolicyTrainer:
                     args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
                           n_episodes // num_envs + (worker_id < n_episodes % num_envs),
                           self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
-                          self.agent.gae_lambda, bool(self._transition_hooks)),
+                          self.agent.gae_lambda, bool(record_hooks), aggregate_wandb),
                     name=f"ppo-collector-{worker_id}",
                 )
                 connections[worker_id] = parent
@@ -118,7 +122,7 @@ class OnPolicyTrainer:
                     while True:
                         kind, payload = receive(worker_id)
                         if kind == "transition":
-                            for hook in self._transition_hooks:
+                            for hook in record_hooks:
                                 hook.on_step(payload)
                         elif kind == "episode":
                             for hook in self.hooks:
@@ -409,13 +413,19 @@ class _RemotePolicy:
 
 
 class _WorkerHook(TrainingHook):
-    def __init__(self, connection, worker_id, seed, record_transitions):
+    def __init__(self, connection, worker_id, seed, record_transitions, aggregate_wandb=False):
         self.connection = connection
         self.worker_id = worker_id
         self.seed = seed
-        self.requires_transition_record = record_transitions
+        self._record_transitions = record_transitions
+        self._wandb = WandbHook(None) if aggregate_wandb else None
+        self.requires_transition_record = record_transitions or aggregate_wandb
 
     def on_step(self, record):
+        if self._wandb is not None:
+            self._wandb.on_step(record)
+        if not self._record_transitions:
+            return
         from dataclasses import replace
         record = replace(record, info={**record.info, "worker_id": self.worker_id,
                                        "worker_seed": self.seed})
@@ -424,13 +434,16 @@ class _WorkerHook(TrainingHook):
     def on_episode_end(self, episode, reward, info, metrics):
         info = {**info, "worker_id": self.worker_id, "worker_seed": self.seed,
                 "worker_episode": episode}
+        if self._wandb is not None:
+            info["_wandb_episode_state"] = self._wandb.take_episode_state()
         metrics = {**metrics, "worker_id": self.worker_id, "worker_seed": self.seed,
                    "worker_episode": episode}
         self.connection.send(("episode", (reward, info, metrics)))
 
 
 def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
-                        n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions):
+                        n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions,
+                        aggregate_wandb):
     import copy
     import traceback
     from pathlib import Path
@@ -466,7 +479,7 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
             env, agent_id, policy, opponents, observations, rewards,
             ActionComposer.from_config(space.low, space.high, cfg.get("action_constraints", {})),
             action_repeat=int(env_cfg.get("action_repeat", 1)),
-            hooks=[_WorkerHook(connection, worker_id, seed, record_transitions)],
+            hooks=[_WorkerHook(connection, worker_id, seed, record_transitions, aggregate_wandb)],
             run_id=f"{run_id}_worker{worker_id:03d}",
         )
         trainer.train(n_episodes)

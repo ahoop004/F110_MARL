@@ -226,3 +226,18 @@ learning-equivalence or L40 scaling results. Parent environment setup is exclude
 from both wall times. Measure longer runs on the target node before selecting a
 worker count. CSV/W&B episode rows carry worker identity; W&B component totals
 are kept separately for interleaved worker episodes.
+
+Standard W&B logging aggregates metrics inside each PPO worker and sends one
+summary per episode. Full transition records still cross the process boundary
+when dataset or custom step hooks require them. This removes per-decision W&B
+record serialization, but workers still construct records for local aggregation.
+PPO checkpoint-selection and standalone evaluation use actor-only deterministic
+inference; training still computes both actions and critic values. These changes
+preserve actions, metrics, and dataset records; measure throughput on the target
+node with the intended logging settings.
+
+A local evaluation microbenchmark (115 inputs, `[256, 256]` MLP, one CPU thread,
+100 warmup calls, median of three 2,000-call repetitions) measured 341 → 134 µs
+per action on CPU and 577 → 313 µs on a Quadro RTX 5000 when replacing full
+deterministic `act()` with `predict()`. This includes the NumPy result transfer,
+but excludes environment stepping and is not an end-to-end or L40 speed claim.

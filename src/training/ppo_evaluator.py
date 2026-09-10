@@ -110,9 +110,7 @@ class DeterministicPPOEvaluator:
                         active = set(getattr(self.env, "agents", list(obs_dict)))
                         if self.rl_agent_id not in active:
                             break
-                        action_norm = np.asarray(
-                            active_agent.act(obs, deterministic=True)[0], dtype=np.float32
-                        )
+                        action_norm = active_agent.predict(obs)
                         action_phys = self.action_composer.process(action_norm)
                         actions = self._actions(action_phys, obs_dict, active)
                         if not actions:

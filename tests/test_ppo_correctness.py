@@ -274,6 +274,27 @@ def test_batched_ppo_inference_and_independent_worker_bootstraps():
     torch.testing.assert_close(captured[4], torch.tensor([10.0, 100.0]))
 
 
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+)])
+def test_ppo_prediction_matches_actions_without_critic_or_rng_changes(device, monkeypatch):
+    agent = PPOAgent(115, -np.ones(2), np.ones(2), {"hidden_dims": [256, 256], "device": device})
+    observations = np.random.default_rng(42).normal(size=(8, 115)).astype(np.float32)
+    expected = [agent.act(obs, deterministic=True)[0] for obs in observations]
+    cpu_rng = torch.get_rng_state()
+    device_rng = torch.cuda.get_rng_state() if device == "cuda" else None
+
+    def unexpected_critic(*args):
+        raise AssertionError("Evaluation must not run the critic")
+
+    monkeypatch.setattr(agent.critic, "forward", unexpected_critic)
+    for obs, action in zip(observations, expected):
+        np.testing.assert_array_equal(agent.predict(obs), action)
+    assert torch.equal(torch.get_rng_state(), cpu_rng)
+    if device_rng is not None:
+        assert torch.equal(torch.cuda.get_rng_state(), device_rng)
+
+
 def _parallel_test_setup(device="cpu"):
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
@@ -306,7 +327,8 @@ def _parallel_test_setup(device="cpu"):
 )])
 def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
     from collections import defaultdict
-    from training.hooks import TrainingHook
+    from types import SimpleNamespace
+    from training.hooks import TrainingHook, WandbHook
 
     class Capture(TrainingHook):
         def __init__(self):
@@ -328,12 +350,22 @@ def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
     for _ in range(2):
         trainer, scenario, directory = _parallel_test_setup(device)
         capture = Capture()
-        trainer.hooks = trainer._transition_hooks = [capture]
+        logged = []
+        wandb = WandbHook(SimpleNamespace(log_metrics=logged.append))
+        trainer.hooks = trainer._transition_hooks = [capture, wandb]
         try:
             trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=3)
         finally:
             trainer.env.close()
         assert len(capture.records) == 12
+        episode_logs = [row for row in logged if "episode/number" in row]
+        assert len(episode_logs) == 3
+        for row, (episode, reward, info, metrics) in zip(episode_logs, capture.episodes):
+            assert row["episode/number"] == episode
+            assert row["episode/reward"] == reward
+            assert row["episode/worker_id"] == info["worker_id"]
+            assert row["episode/steps"] == metrics["episode_steps"]
+        assert not wandb._episodes
         assert [episode[0] for episode in capture.episodes] == [0, 1, 2]
         assert len(capture.updates) == 2
         assert capture.ends == 1
