@@ -25,9 +25,76 @@ from physics.simulaton import Simulator
 from utils.track_preview import TrackPreviewGeometry
 from training.reward_context import build_reward_context
 from wrappers.observations.composer import ObservationComposer
+from wrappers.observations.ego import EgoStateComponent
 from wrappers.observations.neighbors import FrenetNeighborsComponent
 from wrappers.observations.track import FrenetVehicleTrackComponent
 from wrappers.rewards.composer import RewardComposer
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ({"velocity": [2.0, -0.3], "angular_velocity": 0.7}, [2.0, -0.3, 0.7]),
+    ({"velocity": [2.0, -0.3], "angular_velocity": -0.7}, [2.0, -0.3, -0.7]),
+    ({"velocity": [2.0, -0.3, 99.0], "angular_velocity": 0.7}, [2.0, -0.3, 0.7]),
+    ({"angular_velocity": 0.7}, [0.0, 0.0, 0.7]),
+    ({"velocity": [2.0]}, [2.0, 0.0, 0.0]),
+    ({"velocity": [], "angular_velocity": None}, [0.0, 0.0, 0.0]),
+    ({}, [0.0, 0.0, 0.0]),
+])
+def test_ego_motion_reads_separate_yaw_sensor_and_overwrites_buffer(raw, expected):
+    component = EgoStateComponent(include_pose=True)
+    output = np.full(component.dim, 99.0, dtype=np.float32)
+    component.compute_into({**raw, "pose": [4.0, 5.0, 0.2]}, {}, output)
+    np.testing.assert_allclose(output, [*expected, 4.0, 5.0, 0.2])
+    np.testing.assert_array_equal(component.compute({**raw, "pose": [4.0, 5.0, 0.2]}, {}), output)
+    component.compute_into({}, {}, output)
+    np.testing.assert_array_equal(output, np.zeros(6))
+
+
+def test_pose_only_ego_observation_keeps_its_layout():
+    component = EgoStateComponent(include_velocity=False, include_pose=True)
+    assert component.dim == 3
+    np.testing.assert_allclose(
+        component.compute({"pose": [4.0, 5.0, 0.2], "angular_velocity": 0.7}, {}),
+        [4.0, 5.0, 0.2],
+    )
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
+    path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
+    scenario = load_and_expand_scenario(str(path))
+    # Capture the historical simulator defaults plus this scenario's four
+    # effective overrides, to detect any unintended dynamics change.
+    from env.f110ParallelEnv import _default_vehicle_params
+    expected_vehicle = _default_vehicle_params()
+    expected_vehicle.update(v_switch=0.8, a_max=2.0, v_min=-20.0, v_max=20.0)
+    assert "vehicle_params" not in scenario  # no ignored top-level fragment
+    assert scenario["environment"]["vehicle_params"] == expected_vehicle
+    scenario["environment"]["max_steps"] = 32
+    composer = ObservationComposer.from_file(
+        str(path.parent / scenario["agents"]["car_0"]["observation"]),
+        scenario["environment"],
+    )
+    assert composer.obs_dim == 115
+    env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
+    try:
+        assert env.params == expected_vehicle
+        np.testing.assert_allclose(env.action_spaces["car_0"].low, [-0.4189, -20.0])
+        np.testing.assert_allclose(env.action_spaces["car_0"].high, [0.4189, 20.0])
+        observations, infos = env.reset(seed=42)
+        np.testing.assert_array_equal(composer.wrap(observations["car_0"], infos["car_0"])[108:111], np.zeros(3))
+        for _ in range(10):
+            observations, _, _, _, infos = env.step({"car_0": np.array([0.1, 2.0], dtype=np.float32)})
+        raw = observations["car_0"]
+        wrapped = composer.wrap(raw, infos["car_0"])
+        assert abs(float(raw["angular_velocity"])) > 1e-4
+        np.testing.assert_array_equal(wrapped[108:110], raw["velocity"])
+        assert wrapped[110] == raw["angular_velocity"]
+        observations, infos = env.reset(seed=42)
+        composer.reset()
+        assert composer.wrap(observations["car_0"], infos["car_0"])[110] == 0.0
+    finally:
+        env.close()
 
 
 def _circle(radius: float, count: int = 240) -> np.ndarray:

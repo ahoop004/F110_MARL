@@ -4,7 +4,6 @@
 # Best-model selection uses deterministic evaluation rather than training return.
 includes:
   - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
   - ../configs/training/on_policy.yaml
   - ../configs/wandb.yaml
 
@@ -62,6 +61,22 @@ environment:
     enabled: true
     allow_reuse: true
   vehicle_params:
+    # Explicit snapshot of the existing runtime parameters. The former vehicle
+    # include declared a top-level block that create_training_setup did not use.
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    m: 3.74
+    I: 0.04712
+    length: 0.32
+    width: 0.225
+    s_min: -0.4189
+    s_max: 0.4189
+    sv_min: -3.2
+    sv_max: 3.2
     v_switch: 0.8
     a_max: 2.0
     v_min: -20.0

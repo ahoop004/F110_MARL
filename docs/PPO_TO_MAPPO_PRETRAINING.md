@@ -17,6 +17,27 @@ decision.
 The current scenario uses `circle_map` for both splits. A held-out generalization
 experiment requires explicit disjoint training and evaluation maps.
 
+The racer observation remains 115 values: 108 LiDAR ranges, body-frame
+`[vx, vy, yaw_rate]`, normalized progress and cross-track distance, and two
+previous-action values. The shared ego-state wrapper now reads yaw rate from
+the environment's separate `angular_velocity` field in rad/s. Previously it
+padded the two-value `velocity` field with zero, so yaw rate was unavailable to
+the policy. This correction also affects other PPO/MAPPO observation configs
+that enable ego velocity. The sensor scales and vector layout are unchanged.
+
+Treat checkpoints and datasets produced before the yaw-rate correction as a
+different observation contract, even though their dimensions match. Shape
+checks alone cannot detect this semantic difference; use the original code
+revision to reproduce old policies, and retrain for the corrected inputs.
+Receiving MAPPO actors must use the same corrected observation implementation.
+
+This scenario explicitly records the previously effective vehicle parameters
+under `environment.vehicle_params`, including steering bounds ±0.4189 rad,
+speed bounds ±20 m/s, `a_max: 2.0`, and `v_switch: 0.8`. Its unused top-level
+vehicle include was removed. These declarations preserve the physical model
+and action bounds; the yaw-rate correction is the behavioral change in this
+stage. Reverse prevention still clips negative target-speed commands to zero.
+
 The pretraining network and optimizer settings follow Section III-E of
 [On learning racing policies with reinforcement learning, v2](https://arxiv.org/abs/2504.02420v2):
 actor `[256, 256]`, critic `[512, 512]`, LeakyReLU with negative slope 0.2,

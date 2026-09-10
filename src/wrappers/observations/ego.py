@@ -59,10 +59,14 @@ _ZEROS3 = np.zeros(3, dtype=np.float32)
 
 
 class EgoStateComponent(ObservationComponent):
-    """Ego vehicle state: velocity (always) + optional pose.
+    """Optional ego motion state and pose.
 
-    velocity:  [vx, vy, yaw_rate]  — 3 dims
+    motion:    [vx, vy, yaw_rate]  — 3 dims
     pose:      [x,  y,  theta]     — 3 dims (optional)
+
+    The environment exposes body-frame ``velocity=[vx, vy]`` and scalar
+    ``angular_velocity`` separately. Keep the composed motion vector at three
+    dimensions and read yaw rate from its own sensor field (rad/s).
     """
 
     def __init__(
@@ -85,10 +89,12 @@ class EgoStateComponent(ObservationComponent):
                 out[0:3] = 0.0
             else:
                 arr = np.asarray(raw, dtype=np.float32).ravel()
-                n = min(arr.shape[0], 3)
+                n = min(arr.shape[0], 2)
                 out[0:n] = arr[0:n]
-                if n < 3:
-                    out[n:3] = 0.0
+                if n < 2:
+                    out[n:2] = 0.0
+            yaw_rate = raw_obs.get("angular_velocity")
+            out[2] = float(yaw_rate) if yaw_rate is not None else 0.0
             offset = 3
         if self._pose:
             raw = raw_obs.get("pose")
