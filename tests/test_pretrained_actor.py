@@ -188,3 +188,29 @@ def test_deterministic_ppo_evaluator_uses_environment_completion_facts():
     assert summary["collision_rate"] == 0.0
     assert summary["mean_finish_steps"] == 1.0
     assert agent.actor.training is True
+
+
+def test_evaluation_resets_integrated_speed_each_episode():
+    from wrappers.actions.composer import ActionComposer
+
+    class Env(_OneStepFinishEnv):
+        def __init__(self):
+            self.speeds = []
+
+        def step(self, actions):
+            self.speeds.append(float(actions['car_0'][1]))
+            return super().step(actions)
+
+    actions = ActionComposer.from_config(ACTION_LOW, ACTION_HIGH,
+        dict(speed_control='acceleration', max_acceleration=5, max_deceleration=5,
+             prevent_reverse=True), decision_dt=.01)
+    actions.process([0, 1])
+    env = Env()
+    agent = _ActorOwner()
+    agent.predict = lambda obs: np.array([0., 1.], dtype=np.float32)
+    evaluator = DeterministicPPOEvaluator(
+        env=env, rl_agent_id='car_0', other_agents={}, obs_composer=_Composer(),
+        action_composer=actions, episodes=2, base_seed=42,
+    )
+    evaluator.evaluate(agent)
+    assert env.speeds == pytest.approx([.05, .05])

@@ -183,6 +183,7 @@ class MAPPOAgent:
         self.action_low = np.asarray(action_low, dtype=np.float32)
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
+        self.action_contract = dict(params.get("_action_contract", {"speed_control": "direct"}))
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
 
@@ -650,6 +651,8 @@ class MAPPOAgent:
         ckpt = safe_load(path, map_location=self.device)
         if not isinstance(ckpt, dict) or "actor" not in ckpt:
             raise ValueError(f"Pretrained PPO checkpoint has no actor state: {path}")
+        if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
+            raise ValueError("Incompatible pretrained PPO action contract (speed control semantics differ).")
         if "algorithm" in ckpt and str(ckpt["algorithm"]).lower() != "ppo":
             raise ValueError(
                 "Pretrained actor checkpoint must come from PPO; "
@@ -698,6 +701,7 @@ class MAPPOAgent:
                 "action_dim": self.action_dim,
                 "action_low": self.action_low,
                 "action_high": self.action_high,
+                "action_contract": self.action_contract,
                 "global_state_dim": self.global_state_dim,
                 "global_state_contract_version": self.global_state_contract_version,
                 "critic_input_dim": self.critic_input_dim,
@@ -714,6 +718,8 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
+            raise ValueError("Incompatible MAPPO checkpoint action contract (speed control semantics differ).")
         if "critic_mode" not in ckpt or "reward_mode" not in ckpt:
             raise ValueError(
                 "MAPPO checkpoint predates the explicit reward/critic contract; "

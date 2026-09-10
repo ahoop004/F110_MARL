@@ -313,7 +313,8 @@ def test_latest_speed_reference_rate_survives_repeated_physics_actions() -> None
     env._control_timestep = 0.02
     env._last_control_commands = np.zeros((1, 2), dtype=np.float32)
     env._last_speed_reference_rates = np.zeros(1, dtype=np.float32)
-    env._control_command_initialized = np.ones(1, dtype=bool)
+    env._control_repeat = 2
+    env._episode_step_count = 0
 
     command = np.array([[0.1, 1.0]], dtype=np.float32)
     env._record_control_commands(command, ("car_0",))
@@ -321,8 +322,12 @@ def test_latest_speed_reference_rate_survives_repeated_physics_actions() -> None
 
     # action_repeat sends the same command again; preserve the latest policy
     # change rather than replacing it with a misleading zero derivative.
+    env._episode_step_count = 1
     env._record_control_commands(command, ("car_0",))
     assert env._last_speed_reference_rates[0] == pytest.approx(50.0)
+    env._episode_step_count = 2
+    env._record_control_commands(command, ("car_0",))
+    assert env._last_speed_reference_rates[0] == 0.0
 
 
 def test_complete_4_frenet_scenario_is_opt_in() -> None:
@@ -354,16 +359,23 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
     assert env_kwargs["action_repeat"] == 2
 
 
-def test_ppo_frenet_pretraining_changes_only_observation_and_run_labels():
+def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     variant = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
     assert variant["experiment"]["name"] != baseline["experiment"]["name"]
     assert variant["wandb"]["group"] != baseline["wandb"]["group"]
     assert variant["agents"]["car_0"]["observation"].endswith(
-        "/rl_racer_vehicle_track_frenet.yaml"
+        "/rl_racer_vehicle_track_frenet_acceleration.yaml"
     )
-    # An accidental change to any other experiment setting confounds the
-    # observation comparison, including changes inherited from shared files.
+    assert variant["agents"]["car_0"]["action_constraints"] == {
+        "speed_control": "acceleration", "max_acceleration": 5.0,
+        "max_deceleration": 5.0, "prevent_reverse": True, "speed_index": 1,
+    }
+    for key, expected in (("a_max", 5.0), ("v_switch", 20.0)):
+        assert variant["environment"]["vehicle_params"][key] == expected
+        variant["environment"]["vehicle_params"][key] = baseline["environment"]["vehicle_params"][key]
+    variant["agents"]["car_0"]["action_constraints"] = baseline["agents"]["car_0"]["action_constraints"]
+    # All remaining settings stay paired with the baseline.
     variant["experiment"]["name"] = baseline["experiment"]["name"]
     for key in ("group", "tags", "notes"):
         variant["wandb"][key] = baseline["wandb"][key]

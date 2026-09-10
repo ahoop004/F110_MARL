@@ -154,7 +154,11 @@ def resolve_training_params(agent_cfg: Dict, scenario: Dict) -> Dict:
     """Merge training_defaults with agent params — agent params win."""
     defaults = scenario.get("training_defaults", {})
     params = agent_cfg.get("params", {})
-    return {**defaults, **params}
+    environment = scenario.get("environment", {})
+    decision_dt = float(environment.get("timestep", 0.01)) * int(environment.get("action_repeat", 1))
+    return {**defaults, **params, "_action_contract": ActionComposer.contract_from_config(
+        agent_cfg.get("action_constraints", {}), decision_dt,
+    )}
 
 
 def _resolve_scenario_relative_path(value: str, scenario_dir: Path) -> Path:
@@ -616,6 +620,7 @@ def main() -> None:
 
     action_composer = ActionComposer.from_config(
         action_low, action_high, action_constraints,
+        decision_dt=float(env_cfg.get("timestep", 0.01)) * action_repeat,
     )
 
     try:
@@ -803,6 +808,7 @@ def _run_eval(
             env.action_spaces[aid].low,
             env.action_spaces[aid].high,
             agent_configs[aid].get("action_constraints", {}),
+            decision_dt=float(env_cfg.get("timestep", 0.01)) * action_repeat,
         )
         for aid in trainable_ids
     }
@@ -900,6 +906,8 @@ def _run_eval(
             for composer in obs_composers.values():
                 composer.reset()
             for composer in reward_composers.values():
+                composer.reset()
+            for composer in action_composers.values():
                 composer.reset()
             for ag in other_agents.values():
                 if hasattr(ag, "reset"):
@@ -1162,6 +1170,8 @@ def _run_on_policy(
             eval_action_space.low,
             eval_action_space.high,
             agent_cfg.get("action_constraints", {}),
+            decision_dt=float(eval_scenario["environment"].get("timestep", 0.01))
+            * int(eval_scenario["environment"].get("action_repeat", 1)),
         )
         eval_other_agents = {
             aid: controller for aid, controller in eval_agents.items() if aid != rl_agent_id

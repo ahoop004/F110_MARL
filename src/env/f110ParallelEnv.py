@@ -206,7 +206,8 @@ class F110ParallelEnv:
         self._configure_basic_environment(merged)
    
         self.timestep: float = float(merged.get("timestep", 0.01))
-        self._control_timestep = self.timestep * max(int(merged.get("action_repeat", 1)), 1)
+        self._control_repeat = max(int(merged.get("action_repeat", 1)), 1)
+        self._control_timestep = self.timestep * self._control_repeat
         self.integrator = self._resolve_integrator(merged)
 
         self._configure_map_paths(merged, map_data)
@@ -247,7 +248,6 @@ class F110ParallelEnv:
         }
         self._last_control_commands = np.zeros((self.n_agents, 2), dtype=np.float32)
         self._last_speed_reference_rates = np.zeros(self.n_agents, dtype=np.float32)
-        self._control_command_initialized = np.zeros(self.n_agents, dtype=bool)
         
         self.lidar_beams = int(merged.get("lidar_beams", 1080))
         if self.lidar_beams <= 0:
@@ -796,11 +796,10 @@ class F110ParallelEnv:
         self._centerline_progress_tracker.reset()
         for agent_id in self.possible_agents:
             self._track_preview_last_indices[agent_id] = -1
-        self._last_control_commands.fill(0.0)
-        self._last_speed_reference_rates.fill(0.0)
         # Zero is the defined pre-episode reference, so the first command has
         # a meaningful rate relative to reset.
-        self._control_command_initialized.fill(True)
+        self._last_control_commands.fill(0.0)
+        self._last_speed_reference_rates.fill(0.0)
 
         # Speed locking for curriculum
         self._lock_speed_steps = 0
@@ -1463,15 +1462,12 @@ class F110ParallelEnv:
         for agent_id in active_agents:
             index = self._agent_id_to_index[agent_id]
             command = joint[index]
-            if self._control_command_initialized[index]:
-                delta_speed = float(command[1] - self._last_control_commands[index, 1])
-                if abs(delta_speed) > 1e-8:
-                    self._last_speed_reference_rates[index] = (
-                        delta_speed / self._control_timestep
-                    )
-            else:
-                self._last_speed_reference_rates[index] = 0.0
-                self._control_command_initialized[index] = True
+            delta_speed = float(command[1] - self._last_control_commands[index, 1])
+            # A held reference at the next decision means zero acceleration.
+            # Within action_repeat, retain the decision's derivative so the
+            # final observation still describes the action just executed.
+            if self._episode_step_count % self._control_repeat == 0 or abs(delta_speed) > 1e-8:
+                self._last_speed_reference_rates[index] = delta_speed / self._control_timestep
             self._last_control_commands[index] = command
 
     def _inject_track_previews(self, infos: Dict[str, Dict[str, Any]]) -> None:

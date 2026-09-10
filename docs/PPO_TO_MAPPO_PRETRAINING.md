@@ -17,28 +17,56 @@ decision.
 The current scenario uses `circle_map` for both splits. A held-out generalization
 experiment requires explicit disjoint training and evaluation maps.
 
-For the observation comparison, use
-`scenarios/ppo_lap_completion_pretrain_frenet.yaml`. It includes the base
-pretraining scenario and overrides only the observation reference and run
-labels; it explicitly repeats the same 20-point, 0.3 m preview settings.
-Maps, spawn protocol, training/evaluation seeds, rewards, vehicle/action
-parameters, PPO hyperparameters, and episode budget remain matched.
+The enhanced Frenet scenario is `scenarios/ppo_lap_completion_pretrain_frenet.yaml`.
+It includes the base pretraining scenario and adds vehicle/Frenet observations,
+an integrated speed reference, and stronger vehicle acceleration limits.
+Maps, spawn protocol, training/evaluation seeds, rewards, PPO hyperparameters,
+and episode budget remain matched. This is now a combined observation/control/
+dynamics experiment, not an observation-only ablation.
+
+With `action_constraints.speed_control: acceleration`, the normalized second
+action is scaled by `max_acceleration: 5.0` for positive inputs and
+`max_deceleration: 5.0` for negative inputs, in m/s². Once per decision:
+`v_ref = clip(v_ref + acceleration * timestep * action_repeat, 0, 20)`.
+Zero holds the current reference; negative inputs brake. The stored reference
+is clamped too, preventing windup at either limit. Steering retains its physical
+angle interpretation. The environment still receives `[steering, target_speed]`.
+
+Each collector and MAPPO agent owns its own integrator, reset to 0 m/s at every
+episode, matching the environment's reset command reference. Training, checkpoint
+evaluation, and CLI evaluation use the same decision interval and reset behavior.
+Dataset normalized actions contain acceleration commands; physical actions
+contain the resulting speed references. The transition schema is unchanged.
+Checkpoints store the action contract, including rate limits and decision interval;
+loading or PPO-to-MAPPO transfer rejects incompatible control semantics even when
+tensor dimensions and environment bounds match. Legacy checkpoints without this
+metadata are treated as direct-speed policies.
+
+The Frenet vehicle uses `a_max: 5.0` and `v_switch: 20.0`, removing the earlier
+`1.6/v` acceleration taper throughout its allowed forward speed range. This is
+an acceleration cap, not a promise of 5 m/s² realized acceleration: the existing
+speed controller and vehicle dynamics still determine the actual response.
+The observed speed-reference rate is zero for a hold decision and preserved
+across that decision's repeated physics steps.
 
 | Scenario | Actor observation | Dimension |
 |---|---|---|
 | `ppo_lap_completion_pretrain.yaml` | LiDAR, ego motion, progress/deviation, previous action | 115 |
 | `ppo_lap_completion_pretrain_frenet.yaml` | LiDAR, normalized vehicle/Frenet state, curvature and width preview | 158 |
 
-The Frenet variant reuses `rl_racer_vehicle_track_frenet.yaml`: 108 LiDAR
+The Frenet variant extends `rl_racer_vehicle_track_frenet.yaml` through
+`rl_racer_vehicle_track_frenet_acceleration.yaml`: 108 LiDAR
 values, 10 vehicle/Frenet values, 20 curvatures, and 20 widths. It replaces the
 baseline's seven non-LiDAR values; this compares complete observation
 representations, not just the addition of track preview. Normalization and
 clipping also differ. Hidden-layer widths match, but the larger input makes
 the first actor/critic layers larger. Wheel-speed values are simulator proxies
 derived from longitudinal speed and a configured wheel radius, not measured
-wheel rotation. The direct target-speed action remains in use.
+wheel rotation. Reference-rate normalization is now 100 rad/s², corresponding
+to the 5 m/s² action limit divided by the configured 0.05 m wheel radius.
+This changes observation scaling but retains the 158-value layout.
 
-For a paired comparison, launch both scenarios with the same training seed:
+To compare the combined changes against the baseline, use the same training seed:
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
@@ -58,7 +86,8 @@ an independent final test set. Short smoke tests do not measure performance.
 
 Train the Frenet variant from scratch. Its output directory uses the distinct
 experiment name. A receiving MAPPO actor needs the same 158-value observation
-config and LeakyReLU architecture; the baseline's 115-input checkpoints cannot
+config, LeakyReLU architecture, and acceleration action contract; earlier
+direct-speed Frenet checkpoints and the baseline's 115-input checkpoints cannot
 initialize it. Changing the base scenario later also changes the included
 variant, so retain both run snapshots and their source revision for comparisons.
 

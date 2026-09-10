@@ -1,0 +1,9 @@
+# Same 158-value layout, with reference acceleration scaled to its action limit.
+includes:
+  - rl_racer_vehicle_track_frenet.yaml
+
+observation:
+  frenet_vehicle_track:
+    maxima:
+      # 5 m/s² / 0.05 m wheel radius = 100 rad/s².
+      omega_ref_dot: 100.0

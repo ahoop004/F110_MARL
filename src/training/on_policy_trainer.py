@@ -236,6 +236,9 @@ class OnPolicyTrainer:
         self._set_training_progress(0, n_episodes)
         for episode in range(n_episodes):
             obs_dict, info_dict = self._reset_env()
+            reset_actions = getattr(self.action_composer, "reset", None)
+            if reset_actions is not None:
+                reset_actions()
             self.obs_composer.reset()
             self.reward_composer.reset()
             self.agent.buffer.clear()
@@ -487,7 +490,10 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
         policy = _RemotePolicy(connection, n_steps, observations.obs_dim, space.n, gamma, gae_lambda)
         trainer = OnPolicyTrainer(
             env, agent_id, policy, opponents, observations, rewards,
-            ActionComposer.from_config(space.low, space.high, cfg.get("action_constraints", {})),
+            ActionComposer.from_config(
+                space.low, space.high, cfg.get("action_constraints", {}),
+                decision_dt=float(env_cfg.get("timestep", 0.01)) * int(env_cfg.get("action_repeat", 1)),
+            ),
             action_repeat=int(env_cfg.get("action_repeat", 1)),
             hooks=[_WorkerHook(connection, worker_id, seed, record_transitions, aggregate_wandb)],
             run_id=f"{run_id}_worker{worker_id:03d}",

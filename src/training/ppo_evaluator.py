@@ -89,6 +89,9 @@ class DeterministicPPOEvaluator:
             with torch.no_grad():
                 for episode in range(self.episodes):
                     obs_dict, info_dict = self.env.reset(seed=self.base_seed + episode)
+                    reset_actions = getattr(self.action_composer, "reset", None)
+                    if reset_actions is not None:
+                        reset_actions()
                     self.obs_composer.reset()
                     for controller in self.other_agents.values():
                         if hasattr(controller, "reset"):

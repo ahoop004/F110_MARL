@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
-import yaml
+from core.scenario import load_yaml_config
 
 from wrappers.observations.base import ObservationComponent
 from wrappers.observations.ego import LidarComponent, EgoStateComponent, PrevActionComponent
@@ -171,6 +171,5 @@ class ObservationComposer:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Observation config not found: {path}")
-        with open(p) as f:
-            obs_config = yaml.safe_load(f) or {}
+        obs_config = load_yaml_config(p)
         return cls.from_config(obs_config, env_config, action_dim=action_dim)

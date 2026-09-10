@@ -1,6 +1,6 @@
-# Observation comparison with ppo_lap_completion_pretrain.yaml.
-# Inherit its maps, seeds, rewards, dynamics, PPO settings, and evaluation.
-# Actor inputs change from 115 to 158 values; train a fresh checkpoint.
+# Frenet pretraining with an integrated speed reference and stronger acceleration.
+# Inherit maps, seeds, rewards, PPO settings, and evaluation from the baseline.
+# The speed action now means acceleration; train a fresh checkpoint.
 includes:
   - ppo_lap_completion_pretrain.yaml
 
@@ -8,15 +8,26 @@ experiment:
   name: ppo_lap_completion_pretrain_frenet
 
 environment:
+  vehicle_params:
+    # Allow up to 5 m/s² throughout the configured 0–20 m/s forward range.
+    # The simulator's speed controller still determines actual acceleration.
+    a_max: 5.0
+    v_switch: 20.0
   track_preview:
     points: 20
     spacing: 0.3
 
 agents:
   car_0:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
+    action_constraints:
+      speed_control: acceleration
+      max_acceleration: 5.0
+      max_deceleration: 5.0
+      prevent_reverse: true
+      speed_index: 1
 
 wandb:
   group: ppo-lap-completion-pretrain-frenet
-  tags: [ppo, single-agent, lap-completion, actor-pretraining, lidar, frenet, track-preview]
-  notes: "Observation comparison: LiDAR plus normalized vehicle/Frenet state and curvature/width preview; same-track deterministic evaluation"
+  tags: [ppo, single-agent, lap-completion, actor-pretraining, lidar, frenet, track-preview, acceleration-control]
+  notes: "Frenet/track preview with integrated 0–20 m/s speed reference, ±5 m/s² reference rate and vehicle acceleration cap; same-track deterministic evaluation"

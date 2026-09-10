@@ -42,7 +42,7 @@ YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a r
 | PPO centerline racing / time trial | `ppo_centerline.yaml`, `ppo_time_trial.yaml` |
 | PPO against waypoint controllers | `ppo_vs_pure_pursuit.yaml`, `ppo_vs_stanley.yaml`, `ppo_vs_hybrid_pp_ftg.yaml` |
 | PPO actor pretraining | `ppo_lap_completion_pretrain.yaml` |
-| PPO pretraining with Frenet/track-preview observations | `ppo_lap_completion_pretrain_frenet.yaml` |
+| PPO pretraining with Frenet/track preview and acceleration actions | `ppo_lap_completion_pretrain_frenet.yaml` |
 | PPO defender against hybrid controller | `marl_defender.yaml` |
 | MAPPO gaplock | `mappo_gaplock.yaml` |
 | MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |

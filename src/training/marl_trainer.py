@@ -16,6 +16,7 @@ Key differences from :class:`~training.on_policy_trainer.OnPolicyTrainer`
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -64,7 +65,7 @@ class MARLTrainer:
     reward_composers:
         ``{agent_id: RewardComposer}`` — one per trainable agent.
     action_composer:
-        Shared :class:`~wrappers.actions.composer.ActionComposer` for
+        Template :class:`~wrappers.actions.composer.ActionComposer`, cloned per agent for
         denormalizing and constraining actions.  Applied to every trainable
         agent's output.
     action_repeat:
@@ -104,6 +105,7 @@ class MARLTrainer:
         self.obs_composers = obs_composers
         self.reward_composers = reward_composers
         self.action_composer = action_composer
+        self.action_composers = {aid: copy.deepcopy(action_composer) for aid in self.trainable_ids}
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
         self._transition_hooks = transition_record_hooks(self.hooks)
@@ -223,6 +225,9 @@ class MARLTrainer:
             for aid in self.trainable_ids:
                 self.obs_composers[aid].reset()
                 self.reward_composers[aid].reset()
+                reset_actions = getattr(self.action_composers[aid], "reset", None)
+                if reset_actions is not None:
+                    reset_actions()
             self.agent.clear_buffers()
 
             # Wrap initial observations
@@ -270,7 +275,7 @@ class MARLTrainer:
                     actions_norm, log_probs = {}, {}
                 actions_phys: Dict[str, np.ndarray] = {}
                 for aid, action in actions_norm.items():
-                    actions_phys[aid] = self.action_composer.process(action)
+                    actions_phys[aid] = self.action_composers[aid].process(action)
 
                 # Centralized value estimate from current global state
                 values = self.agent.evaluate_states(

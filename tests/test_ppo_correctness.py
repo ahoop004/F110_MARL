@@ -288,6 +288,30 @@ def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
     assert lifecycle["truncated"] is True
 
 
+def test_on_policy_resets_integrated_speed_each_episode():
+    from wrappers.actions.composer import ActionComposer
+
+    class Env(_OneStepTruncationEnv):
+        def __init__(self):
+            super().__init__()
+            self.speeds = []
+
+        def step(self, actions):
+            self.speeds.append(float(actions['car_0'][1]))
+            return super().step(actions)
+
+    agent = _RecordingAgent()
+    agent.act = lambda obs: (np.array([0., 1.], dtype=np.float32), 0., 0.)
+    actions = ActionComposer.from_config(-np.ones(2), np.ones(2),
+        dict(speed_control='acceleration', max_acceleration=5, max_deceleration=5,
+             prevent_reverse=True), decision_dt=.01)
+    actions.process([0, 1])  # A previous episode must not leak into this run.
+    env = Env()
+    trainer = OnPolicyTrainer(env, 'car_0', agent, {}, _ObservationComposer(), _RewardComposer(), actions)
+    trainer.train(2)
+    assert env.speeds == pytest.approx([.05, .05])
+
+
 def test_on_policy_next_observation_uses_current_previous_action() -> None:
     class FixedActionAgent(_RecordingAgent):
         ACTION = np.array([0.25, -0.5], dtype=np.float32)
@@ -376,11 +400,11 @@ def test_ppo_prediction_matches_actions_without_critic_or_rng_changes(device, mo
         assert torch.equal(torch.cuda.get_rng_state(), device_rng)
 
 
-def _parallel_test_setup(device="cpu"):
+def _parallel_test_setup(device="cpu", accelerated=False):
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
     from core.setup import create_training_setup
-    from run import build_obs_composer, build_reward_composer
+    from run import build_obs_composer, build_reward_composer, resolve_training_params
     from wrappers.actions.composer import ActionComposer
 
     path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
@@ -394,13 +418,17 @@ def _parallel_test_setup(device="cpu"):
         device=device, n_steps=8, n_epochs=1, batch_size=4,
         pi_hidden_dims=[4], vf_hidden_dims=[4],
     )
+    if accelerated:
+        cfg["action_constraints"].update(
+            speed_control="acceleration", max_acceleration=5.0, max_deceleration=5.0,
+        )
     env, opponents, _ = create_training_setup(scenario, scenario_dir=path.parent)
     space = env.action_spaces["car_0"]
     obs = build_obs_composer(cfg, scenario["environment"], path.parent)
-    agent = PPOAgent(obs.obs_dim, space.low, space.high, cfg["params"])
+    agent = PPOAgent(obs.obs_dim, space.low, space.high, resolve_training_params(cfg, scenario))
     trainer = OnPolicyTrainer(
         env, "car_0", agent, opponents, obs, build_reward_composer(cfg, path.parent),
-        ActionComposer.from_config(space.low, space.high, cfg["action_constraints"]),
+        ActionComposer.from_config(space.low, space.high, cfg["action_constraints"], decision_dt=.01),
         run_id="parallel-test",
     )
     return trainer, scenario, path.parent
@@ -409,7 +437,8 @@ def _parallel_test_setup(device="cpu"):
 @pytest.mark.parametrize("device", ["cpu", pytest.param(
     "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 )])
-def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
+@pytest.mark.parametrize("accelerated", [False, True])
+def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device, accelerated):
     from collections import defaultdict
     from types import SimpleNamespace
     from training.hooks import TrainingHook, WandbHook
@@ -432,7 +461,7 @@ def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
 
     runs = []
     for _ in range(2):
-        trainer, scenario, directory = _parallel_test_setup(device)
+        trainer, scenario, directory = _parallel_test_setup(device, accelerated)
         capture = Capture()
         logged = []
         wandb = WandbHook(SimpleNamespace(log_metrics=logged.append))
@@ -468,6 +497,11 @@ def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device):
             assert [record.step_idx for record in records] == list(range(4))
             np.testing.assert_array_equal(records[0].obs[-2:], np.zeros(2))
             assert records[-1].truncated and not records[-1].terminated
+            if accelerated:
+                speed_reference = 0.0
+                for record in records:
+                    speed_reference = np.clip(speed_reference + float(record.action_norm[1]) * .05, 0, 20)
+                    assert record.action_phys[1] == pytest.approx(speed_reference, abs=1e-6)
             for previous, current in zip(records, records[1:]):
                 np.testing.assert_array_equal(previous.next_obs, current.obs)
         runs.append(capture)
@@ -491,11 +525,12 @@ def test_parallel_worker_failure_is_reported_and_children_are_reaped():
     assert {child.pid for child in mp.active_children()} == existing
 
 
-def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch):
+@pytest.mark.parametrize("accelerated", [False, True])
+def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch, accelerated):
     import sys
     import run
 
-    trainer, scenario, directory = _parallel_test_setup()
+    trainer, scenario, directory = _parallel_test_setup(accelerated=accelerated)
     checkpoint = tmp_path / "ppo.pt"
     trainer.agent.save(str(checkpoint))
     trainer.env.close()

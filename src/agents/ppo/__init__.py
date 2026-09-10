@@ -83,6 +83,7 @@ class PPOAgent:
         self.action_low = np.asarray(action_low, dtype=np.float32)
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
+        self.action_contract = dict(params.get("_action_contract", {"speed_control": "direct"}))
 
         # Hyperparameters (merged from training_defaults + scenario params)
         self.lr = float(params.get("learning_rate", 3e-4))
@@ -232,6 +233,7 @@ class PPOAgent:
                 "action_dim": self.action_dim,
                 "action_low": self.action_low,
                 "action_high": self.action_high,
+                "action_contract": self.action_contract,
                 "actor_hidden_dims": self.actor_hidden_dims,
                 "activation": self.activation,
             },
@@ -241,6 +243,13 @@ class PPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
+            raise ValueError("Incompatible PPO checkpoint action contract (speed control semantics differ).")
+        for key, expected in (("action_low", self.action_low), ("action_high", self.action_high)):
+            if key in ckpt:
+                actual = np.asarray(ckpt[key], dtype=np.float32)
+                if actual.shape != expected.shape or not np.allclose(actual, expected):
+                    raise ValueError(f"Incompatible PPO checkpoint {key}: action bounds differ.")
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         if "optimizer" in ckpt:
