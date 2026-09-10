@@ -1,5 +1,0 @@
-reward:
-  lap_completion:
-    enabled: true
-    bonus: 150.0
-    require_clean: true

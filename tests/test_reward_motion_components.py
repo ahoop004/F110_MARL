@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from wrappers.rewards.composer import RewardComposer
-from wrappers.rewards.speed import ReverseVelocityPenaltyComponent
+from wrappers.rewards.motion import ReverseVelocityPenaltyComponent
 
 
 def _step_with_speed(speed: float) -> dict:

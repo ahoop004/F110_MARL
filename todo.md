@@ -157,8 +157,8 @@ src/core/env_builder.py
 src/env/f110ParallelEnv.py
 src/utils/track_preview.py
 src/wrappers/observations/composer.py
-src/wrappers/observations/frenet_vehicle_track.py
-src/wrappers/observations/frenet_neighbors.py
+src/wrappers/observations/track.py
+src/wrappers/observations/neighbors.py
 ```
 
 - [x] Derive explicit environment feature requirements from every active

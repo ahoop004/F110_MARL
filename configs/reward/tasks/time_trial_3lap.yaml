@@ -2,13 +2,29 @@ task:
   name: time_trial_3lap
   description: 3-lap time trial — dense centerline progress, speed incentive, reverse penalty, lap completion bonus.
 
-includes:
-  - ../components/centerline_progress.yaml
-  - ../components/reverse_progress_penalty.yaml
-  - ../components/collision_penalty.yaml
-  - ../components/step_time_penalty.yaml
-  - ../components/lap_completion_clean.yaml
-
 reward:
-  collision_penalty:
-    penalty: -500.0
+  centerline_progress:
+    enabled: true
+    weight: 0.1
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_lateral_velocity_penalty:
+    enabled: true
+    weight: 0.005
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_deviation_penalty: {enabled: true, weight: 0.01}
+
+  steering_penalty: {enabled: true, weight: 0.03}
+
+  reverse_progress_penalty: {enabled: true, weight: 5.0}
+
+  collision: {enabled: true, penalty: -200.0}
+
+  step_time_penalty: {enabled: true, penalty: -0.01, apply_on_terminal: true}
+
+  lap_completion: {enabled: true, bonus: 150.0, require_clean: true}
+
+  collision_penalty: {penalty: -500.0}

@@ -1,4 +1,0 @@
-reward:
-  target_edge_pressure:
-    enabled: true
-    weight: 0.5

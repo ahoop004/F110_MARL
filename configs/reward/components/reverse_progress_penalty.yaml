@@ -1,4 +1,0 @@
-reward:
-  reverse_progress_penalty:
-    enabled: true
-    weight: 5.0

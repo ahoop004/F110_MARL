@@ -21,11 +21,16 @@ from metrics.racing_eval import (
     update_agent_step_facts,
 )
 from src.replay.dataset_writer import DatasetWriter, detect_dataset_schema
-from wrappers.rewards.collision import CollisionRewardComponent
-from wrappers.rewards.lap_completion import LapCompletionComponent, PerLapBonusComponent
-from wrappers.rewards.target_finish import TargetFinishComponent
-from wrappers.rewards.timeout import TimeoutPenaltyComponent
-from wrappers.rewards.track_completion import FinishAheadBonusComponent
+from wrappers.rewards.events import (
+    CollisionRewardComponent,
+    TargetFinishComponent,
+    TimeoutPenaltyComponent,
+)
+from wrappers.rewards.completion import (
+    LapCompletionComponent,
+    PerLapBonusComponent,
+    FinishAheadBonusComponent,
+)
 
 
 def test_terminal_vehicle_controller_is_deterministic() -> None:

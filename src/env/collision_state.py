@@ -1,12 +1,27 @@
-"""Collision state and termination helpers."""
+"""Collision termination helpers and per-agent race lifecycle state."""
 from __future__ import annotations
 
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Sequence, Optional, Tuple
 
 import numpy as np
 
-from src.env.collision import build_terminations
 from src.env.types import AgentLifecycleRecord, AgentRaceStatus, TerminalReason
+
+
+def build_terminations(
+    agent_ids: Sequence[str],
+    collisions: np.ndarray,
+    lap_completion: Mapping[str, bool],
+    terminate_on_collision: Mapping[str, bool],
+) -> Dict[str, bool]:
+    terminations: Dict[str, bool] = {}
+    collision_array = np.asarray(collisions)
+    for idx, agent_id in enumerate(agent_ids):
+        collided = bool(collision_array[idx]) if idx < collision_array.shape[0] else False
+        collision_done = collided and terminate_on_collision.get(agent_id, True)
+        lap_done = bool(lap_completion.get(agent_id, False))
+        terminations[agent_id] = collision_done or lap_done
+    return terminations
 
 
 def validate_target_laps(value: object) -> int:

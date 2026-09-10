@@ -2,11 +2,35 @@ task:
   name: time_trial
   description: Single-agent track completion with dense lap progress and light time pressure.
 
-includes:
-  - ../components/centerline_progress.yaml
-  - ../components/progress_delta_bonus.yaml
-  - ../components/progress_safety_standard.yaml
-  - ../components/lap_completion_clean.yaml
-  - ../components/collision_penalty.yaml
-  - ../components/timeout_penalty_50.yaml
-  - ../components/step_time_penalty.yaml
+reward:
+  centerline_progress:
+    enabled: true
+    weight: 0.1
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_lateral_velocity_penalty:
+    enabled: true
+    weight: 0.005
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_deviation_penalty: {enabled: true, weight: 0.01}
+
+  steering_penalty: {enabled: true, weight: 0.03}
+
+  progress_delta_bonus: {enabled: true, weight: 100.0, positive_only: true}
+
+  wrong_way_penalty: {enabled: true, penalty: -2.0}
+
+  reverse_progress_penalty: {enabled: true, weight: 5.0}
+
+  offtrack_penalty: {enabled: true, max_abs_d: 1.5, penalty: -1.0}
+
+  lap_completion: {enabled: true, bonus: 150.0, require_clean: true}
+
+  collision: {enabled: true, penalty: -200.0}
+
+  timeout_penalty: {enabled: true, penalty: -50.0}
+
+  step_time_penalty: {enabled: true, penalty: -0.01, apply_on_terminal: true}

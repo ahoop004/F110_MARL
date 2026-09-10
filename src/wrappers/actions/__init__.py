@@ -1,4 +1,3 @@
-from wrappers.actions.base import ActionComponent
-from wrappers.actions.composer import ActionComposer
+from wrappers.actions.composer import ActionComponent, ActionComposer
 
 __all__ = ["ActionComponent", "ActionComposer"]

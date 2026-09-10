@@ -1,11 +1,69 @@
-"""Normalized vehicle/Frenet/track-preview observation."""
+"""Centerline progress, Frenet state, and track-preview observations."""
 from __future__ import annotations
 
+import math
 from typing import Dict, Mapping
 
 import numpy as np
 
 from wrappers.observations.base import ObservationComponent
+
+
+class CenterlineEgoStateComponent(ObservationComponent):
+    """Ego dynamics expressed in the track (Frenet) frame — 3 dims.
+
+    Reads from ``info["centerline"]`` which is populated each step when
+    ``centerline_features: true`` is set in the environment config.
+
+    Output vector:
+        [vs, vd, heading_error]
+
+    vs
+        Speed along the track tangent (m/s).  Positive = forward progress.
+    vd
+        Speed perpendicular to the track tangent (m/s).  Positive = drifting
+        left.  Indicates wasted lateral velocity.
+    heading_error
+        Angle between the car's heading and the track tangent, normalised to
+        [-pi, pi].  Zero means the car is perfectly aligned with the track.
+    """
+
+    @property
+    def dim(self) -> int:
+        return 3
+
+    def compute_into(self, raw_obs: Dict, info: Dict, out: np.ndarray) -> None:
+        cl = info.get("centerline", {}) if isinstance(info, dict) else {}
+        out[0] = float(cl.get("vs", 0.0))
+        out[1] = float(cl.get("vd", 0.0))
+        out[2] = float(cl.get("heading_error", 0.0))
+
+    def compute(self, raw_obs: Dict, info: Dict) -> np.ndarray:
+        out = np.empty(self.dim, dtype=np.float32)
+        self.compute_into(raw_obs, info, out)
+        return out
+
+
+class ProgressComponent(ObservationComponent):
+    """Normalized lap progress [0, 1] and cross-track deviation — 2 dims.
+
+    Requires centerline to be loaded (centerline_autoload: true in env config).
+    Progress and deviation are sourced from the step info dict.
+    """
+
+    @property
+    def dim(self) -> int:
+        return 2
+
+    def compute_into(self, raw_obs: Dict, info: Dict, out: np.ndarray) -> None:
+        cl_info = info.get("centerline", {}) if isinstance(info, dict) else {}
+        out[0] = float(cl_info.get("progress", 0.0))
+        out[1] = float(cl_info.get("d", 0.0))
+
+    def compute(self, raw_obs: Dict, info: Dict) -> np.ndarray:
+        out = np.empty(2, dtype=np.float32)
+        self.compute_into(raw_obs, info, out)
+        return out
 
 
 _STATE_KEYS = (
@@ -116,4 +174,4 @@ def _vector(value: object, size: int) -> np.ndarray:
     return result
 
 
-__all__ = ["FrenetVehicleTrackComponent"]
+__all__ = ["CenterlineEgoStateComponent", "ProgressComponent", "FrenetVehicleTrackComponent"]

@@ -1,4 +1,4 @@
-"""Target proximity reward components."""
+"""Target proximity and track-edge pressure rewards."""
 from __future__ import annotations
 
 from typing import Dict
@@ -24,3 +24,15 @@ class TargetProximityComponent(RewardComponent):
         deviation = abs(dist - self.preferred_distance)
         bonus = max(0.0, 1.0 - deviation / max(self.distance_tolerance, 1e-6))
         return {"target_proximity/bonus": self.weight * bonus}
+
+
+class TargetEdgePressureComponent(RewardComponent):
+    """Reward proportional to an environment-supplied target edge-pressure fact."""
+
+    def __init__(self, config: dict) -> None:
+        self.weight = float(config.get("weight", 0.5))
+
+    def compute(self, step_info: dict) -> Dict[str, float]:
+        info = step_info.get("info") or {}
+        pressure_val = float(info.get("forcing_reward", 0.0))
+        return {"target_edge_pressure/bonus": self.weight * pressure_val}

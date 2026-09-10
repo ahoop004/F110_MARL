@@ -8,27 +8,30 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import yaml
 
 from wrappers.rewards.base import RewardComponent
-from wrappers.rewards.centerline import (
+from wrappers.rewards.motion import (
     CenterlineDeviationPenaltyComponent,
     CenterlineLateralVelocityPenaltyComponent,
     CenterlineProgressComponent,
     CenterlineRewardComponent,
     SteeringPenaltyComponent,
-)
-from wrappers.rewards.collision import CollisionRewardComponent, SelfCrashPenaltyComponent
-from wrappers.rewards.speed import ReverseVelocityPenaltyComponent, SpeedRewardComponent
-from wrappers.rewards.proximity import TargetProximityComponent
-from wrappers.rewards.track_edge_pressure import TargetEdgePressureComponent
-from wrappers.rewards.lap_completion import LapCompletionComponent, PerLapBonusComponent
-from wrappers.rewards.progress_safety import (
+    ReverseVelocityPenaltyComponent,
+    SpeedRewardComponent,
     OfftrackPenaltyComponent,
     ProgressSafetyComponent,
     ReverseProgressPenaltyComponent,
     WrongWayPenaltyComponent,
 )
-from wrappers.rewards.target_finish import TargetFinishComponent
-from wrappers.rewards.target_crash import TargetCrashBonusComponent
-from wrappers.rewards.track_completion import (
+from wrappers.rewards.events import (
+    CollisionRewardComponent,
+    SelfCrashPenaltyComponent,
+    TargetFinishComponent,
+    TargetCrashBonusComponent,
+    TimeoutPenaltyComponent,
+)
+from wrappers.rewards.interaction import TargetProximityComponent, TargetEdgePressureComponent
+from wrappers.rewards.completion import (
+    LapCompletionComponent,
+    PerLapBonusComponent,
     FinishAheadBonusComponent,
     ProgressDeltaBonusComponent,
     RelativeProgressBonusComponent,
@@ -36,7 +39,6 @@ from wrappers.rewards.track_completion import (
     TeamProgressBonusComponent,
     TeamRelativeProgressBonusComponent,
 )
-from wrappers.rewards.timeout import TimeoutPenaltyComponent
 
 
 COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {

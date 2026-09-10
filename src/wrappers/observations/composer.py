@@ -8,15 +8,17 @@ import numpy as np
 import yaml
 
 from wrappers.observations.base import ObservationComponent
-from wrappers.observations.lidar import LidarComponent
-from wrappers.observations.ego_state import EgoStateComponent
-from wrappers.observations.centerline_ego_state import CenterlineEgoStateComponent
-from wrappers.observations.frenet_vehicle_track import FrenetVehicleTrackComponent
-from wrappers.observations.frenet_neighbors import FrenetNeighborsComponent
-from wrappers.observations.target_state import TargetStateComponent
-from wrappers.observations.relative_pose import RelativePoseComponent
-from wrappers.observations.progress import ProgressComponent
-from wrappers.observations.prev_action import PrevActionComponent
+from wrappers.observations.ego import LidarComponent, EgoStateComponent, PrevActionComponent
+from wrappers.observations.track import (
+    CenterlineEgoStateComponent,
+    FrenetVehicleTrackComponent,
+    ProgressComponent,
+)
+from wrappers.observations.neighbors import (
+    FrenetNeighborsComponent,
+    TargetStateComponent,
+    RelativePoseComponent,
+)
 
 
 class ObservationComposer:

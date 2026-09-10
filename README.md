@@ -120,6 +120,21 @@ Preserve environment contracts, action bounds, observation dimensions, reward
 semantics, and MAPPO's decentralized actors. No additional controller framework,
 plugin system, or placeholder algorithm infrastructure is needed.
 
+Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
+`events.py`, and `interaction.py`; observations use `ego.py`, `track.py`, and
+`neighbors.py`. Action components and their composer live in
+`src/wrappers/actions/composer.py`. Add related components to these modules while
+keeping each component's configuration key, observation slice, and reset behavior
+explicit. Reward and observation composers retain their existing import paths.
+
+Reward settings live in complete presets under `configs/reward/` and task
+definitions under `configs/reward/tasks/`. Task files may include one complete
+shared preset; task-specific settings are written directly in their `reward:`
+block. Avoid separate files for individual penalty or bonus values. Existing
+scenario and reward-task paths remain stable. The 30 former component fragments
+and the previous Python module layout are available in Git history; external
+scripts importing moved component classes must use the grouped modules above.
+
 ## Historical algorithms
 
 SAC, TD3, DQN, and the A2C/DDPG/QR-DQN/TQC compatibility configurations were retired

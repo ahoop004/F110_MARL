@@ -1,13 +1,47 @@
-"""ActionComposer — chains ActionComponents into a processing pipeline."""
+"""Composable action transforms from normalized policy output to physical controls."""
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Dict, List
 
 import numpy as np
 
-from wrappers.actions.base import ActionComponent
-from wrappers.actions.denormalize import DenormalizeComponent
-from wrappers.actions.constraints import PreventReverseComponent
+
+class ActionComponent(ABC):
+    """A single transform applied to an action vector in the processing pipeline."""
+
+    @abstractmethod
+    def process(self, action: np.ndarray) -> np.ndarray:
+        """Apply this transform and return the modified action."""
+
+
+class DenormalizeComponent(ActionComponent):
+    """Linearly maps each action dimension from [-1, 1] to [low, high]."""
+
+    def __init__(self, action_low: np.ndarray, action_high: np.ndarray) -> None:
+        self._low = np.asarray(action_low, dtype=np.float32)
+        self._high = np.asarray(action_high, dtype=np.float32)
+        self._scale = (self._high - self._low) / 2.0
+        self._offset = (self._high + self._low) / 2.0
+
+    def process(self, action: np.ndarray) -> np.ndarray:
+        return (np.asarray(action, dtype=np.float32) * self._scale + self._offset)
+
+
+class PreventReverseComponent(ActionComponent):
+    """Clips the speed dimension to >= 0, preventing the car from reversing.
+
+    Modifies *action* in-place (the composer guarantees that by this point
+    the array is a freshly-allocated float32 buffer owned by the pipeline).
+    """
+
+    def __init__(self, speed_index: int = 1) -> None:
+        self._idx = int(speed_index)
+
+    def process(self, action: np.ndarray) -> np.ndarray:
+        if len(action) > self._idx and action[self._idx] < 0.0:
+            action[self._idx] = 0.0
+        return action
 
 
 class ActionComposer:

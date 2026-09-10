@@ -25,8 +25,8 @@ from physics.simulaton import Simulator
 from utils.track_preview import TrackPreviewGeometry
 from training.reward_context import build_reward_context
 from wrappers.observations.composer import ObservationComposer
-from wrappers.observations.frenet_neighbors import FrenetNeighborsComponent
-from wrappers.observations.frenet_vehicle_track import FrenetVehicleTrackComponent
+from wrappers.observations.neighbors import FrenetNeighborsComponent
+from wrappers.observations.track import FrenetVehicleTrackComponent
 from wrappers.rewards.composer import RewardComposer
 
 

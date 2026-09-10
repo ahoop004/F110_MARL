@@ -2,18 +2,57 @@ task:
   name: race_team_2v2_completion
   description: Conservative 2v2 racing with local completion pressure until team facts are available.
 
-includes:
-  - ../components/centerline_progress.yaml
-  - ../components/progress_delta_bonus.yaml
-  - ../components/relative_progress_bonus_standard.yaml
-  - ../components/team_progress_bonus_standard.yaml
-  - ../components/team_relative_progress_bonus_standard.yaml
-  - ../components/progress_safety_standard.yaml
-  - ../components/lap_completion_clean.yaml
-  - ../components/per_lap_bonus_25.yaml
-  - ../components/finish_ahead_bonus_100.yaml
-  - ../components/target_finish_penalty_100.yaml
-  - ../components/collision_penalty_250.yaml
-  - ../components/timeout_penalty_50.yaml
-  - ../components/self_crash_penalty_125.yaml
-  - ../components/step_time_penalty.yaml
+reward:
+  centerline_progress:
+    enabled: true
+    weight: 0.1
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_lateral_velocity_penalty:
+    enabled: true
+    weight: 0.005
+    normalize_by_track_length: true
+    reference_length: 400.0
+
+  centerline_deviation_penalty: {enabled: true, weight: 0.01}
+
+  steering_penalty: {enabled: true, weight: 0.03}
+
+  progress_delta_bonus: {enabled: true, weight: 100.0, positive_only: true}
+
+  relative_progress_bonus: {enabled: true, weight: 100.0, positive_only: false}
+
+  team_progress_bonus:
+    enabled: true
+    weight: 100.0
+    positive_only: true
+    aggregation: mean
+
+  team_relative_progress_bonus:
+    enabled: true
+    weight: 100.0
+    positive_only: false
+    aggregation: mean
+
+  wrong_way_penalty: {enabled: true, penalty: -2.0}
+
+  reverse_progress_penalty: {enabled: true, weight: 5.0}
+
+  offtrack_penalty: {enabled: true, max_abs_d: 1.5, penalty: -1.0}
+
+  lap_completion: {enabled: true, bonus: 150.0, require_clean: true}
+
+  per_lap_bonus: {enabled: true, bonus: 25.0, include_final_lap: false}
+
+  finish_ahead_bonus: {enabled: true, bonus: 100.0, require_clean: true}
+
+  target_finish: {enabled: true, penalty: -100.0}
+
+  collision: {enabled: true, penalty: -250.0}
+
+  timeout_penalty: {enabled: true, penalty: -50.0}
+
+  self_crash_penalty: {enabled: true, penalty: -125.0}
+
+  step_time_penalty: {enabled: true, penalty: -0.01, apply_on_terminal: true}

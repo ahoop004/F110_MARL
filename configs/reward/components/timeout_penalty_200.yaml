@@ -1,4 +1,0 @@
-reward:
-  timeout_penalty:
-    enabled: true
-    penalty: -200.0

@@ -3,10 +3,4 @@ task:
   description: Target proximity and edge pressure with light centerline progress.
 
 includes:
-  - ../components/target_proximity_standard.yaml
-  - ../components/target_edge_pressure_standard.yaml
-  - ../components/centerline_light.yaml
-  - ../components/collision_penalty.yaml
-  - ../components/target_crash_bonus_200.yaml
-  - ../components/timeout_penalty_100.yaml
-  - ../components/self_crash_penalty_20.yaml
+  - ../target_pressure_centerline.yaml

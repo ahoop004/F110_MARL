@@ -13,20 +13,10 @@ reward:
     positive_only: false
     max_delta: 0.025
 
-  collision:
-    enabled: true
-    penalty: -1.0
+  collision: {enabled: true, penalty: -1.0}
 
-  timeout_penalty:
-    enabled: true
-    penalty: -1.0
+  timeout_penalty: {enabled: true, penalty: -1.0}
 
-  lap_completion:
-    enabled: true
-    bonus: 1.0
-    require_clean: true
+  lap_completion: {enabled: true, bonus: 1.0, require_clean: true}
 
-  step_time_penalty:
-    enabled: true
-    penalty: -0.0000125
-    apply_on_terminal: true
+  step_time_penalty: {enabled: true, penalty: -1.25e-05, apply_on_terminal: true}

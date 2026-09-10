@@ -2,33 +2,31 @@ task:
   name: complete_4_lap_completion
   description: Lap-normalized one-lap completion reward for four-car MAPPO.
 
-includes:
-  - ../components/progress_delta_bonus.yaml
-  - ../components/lap_completion_clean.yaml
-  - ../components/collision_penalty.yaml
-  - ../components/timeout_penalty_50.yaml
-  - ../components/step_time_penalty.yaml
-  - ../components/reverse_velocity_penalty.yaml
-
 reward:
   # One forward lap is worth approximately +100 and one reverse lap -100,
   # independent of track length. Clamp projection discontinuities in either
   # direction so a single step cannot create a spike.
   progress_delta_bonus:
+    enabled: true
     weight: 100.0
     positive_only: false
     max_delta: 0.025
 
-  # Facing backward is discouraged even before measurable reverse motion.
-  wrong_way_penalty:
+  lap_completion: {enabled: true, bonus: 200.0, require_clean: true}
+
+  collision: {enabled: true, penalty: -200.0}
+
+  timeout_penalty: {enabled: true, penalty: -50.0}
+
+  step_time_penalty: {enabled: true, penalty: -0.005, apply_on_terminal: true}
+
+  # Penalize actual negative body-frame longitudinal velocity. Ignore small
+  # simulator jitter and cap the per-step magnitude after the deadband.
+  reverse_velocity_penalty:
     enabled: true
-    penalty: -0.05
+    weight: 0.01
+    deadband: 0.05
+    max_reverse_speed: 2.0
 
-  lap_completion:
-    bonus: 200.0
-
-  collision:
-    penalty: -200.0
-
-  step_time_penalty:
-    penalty: -0.005
+  # Facing backward is discouraged even before measurable reverse motion.
+  wrong_way_penalty: {enabled: true, penalty: -0.05}
