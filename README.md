@@ -47,6 +47,7 @@ YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a r
 | MAPPO gaplock | `mappo_gaplock.yaml` |
 | MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |
 | MAPPO initialized from a PPO checkpoint | `mappo_4car_1lap_circle_ppo_pretrained.yaml` (requires the configured local checkpoint) |
+| Reverse-enabled Frenet PPO transfer to a MAPPO 2v2 team | `mappo_2v2_frenet_ppo_pretrained.yaml` (requires the configured Frenet `best_model.pt`) |
 | MAPPO observation variants | `complete_4.yaml`, `complete_4_frenet.yaml`, `complete_4_frenet_neighbors.yaml` |
 | MAPPO against two hybrid opponents | `mappo_2v2.yaml`, `mappo_2v2_vs_hybrid_pp_ftg.yaml`, `mappo_2v2_individual.yaml`, `mappo_2v2_team_shared.yaml` |
 | Fixed-controller baselines | `nrl_1car.yaml` through `nrl_4car.yaml` |

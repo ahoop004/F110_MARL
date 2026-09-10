@@ -14,6 +14,77 @@ ACTION_LOW = np.array([-0.4, -5.0], dtype=np.float32)
 ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 
 
+def test_reverse_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path):
+    from pathlib import Path
+    from core.agent_builder import get_trainable_agent_ids
+    from core.scenario import load_and_expand_scenario, resolve_mappo_config
+    from core.setup import create_training_setup
+    from run import build_obs_composers, resolve_training_params
+    from wrappers.actions.composer import ActionComposer
+
+    scenario = load_and_expand_scenario("scenarios/mappo_2v2_frenet_ppo_pretrained.yaml")
+    pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    baseline = load_and_expand_scenario("scenarios/mappo_2v2_team_shared.yaml")
+    ids = get_trainable_agent_ids(scenario["agents"])
+    assert ids == ["car_0", "car_1"]
+    assert scenario["experiment"]["num_envs"] == 1
+    assert scenario["environment"]["vehicle_params"] == pretraining["environment"]["vehicle_params"]
+    assert scenario["environment"]["lap_counting"]["count_initial_crossing_as_lap"] is False
+    for aid in ["car_2", "car_3"]:
+        assert scenario["agents"][aid] == baseline["agents"][aid]
+    for aid in ids:
+        assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is False
+        assert scenario["agents"][aid]["observation"] == pretraining["agents"]["car_0"]["observation"]
+    assert scenario["agents"]["car_0"]["params"] == scenario["agents"]["car_1"]["params"]
+
+    env, opponents, _ = create_training_setup(scenario, mode="eval", scenario_dir=Path("scenarios").resolve())
+    try:
+        assert set(opponents) == {"car_2", "car_3"}
+        env.reset(seed=42)
+        assert len(env.agents) == 4
+        composers = build_obs_composers(scenario["agents"], ids, scenario["environment"], Path("scenarios").resolve())
+        assert [composers[aid].obs_dim for aid in ids] == [158, 158]
+        space = env.action_spaces["car_0"]
+        source_params = resolve_training_params(pretraining["agents"]["car_0"], pretraining)
+        params = resolve_training_params(scenario["agents"]["car_0"], scenario)
+        assert params["_action_contract"] == source_params["_action_contract"]
+        assert params["learning_rate"] == 1e-4
+        assert params["gamma"] == source_params["gamma"]
+        source = PPOAgent(158, space.low, space.high, {**source_params, "device": "cpu"})
+        checkpoint = tmp_path / "reverse_frenet.pt"
+        source.save(str(checkpoint))
+        recipient = MAPPOAgent(
+            158, len(env.get_global_state().vector), space.low, space.high, ids,
+            {**params, **resolve_mappo_config(scenario), "device": "cpu"},
+        )
+        critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
+        recipient.load_pretrained_actor(str(checkpoint))
+        for key, value in recipient.actor.state_dict().items():
+            torch.testing.assert_close(value, source.actor.state_dict()[key])
+        for key, value in recipient.critic.state_dict().items():
+            torch.testing.assert_close(value, critic_before[key])
+        assert not recipient.optimizer.state
+        observations = np.zeros((2, 158), dtype=np.float32)
+        actions, _ = recipient.act_batch(ids, observations, deterministic=True)
+        for aid in ids:
+            np.testing.assert_allclose(actions[aid], source.predict(observations[0]), atol=1e-7)
+        controls = [ActionComposer.from_config(
+            space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.01,
+        ) for aid in ids]
+        assert controls[0].process([0, -1])[1] == pytest.approx(-0.05)
+        assert controls[1].process([0, 0])[1] == 0
+        controls[0].reset()
+        assert controls[0].process([0, 0])[1] == 0
+
+        # A same-size forward-only checkpoint must still be rejected.
+        source.action_contract = {**source.action_contract, "prevent_reverse": True}
+        source.save(str(checkpoint))
+        with pytest.raises(ValueError, match="action contract"):
+            recipient.load_pretrained_actor(str(checkpoint))
+    finally:
+        env.close()
+
+
 def _ppo(obs_dim=6, hidden_dims=None):
     return PPOAgent(
         obs_dim=obs_dim,

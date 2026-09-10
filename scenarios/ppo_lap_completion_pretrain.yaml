@@ -11,13 +11,13 @@ experiment:
   name: ppo_lap_completion_pretrain
   episodes: 1000
   seed: 42
-  num_envs: 1
+  num_envs: 4
   torch_threads: 1
 
 environment:
   map_bundles:
-    # - Budapest_map
-    - circle_map
+    #  - Budapest_map
+     - circle_map
     # - Melbourne_map
     # - Montreal_map
     # - Shanghai_map
@@ -25,8 +25,8 @@ environment:
     # - Spa_map
     # - Spielberg_map
   map_bundles_train:
-    # - Budapest_map
-    - circle_map
+    #  - Budapest_map
+     - circle_map
     # - Melbourne_map
     # - Montreal_map
     # - Shanghai_map

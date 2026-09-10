@@ -24,7 +24,7 @@ agents:
       speed_control: acceleration
       max_acceleration: 5.0
       max_deceleration: 5.0
-      prevent_reverse: true
+      prevent_reverse: false
       speed_index: 1
 
 wandb:

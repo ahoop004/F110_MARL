@@ -1,0 +1,125 @@
+# Reverse-enabled Frenet PPO actor transfer to two MAPPO teammates.
+# Reuse the established team reward and fixed hybrid opponents; snapshot the
+# PPO observation/control/dynamics contract so later pretraining edits cannot
+# silently change this experiment. The critic and optimizer start fresh.
+includes:
+  - mappo_2v2_team_shared.yaml
+
+experiment:
+  name: mappo_2v2_frenet_ppo_pretrained
+  episodes: 5000
+  seed: 42
+  num_envs: 1
+  torch_threads: 1
+
+training_defaults:
+  # Requires the selected checkpoint from the completed reverse-enabled run.
+  # Do not substitute the older direct-speed or forward-only PPO checkpoints.
+  pretrained_actor_checkpoint: ../outputs/ppo_lap_completion_pretrain_frenet/ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d/best_model.pt
+  device: cuda
+
+mappo:
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: mean
+
+environment:
+  map_bundles: [Budapest_map, circle_map]
+  map_bundles_train: [Budapest_map, circle_map]
+  # Same-map evaluation measures transfer to traffic, not map generalization.
+  map_bundles_eval: [circle_map]
+  map_cycle: per_episode
+  map_pick: round_robin
+  timestep: 0.01
+  action_repeat: 1
+  target_laps: 3
+  lap_counting:
+    count_initial_crossing_as_lap: false
+  max_steps: 80000
+  track_preview:
+    points: 20
+    spacing: 0.3
+  episode_termination:
+    mode: all_agents
+  vehicle_params:
+    mu: 1.0489
+    C_Sf: 4.718
+    C_Sr: 5.4562
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    m: 3.74
+    I: 0.04712
+    length: 0.32
+    width: 0.225
+    s_min: -0.4189
+    s_max: 0.4189
+    sv_min: -3.2
+    sv_max: 3.2
+    v_switch: 20.0
+    a_max: 5.0
+    v_min: -20.0
+    v_max: 20.0
+
+# CLI evaluation is available for MAPPO; automatic completion-based checkpoint
+# selection is currently PPO-only. Select MAPPO checkpoints explicitly using
+# the selection set, then use the disjoint final seeds once.
+evaluation:
+  enabled: false
+  episodes: 8
+  seed: 10042
+  max_steps: 80000
+  final_test:
+    episodes: 20
+    seed: 20042
+
+agents:
+  car_0:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    target_id: car_2
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
+    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    params: &learner_params
+      learning_rate: 0.0001
+      pi_hidden_dims: [256, 256]
+      vf_hidden_dims: [512, 512]
+      activation: leaky_relu
+      gamma: 0.9979919516614258
+      checkpoint_every: 100
+    action_constraints: &learner_actions
+      speed_control: acceleration
+      max_acceleration: 5.0
+      max_deceleration: 5.0
+      prevent_reverse: false
+      speed_index: 1
+
+  car_1:
+    algorithm: mappo
+    trainable: true
+    role: racer
+    target_id: car_3
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
+    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    params: *learner_params
+    action_constraints: *learner_actions
+
+  # Fixed hybrid PP+FTG settings are inherited without retuning. Their 2.5 m/s
+  # pace makes this an initial transfer experiment, not a matched-speed contest.
+  car_2:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    target_id: car_0
+  car_3:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    target_id: car_1
+
+wandb:
+  enabled: false
+  project: marl-f110-complete
+  group: mappo-2v2-frenet-ppo-pretrained
+  job_type: pretrained-mappo-team
+  tags: [mappo, 2v2, ppo-pretrained, frenet, acceleration-control, reverse-enabled, team-reward, hybrid_pp_ftg]
+  notes: "Three-lap reverse-enabled PPO actor transfer; Budapest/circle training, circle evaluation; shared team critic/reward; inherited 2.5 m/s hybrid opponents"

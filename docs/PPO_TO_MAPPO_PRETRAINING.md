@@ -197,3 +197,65 @@ critic and a fresh optimizer. Loading fails if the observation dimension,
 action dimension or bounds, hidden layers, activation, or actor state shapes
 do not match. The source path and SHA-256 digest are recorded in run
 provenance.
+
+## Reverse-enabled Frenet transfer to a 2v2 team
+
+`scenarios/mappo_2v2_frenet_ppo_pretrained.yaml` defines two trainable MAPPO
+teammates (`car_0`, `car_1`) against the existing fixed hybrid PP+FTG opponents
+(`car_2`, `car_3`). It uses a mean shared team reward and a shared centralized
+critic. The 158-value local actor input remains unchanged; LiDAR sees traffic,
+but no explicit teammate/opponent identity inputs are added.
+
+This variant requires a PPO checkpoint trained with `prevent_reverse: false`.
+Its acceleration integrators allow references from -20 to +20 m/s, with signed
+reference rates of up to 5 m/s², at a 0.01 s decision interval. Negative action
+first reduces a positive reference, then commands reverse after crossing zero.
+The earlier forward-only contract described above is incompatible even though
+the network dimensions match. The current reverse-enabled pretraining scenario
+must be used to generate this initialization; changing only the receiving YAML
+cannot convert a forward-only checkpoint.
+
+The new scenario snapshots the vehicle dynamics, actor architecture and action
+contract instead of including the entire mutable PPO experiment. Its training
+maps are explicitly Budapest and circle, with circle evaluation, three full
+laps, and an 80,000-step horizon. MAPPO uses one environment, a fresh
+`[512, 512]` centralized critic, a fresh optimizer with constant learning rate
+`0.0001`, and the physical discount `gamma = 0.9979919516614258`. Shared reward
+and critic settings come from the established 2v2 team experiment. Reverse
+commands are permitted; the inherited racing reward still penalizes backward
+progress. Neither the reward nor the opponent settings were retuned here.
+
+The configured initialization path is the completion-selected `best_model.pt`
+from run `ppo_lap_completion_pretrain_frenet_ppo_s42_1789067806_2f5d`. Wait for
+that PPO run to finish before using its selected checkpoint. If using another
+run, change `training_defaults.pretrained_actor_checkpoint` in the new scenario;
+the path is relative to `scenarios/`, and its digest is captured in provenance.
+The episode-zero checkpoint is useful for an integration smoke test, not as
+evidence that the source actor has learned to finish laps. A missing selected
+checkpoint fails explicitly; the scenario never falls back to random weights.
+
+```bash
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_2v2_frenet_ppo_pretrained.yaml --no-wandb
+```
+
+MAPPO does not yet run the PPO automatic evaluation-selection hook. Evaluate
+periodic MAPPO checkpoints explicitly on the fixed selection seeds, choose one,
+and evaluate the chosen checkpoint once on the disjoint final seeds:
+
+```bash
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_2v2_frenet_ppo_pretrained.yaml \
+  --eval --eval-protocol selection --checkpoint <mappo-checkpoint.pt> --no-wandb
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_2v2_frenet_ppo_pretrained.yaml \
+  --eval --eval-protocol final --checkpoint <selected-mappo-checkpoint.pt> --no-wandb
+```
+
+Keep any training CLI overrides identical for provenance checks. A MAPPO
+`best_model.pt` chosen by training reward is not a completion-selected model.
+The fixed opponents retain their 2.5 m/s pace while the learners can command
+20 m/s: this is an initial transfer-to-traffic experiment, not a matched-speed
+comparison. Evaluation on circle is not a held-out-map result. Before making
+competitive claims, calibrate the opponents and compare against scratch MAPPO
+with the same team reward, physics, maps, seeds, horizon, and training budget.

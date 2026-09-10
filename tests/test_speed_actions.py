@@ -78,7 +78,8 @@ def test_frenet_environment_observes_applied_reference_rate(mode, repeat):
     try:
         env.reset(seed=42)
         for command, expected_speed, expected_rate in [(1, 5*dt, 5), (1, 10*dt, 5),
-                (0, 10*dt, 0), (-1, 5*dt, -5), (-1, 0, -5), (-1, 0, 0)]:
+                (0, 10*dt, 0), (-1, 5*dt, -5), (-1, 0, -5),
+                (-1, -5*dt, -5), (0, -5*dt, 0)]:
             physical = actions.process([0, command])
             assert physical[1] == pytest.approx(expected_speed, abs=1e-7)
             for _ in range(repeat):
