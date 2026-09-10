@@ -354,6 +354,63 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
     assert env_kwargs["action_repeat"] == 2
 
 
+def test_ppo_frenet_pretraining_changes_only_observation_and_run_labels():
+    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    variant = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    assert variant["experiment"]["name"] != baseline["experiment"]["name"]
+    assert variant["wandb"]["group"] != baseline["wandb"]["group"]
+    assert variant["agents"]["car_0"]["observation"].endswith(
+        "/rl_racer_vehicle_track_frenet.yaml"
+    )
+    # An accidental change to any other experiment setting confounds the
+    # observation comparison, including changes inherited from shared files.
+    variant["experiment"]["name"] = baseline["experiment"]["name"]
+    for key in ("group", "tags", "notes"):
+        variant["wandb"][key] = baseline["wandb"][key]
+    variant["agents"]["car_0"]["observation"] = baseline["agents"]["car_0"]["observation"]
+    assert variant == baseline
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
+    path = Path("scenarios/ppo_lap_completion_pretrain_frenet.yaml").resolve()
+    scenario = load_and_expand_scenario(str(path))
+    composer = ObservationComposer.from_file(
+        str(path.parent / scenario["agents"]["car_0"]["observation"]),
+        scenario["environment"],
+    )
+    assert composer.obs_dim == 158
+    env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
+    try:
+        assert env.track_preview_available
+        observations, infos = env.reset(seed=10042)
+        for step in range(3):
+            raw, info = observations["car_0"], infos["car_0"]
+            observation = composer.wrap(raw, info)
+            assert observation.shape == (158,)
+            assert np.isfinite(observation).all()
+            assert np.max(np.abs(observation)) <= 1.0
+            preview = info["track_preview"]
+            assert len(preview["curvature"]) == len(preview["width"]) == 20
+            assert np.all(np.asarray(preview["width"]) > 0.0)
+            # Check the actor receives geometry, rather than zero-filled slots
+            # due to a missing feature request or an incomplete info payload.
+            np.testing.assert_allclose(observation[118:138], np.clip(
+                np.asarray(preview["curvature"]) / preview["curvature_max"], -1, 1,
+            ), atol=1e-6)
+            np.testing.assert_allclose(observation[138:158], np.clip(
+                np.asarray(preview["width"]) / preview["width_max"], -1, 1,
+            ), atol=1e-6)
+            if step:
+                assert raw["speed_reference"] == pytest.approx(2.0)
+                assert observation[116] == pytest.approx(2.0 / 0.05 / 400.0)
+            observations, _, _, _, infos = env.step({
+                "car_0": np.array([0.1, 2.0], dtype=np.float32),
+            })
+    finally:
+        env.close()
+
+
 def test_complete_4_frenet_neighbors_is_a_separate_privileged_arm() -> None:
     scenario = load_and_expand_scenario(
         "scenarios/complete_4_frenet_neighbors.yaml"

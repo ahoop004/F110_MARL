@@ -1,0 +1,22 @@
+# Observation comparison with ppo_lap_completion_pretrain.yaml.
+# Inherit its maps, seeds, rewards, dynamics, PPO settings, and evaluation.
+# Actor inputs change from 115 to 158 values; train a fresh checkpoint.
+includes:
+  - ppo_lap_completion_pretrain.yaml
+
+experiment:
+  name: ppo_lap_completion_pretrain_frenet
+
+environment:
+  track_preview:
+    points: 20
+    spacing: 0.3
+
+agents:
+  car_0:
+    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+
+wandb:
+  group: ppo-lap-completion-pretrain-frenet
+  tags: [ppo, single-agent, lap-completion, actor-pretraining, lidar, frenet, track-preview]
+  notes: "Observation comparison: LiDAR plus normalized vehicle/Frenet state and curvature/width preview; same-track deterministic evaluation"

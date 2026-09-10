@@ -17,6 +17,51 @@ decision.
 The current scenario uses `circle_map` for both splits. A held-out generalization
 experiment requires explicit disjoint training and evaluation maps.
 
+For the observation comparison, use
+`scenarios/ppo_lap_completion_pretrain_frenet.yaml`. It includes the base
+pretraining scenario and overrides only the observation reference and run
+labels; it explicitly repeats the same 20-point, 0.3 m preview settings.
+Maps, spawn protocol, training/evaluation seeds, rewards, vehicle/action
+parameters, PPO hyperparameters, and episode budget remain matched.
+
+| Scenario | Actor observation | Dimension |
+|---|---|---|
+| `ppo_lap_completion_pretrain.yaml` | LiDAR, ego motion, progress/deviation, previous action | 115 |
+| `ppo_lap_completion_pretrain_frenet.yaml` | LiDAR, normalized vehicle/Frenet state, curvature and width preview | 158 |
+
+The Frenet variant reuses `rl_racer_vehicle_track_frenet.yaml`: 108 LiDAR
+values, 10 vehicle/Frenet values, 20 curvatures, and 20 widths. It replaces the
+baseline's seven non-LiDAR values; this compares complete observation
+representations, not just the addition of track preview. Normalization and
+clipping also differ. Hidden-layer widths match, but the larger input makes
+the first actor/critic layers larger. Wheel-speed values are simulator proxies
+derived from longitudinal speed and a configured wheel radius, not measured
+wheel rotation. The direct target-speed action remains in use.
+
+For a paired comparison, launch both scenarios with the same training seed:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_pretrain.yaml --seed 42 --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_pretrain_frenet.yaml --seed 42 --no-wandb
+```
+
+Repeat the pair with training seeds 43 and 44. Both scenarios retain evaluation
+seed 10042 and the same eight evaluation episodes. Compare completion rate,
+collision rate, progress, and mean finish steps in `evaluation_history.jsonl`;
+finish steps times 0.01 s is the elapsed three-lap race time for successful
+episodes, not a measured flying-lap time. Also report collected transitions
+and wall time: equal episode budgets need not yield equal transition counts.
+These are same-track results, and the checkpoint-selection episodes are not
+an independent final test set. Short smoke tests do not measure performance.
+
+Train the Frenet variant from scratch. Its output directory uses the distinct
+experiment name. A receiving MAPPO actor needs the same 158-value observation
+config and LeakyReLU architecture; the baseline's 115-input checkpoints cannot
+initialize it. Changing the base scenario later also changes the included
+variant, so retain both run snapshots and their source revision for comparisons.
+
 The racer observation remains 115 values: 108 LiDAR ranges, body-frame
 `[vx, vy, yaw_rate]`, normalized progress and cross-track distance, and two
 previous-action values. The shared ego-state wrapper now reads yaw rate from
