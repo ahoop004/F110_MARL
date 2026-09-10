@@ -1,9 +1,48 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from core.scenario import load_and_expand_scenario
 from core.setup import create_training_setup
+
+
+@pytest.mark.parametrize("pick,shuffle", [("random", False), ("round_robin", False), ("round_robin", True)])
+def test_seeded_map_schedule_replays_independently_of_reset_history(pick, shuffle):
+    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario["environment"].update(
+        map_bundles_train=["line2", "circle_map"],
+        map_bundles_eval=["line2", "circle_map"],
+        map_cycle="per_episode", map_pick=pick, epoch_shuffle=shuffle,
+    )
+    env, _, _ = create_training_setup(scenario, mode="eval", scenario_dir=Path("scenarios").resolve())
+    try:
+        def snapshot(index):
+            obs, _ = env.reset(seed=123, options={"map_episode_index": index})
+            return env._map_bundle_active, obs["car_0"]["pose"].copy(), obs["car_0"]["scans"].copy()
+
+        baseline = [snapshot(index) for index in range(4)]
+        env.reset(seed=999)
+        env.reset()
+        for index in reversed(range(4)):
+            actual = snapshot(index)
+            assert actual[0] == baseline[index][0]
+            np.testing.assert_array_equal(actual[1], baseline[index][1])
+            np.testing.assert_array_equal(actual[2], baseline[index][2])
+        if pick == "round_robin" and not shuffle:
+            assert [row[0] for row in baseline] == ["line2", "circle_map"] * 2
+            env.reset(seed=123)
+            assert env._map_bundle_active == "line2"
+            env.reset()
+            assert env._map_bundle_active == "circle_map"
+            env.reset(seed=123)
+            assert env._map_bundle_active == "line2"
+        with pytest.raises(ValueError, match="map_episode_index"):
+            env.reset(options={"map_episode_index": 1})
+        with pytest.raises(ValueError, match="map_episode_index"):
+            env.reset(seed=123, options={"map_episode_index": -1})
+    finally:
+        env.close()
 
 
 def test_training_and_evaluation_environments_keep_independent_scan_maps() -> None:

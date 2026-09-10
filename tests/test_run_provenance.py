@@ -74,6 +74,9 @@ def test_run_provenance_hashes_source_and_resolved_config(tmp_path) -> None:
     assert len(provenance["resolved_config_sha256"]) == 64
     assert provenance["seed"] == 7
     assert provenance["trainable_agents"] == ["car_0"]
+    legacy = {key: value for key, value in provenance.items() if key != "behavior_contracts"}
+    assert any("behavior_contracts" in item for item in provenance_mismatches(legacy, provenance))
+    assert provenance_mismatches(provenance, dict(provenance)) == []
 
 
 def test_provenance_comparison_detects_config_and_map_changes() -> None:

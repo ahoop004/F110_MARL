@@ -150,7 +150,7 @@ class _OneStepFinishEnv:
     possible_agents = ["car_0"]
     timestep = 0.01
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, options=None):
         self.agents = ["car_0"]
         return {"car_0": {}}, {"car_0": {}}
 
@@ -192,6 +192,46 @@ def test_deterministic_ppo_evaluator_uses_environment_completion_facts():
     assert summary["finish_time_sample_count"] == 2
     assert summary["evaluation_protocol"]["seeds"] == [100, 101]
     assert agent.actor.training is True
+
+
+def test_selection_evaluation_replans_when_opponent_terminates():
+    class Env(_OneStepFinishEnv):
+        possible_agents = ["car_0", "opponent"]
+
+        def __init__(self):
+            self.resets = []
+
+        def reset(self, seed=None, options=None):
+            self.steps = 0
+            self.agents = self.possible_agents.copy()
+            self.resets.append((seed, options))
+            return {aid: {} for aid in self.agents}, {}
+
+        def step(self, actions):
+            assert set(actions) == set(self.agents)
+            self.steps += 1
+            self.agents = ["car_0"] if self.steps < 3 else []
+            return ({aid: {} for aid in self.possible_agents}, {},
+                    {"car_0": self.steps == 3, "opponent": self.steps == 1}, {}, {})
+
+    env = Env()
+    decisions = []
+    agent = _ActorOwner()
+
+    def predict(obs):
+        decisions.append(env.steps)
+        return np.zeros(2)
+
+    agent.predict = predict
+    evaluator = DeterministicPPOEvaluator(
+        env=env, rl_agent_id="car_0", other_agents={"opponent": type(
+            "Opponent", (), {"act": lambda self, obs: np.zeros(2)}
+        )()}, obs_composer=_Composer(), action_composer=_ActionComposer(),
+        episodes=2, base_seed=100, action_repeat=2,
+    )
+    evaluator.evaluate(agent)
+    assert decisions == [0, 1, 0, 1]
+    assert env.resets == [(100, {"map_episode_index": 0}), (101, {"map_episode_index": 1})]
 
 
 def test_evaluation_resets_integrated_speed_each_episode():

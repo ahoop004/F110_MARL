@@ -5,6 +5,33 @@ import agents.waypoint as waypoint
 from agents.waypoint import _find_nearest, _is_closed_path, _lookahead_point
 
 
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_ftg_episode_reset_matches_fresh_controller(hybrid):
+    from agents.ftg import FollowTheGapPolicy
+    from env.spaces import SpaceSpec
+
+    def build():
+        ftg = FollowTheGapPolicy()
+        ftg.set_action_space(SpaceSpec((2,), [-0.46, 0.0], [0.46, 20.0]))
+        if hybrid:
+            return waypoint.HybridPPFTGPolicy(
+                lambda: np.array([[0., 0.], [1., 0.], [2., 0.]], dtype=np.float32), ftg,
+            )
+        return ftg
+
+    policy = build()
+    ftg = policy._ftg if hybrid else policy
+    # An interrupted avoidance manoeuvre must not survive the next reset.
+    ftg.last_steer = 0.3
+    ftg._cutback_ttl = 8
+    ftg._cutback_side = "left"
+    policy.reset()
+    assert ftg._cutback_ttl == 0
+    assert ftg._cutback_side is None
+    observation = {"scans": np.ones(1080), "pose": np.zeros(3), "velocity": np.zeros(2)}
+    np.testing.assert_array_equal(policy.act(observation), build().act(observation))
+
+
 def test_closed_centerline_nearest_search_wraps_at_finish_seam() -> None:
     points = np.array(
         [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.1]],

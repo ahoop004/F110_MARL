@@ -105,6 +105,11 @@ def build_run_provenance(
     repo_root = Path(__file__).resolve().parents[2]
     return {
         "version": PROVENANCE_VERSION,
+        "behavior_contracts": {
+            "fixed_opponent_episode_reset": "1.0",
+            "seeded_map_schedule": "1.0",
+            "evaluation_action_repeat_boundary": "1.0",
+        },
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,
         "algorithm": algorithm,
@@ -131,7 +136,7 @@ def provenance_mismatches(
 ) -> list[str]:
     """Describe contract mismatches between a checkpoint and evaluation run."""
     mismatches: list[str] = []
-    for key in ("algorithm", "scenario_source_sha256", "resolved_config_sha256"):
+    for key in ("algorithm", "scenario_source_sha256", "resolved_config_sha256", "behavior_contracts"):
         if stored.get(key) != current.get(key):
             mismatches.append(
                 f"{key}: checkpoint={stored.get(key)!r}, current={current.get(key)!r}"

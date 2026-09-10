@@ -179,9 +179,33 @@ scenario resources, invalid algorithm/role combinations, and sweep CLI arguments
 Before cleanup the suite had 147 passes and one scan-isolation failure caused by a
 scenario-dependent map fixture; that fixture now declares its own distinct maps.
 
-This cleanup preserves policy, observation, reward, and dataset semantics. The
-review identified separate correctness work before new research comparisons:
-opponent resets between training episodes, PPO dataset global-state timing,
-dataset overwrite protection, and map-scheduler
-reseeding. Fixes to these require focused regression tests and explicit contract
-metadata where existing checkpoint or dataset behavior changes.
+The follow-up correctness fixes reset fixed opponents in PPO/MAPPO training,
+including FTG steering and cutback history and the hybrid controller's FTG state.
+Checkpoint-selection evaluation now ends an action repeat when any acting agent
+terminates, matching training and CLI evaluation.
+
+An explicit `env.reset(seed=...)` restarts the map scheduler from its configured
+order and reseeds its RNG. Unseeded resets continue the existing cycle. Evaluation
+uses `reset(seed=base_seed + episode, options={"map_episode_index": episode})`:
+the index advances that seeded schedule before selecting the map, preserving
+multi-map coverage without depending on sizing resets or earlier evaluations.
+The index must be nonnegative and requires an explicit seed.
+
+Dataset directories must be absent or empty. The writer reserves the directory
+immediately with `metadata.json` (`complete: false`) and sets `complete: true`
+only after successful close. Existing datasets cannot be resumed or overwritten;
+use a new directory for each run. Chunk files are also created exclusively.
+The array schema remains `2.0`. New `run.py` datasets record
+`transition_contract.version: "1.0"`, with `global_state: pre_decision` and
+`lifecycle_fields: post_decision`. Both PPO and MAPPO now pair `obs_t` with `s_t`.
+Older datasets without this metadata retain their historical semantics: PPO
+recorded `s_{t+1}`, while MAPPO recorded `s_t`; do not mix them without an explicit
+conversion. A first state cannot generally be recovered from old PPO recordings.
+
+Run provenance now includes `behavior_contracts` for opponent resets, seeded map
+scheduling, and evaluation action-repeat boundaries. Checkpoints with older
+provenance require `--allow-provenance-mismatch` for intentional reevaluation
+under the corrected behavior. These fixes can change trajectories, baseline
+scores, and selected checkpoints, so regenerate matched baseline/evaluation runs
+before comparing new results with historical experiments. Observation dimensions,
+action bounds, reward definitions, and decentralized actor inputs are unchanged.

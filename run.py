@@ -577,6 +577,11 @@ def main() -> None:
                     aid: composer.obs_dim for aid, composer in obs_composers.items()
                 },
                 "lifecycle_contract_version": "1.0",
+                "transition_contract": {
+                    "version": "1.0",
+                    "global_state": "pre_decision",
+                    "lifecycle_fields": "post_decision",
+                },
                 "mappo": (
                     resolve_mappo_config(scenario)
                     if algorithm == "mappo"
@@ -919,7 +924,10 @@ def _run_eval(
 
     try:
         for episode in range(eval_episodes):
-            obs_dict, info_dict = env.reset(seed=base_seed + episode)
+            obs_dict, info_dict = env.reset(
+                seed=base_seed + episode,
+                options={"map_episode_index": episode},
+            )
             for composer in obs_composers.values():
                 composer.reset()
             for composer in reward_composers.values():

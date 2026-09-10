@@ -152,6 +152,11 @@ def test_dataset_v2_round_trip_and_old_schema_detection(tmp_path) -> None:
     writer.close()
 
     assert detect_dataset_schema(output) == "2.0"
+    assert json.loads((output / "metadata.json").read_text())["complete"] is True
+    original = {path.name: path.read_bytes() for path in output.iterdir()}
+    with pytest.raises(FileExistsError, match="must be empty"):
+        DatasetWriter(output, chunk_size=1)
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == original
     chunk = np.load(output / "transitions_000000.npz", allow_pickle=True)
     assert chunk["lap_count"].tolist() == [3, 2, 1]
     assert chunk["terminal_reason"].tolist() == [
@@ -165,6 +170,29 @@ def test_dataset_v2_round_trip_and_old_schema_detection(tmp_path) -> None:
     old.mkdir()
     (old / "metadata.json").write_text(json.dumps({"schema_version": "1.0"}))
     assert detect_dataset_schema(old) == "1.0"
+
+
+def test_dataset_reserves_empty_directory_before_first_transition(tmp_path):
+    output = tmp_path / "reserved"
+    output.mkdir()
+    writer = DatasetWriter(output)
+    assert json.loads((output / "metadata.json").read_text())["complete"] is False
+    with pytest.raises(FileExistsError):
+        DatasetWriter(output)
+    writer.close()
+    writer.close()
+    metadata = json.loads((output / "metadata.json").read_text())
+    assert metadata["complete"] is True
+    assert metadata["total_transitions"] == 0
+
+
+def test_dataset_rejects_unrelated_files_without_modifying_them(tmp_path):
+    marker = tmp_path / "keep.txt"
+    marker.write_text("keep")
+    with pytest.raises(FileExistsError):
+        DatasetWriter(tmp_path)
+    assert list(tmp_path.iterdir()) == [marker]
+    assert marker.read_text() == "keep"
 
 
 def test_2v2_scenario_expands_explicit_race_contract() -> None:

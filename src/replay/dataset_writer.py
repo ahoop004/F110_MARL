@@ -64,7 +64,8 @@ class DatasetWriter:
     ----------
     output_dir:
         Directory where chunk files and ``metadata.json`` are written.
-        Created on first flush if it does not exist.
+        Must be absent or empty. Reserved immediately with incomplete metadata;
+        reopening or resuming an existing dataset is not supported.
     chunk_size:
         Number of transitions per ``.npz`` file.  Default 10 000.
     metadata:
@@ -100,6 +101,11 @@ class DatasetWriter:
         self._chunk_idx = 0
         self._total = 0
         self._closed = False
+        self._dir.mkdir(parents=True, exist_ok=True)
+        if any(self._dir.iterdir()):
+            raise FileExistsError(f"Dataset directory must be empty: {self._dir}")
+        # Exclusive creation reserves an empty directory against a second writer.
+        self._write_metadata(exclusive=True)
 
     # ------------------------------------------------------------------
     # Write path
@@ -181,31 +187,32 @@ class DatasetWriter:
                 lifecycle_mask_arr[i, mask_idx, : min(mask_dim, mask.size)] = mask[:mask_dim]
 
         chunk_path = self._dir / f"transitions_{self._chunk_idx:06d}.npz"
-        np.savez_compressed(
-            chunk_path,
-            obs=obs_arr,
-            action_norm=act_norm_arr,
-            action_phys=act_phys_arr,
-            reward=reward_arr,
-            next_obs=next_obs_arr,
-            terminated=terminated_arr,
-            truncated=truncated_arr,
-            global_state=gs_arr,
-            map_id=map_id_arr,
-            spawn_id=spawn_id_arr,
-            episode_id=episode_id_arr,
-            step_idx=step_idx_arr,
-            agent_id=agent_id_arr,
-            lap_crossed=lap_crossed_arr,
-            lap_count=lap_count_arr,
-            target_laps=target_laps_arr,
-            race_completed=race_completed_arr,
-            terminal_reason=terminal_reason_arr,
-            lifecycle_status=lifecycle_status_arr,
-            finish_position=finish_position_arr,
-            lifecycle_masks=lifecycle_mask_arr,
-            lifecycle_mask_keys=np.asarray(mask_keys, dtype=object),
-        )
+        with chunk_path.open("xb") as chunk_file:
+            np.savez_compressed(
+                chunk_file,
+                obs=obs_arr,
+                action_norm=act_norm_arr,
+                action_phys=act_phys_arr,
+                reward=reward_arr,
+                next_obs=next_obs_arr,
+                terminated=terminated_arr,
+                truncated=truncated_arr,
+                global_state=gs_arr,
+                map_id=map_id_arr,
+                spawn_id=spawn_id_arr,
+                episode_id=episode_id_arr,
+                step_idx=step_idx_arr,
+                agent_id=agent_id_arr,
+                lap_crossed=lap_crossed_arr,
+                lap_count=lap_count_arr,
+                target_laps=target_laps_arr,
+                race_completed=race_completed_arr,
+                terminal_reason=terminal_reason_arr,
+                lifecycle_status=lifecycle_status_arr,
+                finish_position=finish_position_arr,
+                lifecycle_masks=lifecycle_mask_arr,
+                lifecycle_mask_keys=np.asarray(mask_keys, dtype=object),
+            )
         _log.info("DatasetWriter: wrote %d transitions → %s", n, chunk_path)
 
         self._total += n
@@ -216,17 +223,18 @@ class DatasetWriter:
     # Metadata
     # ------------------------------------------------------------------
 
-    def _write_metadata(self) -> None:
+    def _write_metadata(self, *, exclusive: bool = False, complete: bool = False) -> None:
         meta: Dict[str, Any] = {
+            **self._extra_meta,
             "schema_version": DATASET_SCHEMA_VERSION,
             "total_transitions": self._total,
             "num_chunks": self._chunk_idx,
             "chunk_size": self._chunk_size,
+            "complete": complete,
         }
-        meta.update(self._extra_meta)
         meta_path = self._dir / "metadata.json"
         self._dir.mkdir(parents=True, exist_ok=True)
-        with open(meta_path, "w") as f:
+        with open(meta_path, "x" if exclusive else "w") as f:
             json.dump(meta, f, indent=2, default=str)
         _log.info("DatasetWriter: metadata → %s  (%d total transitions)", meta_path, self._total)
 
@@ -239,7 +247,7 @@ class DatasetWriter:
         if self._closed:
             return
         self._flush()
-        self._write_metadata()
+        self._write_metadata(complete=True)
         self._closed = True
 
     def __enter__(self) -> "DatasetWriter":

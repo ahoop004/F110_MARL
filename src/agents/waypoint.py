@@ -468,6 +468,7 @@ class HybridPPFTGPolicy:
 
     def reset(self) -> None:
         self._pp.reset()
+        self._ftg.reset()
 
     def act(
         self,

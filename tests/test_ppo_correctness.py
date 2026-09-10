@@ -288,6 +288,67 @@ def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
     assert lifecycle["truncated"] is True
 
 
+def test_ppo_dataset_state_precedes_repeated_action(tmp_path):
+    from types import SimpleNamespace
+    from src.replay.dataset_writer import DatasetHook, DatasetWriter
+
+    class Env(_OneStepTruncationEnv):
+        def reset(self, options=None):
+            self.state = np.array([0.0], dtype=np.float32)
+            return super().reset(options)
+
+        def get_global_state(self):
+            return SimpleNamespace(vector=self.state, masks={})
+
+        def step(self, actions):
+            self.state[0] += 1
+            done = self.state[0] == 4
+            self.agents = [] if done else ["car_0"]
+            return ({"car_0": {"value": float(self.state[0])}}, {},
+                    {"car_0": False}, {"car_0": done}, {"car_0": {}})
+
+    writer = DatasetWriter(tmp_path / "dataset")
+    trainer = OnPolicyTrainer(
+        Env(), "car_0", _RecordingAgent(), {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(), action_repeat=2,
+        hooks=[DatasetHook(writer)],
+    )
+    trainer.train(1)
+    with np.load(tmp_path / "dataset/transitions_000000.npz") as chunk:
+        np.testing.assert_array_equal(chunk["obs"], [[0], [2]])
+        np.testing.assert_array_equal(chunk["global_state"], chunk["obs"])
+        np.testing.assert_array_equal(chunk["next_obs"], [[2], [4]])
+        assert chunk["truncated"].tolist() == [False, True]
+
+
+def test_ppo_resets_fixed_opponents_before_each_episode():
+    class Opponent:
+        calls = 9
+        history = []
+
+        def reset(self):
+            self.calls = 0
+
+        def act(self, obs):
+            self.calls += 1
+            self.history.append(self.calls)
+            return np.zeros(2)
+
+    class Env(_OneStepTruncationEnv):
+        def reset(self, options=None):
+            obs, info = super().reset(options)
+            self.agents.append("opponent")
+            obs["opponent"] = {}
+            return obs, info
+
+    opponent = Opponent()
+    OnPolicyTrainer(
+        Env(), "car_0", _RecordingAgent(), {"opponent": opponent},
+        _ObservationComposer(), _RewardComposer(), _ActionComposer(),
+    ).train(2)
+    assert opponent.history == [1, 1]
+
+
 def test_on_policy_resets_integrated_speed_each_episode():
     from wrappers.actions.composer import ActionComposer
 

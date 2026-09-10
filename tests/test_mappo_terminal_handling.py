@@ -373,6 +373,35 @@ def test_trainer_stops_collecting_after_individual_agent_termination() -> None:
     assert hook.records[-1].episode_id == "terminal-test_ep000000"
 
 
+def test_mappo_resets_fixed_opponents_before_each_episode():
+    class Env(_MixedEndingEnv):
+        possible_agents = ["car_0", "car_1", "opponent"]
+
+    class Opponent:
+        def __init__(self):
+            self.calls = 9
+            self.history = []
+
+        def reset(self):
+            self.calls = 0
+
+        def act(self, obs):
+            self.calls += 1
+            self.history.append(self.calls)
+            return np.zeros(2)
+
+    opponent = Opponent()
+    ids = ["car_0", "car_1"]
+    MARLTrainer(
+        env=Env(), agent=_FakeMAPPOAgent(), trainable_ids=ids,
+        other_agents={"opponent": opponent},
+        obs_composers={aid: _ObservationComposer() for aid in ids},
+        reward_composers={aid: _RewardComposer() for aid in ids},
+        action_composer=_ActionComposer(),
+    ).train(2)
+    assert opponent.history == [1, 1]
+
+
 def test_mappo_next_observation_contains_action_that_produced_it() -> None:
     env = _MixedEndingEnv()
     agent = _FixedActionMAPPOAgent()

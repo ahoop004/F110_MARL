@@ -765,12 +765,23 @@ class F110ParallelEnv:
         self.start_poses = np.asarray(poses, dtype=np.float32)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
+        """Reset; seeded map cycles restart unless map_episode_index is supplied."""
+        map_episode_index = (options or {}).get("map_episode_index", 0)
+        if (
+            isinstance(map_episode_index, bool)
+            or not isinstance(map_episode_index, (int, np.integer))
+            or map_episode_index < 0
+            or (seed is None and "map_episode_index" in (options or {}))
+        ):
+            raise ValueError("map_episode_index requires an explicit seed and a nonnegative integer")
         self._invalidate_global_state_cache()
         self.last_step_facts = None
         if seed is not None:
             seed_value = int(seed)
             self.seed = seed_value
             self.rng = np.random.default_rng(seed_value)
+            self._map_scheduler.reseed(self.rng)
+            self._map_scheduler.seek_episode(self._map_split_mode, map_episode_index)
             reseed_sim = getattr(self.sim, "reseed", None)
             if callable(reseed_sim):
                 reseed_sim(seed_value)

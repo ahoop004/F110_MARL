@@ -236,6 +236,9 @@ class OnPolicyTrainer:
         self._set_training_progress(0, n_episodes)
         for episode in range(n_episodes):
             obs_dict, info_dict = self._reset_env()
+            for controller in self.other_agents.values():
+                if hasattr(controller, "reset"):
+                    controller.reset()
             reset_actions = getattr(self.action_composer, "reset", None)
             if reset_actions is not None:
                 reset_actions()
@@ -255,6 +258,12 @@ class OnPolicyTrainer:
             spawn_id = self._spawn_id()
 
             while not done:
+                # Copy before stepping: dataset state and observation describe
+                # the same decision, even if an environment reuses its arrays.
+                global_state = (
+                    np.asarray(self.env.get_global_state().vector, dtype=np.float32).copy()
+                    if self._transition_hooks else None
+                )
                 action_norm, log_prob, value = self.agent.act(obs)
                 action_phys = self.action_composer.process(action_norm)
                 actions = self._build_actions(action_phys, obs_dict)
@@ -327,11 +336,6 @@ class OnPolicyTrainer:
                 )
 
                 # --- Emit transition record for dataset hooks ---
-                global_state = (
-                    post_step_global_snapshot.vector
-                    if post_step_global_snapshot is not None
-                    else np.zeros(0, dtype=np.float32)
-                )
                 if self._transition_hooks:
                     record = TransitionRecord(
                         obs=obs,

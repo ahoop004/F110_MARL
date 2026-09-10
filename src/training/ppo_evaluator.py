@@ -88,7 +88,10 @@ class DeterministicPPOEvaluator:
         try:
             with torch.no_grad():
                 for episode in range(self.episodes):
-                    obs_dict, info_dict = self.env.reset(seed=self.base_seed + episode)
+                    obs_dict, info_dict = self.env.reset(
+                        seed=self.base_seed + episode,
+                        options={"map_episode_index": episode},
+                    )
                     reset_actions = getattr(self.action_composer, "reset", None)
                     if reset_actions is not None:
                         reset_actions()
@@ -134,6 +137,8 @@ class DeterministicPPOEvaluator:
                             active_after = set(getattr(self.env, "agents", []))
                             if self.rl_agent_id not in active_after:
                                 episode_done = True
+                                break
+                            if not set(actions).issubset(active_after):
                                 break
                         if episode_done:
                             break

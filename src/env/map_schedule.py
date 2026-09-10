@@ -55,18 +55,12 @@ class MapScheduler:
             bundles_train = list(bundles_all)
         # eval stays empty unless explicitly configured
 
-        self._cycle_order: Dict[str, List[str]] = {
+        self._initial_order: Dict[str, List[str]] = {
             "train": bundles_train,
             "eval": bundles_eval,
         }
         configured = [*bundles_all, *bundles_train, *bundles_eval]
-        self._cycle_indices: Dict[str, int] = {"train": 0, "eval": 0}
-
-        if self._epoch_shuffle:
-            for key, order in self._cycle_order.items():
-                if order:
-                    self._rng.shuffle(order)
-                    self._cycle_indices[key] = 0
+        self.reseed(rng)
 
         # Active bundle tracking
         self._active_bundle: Optional[str] = (
@@ -111,6 +105,25 @@ class MapScheduler:
     # ------------------------------------------------------------------
     # Bundle selection
     # ------------------------------------------------------------------
+
+    def reseed(self, rng: np.random.Generator) -> None:
+        """Restart from configured order using the environment's new RNG."""
+        self._rng = rng
+        self._cycle_order = {key: list(order) for key, order in self._initial_order.items()}
+        self._cycle_indices = {"train": 0, "eval": 0}
+        if self._epoch_shuffle:
+            for order in self._cycle_order.values():
+                if order:
+                    self._rng.shuffle(order)
+
+    def seek_episode(self, split_mode: str, episode_index: int) -> None:
+        """Advance a freshly seeded schedule to an explicit evaluation episode.
+
+        Replaying selection also reproduces random picks and epoch shuffles.
+        This avoids depending on previous evaluations or sizing resets.
+        """
+        for _ in range(episode_index):
+            self.select_next_bundle(split_mode)
 
     def select_next_bundle(self, split_mode: str) -> Optional[str]:
         """Return the bundle to use for the next episode, or ``None``.

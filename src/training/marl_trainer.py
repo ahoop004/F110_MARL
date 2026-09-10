@@ -218,6 +218,9 @@ class MARLTrainer:
         """Run *n_episodes* of MAPPO training."""
         for episode in range(n_episodes):
             obs_dict, info_dict = self.env.reset()
+            for controller in self.other_agents.values():
+                if hasattr(controller, "reset"):
+                    controller.reset()
             global_snapshot = self.env.get_global_state()
             global_state = global_snapshot.vector
 
