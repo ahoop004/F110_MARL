@@ -98,15 +98,3 @@ def create_training_setup(
 
     agents = build_fixed_policy_agents(agent_configs)
     return env, agents, {}
-
-
-def get_experiment_config(scenario: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract experiment configuration from scenario.
-
-    Args:
-        scenario: Scenario configuration
-
-    Returns:
-        Experiment configuration dict
-    """
-    return scenario.get('experiment', {})

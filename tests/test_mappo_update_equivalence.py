@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
+from agents.ppo import PPOAgent
 
 
 def _make_agent(
@@ -51,7 +52,7 @@ def _fill_rollout(agent: MAPPOAgent) -> np.ndarray:
 
 
 def _legacy_update(
-    agent: MAPPOAgent, next_global_state: np.ndarray
+    agent: MAPPOAgent | PPOAgent, next_global_state: np.ndarray | float
 ) -> dict[str, float]:
     all_obs = []
     all_gs = []
@@ -59,18 +60,19 @@ def _legacy_update(
     all_old_lp = []
     all_adv = []
     all_ret = []
-    rollout_agent_ids = [
-        aid for aid in agent.agent_ids if agent.buffers[aid].size() > 0
-    ]
-    next_values = agent.evaluate_states(next_global_state, rollout_agent_ids)
+    buffers = {None: agent.buffer} if isinstance(agent, PPOAgent) else agent.buffers
+    rollout_agent_ids = [aid for aid, buf in buffers.items() if buf.size() > 0]
+    next_values = ({None: next_global_state} if isinstance(agent, PPOAgent)
+                   else agent.evaluate_states(next_global_state, rollout_agent_ids))
     for aid in rollout_agent_ids:
-        buffer = agent.buffers[aid]
+        buffer = buffers[aid]
         n = buffer.size()
         adv, ret = buffer.compute_gae(
             next_values[aid], agent.gamma, agent.gae_lambda
         )
         all_obs.append(buffer.obs[:n])
-        all_gs.append(agent._critic_batch(buffer.global_states[:n], aid))
+        all_gs.append(buffer.obs[:n] if isinstance(agent, PPOAgent)
+                      else agent._critic_batch(buffer.global_states[:n], aid))
         all_acts.append(buffer.actions[:n])
         all_old_lp.append(buffer.log_probs[:n])
         all_adv.append(adv)
@@ -133,6 +135,7 @@ def _legacy_update(
 
 
 @pytest.mark.parametrize("critic_mode", ["agent_conditioned", "shared_team"])
+@pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize(
     "device",
     [
@@ -146,7 +149,7 @@ def _legacy_update(
     ],
 )
 def test_packed_update_matches_legacy_losses_gradients_and_parameters(
-    critic_mode: str, device: str,
+    critic_mode: str, device: str, partial: bool,
 ) -> None:
     torch.manual_seed(123)
     legacy = _make_agent(device=device, critic_mode=critic_mode)
@@ -158,6 +161,9 @@ def test_packed_update_matches_legacy_losses_gradients_and_parameters(
     optimized._rollout_storage.copy_(legacy._rollout_storage)
     for buffer in optimized.buffers.values():
         buffer.ptr = optimized.n_steps
+    if partial:
+        for i, aid in enumerate(legacy.agent_ids):
+            legacy.buffers[aid].ptr = optimized.buffers[aid].ptr = i + 1
 
     torch.manual_seed(999)
     expected_metrics = _legacy_update(legacy, next_state)
@@ -209,3 +215,29 @@ def test_gae_matches_scalar_recurrence_exactly(algorithm, n, device) -> None:
     advantages, returns = buffer.compute_gae(1.25, 0.99, 0.95)
     assert torch.equal(advantages.cpu(), torch.from_numpy(expected))
     assert torch.equal(returns.cpu(), torch.from_numpy(expected + data[:, 1]))
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+)])
+def test_shared_ppo_update_matches_reference_with_partial_minibatch(device):
+    torch.manual_seed(123)
+    reference = PPOAgent(5, -np.ones(2), np.ones(2), {
+        "device": device, "hidden_dims": [8], "n_steps": 8,
+        "n_epochs": 2, "batch_size": 3,
+    })
+    rng = np.random.default_rng(321)
+    for i in range(5):
+        reference.buffer.add(rng.normal(size=5), np.tanh(rng.normal(size=2)),
+                             float(rng.normal()), -.2, .3, i == 2, i == 4)
+    actual = copy.deepcopy(reference)
+    torch.manual_seed(999)
+    expected_metrics = _legacy_update(reference, .5)
+    torch.manual_seed(999)
+    actual_metrics = actual.update(.5)
+    assert actual_metrics == pytest.approx(expected_metrics, rel=1e-6, abs=1e-7)
+    for expected, observed in zip(reference._optim_parameters, actual._optim_parameters):
+        torch.testing.assert_close(observed, expected, rtol=0, atol=0)
+        torch.testing.assert_close(observed.grad, expected.grad, rtol=0, atol=0)
+        for key, value in reference.optimizer.state[expected].items():
+            torch.testing.assert_close(actual.optimizer.state[observed][key], value, rtol=0, atol=0)

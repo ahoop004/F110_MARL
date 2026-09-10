@@ -6,10 +6,9 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 
-from agents.common import Actor, Critic, compute_gae
+from agents.common import Actor, Critic, compute_gae, ppo_minibatch_step, mean_update_metrics
 from utils.torch_io import resolve_device
 
 
@@ -191,38 +190,11 @@ class PPOAgent:
                 adv_b = advantages[idx]
                 ret_b = returns[idx]
 
-                # PPO's importance ratio must score the exact action collected
-                # during rollout; sampling a replacement action makes the ratio
-                # unrelated to the stored transition.
-                new_lp_t, entropy_t = self.actor.evaluate_actions(obs_b, act_b)
-                value_pred = self.critic(obs_b)
+                metric_rows.append(ppo_minibatch_step(
+                    self, obs_b, obs_b, act_b, old_lp_b, adv_b, ret_b,
+                ))
 
-                ratio = (new_lp_t - old_lp_b).exp()
-                pi_loss_1 = -adv_b * ratio
-                pi_loss_2 = -adv_b * ratio.clamp(1 - self.clip_range, 1 + self.clip_range)
-                pi_loss = torch.max(pi_loss_1, pi_loss_2).mean()
-
-                vf_loss = nn.functional.mse_loss(value_pred, ret_b)
-
-                entropy = entropy_t.mean()
-
-                loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(
-                    self._optim_parameters,
-                    self.max_grad_norm,
-                )
-                self.optimizer.step()
-
-                with torch.no_grad():
-                    approx_kl = ((old_lp_b - new_lp_t).mean()).abs()
-                    metric_rows.append(torch.stack((pi_loss, vf_loss, entropy, approx_kl)))
-
-        names = ("train/policy_loss", "train/value_loss", "train/entropy", "train/approx_kl")
-        means = torch.stack(metric_rows).mean(dim=0).cpu().tolist() if metric_rows else [0.0] * len(names)
-        return dict(zip(names, means))
+        return mean_update_metrics(metric_rows)
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

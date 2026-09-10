@@ -4,7 +4,6 @@ Provides automatic W&B initialization, configuration tracking,
 and per-episode/rolling metrics logging.
 """
 
-import os
 from typing import Dict, Any, Optional
 import wandb
 
@@ -163,86 +162,6 @@ class WandbLogger:
             return metrics
         return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
 
-    def log_episode(
-        self,
-        episode: int,
-        metrics: Any,
-        rolling_stats: Optional[Dict[str, float]] = None,
-        extra: Optional[Dict[str, Any]] = None,
-        agent_id: Optional[str] = None,
-    ):
-        """Log metrics for a single episode.
-
-        Args:
-            episode: Episode number
-            metrics: Object exposing to_dict()
-            rolling_stats: Optional dict of rolling statistics
-            extra: Optional extra metrics to log
-            agent_id: Optional agent ID for namespacing metrics
-
-        Example:
-            >>> logger.log_episode(
-            ...     episode=0,
-            ...     metrics=episode_metrics,
-            ...     rolling_stats={'success_rate': 0.75, 'avg_reward': 85.2},
-            ...     agent_id='car_0',
-            ... )
-        """
-        if not self.enabled:
-            return
-
-        # Convert metrics to dict
-        metrics_dict = metrics.to_dict()
-
-        log_dict = {}
-
-        # Namespace episode metrics by agent_id if provided
-        if agent_id:
-            # Remove 'episode' from namespacing as it's a global counter
-            if 'episode' in metrics_dict:
-                log_dict['episode'] = metrics_dict.pop('episode')
-
-            # Namespace all other episode metrics
-            for key, value in metrics_dict.items():
-                log_dict[f'{agent_id}/{key}'] = value
-        else:
-            # No namespacing if agent_id not provided
-            log_dict = metrics_dict
-
-        # Add rolling stats with agent namespace
-        if rolling_stats:
-            for key, value in rolling_stats.items():
-                if key not in ['outcome_counts', 'outcome_rates', 'total_episodes']:
-                    if agent_id:
-                        log_dict[f'{agent_id}/rolling/{key}'] = value
-                    else:
-                        log_dict[f'rolling/{key}'] = value
-
-            # Log outcome distribution
-            if 'outcome_counts' in rolling_stats:
-                for outcome, count in rolling_stats['outcome_counts'].items():
-                    if agent_id:
-                        log_dict[f'{agent_id}/rolling/outcomes/{outcome}'] = count
-                    else:
-                        log_dict[f'rolling/outcomes/{outcome}'] = count
-
-            if 'outcome_rates' in rolling_stats:
-                for outcome, rate in rolling_stats['outcome_rates'].items():
-                    if agent_id:
-                        log_dict[f'{agent_id}/rolling/outcome_rates/{outcome}'] = rate
-                    else:
-                        log_dict[f'rolling/outcome_rates/{outcome}'] = rate
-
-        # Add extra metrics (not namespaced - assume they're already properly named)
-        if extra:
-            log_dict.update(extra)
-
-        # Log to W&B
-        log_dict = self._filter_metrics(log_dict)
-        if not log_dict:
-            return
-        wandb.log(log_dict, step=episode)
-
     def log_metrics(
         self,
         metrics: Dict[str, Any],
@@ -264,50 +183,6 @@ class WandbLogger:
         if not metrics:
             return
         wandb.log(metrics, step=step)
-
-    def log_component_stats(
-        self,
-        component_stats: Dict[str, Dict[str, float]],
-        step: Optional[int] = None,
-    ):
-        """Log reward component statistics.
-
-        Args:
-            component_stats: Dict mapping component names to their stats
-            step: Optional step number
-
-        Example:
-            >>> stats = {"progress": {"mean": 0.5, "std": 0.1}}
-            >>> logger.log_component_stats(stats, step=500)
-        """
-        if not self.enabled:
-            return
-
-        log_dict = {}
-        for component, stats in component_stats.items():
-            for stat_name, value in stats.items():
-                # components/terminal/success/mean
-                log_dict[f'components/{component}/{stat_name}'] = value
-
-        wandb.log(log_dict, step=step)
-
-    def get_wandb_info(self) -> Dict[str, Optional[str]]:
-        """Get W&B run information for metadata tracking.
-
-        Returns:
-            Dict with keys: run_id, run_name, url
-                Values are None if W&B is disabled or not initialized
-
-        Example:
-            >>> info = logger.get_wandb_info()
-            >>> print(info['url'])
-            'https://wandb.ai/username/project/runs/abc123'
-        """
-        return {
-            'run_id': self.wandb_run_id,
-            'run_name': self.wandb_run_name,
-            'url': self.wandb_url,
-        }
 
     def finish(self):
         """Finish the W&B run."""

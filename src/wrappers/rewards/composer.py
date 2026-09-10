@@ -1,11 +1,10 @@
 """RewardComposer — assembles RewardComponents from config."""
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-import yaml
+from core.scenario import load_yaml_config
 
 from wrappers.rewards.base import RewardComponent
 from wrappers.rewards.motion import (
@@ -98,53 +97,6 @@ def _component_config(cfg: Dict, canonical_key: str) -> Optional[Dict]:
     return None
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    merged = copy.deepcopy(base)
-    for key, value in override.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = copy.deepcopy(value)
-    return merged
-
-
-def _load_reward_config_file(path: Path, visited: Optional[set[Path]] = None) -> Dict[str, Any]:
-    path = path.resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"Reward config not found: {path}")
-
-    visited = visited or set()
-    if path in visited:
-        raise ValueError(f"Reward config include cycle detected at: {path}")
-    visited.add(path)
-
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Reward config must be a YAML mapping: {path}")
-
-    includes = data.pop("includes", None)
-    merged: Dict[str, Any] = {}
-    if includes:
-        if isinstance(includes, (str, Path)):
-            includes = [includes]
-        if not isinstance(includes, list):
-            raise ValueError(f"Reward config 'includes' must be a list: {path}")
-        for include_path in includes:
-            if not isinstance(include_path, (str, Path)):
-                raise ValueError(f"Reward config include entries must be paths: {path}")
-            include_obj = (path.parent / include_path).resolve()
-            merged = _deep_merge(merged, _load_reward_config_file(include_obj, visited))
-
-    merged = _deep_merge(merged, data)
-    visited.remove(path)
-    return merged
-
-
 class RewardComposer:
     """Sums enabled RewardComponents into a total scalar + breakdown dict.
 
@@ -184,5 +136,5 @@ class RewardComposer:
     @classmethod
     def from_file(cls, path: str) -> "RewardComposer":
         """Load from a YAML reward config file path."""
-        reward_config = _load_reward_config_file(Path(path))
+        reward_config = load_yaml_config(Path(path))
         return cls.from_config(reward_config)

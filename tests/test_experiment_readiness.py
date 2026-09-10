@@ -14,6 +14,52 @@ from wrappers.observations.composer import ObservationComposer
 from wrappers.rewards.composer import RewardComposer
 
 
+def test_shared_yaml_loader_preserves_include_precedence_and_isolation(tmp_path):
+    from core.scenario import load_scenario, load_yaml_config
+    from core.feature_requirements import _resolve_config
+
+    (tmp_path / "base.yaml").write_text("reward:\n  collision: {enabled: true, penalty: -1}\nitems: [1, 2]\n")
+    (tmp_path / "left.yaml").write_text("includes: base.yaml\nreward:\n  collision: {penalty: -2}\n")
+    (tmp_path / "right.yaml").write_text("includes: base.yaml\nreward:\n  collision: {penalty: -3}\n")
+    path = tmp_path / "task.yaml"
+    path.write_text("includes: [left.yaml, right.yaml]\nreward:\n  collision: {penalty: -4}\nitems: [3]\n")
+    expected = {"reward": {"collision": {"enabled": True, "penalty": -4}}, "items": [3]}
+    assert load_scenario(str(path)) == _resolve_config(path.name, tmp_path) == expected
+    assert RewardComposer.from_file(str(path)).compute({"info": {"terminal_reason": "collision"}})[0] == -4
+    loaded = load_yaml_config(path)
+    loaded["reward"]["collision"]["penalty"] = 999
+    loaded["items"].append(4)
+    assert load_yaml_config(path) == expected
+
+
+@pytest.mark.parametrize("content", ["includes: cycle.yaml", "includes: [42]", "[1, 2]", "reward: ["])
+def test_shared_yaml_loader_rejects_invalid_configs(tmp_path, content):
+    from core.scenario import load_scenario, load_yaml_config
+    path = tmp_path / "cycle.yaml"
+    path.write_text(content)
+    with pytest.raises(ValueError):
+        load_yaml_config(path)
+    with pytest.raises(ScenarioError):
+        load_scenario(str(path))
+    with pytest.raises(FileNotFoundError):
+        load_yaml_config(tmp_path / "missing.yaml")
+    with pytest.raises(ScenarioError):
+        load_scenario(str(tmp_path / "missing.yaml"))
+
+
+def test_builtin_factory_and_training_setup_contract():
+    from src.core.config import AgentFactory, register_builtin_agents
+    from src.core.setup import create_training_setup
+    register_builtin_agents()
+    assert {"ftg", "pure_pursuit", "stanley", "hybrid_pp_ftg"} <= set(AgentFactory.available_agents())
+    env, agents, reward_strategies = create_training_setup(load_and_expand_scenario("scenarios/ppo.yaml"))
+    try:
+        assert set(agents) == {"car_1"}
+        assert reward_strategies == {}
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize("algorithm", ["a2c", "ddpg", "sac", "td3", "dqn", "qrdqn", "tqc", "typo"])
 @pytest.mark.parametrize("explicit", [None, True, False])
 def test_unsupported_algorithms_cannot_become_fixed_opponents(algorithm, explicit) -> None:

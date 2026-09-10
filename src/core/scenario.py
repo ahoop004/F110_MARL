@@ -1,6 +1,6 @@
 """Scenario configuration system for v2 training pipeline.
 
-Provides YAML-based scenario configuration with preset expansion
+Provides shared YAML include loading and scenario validation
 for algorithms, rewards, and observations. Scenarios define complete
 training setups in a concise, readable format.
 """
@@ -55,27 +55,27 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 def _load_yaml_file(path_obj: Path) -> Dict[str, Any]:
     """Load a YAML file and ensure it returns a dict."""
     if not path_obj.exists():
-        raise ScenarioError(f"Scenario file not found: {path_obj}")
+        raise FileNotFoundError(f"Config file not found: {path_obj}")
 
     try:
         with open(path_obj, 'r') as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        raise ScenarioError(f"Invalid YAML in scenario file: {e}")
+        raise ValueError(f"Invalid YAML in config {path_obj}: {e}") from e
 
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise ScenarioError("Scenario must be a YAML dictionary")
+        raise ValueError(f"Config must be a YAML dictionary: {path_obj}")
     return data
 
 
-def _load_with_includes(path_obj: Path, visited: Optional[set] = None) -> Dict[str, Any]:
-    """Load a scenario file with optional includes."""
-    path_obj = path_obj.resolve()
+def load_yaml_config(path_obj: Path, visited: Optional[set] = None) -> Dict[str, Any]:
+    """Load YAML includes relative to each file; later values override earlier ones."""
+    path_obj = Path(path_obj).resolve()
     visited = visited or set()
     if path_obj in visited:
-        raise ScenarioError(f"Include cycle detected at: {path_obj}")
+        raise ValueError(f"Include cycle detected at: {path_obj}")
     visited.add(path_obj)
 
     data = _load_yaml_file(path_obj)
@@ -86,12 +86,12 @@ def _load_with_includes(path_obj: Path, visited: Optional[set] = None) -> Dict[s
         if isinstance(includes, (str, Path)):
             includes = [includes]
         if not isinstance(includes, list):
-            raise ScenarioError("'includes' must be a list of file paths")
+            raise ValueError("'includes' must be a list of file paths")
         for include_path in includes:
             if not isinstance(include_path, (str, Path)):
-                raise ScenarioError("'includes' entries must be file paths")
+                raise ValueError("'includes' entries must be file paths")
             include_obj = (path_obj.parent / include_path).resolve()
-            merged = _deep_merge(merged, _load_with_includes(include_obj, visited))
+            merged = _deep_merge(merged, load_yaml_config(include_obj, visited))
 
     merged = _deep_merge(merged, data)
     visited.remove(path_obj)
@@ -117,74 +117,10 @@ def load_scenario(path: str) -> Dict[str, Any]:
     """
     path_obj = Path(path)
 
-    return _load_with_includes(path_obj)
-
-
-def expand_reward_preset(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Pass-through: reward configs are file paths or explicit dicts (no presets)."""
-    return copy.deepcopy(config)
-
-
-def expand_observation_preset(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Pass-through: observation configs are file paths or explicit dicts (no presets)."""
-    return copy.deepcopy(config)
-
-
-def expand_agent_config(agent_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Expand agent configuration with preset expansion.
-
-    Expands reward and observation presets for an agent.
-
-    Args:
-        agent_config: Agent configuration dict
-
-    Returns:
-        Expanded agent configuration
-
-    Example:
-        >>> agent_config = {
-        ...     'algorithm': 'ppo',
-        ...     'observation': {'preset': 'gaplock'},
-        ...     'reward': {'preset': 'gaplock_full'},
-        ... }
-        >>> expanded = expand_agent_config(agent_config)
-    """
-    config = copy.deepcopy(agent_config)
-
-    # Expand observation preset
-    if 'observation' in config:
-        config['observation'] = expand_observation_preset(config['observation'])
-
-    # Expand reward preset
-    if 'reward' in config:
-        config['reward'] = expand_reward_preset(config['reward'])
-
-    return config
-
-
-def expand_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
-    """Expand all presets in a scenario.
-
-    Expands reward and observation presets for all agents in the scenario.
-
-    Args:
-        scenario: Raw scenario configuration
-
-    Returns:
-        Scenario with all presets expanded
-
-    Example:
-        >>> scenario = load_scenario('scenarios/ppo.yaml')
-        >>> expanded = expand_scenario(scenario)
-    """
-    expanded = copy.deepcopy(scenario)
-
-    # Expand each agent's configuration
-    if 'agents' in expanded:
-        for agent_id, agent_config in expanded['agents'].items():
-            expanded['agents'][agent_id] = expand_agent_config(agent_config)
-
-    return expanded
+    try:
+        return load_yaml_config(path_obj)
+    except (OSError, ValueError) as exc:
+        raise ScenarioError(str(exc)) from exc
 
 
 def validate_scenario(scenario: Dict[str, Any]) -> None:
@@ -404,9 +340,9 @@ def resolve_target_ids(scenario: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]:
-    """Load, expand, and validate a scenario file.
+    """Load and validate a scenario, then resolve agent targets.
 
-    Convenience function that combines loading, expansion, and validation.
+    The historical entry-point name is retained for callers.
 
     Args:
         path: Path to scenario YAML file
@@ -425,12 +361,9 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
     # Load raw scenario
     scenario = load_scenario(path)
 
-    # Validate before expansion
+    # Validate before resolving targets
     if validate:
         validate_scenario(scenario)
-
-    # Expand presets
-    scenario = expand_scenario(scenario)
 
     # Resolve target IDs for adversarial tasks
     scenario = resolve_target_ids(scenario)
@@ -441,10 +374,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
 __all__ = [
     'ScenarioError',
     'load_scenario',
-    'expand_reward_preset',
-    'expand_observation_preset',
-    'expand_agent_config',
-    'expand_scenario',
+    'load_yaml_config',
     'validate_scenario',
     'resolve_mappo_config',
     'resolve_target_ids',

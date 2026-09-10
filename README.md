@@ -97,7 +97,9 @@ with one GPU. Single-environment training remains the default. See
 [HPC collection and reproducibility](docs/PERFORMANCE.md#headless-ppo-on-hpc)
 for allocation, rollout-size, seed, and evaluation details.
 
-PPO and MAPPO share advantage calculation in `src/agents/common/__init__.py`.
+PPO and MAPPO share advantage calculation, minibatch loss/optimizer steps, and
+metric reduction in `src/agents/common/__init__.py`. Each agent retains its own
+rollout storage, minibatch selection, and critic inputs.
 Curriculum uses `src/training/curriculum.py`; logging uses training hooks,
 `ConsoleLogger`, and the CSV/W&B loggers. Unused alternate curriculum, metrics,
 console, and checkpoint utilities were retired from `src/` and remain available
@@ -134,6 +136,16 @@ block. Avoid separate files for individual penalty or bonus values. Existing
 scenario and reward-task paths remain stable. The 30 former component fragments
 and the previous Python module layout are available in Git history; external
 scripts importing moved component classes must use the grouped modules above.
+
+Scenario, reward, and environment-feature configuration use the same recursive
+YAML loader, `core.scenario.load_yaml_config`, with later includes and local
+settings taking precedence. `load_and_expand_scenario` remains the entry point;
+it validates the configuration and resolves targets without obsolete preset
+expansion passes. Configure evaluation in scenario YAMLs. The unused legacy
+files under `configs/evaluation/`, protocol interfaces, factory test runner,
+logger methods, and output-directory helpers are retained in Git history.
+Factory checks now run with the regular readiness tests. Current logging uses
+training hooks, `CSVLogger.log_training_episode`, and `WandbLogger.log_metrics`.
 
 ## Historical algorithms
 

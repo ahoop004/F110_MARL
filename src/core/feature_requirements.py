@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Set, Tuple
+from typing import Any, Dict, Mapping, Set, Tuple
 
-import yaml
+from src.core.scenario import load_yaml_config
 
 
 _CENTERLINE_OBSERVATIONS = {
@@ -62,49 +62,11 @@ class EnvironmentFeatureRequirements:
         }
 
 
-def _load_config(path: Path, visited: Optional[Set[Path]] = None) -> Dict[str, Any]:
-    """Load and merge a component config, including reward-style includes."""
-
-    resolved = path.resolve()
-    if not resolved.exists():
-        raise FileNotFoundError(f"Feature consumer config not found: {resolved}")
-    active = visited or set()
-    if resolved in active:
-        raise ValueError(f"Feature consumer include cycle detected at: {resolved}")
-    active.add(resolved)
-    with resolved.open() as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Feature consumer config must be a YAML mapping: {resolved}")
-
-    includes = data.pop("includes", None)
-    merged: Dict[str, Any] = {}
-    if includes:
-        include_paths = [includes] if isinstance(includes, (str, Path)) else includes
-        if not isinstance(include_paths, list):
-            raise ValueError(f"Feature consumer 'includes' must be a list: {resolved}")
-        for include_path in include_paths:
-            child = _load_config(resolved.parent / str(include_path), active)
-            merged = _deep_merge(merged, child)
-    active.remove(resolved)
-    return _deep_merge(merged, data)
-
-
-def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
 def _resolve_config(reference: Any, scenario_dir: Path) -> Dict[str, Any]:
     if isinstance(reference, Mapping):
         return dict(reference)
     if isinstance(reference, str):
-        return _load_config(scenario_dir / reference)
+        return load_yaml_config(scenario_dir / reference)
     return {}
 
 

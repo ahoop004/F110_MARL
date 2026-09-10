@@ -31,10 +31,9 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 
-from agents.common import Actor, Critic, compute_gae
+from agents.common import Actor, Critic, compute_gae, ppo_minibatch_step, mean_update_metrics
 from utils.torch_io import resolve_device
 
 
@@ -630,61 +629,11 @@ class MAPPOAgent:
                 adv_b = batch[:, adv_index]
                 ret_b = batch[:, ret_index]
 
-                # PPO compares the current policy probability with the
-                # probability recorded for the same rollout action.  Sampling
-                # a replacement action here would make the importance ratio
-                # unrelated to the collected transition.
-                new_lp_b, entropy_b = self.actor.evaluate_actions(obs_b, acts_b)
-                ratio = (new_lp_b - old_lp_b).exp()
-                pi_loss = torch.max(
-                    -adv_b * ratio,
-                    -adv_b * ratio.clamp(1 - self.clip_range, 1 + self.clip_range),
-                ).mean()
+                metric_rows.append(ppo_minibatch_step(
+                    self, obs_b, gs_b, acts_b, old_lp_b, adv_b, ret_b,
+                ))
 
-                # Centralized critic loss
-                value_pred = self.critic(gs_b)
-                vf_loss = nn.functional.mse_loss(value_pred, ret_b)
-
-                # Entropy of the current unsquashed Gaussian policy.
-                entropy = entropy_b.mean()
-
-                loss = pi_loss + self.vf_coef * vf_loss - self.ent_coef * entropy
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(
-                    self._optim_parameters,
-                    self.max_grad_norm,
-                )
-                self.optimizer.step()
-
-                with torch.no_grad():
-                    approx_kl = ((old_lp_b - new_lp_b).mean()).abs()
-                    metric_rows.append(
-                        torch.stack(
-                            (
-                                pi_loss.detach(),
-                                vf_loss.detach(),
-                                entropy.detach(),
-                                approx_kl,
-                            )
-                        )
-                    )
-
-        if not metric_rows:
-            return {
-                "train/policy_loss": 0.0,
-                "train/value_loss": 0.0,
-                "train/entropy": 0.0,
-                "train/approx_kl": 0.0,
-            }
-        averages = torch.stack(metric_rows).mean(dim=0).cpu().tolist()
-        return {
-            "train/policy_loss": averages[0],
-            "train/value_loss": averages[1],
-            "train/entropy": averages[2],
-            "train/approx_kl": averages[3],
-        }
+        return mean_update_metrics(metric_rows)
 
     # ------------------------------------------------------------------
     # Checkpoint I/O
