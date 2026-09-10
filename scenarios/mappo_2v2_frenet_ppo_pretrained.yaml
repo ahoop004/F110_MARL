@@ -9,7 +9,7 @@ experiment:
   name: mappo_2v2_frenet_ppo_pretrained
   episodes: 5000
   seed: 42
-  num_envs: 1
+  num_envs: 4
   torch_threads: 1
 
 training_defaults:
@@ -95,7 +95,7 @@ agents:
       speed_control: acceleration
       max_acceleration: 5.0
       max_deceleration: 5.0
-      prevent_reverse: false
+      prevent_reverse: true
       speed_index: 1
 
   car_1:
@@ -107,6 +107,7 @@ agents:
     reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
     params: *learner_params
     action_constraints: *learner_actions
+    
 
   # Fixed hybrid PP+FTG settings are inherited without retuning. Their 2.5 m/s
   # pace makes this an initial transfer experiment, not a matched-speed contest.
