@@ -4,6 +4,7 @@
 import argparse
 import copy
 import hashlib
+import json
 import os
 import random
 import sys
@@ -17,7 +18,7 @@ SRC_DIR = ROOT_DIR / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from core.scenario import ScenarioError, load_and_expand_scenario, resolve_mappo_config, validate_scenario
+from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario
 from core.setup import create_training_setup
 from core.run_id import resolve_run_id, set_run_id_env
 from core.provenance import build_run_provenance, provenance_mismatches
@@ -59,6 +60,8 @@ def parse_args() -> argparse.Namespace:
         help="Allow --eval with a checkpoint from a different scenario/config/map contract.",
     )
     p.add_argument("--eval-episodes", type=int, default=None, help="Evaluation episodes; defaults to --episodes")
+    p.add_argument("--eval-protocol", choices=("selection", "final"), default=None,
+                   help="Use fixed scenario evaluation seeds, episodes, and horizon; requires --eval.")
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--run-id", type=str, default=None)
     p.add_argument("--output-dir", type=str, default=None)
@@ -329,6 +332,8 @@ def _run_heuristic(
 def main() -> None:
     args = parse_args()
     console = ConsoleLogger(verbose=not args.quiet)
+    if args.eval_protocol and (not args.eval or args.eval_episodes is not None):
+        raise ValueError("--eval-protocol requires --eval and uses fixed episodes; omit --eval-episodes.")
 
     try:
         scenario = load_and_expand_scenario(args.scenario)
@@ -773,6 +778,14 @@ def _run_eval(
 
     focal_agent_id = trainable_ids[0]
     focal_cfg = agent_configs[focal_agent_id]
+    provenance_scenario = scenario
+    protocol_name = getattr(args, "eval_protocol", None)
+    if protocol_name:
+        protocol = resolve_evaluation_protocol(scenario, protocol_name)
+        scenario = copy.deepcopy(scenario)
+        scenario["experiment"]["seed"] = protocol["seed"]
+        scenario["experiment"]["episodes"] = protocol["episodes"]
+        scenario["environment"]["max_steps"] = protocol["max_steps"]
     exp_cfg = scenario.get("experiment", {})
     env_cfg = scenario.get("environment", {})
     eval_episodes = (
@@ -842,15 +855,17 @@ def _run_eval(
             params=params,
         )
     from utils.torch_io import safe_load
+    checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     checkpoint_payload = safe_load(str(checkpoint_path), map_location="cpu")
     stored_provenance = (
         checkpoint_payload.get("provenance")
         if isinstance(checkpoint_payload, dict)
         else None
     )
+    mismatches = []
     if isinstance(stored_provenance, dict):
         current_provenance = build_run_provenance(
-            scenario,
+            provenance_scenario,
             scenario_path=args.scenario,
             run_id="evaluation",
             algorithm=algorithm,
@@ -872,6 +887,8 @@ def _run_eval(
             "Checkpoint has no provenance block; scenario/config/map compatibility cannot be verified."
         )
     agent.load(str(checkpoint_path))
+    if hashlib.sha256(checkpoint_path.read_bytes()).hexdigest() != checkpoint_hash:
+        raise ValueError("Checkpoint changed while loading for evaluation; use a stable checkpoint file.")
     agent.actor.eval()
     agent.critic.eval()
 
@@ -1087,6 +1104,7 @@ def _run_eval(
         eval_episodes_facts,
         focal_agent_id=focal_agent_id,
         opponent_agent_id=opponent_agent_id,
+        timestep=float(env.timestep),
     )
     if not opponent_ids and len(trainable_ids) > 1:
         summary["success_rate"] = summary.get("team_both_finished_rate", 0.0)
@@ -1096,6 +1114,38 @@ def _run_eval(
         summary["success_rate"] = summary["win_rate"]
 
     console.print_summary(summary)
+    run_id = args.run_id or resolve_run_id(
+        scenario_name=exp_cfg.get("name"), algorithm=f"{algorithm}-eval", seed=base_seed
+    )
+    output_dir = Path(args.output_dir) if args.output_dir else Path("outputs") / exp_cfg.get("name", "unnamed") / "evaluation" / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report = {
+        "checkpoint": str(checkpoint_path.resolve()),
+        "checkpoint_sha256": checkpoint_hash,
+        "checkpoint_provenance": stored_provenance,
+        "provenance_mismatches": mismatches,
+        "evaluation_provenance": build_run_provenance(
+            scenario, scenario_path=args.scenario, run_id=run_id,
+            algorithm=algorithm, trainable_agents=trainable_ids,
+        ),
+        "protocol": protocol_name or "custom",
+        "seeds": list(range(base_seed, base_seed + eval_episodes)),
+        "max_steps": env.max_steps,
+        "timestep_s": float(env.timestep),
+        "horizon_s": env.max_steps * float(env.timestep) if env.max_steps > 0 else None,
+        "action_repeat": action_repeat,
+        "summary": summary,
+        "episode_results": [
+            {"seed": base_seed + facts.episode, **aggregate_eval_episodes(
+                [facts], focal_agent_id=focal_agent_id,
+                opponent_agent_id=opponent_agent_id, timestep=float(env.timestep),
+            )}
+            for facts in eval_episodes_facts
+        ],
+    }
+    report_path = output_dir / "evaluation_report.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    console.print_info(f"Evaluation report: {report_path}")
 
 
 def _run_on_policy(
@@ -1123,14 +1173,10 @@ def _run_on_policy(
         if scenario_dir is None:
             raise ValueError("Evaluation checkpoint selection requires a scenario directory.")
         eval_scenario = copy.deepcopy(scenario)
-        eval_seed = int(
-            eval_cfg.get("seed", int(exp_cfg.get("seed", 0) or 0) + 10_000)
-        )
+        selection_protocol = resolve_evaluation_protocol(scenario, "selection")
+        eval_seed = selection_protocol["seed"]
         eval_scenario.setdefault("experiment", {})["seed"] = eval_seed
-        if eval_cfg.get("max_steps") is not None:
-            eval_scenario.setdefault("environment", {})["max_steps"] = int(
-                eval_cfg["max_steps"]
-            )
+        eval_scenario.setdefault("environment", {})["max_steps"] = selection_protocol["max_steps"]
         # Setup seeds process-global RNGs. Preserve the training streams while
         # still giving the evaluation environment its own deterministic seed.
         numpy_rng_state = np.random.get_state()

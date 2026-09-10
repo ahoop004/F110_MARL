@@ -11,7 +11,7 @@ experiment:
   name: ppo_lap_completion_pretrain
   episodes: 1000
   seed: 42
-  num_envs: 4
+  num_envs: 1
   torch_threads: 1
 
 environment:
@@ -82,14 +82,18 @@ environment:
     v_min: -20.0
     v_max: 20.0
 
-# Every evaluation replays the same seeds on held-out maps. Checkpoints are
+# Selection replays fixed seeds on the same track as training. Checkpoints are
 # ranked by completion rate, lower collision rate, progress, then finish steps.
 evaluation:
   enabled: true
   every_episodes: 100
   episodes: 8
   seed: 10042
-  max_steps: 40000
+  # Inherit environment.max_steps: 80000 physics steps = 800 s at dt=0.01.
+  # Run the independent final set explicitly after checkpoint selection.
+  final_test:
+    episodes: 20
+    seed: 20042
 
 agents:
   car_0:
@@ -125,5 +129,5 @@ wandb:
   group: ppo-lap-completion-pretrain
   job_type: actor-pretraining
   tags: [ppo, single-agent, lap-completion, actor-pretraining]
-  notes: "Single-agent PPO actor pretraining with held-out completion-based checkpoint selection"
+  notes: "Single-agent PPO actor pretraining with same-track completion-based checkpoint selection and separate final-test seeds"
   mode: online

@@ -155,7 +155,18 @@ class DeterministicPPOEvaluator:
             if cuda_rng_states is not None:
                 torch.cuda.set_rng_state_all(cuda_rng_states)
 
-        return aggregate_eval_episodes(results, focal_agent_id=self.rl_agent_id)
+        summary = aggregate_eval_episodes(
+            results, focal_agent_id=self.rl_agent_id,
+            timestep=getattr(self.env, "timestep", None),
+        )
+        summary["evaluation_protocol"] = {
+            "name": "selection",
+            "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
+            "max_steps": getattr(self.env, "max_steps", None),
+            "timestep_s": getattr(self.env, "timestep", None),
+            "action_repeat": self.action_repeat,
+        }
+        return summary
 
     def bind_agent(self, agent: Any) -> "DeterministicPPOEvaluator":
         self.agent = agent

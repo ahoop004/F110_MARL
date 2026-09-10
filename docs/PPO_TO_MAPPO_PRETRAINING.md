@@ -14,6 +14,49 @@ this order: lap-completion rate, lower collision rate, mean lap progress, then
 lower mean finish steps. `evaluation_history.jsonl` records every selection
 decision.
 
+Checkpoint selection uses eight fixed episodes with seeds 10042–10049. Final
+testing uses a separate 20-episode set with seeds 20042–20061, configured under
+`evaluation.final_test`. Both inherit `environment.max_steps`: currently 80000
+physics steps, or 800 seconds at 0.01 s per step. The earlier selection limit
+was 400 seconds; selection results across this change are different protocols.
+An explicit `evaluation.max_steps` overrides the horizon for both fixed sets.
+Overlapping selection/final seed ranges are rejected during scenario validation.
+
+After choosing a checkpoint, run its final test explicitly:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_pretrain_frenet.yaml \
+  --eval --eval-protocol final \
+  --checkpoint outputs/ppo_lap_completion_pretrain_frenet/<run-id>/best_model.pt \
+  --output-dir outputs/ppo_lap_completion_pretrain_frenet/<run-id>/final-test \
+  --no-wandb
+```
+
+Use the same scenario and training overrides as the checkpoint's run (for
+example `--seed 43` for a policy trained with seed 43). Named evaluation
+protocols apply their own seeds to a runtime copy after retaining the training
+configuration for the provenance comparison. `--eval-protocol selection`
+replays the selection set. Omit `--eval-episodes` for either fixed protocol;
+plain `--eval` retains the existing custom episode/seed behavior.
+
+`evaluation_report.json` contains the checkpoint SHA-256, provenance, exact
+seeds, horizon, summary, and per-episode results. Completion, collision, and
+timeout rates are reported alongside `mean_clean_finish_time_s` and its sample
+count. Time measures elapsed physics steps through a clean completion, including
+the first step; no clean finishes produces `null`. This is full three-lap race
+time from reset, not a flying-lap measurement. The existing finish-step ranking
+is unchanged. For teams, clean-finish time pools individual trainable finishers;
+it is not the time for the whole team to finish.
+
+Final tests never update `best_model.pt` and are not run by the training hook.
+Keep the final set out of tuning decisions; once used to choose configurations,
+it is no longer an independent test set. These seed sets sample reset conditions,
+not independent training runs. Older checkpoints may fail the strict scenario
+hash check after this config change; use the original run configuration for
+reproduction, or explicitly allow a provenance mismatch for a documented
+cross-protocol evaluation. Action-contract checks still apply.
+
 The current scenario uses `circle_map` for both splits. A held-out generalization
 experiment requires explicit disjoint training and evaluation maps.
 
@@ -75,14 +118,12 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/ppo_lap_completion_pretrain_frenet.yaml --seed 42 --no-wandb
 ```
 
-Repeat the pair with training seeds 43 and 44. Both scenarios retain evaluation
-seed 10042 and the same eight evaluation episodes. Compare completion rate,
-collision rate, progress, and mean finish steps in `evaluation_history.jsonl`;
-finish steps times 0.01 s is the elapsed three-lap race time for successful
-episodes, not a measured flying-lap time. Also report collected transitions
+Repeat the pair with training seeds 43 and 44. Both scenarios retain the same
+selection and final-test sets. Compare completion rate, collision rate, timeout
+rate, progress, and clean finish time in the final reports. Selection history
+remains in `evaluation_history.jsonl`. Also report collected transitions
 and wall time: equal episode budgets need not yield equal transition counts.
-These are same-track results, and the checkpoint-selection episodes are not
-an independent final test set. Short smoke tests do not measure performance.
+These are same-track results. Short smoke tests do not measure performance.
 
 Train the Frenet variant from scratch. Its output directory uses the distinct
 experiment name. A receiving MAPPO actor needs the same 158-value observation
@@ -124,8 +165,9 @@ The parent optimizer owns this schedule with parallel collectors, and
 Omitting the schedule retains a constant learning rate.
 
 This is an episode-based adaptation, not the paper's 120-million-step budget;
-the paper does not specify the decay curve. Collection remains four workers
-with at most 2048 pooled transitions, so early episode ends can produce batches
+the paper does not specify the decay curve. Collector count is controlled by
+`experiment.num_envs` (currently one), with at most 2048 transitions per rollout,
+so early episode ends can produce batches
 smaller than 1024. PPO epochs, GAE lambda, clipping, and loss coefficients retain
 the existing defaults. At the current 0.01-second decision interval,
 `gamma = 0.99 ** (0.01 / 0.05)` matches the paper's physical discount horizon.

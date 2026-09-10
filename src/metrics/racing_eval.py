@@ -30,6 +30,7 @@ class AgentEpisodeFacts:
     active_steps: int = 0
     done_step: Optional[int] = None
     finish_step: Optional[int] = None
+    finish_elapsed_steps: Optional[int] = None
     collision_step: Optional[int] = None
     timed_out: bool = False
     final_progress: Optional[float] = None
@@ -125,6 +126,8 @@ def update_agent_step_facts(
             facts.terminal_reason = str(terminal_reason)
         if bool(info.get("race_completed", False)) and facts.finish_step is None:
             facts.finish_step = int(info.get("terminal_step", step_idx))
+            # Callers count completed physics steps; terminal_step may be zero-based.
+            facts.finish_elapsed_steps = int(step_idx)
             position = info.get("finish_position")
             facts.finish_position = int(position) if position is not None else None
         if terminal_reason == "collision" and facts.collision_step is None:
@@ -178,6 +181,7 @@ def aggregate_eval_episodes(
     *,
     focal_agent_id: Optional[str] = None,
     opponent_agent_id: Optional[str] = None,
+    timestep: Optional[float] = None,
 ) -> Dict[str, Any]:
     total = len(episodes)
     if total == 0:
@@ -252,6 +256,18 @@ def aggregate_eval_episodes(
     summary["mean_finish_steps"] = (
         float(np.mean(finish_steps)) if finish_steps else None
     )
+    clean_finishes = [
+        facts for ep in episodes for aid in trainable_ids
+        if (facts := ep.agents.get(aid)) is not None and facts.clean_finish
+    ]
+    summary["clean_finish_count"] = len(clean_finishes)
+    if timestep is not None:
+        finish_times = [
+            facts.finish_elapsed_steps * timestep for facts in clean_finishes
+            if facts.finish_elapsed_steps is not None
+        ]
+        summary["finish_time_sample_count"] = len(finish_times)
+        summary["mean_clean_finish_time_s"] = float(np.mean(finish_times)) if finish_times else None
     summary["self_crash_rate"] = summary["collision_rate"]
     summary["mean_progress"] = _mean(
         _team_mean_progress(ep, trainable_ids) for ep in episodes

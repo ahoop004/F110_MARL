@@ -526,19 +526,47 @@ def test_parallel_worker_failure_is_reported_and_children_are_reaped():
 
 
 @pytest.mark.parametrize("accelerated", [False, True])
-def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch, accelerated):
+@pytest.mark.parametrize("protocol", [None, "selection", "final"])
+def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch, accelerated, protocol):
+    import hashlib
+    import json
     import sys
     import run
+    from core.provenance import build_run_provenance
 
     trainer, scenario, directory = _parallel_test_setup(accelerated=accelerated)
+    scenario["wandb"]["enabled"] = False
+    scenario["evaluation"]["episodes"] = 2
+    scenario["evaluation"]["final_test"]["episodes"] = 3
     checkpoint = tmp_path / "ppo.pt"
     trainer.agent.save(str(checkpoint))
     trainer.env.close()
+    payload = torch.load(checkpoint, weights_only=False)
+    payload["provenance"] = build_run_provenance(
+        scenario, scenario_path=directory / "ppo_lap_completion_pretrain.yaml",
+        run_id="test", algorithm="ppo", trainable_agents=["car_0"],
+    )
+    torch.save(payload, checkpoint)
+    checkpoint_hash = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
     monkeypatch.setattr(sys, "argv", [
         "run.py", "--scenario", str(directory / "ppo_lap_completion_pretrain.yaml"),
-        "--eval", "--checkpoint", str(checkpoint), "--eval-episodes", "1",
+        "--eval", "--checkpoint", str(checkpoint),
+        *(["--eval-protocol", protocol] if protocol else ["--eval-episodes", "1"]),
         "--output-dir", str(tmp_path / "eval"), "--run-id", "ppo-eval-test",
         "--no-render", "--no-wandb", "--quiet",
     ])
     run.main()
+    report = json.loads((tmp_path / "eval" / "evaluation_report.json").read_text())
+    expected_seeds = {None: [42], "selection": [10042, 10043], "final": [20042, 20043, 20044]}[protocol]
+    assert report["protocol"] == (protocol or "custom")
+    assert report["seeds"] == expected_seeds
+    assert [row["seed"] for row in report["episode_results"]] == expected_seeds
+    assert report["summary"]["episodes"] == len(expected_seeds)
+    assert report["summary"]["mean_episode_length"] == 4
+    assert report["horizon_s"] == pytest.approx(0.04)
+    assert report["provenance_mismatches"] == []
+    assert report["checkpoint_sha256"] == checkpoint_hash
+    assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == checkpoint_hash
+    assert scenario["experiment"]["seed"] == 42
+    assert scenario["experiment"]["episodes"] == 3

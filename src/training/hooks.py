@@ -453,15 +453,16 @@ class EvaluationCheckpointHook(CheckpointHook):
             self._wandb.log_metrics(scalar_metrics)
 
         if self._console is not None:
-            finish = summary.get("mean_finish_steps")
+            finish = summary.get("mean_clean_finish_time_s")
             finish_text = "n/a" if finish is None else f"{float(finish):.1f}"
             self._console.print_info(
                 "checkpoint eval  "
                 f"episode={episode + 1}  "
                 f"completion={float(summary.get('completion_rate', 0.0)):.1%}  "
                 f"collision={float(summary.get('collision_rate', 0.0)):.1%}  "
+                f"timeout={float(summary.get('timeout_rate', 0.0)):.1%}  "
                 f"progress={float(summary.get('mean_progress', 0.0)):.3f}  "
-                f"finish_steps={finish_text}  best={is_best}"
+                f"clean_finish_s={finish_text}  best={is_best}"
             )
 
         if is_best:

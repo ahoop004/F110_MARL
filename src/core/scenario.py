@@ -123,6 +123,47 @@ def load_scenario(path: str) -> Dict[str, Any]:
         raise ScenarioError(str(exc)) from exc
 
 
+def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict[str, Any]:
+    """Resolve fixed selection/final seeds without mutating training config."""
+    evaluation = scenario.get("evaluation", {}) or {}
+    if not isinstance(evaluation, dict):
+        raise ScenarioError("'evaluation' must be a dictionary.")
+    if protocol not in {"selection", "final"}:
+        raise ScenarioError(f"Unknown evaluation protocol: {protocol!r}.")
+    selection = {
+        "seed": evaluation.get("seed", int(scenario["experiment"].get("seed", 0) or 0) + 10_000),
+        "episodes": evaluation.get("episodes", 8),
+    }
+    final = evaluation.get("final_test")
+    if final is not None and (not isinstance(final, dict) or not {"seed", "episodes"} <= final.keys()):
+        raise ScenarioError("'evaluation.final_test' requires explicit seed and episodes.")
+    if final is not None and set(final) - {"seed", "episodes"}:
+        raise ScenarioError("'evaluation.final_test' accepts only seed and episodes; both protocols share evaluation.max_steps.")
+    for name, config in (("selection", selection), ("final", final)):
+        if config is None:
+            continue
+        for key, minimum in (("seed", 0), ("episodes", 1)):
+            value = config[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ScenarioError(f"Evaluation {name} {key} must be an integer >= {minimum}.")
+        if config["seed"] + config["episodes"] > 2**32:
+            raise ScenarioError(f"Evaluation {name} seeds exceed the NumPy seed range.")
+    if final is not None and max(selection["seed"], final["seed"]) < min(
+        selection["seed"] + selection["episodes"], final["seed"] + final["episodes"]
+    ):
+        raise ScenarioError("Checkpoint-selection and final-test seed ranges must be disjoint.")
+    if protocol == "final" and final is None:
+        raise ScenarioError("--eval-protocol final requires evaluation.final_test.")
+    config = selection if protocol == "selection" else final
+    # Both fixed protocols share the selection horizon, inheriting training by default.
+    max_steps = evaluation.get("max_steps")
+    if max_steps is None:
+        max_steps = scenario["environment"].get("max_steps", 5000)
+    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 0:
+        raise ScenarioError("Evaluation max_steps must be a nonnegative integer.")
+    return {"name": protocol, "seed": config["seed"], "episodes": config["episodes"], "max_steps": max_steps}
+
+
 def validate_scenario(scenario: Dict[str, Any]) -> None:
     """Validate scenario configuration before env construction.
 
@@ -160,6 +201,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("PPO/MAPPO use 'experiment.episodes'; 'total_steps' is unsupported.")
 
     environment = scenario["environment"]
+    if scenario.get("evaluation"):
+        resolve_evaluation_protocol(scenario, "selection")
     _MAP_KEYS = {"map", "maps", "map_bundle", "map_bundles"}
     if not _MAP_KEYS.intersection(environment):
         raise ScenarioError(

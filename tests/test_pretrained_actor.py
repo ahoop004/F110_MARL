@@ -148,6 +148,7 @@ class _ActionComposer:
 
 class _OneStepFinishEnv:
     possible_agents = ["car_0"]
+    timestep = 0.01
 
     def reset(self, seed=None):
         self.agents = ["car_0"]
@@ -187,6 +188,9 @@ def test_deterministic_ppo_evaluator_uses_environment_completion_facts():
     assert summary["completion_rate"] == 1.0
     assert summary["collision_rate"] == 0.0
     assert summary["mean_finish_steps"] == 1.0
+    assert summary["mean_clean_finish_time_s"] == pytest.approx(0.01)
+    assert summary["finish_time_sample_count"] == 2
+    assert summary["evaluation_protocol"]["seeds"] == [100, 101]
     assert agent.actor.training is True
 
 
@@ -214,3 +218,50 @@ def test_evaluation_resets_integrated_speed_each_episode():
     )
     evaluator.evaluate(agent)
     assert env.speeds == pytest.approx([.05, .05])
+
+
+def test_fixed_evaluation_protocols_are_disjoint_and_inherit_training_horizon():
+    import copy
+    from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol
+
+    for name in ("ppo_lap_completion_pretrain", "ppo_lap_completion_pretrain_frenet"):
+        scenario = load_and_expand_scenario(f"scenarios/{name}.yaml")
+        original = copy.deepcopy(scenario)
+        selection = resolve_evaluation_protocol(scenario, "selection")
+        final = resolve_evaluation_protocol(scenario, "final")
+        assert selection == dict(name="selection", seed=10042, episodes=8, max_steps=80000)
+        assert final == dict(name="final", seed=20042, episodes=20, max_steps=80000)
+        assert scenario == original
+        scenario["evaluation"]["final_test"]["seed"] = 10049
+        with pytest.raises(ScenarioError, match="disjoint"):
+            resolve_evaluation_protocol(scenario, "selection")
+        scenario["evaluation"]["final_test"]["seed"] = 10050
+        scenario["evaluation"]["max_steps"] = 123
+        assert resolve_evaluation_protocol(scenario, "final")["max_steps"] == 123
+        del scenario["evaluation"]["final_test"]
+        with pytest.raises(ScenarioError, match="requires evaluation.final_test"):
+            resolve_evaluation_protocol(scenario, "final")
+
+
+def test_finish_time_uses_elapsed_physics_steps_and_only_clean_finishes():
+    from metrics.racing_eval import aggregate_eval_episodes, create_episode_facts, update_agent_step_facts
+
+    episodes = []
+    for index, reason in enumerate(("race_complete", "collision", "time_limit")):
+        facts = create_episode_facts(episode=index, agent_ids=["car_0"], trainable_ids=["car_0"], opponent_ids=[])
+        update_agent_step_facts(
+            facts, step_idx=1, infos={"car_0": {
+                "race_completed": reason != "time_limit", "terminal_reason": reason,
+                "terminal_step": 0, "time_limit": reason == "time_limit",
+            }},
+        )
+        episodes.append(facts)
+    summary = aggregate_eval_episodes(episodes, timestep=.01)
+    assert summary["mean_finish_steps"] == 0.0  # Existing ranking metric preserved.
+    assert summary["mean_clean_finish_time_s"] == pytest.approx(.01)
+    assert summary["clean_finish_count"] == summary["finish_time_sample_count"] == 1
+    assert summary["collision_rate"] == pytest.approx(1 / 3)
+    assert summary["timeout_rate"] == pytest.approx(1 / 3)
+    failed = aggregate_eval_episodes(episodes[1:], timestep=.01)
+    assert failed["mean_clean_finish_time_s"] is None
+    assert failed["finish_time_sample_count"] == 0
