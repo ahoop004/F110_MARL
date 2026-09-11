@@ -1,5 +1,5 @@
 # Frenet pretraining with an integrated speed reference and stronger acceleration.
-# Inherit maps, seeds, rewards, PPO settings, and evaluation from the baseline.
+# Inherit maps, seeds, networks, and evaluation episodes from the baseline.
 # The speed action now means acceleration; train a fresh checkpoint.
 includes:
   - ppo_lap_completion_pretrain.yaml
@@ -20,9 +20,18 @@ environment:
     points: 20
     spacing: 0.3
 
+evaluation:
+  # At equal completion rates, favor earned progress over stationary survival.
+  selection_strategy: completion_progress
+
 agents:
   car_0:
     observation: ../configs/observations/rl_racer_vehicle_track_frenet_acceleration.yaml
+    reward: ../configs/reward/tasks/lap_completion_frenet.yaml
+    params:
+      # At dt=0.01 and gamma=0.99799195, gamma*lambda decays over ~2 s.
+      # Acceleration needs credit beyond the inherited ~0.19 s trace.
+      gae_lambda: 0.997
     action_constraints:
       speed_control: acceleration
       max_acceleration: 5.0
@@ -33,4 +42,4 @@ agents:
 wandb:
   group: ppo-lap-completion-pretrain-frenet
   tags: [ppo, single-agent, lap-completion, actor-pretraining, lidar, frenet, track-preview, acceleration-control]
-  notes: "Frenet/track preview with integrated 0–20 m/s speed reference, ±5 m/s² reference rate and vehicle acceleration cap; same-track deterministic evaluation"
+  notes: "Frenet acceleration control with denser progress/time shaping, ~2 s GAE trace, and completion-first earned-progress selection; same-track evaluation"

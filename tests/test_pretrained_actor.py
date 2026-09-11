@@ -382,3 +382,84 @@ def test_finish_time_uses_elapsed_physics_steps_and_only_clean_finishes():
     failed = aggregate_eval_episodes(episodes[1:], timestep=.01)
     assert failed["mean_clean_finish_time_s"] is None
     assert failed["finish_time_sample_count"] == 0
+
+
+def test_frenet_progress_selection_replaces_idle_but_prioritizes_completion(tmp_path):
+    idle = dict(completion_rate=0.0, collision_rate=0.0, mean_progress=0.9,
+                mean_net_progress=0.0, mean_finish_steps=None)
+    progressing = {**idle, "collision_rate": 1.0, "mean_net_progress": 0.4}
+    finished = {**idle, "completion_rate": 0.125, "mean_net_progress": 0.3, "mean_finish_steps": 1000.0}
+    # Reward is irrelevant to the model-selection decision.
+    evaluator = _SequenceEvaluator([idle, progressing, idle, finished])
+    agent = _SavingAgent()
+    hook = EvaluationCheckpointHook(agent, str(tmp_path), evaluator, 1,
+                                    selection_strategy="completion_progress")
+    for episode in range(4):
+        agent.version = episode
+        hook.on_episode_end(episode, 1000.0 if episode == 2 else -10.0, {}, {})
+    records = [json.loads(line) for line in (tmp_path / "evaluation_history.jsonl").read_text().splitlines()]
+    assert [record["is_best"] for record in records] == [True, True, False, True]
+    assert all(record["selection_strategy"] == "completion_progress" for record in records)
+    assert torch.load(tmp_path / "best_model.pt", weights_only=False)["version"] == 3
+    score = EvaluationCheckpointHook.selection_score
+    assert score(idle) > score(progressing)  # Preserve the baseline strategy.
+    assert score(idle, "completion_progress") == score({**idle, "mean_net_progress": 1e-7}, "completion_progress")
+    for progress in (None, float("nan")):
+        with pytest.raises(ValueError, match="progress deltas"):
+            score({**idle, "mean_net_progress": progress}, "completion_progress")
+
+
+def test_net_progress_ignores_spawn_position_counts_laps_and_cancels_reverse():
+    from metrics.racing_eval import aggregate_eval_episodes, create_episode_facts, update_agent_step_facts
+
+    results = []
+    for spawn in (0.05, 0.95):
+        facts = create_episode_facts(episode=0, agent_ids=["car_0"], trainable_ids=["car_0"], opponent_ids=[])
+        position = spawn
+        for index, delta in enumerate([0.0] + [0.1] * 12 + [-0.1] * 2, 1):
+            position = (position + delta) % 1.0
+            update_agent_step_facts(facts, step_idx=index, infos={"car_0": {
+                "centerline": {"progress": position, "progress_delta": delta},
+            }}, terminations={"car_0": index == 15})
+            if index == 1:
+                assert aggregate_eval_episodes([facts])["mean_net_progress"] == 0.0
+        # Post-terminal physics must not grant the retired agent progress.
+        update_agent_step_facts(facts, step_idx=16, infos={"car_0": {"centerline": {"progress_delta": 0.5}}})
+        results.append(facts)
+    assert aggregate_eval_episodes(results)["mean_net_progress"] == pytest.approx(1.0)
+    missing = create_episode_facts(episode=1, agent_ids=["car_0"], trainable_ids=["car_0"], opponent_ids=[])
+    assert aggregate_eval_episodes([missing])["mean_net_progress"] is None
+
+
+def test_frenet_dense_reward_and_trace_make_progress_useful_without_suicide_incentive():
+    import math
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario
+    from run import build_reward_composer, resolve_training_params
+
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    cfg = scenario["agents"]["car_0"]
+    params = resolve_training_params(cfg, scenario)
+    dt = scenario["environment"]["timestep"]
+    gamma = params["gamma"]
+    reward = build_reward_composer(cfg, Path("scenarios").resolve())
+    def step(delta, **info):
+        return reward.compute({"info": {"centerline": {"progress_delta": delta}, **info}})[0]
+    idle = step(0.0)
+    forward = step(3.0 * dt / 350.0)  # Example physical trajectory, not a map dependency.
+    backward = step(-3.0 * dt / 350.0)
+    assert backward < idle < 0 < forward
+    assert (forward + backward) / 2 == pytest.approx(idle)
+    stationary_return = idle * (1 - gamma ** 80000) / (1 - gamma) - gamma ** 79999
+    assert stationary_return == pytest.approx(-0.498, abs=0.001)
+    assert stationary_return > step(0.0, terminal_reason="collision")
+    # Waiting then crashing must not beat waiting to timeout on time cost alone.
+    delayed_crash = idle * (1 - gamma ** 500) / (1 - gamma) - gamma ** 499
+    assert stationary_return > delayed_crash
+    trace_seconds = -dt / math.log(gamma * params["gae_lambda"])
+    assert 1.9 < trace_seconds < 2.1
+    # Model a ramp from rest to 3 m/s over two seconds, then sustained progress.
+    moving_return = sum(gamma ** i * step(min(3.0, 1.5 * (i + 1) * dt) * dt / 350.0)
+                        for i in range(2000))
+    waiting_return = idle * (1 - gamma ** 2000) / (1 - gamma)
+    assert moving_return > waiting_return

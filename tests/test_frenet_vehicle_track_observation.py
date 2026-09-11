@@ -378,6 +378,10 @@ def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
         assert variant["environment"]["vehicle_params"][key] == expected
         variant["environment"]["vehicle_params"][key] = baseline["environment"]["vehicle_params"][key]
     variant["agents"]["car_0"]["action_constraints"] = baseline["agents"]["car_0"]["action_constraints"]
+    assert variant["agents"]["car_0"]["reward"].endswith("/lap_completion_frenet.yaml")
+    assert variant["agents"]["car_0"]["params"].pop("gae_lambda") == 0.997
+    assert variant["evaluation"].pop("selection_strategy") == "completion_progress"
+    variant["agents"]["car_0"]["reward"] = baseline["agents"]["car_0"]["reward"]
     # All remaining settings stay paired with the baseline.
     variant["experiment"]["name"] = baseline["experiment"]["name"]
     variant["experiment"]["num_envs"] = baseline["experiment"]["num_envs"]

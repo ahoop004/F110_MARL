@@ -11,8 +11,8 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 The selected checkpoint is written to the run output directory as
 `best_model.pt`. Selection is based on deterministic evaluation in
 this order: lap-completion rate, lower collision rate, mean lap progress, then
-lower mean finish steps. `evaluation_history.jsonl` records every selection
-decision.
+lower mean finish steps. The Frenet variant overrides this order as described
+below. `evaluation_history.jsonl` records every selection decision and strategy.
 
 Checkpoint selection uses eight fixed episodes with seeds 10042–10049. Final
 testing uses a separate 20-episode set with seeds 20042–20061, configured under
@@ -63,9 +63,43 @@ experiment requires explicit disjoint training and evaluation maps.
 The enhanced Frenet scenario is `scenarios/ppo_lap_completion_pretrain_frenet.yaml`.
 It includes the base pretraining scenario and adds vehicle/Frenet observations,
 an integrated speed reference, and stronger vehicle acceleration limits.
-Maps, spawn protocol, training/evaluation seeds, rewards, PPO hyperparameters,
-and episode budget remain matched. This is now a combined observation/control/
-dynamics experiment, not an observation-only ablation.
+Maps, spawn protocol, training/evaluation seeds, and episode budget remain
+matched. Frenet also overrides reward shaping, GAE lambda, and checkpoint
+selection. This is a combined training condition, not an isolated ablation.
+
+The Frenet reward `lap_completion_frenet.yaml` extends the original normalized
+progress task. Signed progress now pays +20 per net forward lap, and time costs
+0.001 per physics step (0.1 per second at the configured timestep). Clean race
+completion, collision, and timeout remain +1, -1, and -1 respectively. With
+gamma 0.99799195, the infinite discounted stationary time cost is about 0.498,
+compared with 0.0062 previously; an immediate crash still costs more than waiting.
+This makes the dense time cost meaningful without making crashing profitable
+solely to avoid time costs. Forward progress offsets the cost: on a 350 m track,
+3 m/s gives approximately +0.000714 net per step. The reward uses lap fractions,
+so this example's break-even speed varies with track length. No minimum speed or
+forced positive acceleration is imposed. Revisit these scales if timestep or
+gamma changes; they are an initial correction, not demonstrated convergence.
+
+Frenet sets `gae_lambda: 0.997`: the trace's e-folding time
+`-dt / log(gamma * gae_lambda)` rises from about 0.19 s to 2 s, giving acceleration
+more time to affect the advantage estimate. The longer trace increases variance;
+gamma, network architecture, and optimizer settings retain their existing values.
+
+Frenet selects with `evaluation.selection_strategy: completion_progress`:
+completion rate, mean net progress since reset, lower collision rate, then lower
+mean finish steps. Net progress sums signed centerline deltas in lap units, so
+spawn position earns no credit, seam crossings remain continuous, and reverse
+travel cancels forward travel. Selection rounds net progress to six decimals to
+ignore numerical jitter. Missing progress measurements cause a clear error.
+An incomplete policy that travels farther can now beat an idle one even if it
+crashes; completed races still rank first. Reports retain collision and timeout
+rates so this deliberate tradeoff remains visible. The baseline keeps the
+original `completion_safety` strategy, reward, and GAE lambda.
+
+Train a fresh Frenet run to measure these changes. An existing stopped actor is
+not repaired by changing YAML, and old reward totals/selection scores are not
+comparable to the new condition. Observation and action contracts are unchanged,
+so weight compatibility alone does not distinguish these training conditions.
 
 With `action_constraints.speed_control: acceleration`, the normalized second
 action is scaled by `max_acceleration: 5.0` for positive inputs and
@@ -168,8 +202,9 @@ This is an episode-based adaptation, not the paper's 120-million-step budget;
 the paper does not specify the decay curve. Collector count is controlled by
 `experiment.num_envs` (currently one), with at most 2048 transitions per rollout,
 so early episode ends can produce batches
-smaller than 1024. PPO epochs, GAE lambda, clipping, and loss coefficients retain
-the existing defaults. At the current 0.01-second decision interval,
+smaller than 1024. PPO epochs, clipping, and loss coefficients retain the existing
+defaults; baseline GAE lambda is 0.95 and Frenet overrides it to 0.997.
+At the current 0.01-second decision interval,
 `gamma = 0.99 ** (0.01 / 0.05)` matches the paper's physical discount horizon.
 This does not also match GAE's trace horizon. Recompute gamma if the decision
 interval changes. These joint changes form a new training condition; they do
@@ -221,7 +256,8 @@ maps are explicitly Budapest and circle, with circle evaluation, three full
 laps, and an 80,000-step horizon. MAPPO uses one environment, a fresh
 `[512, 512]` centralized critic, a fresh optimizer with constant learning rate
 `0.0001`, and the physical discount `gamma = 0.9979919516614258`. The base
-scenario now averages the exact local reward from Frenet PPO pretraining.
+scenario averages the historical normalized local PPO reward; it does not inherit
+the newer Frenet progress/time shaping or GAE override.
 Reverse commands are prevented in all current scenarios and by default in the
 action composer. Vehicle bounds and reward formulas are unchanged. Experiments
 previously allowing reverse need new learning curves because the controls differ.
@@ -275,7 +311,7 @@ seeds, actors, critics, control, opponents, and optimizer settings:
 | `_sweep.yaml` | `race_team_2v2_sweep.yaml` | +2 when teammates take first and second |
 
 All three task files include `lap_completion_normalized_progress.yaml`, the
-reward used by `ppo_lap_completion_pretrain_frenet.yaml`. The original PPO task
+historical Frenet reward, retained by the baseline PPO scenario. This task
 is unchanged: signed progress of approximately +1 per forward lap (clamped to
 ±0.025 per physics step), +1 clean race completion, -1 collision, -1 timeout,
 and -0.0000125 per physics step. For two active teammates these local terms are

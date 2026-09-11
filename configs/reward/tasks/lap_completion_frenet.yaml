@@ -1,0 +1,17 @@
+includes:
+  - lap_completion_normalized_progress.yaml
+
+task:
+  name: lap_completion_frenet
+  description: Acceleration-controlled lap completion with dense progress and time shaping.
+
+reward:
+  # +20 per net forward lap; retain signed deltas and the inherited jump clamp.
+  progress_delta_bonus:
+    weight: 20.0
+
+  # At dt=0.01 this costs 0.1 per second. With gamma=0.99799195,
+  # stationary discounted cost is ~0.498, still below the crash penalty of 1.
+  # Positive progress offsets the cost; a distant timeout is not the main signal.
+  step_time_penalty:
+    penalty: -0.001

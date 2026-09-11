@@ -382,9 +382,9 @@ class CheckpointHook(TrainingHook):
 class EvaluationCheckpointHook(CheckpointHook):
     """Select ``best_model.pt`` using deterministic racing outcomes.
 
-    Candidate policies are ranked lexicographically by completion rate,
-    inverse collision rate, mean progress, and (only after those) finish speed.
-    This keeps reward shaping out of model selection.
+    Completion is always first. The default then ranks collision avoidance,
+    absolute progress, and finish speed. The opt-in completion_progress strategy
+    ranks earned net progress before collision avoidance. Neither uses reward.
     """
 
     def __init__(
@@ -396,7 +396,11 @@ class EvaluationCheckpointHook(CheckpointHook):
         provenance: Optional[Dict[str, Any]] = None,
         console: Optional[ConsoleLogger] = None,
         wandb_logger: Optional[WandbLogger] = None,
+        selection_strategy: str = "completion_safety",
     ) -> None:
+        if selection_strategy not in {"completion_safety", "completion_progress"}:
+            raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
+        self._selection_strategy = selection_strategy
         super().__init__(
             agent=agent,
             output_dir=output_dir,
@@ -412,7 +416,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         self._history_path = self._dir / "evaluation_history.jsonl"
 
     @staticmethod
-    def selection_score(summary: Dict[str, Any]) -> tuple[float, float, float, float]:
+    def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
         completion = float(summary.get("completion_rate", 0.0))
         collision = float(summary.get("collision_rate", 1.0))
         progress = float(summary.get("mean_progress", 0.0))
@@ -420,6 +424,14 @@ class EvaluationCheckpointHook(CheckpointHook):
         finish_speed_score = (
             -float(finish_steps) if finish_steps is not None else float("-inf")
         )
+        if strategy == "completion_progress":
+            net_progress = summary.get("mean_net_progress")
+            if net_progress is None or not np.isfinite(net_progress):
+                raise ValueError("completion_progress selection requires finite centerline progress deltas in every evaluation episode.")
+            # Ignore sub-millionth-lap numerical jitter when selecting a model.
+            return (completion, round(float(net_progress), 6), -collision, finish_speed_score)
+        if strategy != "completion_safety":
+            raise ValueError(f"Unknown checkpoint selection strategy: {strategy!r}")
         return (completion, -collision, progress, finish_speed_score)
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
@@ -427,10 +439,11 @@ class EvaluationCheckpointHook(CheckpointHook):
             return
 
         summary = dict(self._evaluator.evaluate())
-        score = self.selection_score(summary)
+        score = self.selection_score(summary, self._selection_strategy)
         is_best = self._best_score is None or score > self._best_score
         record = {
             "training_episode": episode + 1,
+            "selection_strategy": self._selection_strategy,
             "selection_score": [
                 score[0],
                 score[1],
@@ -455,13 +468,14 @@ class EvaluationCheckpointHook(CheckpointHook):
         if self._console is not None:
             finish = summary.get("mean_clean_finish_time_s")
             finish_text = "n/a" if finish is None else f"{float(finish):.1f}"
+            progress_key = "mean_net_progress" if self._selection_strategy == "completion_progress" else "mean_progress"
             self._console.print_info(
                 "checkpoint eval  "
                 f"episode={episode + 1}  "
                 f"completion={float(summary.get('completion_rate', 0.0)):.1%}  "
                 f"collision={float(summary.get('collision_rate', 0.0)):.1%}  "
                 f"timeout={float(summary.get('timeout_rate', 0.0)):.1%}  "
-                f"progress={float(summary.get('mean_progress', 0.0)):.3f}  "
+                f"{progress_key}={float(summary.get(progress_key, 0.0)):.3f}  "
                 f"clean_finish_s={finish_text}  best={is_best}"
             )
 

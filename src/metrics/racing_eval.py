@@ -70,6 +70,8 @@ class AgentEpisodeFacts:
     terminal_reason: Optional[str] = None
     finish_position: Optional[int] = None
     final_lap_count: int = 0
+    net_progress: float = 0.0
+    progress_delta_samples: int = 0
 
     @property
     def completed(self) -> bool:
@@ -172,6 +174,12 @@ def update_agent_step_facts(
 
         centerline = info.get("centerline")
         if isinstance(centerline, Mapping):
+            delta = _float_or_none(centerline.get("progress_delta"))
+            if delta is not None and np.isfinite(delta):
+                # Sum signed, seam-corrected lap fractions. Absolute position
+                # rewards spawn placement; positive-only sums reward oscillation.
+                facts.net_progress += delta
+                facts.progress_delta_samples += 1
             progress = _float_or_none(centerline.get("progress"))
             if progress is not None:
                 facts.final_progress = float(np.clip(progress, 0.0, 1.0))
@@ -300,6 +308,12 @@ def aggregate_eval_episodes(
         summary["finish_time_sample_count"] = len(finish_times)
         summary["mean_clean_finish_time_s"] = float(np.mean(finish_times)) if finish_times else None
     summary["self_crash_rate"] = summary["collision_rate"]
+    progress_facts = [ep.agents[aid] for ep in episodes for aid in trainable_ids if aid in ep.agents]
+    summary["mean_net_progress"] = (
+        _mean(facts.net_progress for facts in progress_facts)
+        if progress_facts and all(facts.progress_delta_samples for facts in progress_facts)
+        else None
+    )
     summary["mean_progress"] = _mean(
         _team_mean_progress(ep, trainable_ids) for ep in episodes
     )

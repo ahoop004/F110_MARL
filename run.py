@@ -1294,6 +1294,7 @@ def _run_on_policy(
                 output_dir=output_dir,
                 evaluator=evaluator,
                 evaluate_every=int(eval_cfg.get("every_episodes", 100)),
+                selection_strategy=eval_cfg.get("selection_strategy", "completion_safety"),
                 provenance=provenance,
                 console=console,
                 wandb_logger=wandb_logger,
@@ -1302,7 +1303,8 @@ def _run_on_policy(
         console.print_info(
             "Best-model selection: deterministic lap-completion evaluation "
             f"every {int(eval_cfg.get('every_episodes', 100))} episodes "
-            f"over {int(eval_cfg.get('episodes', 8))} fixed-seed episodes."
+            f"over {int(eval_cfg.get('episodes', 8))} fixed-seed episodes; "
+            f"strategy={eval_cfg.get('selection_strategy', 'completion_safety')}."
         )
 
     trainer = OnPolicyTrainer(
