@@ -1,0 +1,17 @@
+includes:
+  - mappo_combined_slip_development.yaml
+
+experiment:
+  name: mappo_combined_slip_friction_development
+
+environment:
+  friction:
+    version: 1
+    scope: shared
+    train:
+      mode: uniform
+      low: 0.8
+      high: 1.1
+    eval:
+      mode: grid
+      values: [0.8, 0.95, 1.1]

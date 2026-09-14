@@ -19,7 +19,10 @@ workflows live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Outstanding work
 from the previous roadmap is retained in the backlog below; this rewrite does
 not mark it complete.
 
-## Current gaps
+## Current gaps in the training environment
+
+Opt-in nonlinear physics is integrated into PPO/MAPPO. The default legacy model
+retains the following approximations for reproducible comparisons.
 
 - `src/physics/dynamic_models.py` uses a linear lateral tire formulation with
   `mu`, `C_Sf`, and `C_Sr`; longitudinal acceleration is applied directly.
@@ -54,26 +57,37 @@ not mark it complete.
 
 ## P0 - Freeze the baseline and define the model contract
 
-- [ ] Capture the commit, expanded configs, observation/action contracts, seeds,
+- [x] Capture the commit, expanded configs, observation/action contracts, seeds,
   maps, spawn plans, and scripted-action trajectories for existing PPO/MAPPO.
-- [ ] Include `ppo_lap_completion_pretrain.yaml`,
+- [x] Include `ppo_lap_completion_pretrain.yaml`,
   `ppo_lap_completion_pretrain_frenet.yaml`, and the existing track-transfer
   workflow in the compatibility audit.
-- [ ] Define an explicit model selector and version in environment vehicle
+- [x] Define an explicit model selector and version in environment vehicle
   configuration. Omitted selection must continue to use current physics.
-- [ ] Define state coordinates, sign conventions, SI units, wheel/axle speed
+- [x] Define state coordinates, sign conventions, SI units, wheel/axle speed
   representation, and the mapping into existing public state fields.
-- [ ] Decide whether a shared effective wheel speed or separate front/rear axle
-  speeds match the target drivetrain; document the approximation.
-- [ ] Specify proposed parameters: rolling radius, tire coefficients, grip,
+- [x] Choose an initial wheel-speed representation and document the drivetrain
+  assumptions that P1 must verify against hardware.
+- [x] Specify proposed parameters: rolling radius, tire coefficients, grip,
   actuator time constants, drive/braking distribution, and parameter provenance.
-- [ ] Validate finite values, positive physical quantities, coefficient domains,
+- [x] Validate finite values, positive physical quantities, coefficient domains,
   and incompatible model/config combinations before simulation begins.
 
-Exit gate: old scenarios reproduce baseline trajectories; the new model and
-its state/action contract are documented before implementation.
+Completed: [model/state contract and capture protocol](docs/PHYSICS_MODEL.md).
+The five frozen cases replay under omitted and explicit `legacy_st` selection.
+Nonlinear training requires its own complete, explicitly selected parameter
+profile and wheel-action contracts. The shared-speed AWD design is provisional
+pending P1 hardware identification. See the contract for capture coverage and limitations.
 
 ## P1 - Collect and identify vehicle, tire, and actuator parameters
+
+Development support is available; hardware identification remains pending.
+See [data sources and provisional-value guidance](docs/PHYSICS_MODEL.md).
+
+- [x] Add a labeled uncalibrated actuator development profile with explicit units.
+- [x] Validate optional uniform tire/surface metadata in bundle YAMLs, with tire
+  identity and calibration provenance; keep missing grip unknown and legacy
+  physics unchanged. No existing map bundles need migration.
 
 - [ ] Measure effective rolling radius, mass, wheelbase, front/rear static weight
   distribution, and center-of-mass location; estimate yaw inertia with a
@@ -103,50 +117,62 @@ implementation tests but cannot support a sim-to-real accuracy claim.
 Primary files: `src/physics/vehicle.py`, `src/physics/dynamic_models.py`, and the
 existing environment state/reset adapters under `src/env/`.
 
-- [ ] Add wheel angular speed independently of chassis speed for the new model.
-- [ ] Implement steering response `delta_dot = (delta_ref - delta) / T_delta`
-  and wheel-speed response `omega_dot = (omega_ref - omega) / T_omega`, with
-  explicit calibrated limits and any separately justified transport delay.
-- [ ] Keep actual and commanded steering/wheel speeds distinct. Integrate
-  actuator state at the physics timestep, including RK4 intermediate states.
-- [ ] Define rolling-start initialization through public reset/spawn options;
-  clear actuator history consistently on reset and preserve terminal behavior.
-- [ ] Verify step response, steady-state tracking, saturation, reset isolation,
-  and repeatability across multiple cars and concurrent environments.
+- [x] Implement an independent steering/wheel actuator component with actual and
+  commanded states, explicit reference bounds, and asymmetric rate limits.
+- [x] Implement first-order response with exact held-command integration and
+  non-mutating intermediate-stage sampling for future coupled RK4 integration.
+- [x] Verify analytical step response, saturation, reverse motion, timestep
+  partition invariance, component reset behavior, and independent instances.
+- [ ] Calibrate the time constants/limits against hardware data and introduce
+  transport delay only if measurements justify it.
+- [x] Couple the component into the new vehicle model with P3 tire forces;
+  sample actuator state at each chassis integrator stage and advance only once.
+- [x] Integrate independent wheel speed into the new component's eight-state
+  vehicle model, preserving the legacy model's state ordering.
+- [x] Adapt the new component into RaceCar and public environment state views.
+- [x] Wire rolling-start initialization through public reset/spawn options and
+  verify terminal handling and concurrent-environment isolation end to end.
 
-Exit gate: wheel motion can differ from chassis motion and follows the defined
-actuator response. Keep this intermediate model out of learning comparisons
-until tire-force coupling is complete.
+The nonlinear model now runs through RaceCar, public reset/spawn, collisions,
+and terminal handling. P2 engineering integration is complete; hardware actuator
+calibration remains pending. Repeated chassis-speed locking is rejected for this
+model. Existing legacy scenarios retain their original physics.
 
 ## P3 - Implement nonlinear tires and combined-slip vehicle dynamics
 
 Primary files: `src/physics/dynamic_models.py` and `src/physics/vehicle.py`.
-Extract a focused tire helper only if the implemented equations justify it.
+The reduced force law lives in `src/physics/tire_models.py`; equations and
+limitations are documented in [the model contract](docs/PHYSICS_MODEL.md).
 
-- [ ] Select and document either MF6.1 for paper replication or a named reduced
+- [x] Select and document either MF6.1 for paper replication or a named reduced
   nonlinear model with combined-slip coupling for an initial approximation.
   Identify the equation source and exact subset implemented.
-- [ ] Compute front/rear contact velocities in the tire frame, including yaw
+- [x] Compute front/rear contact velocities in the tire frame, including yaw
   rate and front steering; derive slip angles and longitudinal slip ratios.
-- [ ] Define stable slip behavior at rest, during braking to rest, and in reverse.
+- [x] Define stable slip behavior at rest, during braking to rest, and in reverse.
   Document low-speed regularization and any kinematic blending explicitly.
-- [ ] Compute front/rear normal loads using existing mass/geometry and a
+- [x] Compute front/rear normal loads using existing mass/geometry and a
   consistent acceleration/load-transfer treatment; handle invalid loads clearly.
-- [ ] Evaluate longitudinal and lateral tire forces with nonlinear saturation
+- [x] Evaluate longitudinal and lateral tire forces with nonlinear saturation
   and combined-slip coupling. Acceleration/braking must reduce remaining
   cornering capacity according to the selected tire model.
-- [ ] Apply drive/braking distribution consistently with the chosen wheel-state
+- [x] Apply drive/braking distribution consistently with the chosen wheel-state
   approximation. Rotate tire forces into the vehicle frame and derive chassis
   acceleration and yaw acceleration from force/moment balance.
-- [ ] Remove direct commanded chassis acceleration only for the new model;
+- [x] Remove direct commanded chassis acceleration only for the new model;
   retain the existing baseline path.
-- [ ] Verify force signs, zero-slip behavior, saturation, straight-line symmetry,
+- [x] Verify force signs, zero-slip behavior, saturation, straight-line symmetry,
   left/right turn symmetry, wheelspin, braking slip, and grip sensitivity.
-- [ ] Check finite outputs and timestep convergence through low-speed crossings,
+- [x] Check finite outputs and timestep convergence through low-speed crossings,
   aggressive maneuvers, and long rollouts. State the model's validity envelope.
 
-Exit gate: deterministic physical checks pass, and held-out maneuver validation
-shows where the model is accurate and where its approximation breaks down.
+- [ ] Validate against held-out hardware maneuver data after P1 identification.
+
+The coupled `combined_slip_st` / `smooth_friction_circle` component passes
+deterministic physical checks, including a one-minute maneuver sequence. It is
+an uncalibrated reduced approximation, not MF6.1. The numerical portion is
+complete; the held-out-data exit gate remains open. PPO/MAPPO development runs
+are available, but calibrated learning comparisons remain outstanding.
 
 ## P4 - Integrate actions, observations, checkpoints, and datasets
 
@@ -154,52 +180,64 @@ Primary areas: `src/wrappers/actions/composer.py`,
 `src/wrappers/observations/track.py`, `src/env/`, existing checkpoint handling,
 `src/training/hooks.py`, and `src/replay/dataset_writer.py`.
 
-- [ ] Add an explicit wheel-reference action mode through the existing action
+- [x] Add an explicit wheel-reference action mode through the existing action
   composer. Specify whether the reference derivative uses rad/s² or tire
   circumferential m/s², and convert with the configured physical radius.
-- [ ] Preserve old vehicle-speed action semantics. Apply reference integration
+- [x] Preserve old vehicle-speed action semantics. Apply reference integration
   once per intended interval and actuator integration per physics substep;
   verify behavior with action repeat and reference clamping.
-- [ ] Expose actual wheel speed through a versioned observation option; retain
+- [x] Expose actual wheel speed through a versioned observation option; retain
   the old `vx / radius` estimate for legacy observations/checkpoints.
-- [ ] Use one authoritative physical rolling radius for new-model conversions;
+- [x] Use one authoritative physical rolling radius for new-model conversions;
   validate observation configuration against it and document normalization.
-- [ ] Record layout, units, physics model, calibration ID, and action/observation
+- [x] Record layout, units, physics model, calibration ID, and action/observation
   versions in checkpoint provenance; reject incompatible loads by default.
-- [ ] Keep any transfer across physics or observation semantics an explicit
+- [x] Keep any transfer across physics or observation semantics an explicit
   experiment with documented initialization scope, not a silent resume.
-- [ ] Preserve actor-local observations and MAPPO global-state compatibility;
+- [x] Preserve actor-local observations and MAPPO global-state compatibility;
   version any intentionally expanded critic input rather than changing its size
   implicitly. Do not leak randomized ground-truth grip into actor observations.
 - [ ] Log diagnostic wheel speed, slip, forces, and sampled physics parameters
   through optional hooks/metadata without adding noisy default per-step logs.
-- [ ] Preserve one complete `TransitionRecord` per active agent decision for
+- [x] Preserve one complete `TransitionRecord` per active agent decision for
   PPO and MAPPO, including normalized/physical action and required lifecycle,
   map/spawn/episode/step/agent fields and global state when available.
-- [ ] Preserve the dataset schema unless a deliberate migration is necessary;
+- [x] Preserve the dataset schema unless a deliberate migration is necessary;
   document any PPO/MAPPO logging differences and test terminal transitions.
 
-Exit gate: action units, observation meaning, checkpoint loading, and recorded
-transitions agree end to end for both trainable and fixed-policy agents.
+PPO/MAPPO contracts now agree end to end. New checkpoints reject mismatched
+physics, wheel semantics, and observation normalization even at equal dimensions.
+Dataset schema remains 2.0; metadata records the physical action units and resolved
+contracts. Cross-physics checkpoint transfer is rejected until an explicit transfer
+policy is implemented. The 17-value-per-agent critic vector remains unchanged.
+
+- [x] Add and validate explicit wheel-command adapters for fixed-policy agents;
+  opt in with `action_adapter: rolling_speed_to_wheel_v1`.
+
+Fixed-controller conversion and per-episode grip logging are implemented.
+Optional time-series force/slip diagnostics remain before detailed model analysis.
 
 ## P5 - Add reproducible friction randomization
 
-- [ ] Keep fixed calibrated parameters as the default for deterministic checks.
-- [ ] Add opt-in episode-level friction randomization through the public reset
+- [x] Keep fixed nominal parameters as the default; hardware calibration remains P1.
+- [x] Add opt-in episode-level friction randomization through the public reset
   configuration path, using an explicit RNG stream independent of sensor noise.
-- [ ] Define physically valid sampling bounds and rejection/clipping behavior.
+- [x] Define physically valid sampling bounds and rejection/clipping behavior.
   Record nominal grip, distribution, seed, and actual sampled grip per episode.
-- [ ] Start with friction-only randomization. The paper's relative perturbation
+- [x] Start with friction-only randomization. The paper's relative perturbation
   level of 0.02 is an experimental starting point, not a measured uncertainty
   for our platform or a universal optimum.
-- [ ] Define which surface variation is shared across cars and which tire
+- [x] Define which surface variation is shared across cars and which tire
   variation is car-specific; avoid accidental baseline/opponent asymmetry.
-- [ ] Keep evaluation on fixed parameter grids and held-out seeds, separate from
+- [x] Keep evaluation on fixed parameter grids and held-out seeds, separate from
   training randomization. Verify repeated resets reproduce sampled parameters.
 - [ ] Add broader parameter randomization only as a separate calibrated ablation.
 
-Exit gate: train/evaluation physics distributions are explicit and reproducible,
-including vectorized PPO and multi-agent runs.
+Implemented: explicit train/eval grip protocols, shared grip across all cars,
+independent seeded sampling, and deterministic evaluation grids. Run/dataset
+`physics_episodes.jsonl` records nominal/sample values, seed, draw, and protocol.
+Vectorized PPO and MAPPO development runs verify recording and isolation. Synthetic
+ranges are not calibrated uncertainty; per-car tire variation remains unsupported.
 
 ## P6 - Validate learning and transfer under the new physics
 
@@ -260,7 +298,7 @@ from the old roadmap remain pending and may have advanced independently.
 - [ ] Confirm W&B-disabled/dataset-disabled benchmarks do no external I/O.
 - [ ] Record results in `docs/PERFORMANCE.md`; evaluate the prior optimization
   targets (25% throughput improvement for `complete_4`, no >5% Frenet throughput
-  regression, no >5% memory increase without justification) on unchanged physics.
+  regression, no >5% memory increase without justification) on unchanged physics.5,
   Do not apply those equivalence targets to the new physics model.
 
 Historical variable-episode baseline (2026-09-02, Quadro RTX 5000): 4,497
@@ -296,10 +334,10 @@ benchmark scripts for new comparisons; this old timing alone is insufficient.
   is reliable; keep algorithm additions separate from this physics work.
 - [ ] Consider `--verbose` and `--debug` CLI flags as a separate tooling change.
 
-## Suggested first delivery
+## Next delivery
 
-Complete P0: preserve scripted baseline trajectories and specify model selection,
-physical state, units, parameter provenance, and compatibility behavior. Begin
-P1 data collection in parallel with local implementation preparation; do not
-block numerical tests on unavailable hardware or present provisional parameters
-as a calibrated model.
+Fixed-controller wheel-command adapters and P5 seeded friction protocols are
+implemented, with separate PPO/MAPPO development scenarios and episode records.
+Next add optional force/slip time-series diagnostics and prepare controlled P6
+comparisons. P1 hardware data and held-out model validation remain outstanding.
+See the [model contract](docs/PHYSICS_MODEL.md) for units and compatibility rules.

@@ -109,6 +109,9 @@ class TerminalVehicleController:
     @staticmethod
     def _freeze(simulator: Any, index: int) -> None:
         agent = simulator.agents[index]
+        if getattr(agent, "nonlinear", False):
+            agent.freeze_motion()
+            return
         agent.state[3] = 0.0  # longitudinal velocity
         agent.state[5] = 0.0  # yaw rate
         agent.state[6] = 0.0  # slip angle

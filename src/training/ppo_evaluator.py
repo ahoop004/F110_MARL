@@ -77,6 +77,7 @@ class DeterministicPPOEvaluator:
         all_agent_ids = list(getattr(self.env, "possible_agents", [self.rl_agent_id]))
         opponent_ids = [aid for aid in all_agent_ids if aid != self.rl_agent_id]
         results = []
+        physics_episodes = []
         actor_was_training = bool(active_agent.actor.training)
         numpy_rng_state = np.random.get_state()
         python_rng_state = random.getstate()
@@ -150,6 +151,9 @@ class DeterministicPPOEvaluator:
                         )
 
                     results.append(finalize_episode_facts(facts))
+                    physics = info_dict.get(self.rl_agent_id, {}).get("physics")
+                    if physics is not None:
+                        physics_episodes.append({"seed": self.base_seed + episode, "physics": physics})
         finally:
             active_agent.actor.train(actor_was_training)
             # Fixed evaluation controllers are permitted to use process-global
@@ -171,6 +175,8 @@ class DeterministicPPOEvaluator:
             "timestep_s": getattr(self.env, "timestep", None),
             "action_repeat": self.action_repeat,
         }
+        if physics_episodes:
+            summary["evaluation_protocol"]["physics_episodes"] = physics_episodes
         return summary
 
     def bind_agent(self, agent: Any) -> "DeterministicPPOEvaluator":

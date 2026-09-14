@@ -84,6 +84,8 @@ class PPOAgent:
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.action_dim = len(self.action_low)
         self.action_contract = dict(params.get("_action_contract", {"speed_control": "direct"}))
+        self.physics_contract = params.get("_physics_contract")
+        self.observation_contract = params.get("_observation_contract")
 
         # Hyperparameters (merged from training_defaults + scenario params)
         self.lr = float(params.get("learning_rate", 3e-4))
@@ -235,6 +237,8 @@ class PPOAgent:
                 "action_low": self.action_low,
                 "action_high": self.action_high,
                 "action_contract": self.action_contract,
+                "physics_contract": self.physics_contract,
+                "observation_contract": self.observation_contract,
                 "actor_hidden_dims": self.actor_hidden_dims,
                 "critic_hidden_dims": self.critic_hidden_dims,
                 "activation": self.activation,
@@ -246,6 +250,9 @@ class PPOAgent:
         """Load actor/critic weights; transfer runs keep their fresh optimizer."""
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        for key in ("physics_contract", "observation_contract"):
+            if ckpt.get(key) != getattr(self, key):
+                raise ValueError(f"Incompatible checkpoint {key}; physics/observation semantics differ")
         for key, expected in (
             ("algorithm", "ppo"), ("obs_dim", self.obs_dim),
             ("action_dim", self.action_dim),

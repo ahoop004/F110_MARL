@@ -22,6 +22,151 @@ Author: Hongrui Zheng
 
 import numpy as np
 from numba import njit
+from collections.abc import Mapping
+from physics.tire_models import smooth_tire_force
+
+
+LEGACY_MODEL = "legacy_st"
+LEGACY_MODEL_VERSION = 1
+GRAVITY = 9.81
+_POSITIVE_PARAMS = frozenset({"lf", "lr", "m", "I", "length", "width",
+                              "v_switch", "a_max", "ang_vel_max"})
+_NONNEGATIVE_PARAMS = frozenset({"mu", "C_Sf", "C_Sr", "h"})
+_LIMIT_PARAMS = frozenset({"s_min", "s_max", "sv_min", "sv_max", "v_min", "v_max"})
+
+
+def validate_vehicle_params(params: Mapping) -> dict:
+    """Validate partial legacy parameters or a complete nonlinear configuration.
+
+    Model identity is optional for historical scenarios. Nonlinear configurations
+    must supply their own complete parameter set without legacy default merging.
+    The legacy speed controller divides by both v_max and -v_min, so physical
+    limits must straddle zero even for a forward-only action wrapper.
+    """
+    if not isinstance(params, Mapping):
+        raise ValueError("vehicle_params must be a mapping")
+    if params.get("model") == "combined_slip_st":
+        # Local import avoids a module cycle with the numerical kernels above.
+        from physics.vehicle import CombinedSlipVehicle
+        required = {"wheel_actuators", "length", "width"}
+        if not required <= params.keys():
+            raise ValueError("combined_slip_st requires wheel_actuators, length, and width")
+        component = CombinedSlipVehicle(
+            {k: v for k, v in params.items() if k not in required}, params["wheel_actuators"])
+        dimensions = validate_vehicle_params({k: params[k] for k in ("length", "width")})
+        return {**dict(component.params), **dimensions,
+                "calibration": dict(component.params["calibration"]),
+                "wheel_actuators": {**dict(component._actuators.params),
+                    "calibration": dict(component._actuators.params["calibration"])}}
+    if params.get("model", LEGACY_MODEL) != LEGACY_MODEL:
+        raise ValueError("vehicle_params.model must be 'legacy_st' or 'combined_slip_st'")
+    version = params.get("model_version", LEGACY_MODEL_VERSION)
+    if type(version) is not int or version != LEGACY_MODEL_VERSION:
+        raise ValueError("vehicle_params.model_version must be integer 1 for legacy_st")
+    allowed = _POSITIVE_PARAMS | _NONNEGATIVE_PARAMS | _LIMIT_PARAMS | {"model", "model_version"}
+    unknown = set(params) - allowed
+    if unknown:
+        raise ValueError(f"Unsupported legacy_st vehicle parameter(s): {sorted(unknown, key=str)}")
+    result = dict(params)
+    for name in set(params) - {"model", "model_version"}:
+        value = params[name]
+        if isinstance(value, (bool, str)) or not np.isscalar(value):
+            raise ValueError(f"vehicle_params.{name} must be a finite number")
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"vehicle_params.{name} must be a finite number") from exc
+        if not np.isfinite(value):
+            raise ValueError(f"vehicle_params.{name} must be finite")
+        if name in _POSITIVE_PARAMS and value <= 0:
+            raise ValueError(f"vehicle_params.{name} must be positive")
+        if name in _NONNEGATIVE_PARAMS and value < 0:
+            raise ValueError(f"vehicle_params.{name} must be nonnegative")
+        if name in {"s_min", "sv_min", "v_min"} and value >= 0:
+            raise ValueError(f"vehicle_params.{name} must be negative for legacy_st")
+        if name in {"s_max", "sv_max", "v_max"} and value <= 0:
+            raise ValueError(f"vehicle_params.{name} must be positive for legacy_st")
+        if name in {"s_min", "s_max"} and abs(value) >= np.pi / 2:
+            raise ValueError(f"vehicle_params.{name} must lie strictly inside (-pi/2, pi/2)")
+        result[name] = value
+    return result
+
+
+@njit(cache=True)
+def first_order_actuator_step(value, reference, dt, time_constant, rate_min, rate_max):
+    """Exact held-reference solution of a rate-limited first-order actuator.
+
+    Parameters are validated by WheelActuators. Outside the exponential region,
+    integrate the constant rate until abs(error) == rate_limit * time_constant;
+    then integrate the exponential tail. This avoids timestep-dependent clipping
+    and lets a coupled vehicle integrator sample exact actuator states at its
+    intermediate stages. The reference must already satisfy position/speed bounds.
+    """
+    error = reference - value
+    rate = rate_max if error >= 0.0 else -rate_min
+    direction = 1.0 if error >= 0.0 else -1.0
+    linear_time = max(0.0, abs(error) / rate - time_constant)
+    if dt <= linear_time:
+        return value + direction * rate * dt
+    boundary = value + direction * rate * linear_time
+    remaining = dt - linear_time
+    return boundary + (reference - boundary) * (-np.expm1(-remaining / time_constant))
+
+
+@njit(cache=True)
+def combined_slip_dynamics(state, actuators, params):
+    """Six chassis derivatives and axle diagnostics for smooth-circle ST v1.
+
+    state = [x, y, psi, vx, vy, r]; actuators = [delta, omega]. Each diagnostic
+    row is [u_tire, v_tire, kappa, alpha, Fx_tire, Fy_tire, Fz] (front, rear).
+    Coefficients are normalized by axle load, allowing simultaneous force/load
+    transfer to be solved algebraically rather than using stale acceleration.
+    """
+    m, inertia, lf, lr, h, mu, cxf, cyf, cxr, cyr, floor, radius = params
+    psi, vx, vy, yaw_rate = state[2], state[3], state[4], state[5]
+    delta, omega = actuators[0], actuators[1]
+    cos_delta, sin_delta = np.cos(delta), np.sin(delta)
+    # Contact velocities include yaw-induced motion about the center of mass.
+    vf = vy + lf * yaw_rate
+    uf = vx * cos_delta + vf * sin_delta
+    vf = -vx * sin_delta + vf * cos_delta
+    ur, vr = vx, vy - lr * yaw_rate
+    fx_unit_f, fy_unit_f, kappa_f, alpha_f = smooth_tire_force(
+        uf, vf, radius * omega, mu, cxf, cyf, floor)
+    fx_unit_r, fy_unit_r, kappa_r, alpha_r = smooth_tire_force(
+        ur, vr, radius * omega, mu, cxr, cyr, floor)
+    ax_unit_f = fx_unit_f * cos_delta - fy_unit_f * sin_delta
+    ax_unit_r = fx_unit_r
+    wheelbase = lf + lr
+    # Fzf=m*(g*lr-h*ax)/L, Fzr=m*(g*lf+h*ax)/L, ax=sum(Fx_body)/m.
+    # ax is inertial acceleration resolved in body x, not dvx/dt=ax+r*vy.
+    denominator = wheelbase + h * (ax_unit_f - ax_unit_r)
+    if denominator <= 0.0:
+        raise ValueError("Nonpositive load-transfer denominator; outside model validity")
+    ax = GRAVITY * (lr * ax_unit_f + lf * ax_unit_r) / denominator
+    fzf = m * (GRAVITY * lr - h * ax) / wheelbase
+    fzr = m * (GRAVITY * lf + h * ax) / wheelbase
+    if fzf < 0.0 or fzr < 0.0:
+        raise ValueError("Negative axle normal load; wheel lift is outside model validity")
+    fxf, fyf = fx_unit_f * fzf, fy_unit_f * fzf
+    fxr, fyr = fx_unit_r * fzr, fy_unit_r * fzr
+    fy_front_body = fxf * sin_delta + fyf * cos_delta
+    ay = (fy_front_body + fyr) / m
+    rhs = np.array([
+        vx * np.cos(psi) - vy * np.sin(psi),
+        vx * np.sin(psi) + vy * np.cos(psi),
+        yaw_rate,
+        ax + yaw_rate * vy,
+        ay - yaw_rate * vx,
+        (lf * fy_front_body - lr * fyr) / inertia,
+    ])
+    axles = np.array([
+        [uf, vf, kappa_f, alpha_f, fxf, fyf, fzf],
+        [ur, vr, kappa_r, alpha_r, fxr, fyr, fzr],
+    ])
+    if not np.all(np.isfinite(rhs)) or not np.all(np.isfinite(axles)):
+        raise ValueError("Nonfinite combined-slip dynamics; outside model validity")
+    return rhs, axles
 
 
 @njit(cache=True)

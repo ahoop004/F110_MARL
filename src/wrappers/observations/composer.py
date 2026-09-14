@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -35,6 +36,7 @@ class ObservationComposer:
 
     def __init__(self, components: List[ObservationComponent]) -> None:
         self._components = components
+        self.contract = None
         # Pre-allocate assembly buffer and slice boundaries once.
         self._obs_dim: int = sum(c.dim for c in components)
         self._buf = np.zeros(self._obs_dim, dtype=np.float32)
@@ -128,12 +130,21 @@ class ObservationComposer:
 
         frenet_cfg = obs.get("frenet_vehicle_track", {})
         if frenet_cfg.get("enabled", False):
+            vehicle = env_config.get("vehicle_params", {})
+            nonlinear = vehicle.get("model") == "combined_slip_st"
+            source = frenet_cfg.get("wheel_speed_source", "rolling_estimate")
+            if nonlinear != (source == "simulated_v1"):
+                raise ValueError("combined_slip_st requires simulated_v1 wheel observations; legacy requires rolling_estimate")
+            radius = float(frenet_cfg.get("wheel_radius", 0.05))
+            if nonlinear and radius != float(vehicle["wheel_actuators"]["wheel_radius"]):
+                raise ValueError("Observation wheel_radius must match physical wheel_radius")
             components.append(
                 FrenetVehicleTrackComponent(
                     points=int(frenet_cfg.get("points", 20)),
                     wheel_radius=float(frenet_cfg.get("wheel_radius", 0.05)),
                     maxima=frenet_cfg.get("maxima", {}),
                     clip=bool(frenet_cfg.get("clip", False)),
+                    wheel_speed_source=source,
                 )
             )
 
@@ -158,7 +169,12 @@ class ObservationComposer:
         if not components:
             raise ValueError("ObservationComposer: no components enabled in obs config.")
 
-        return cls(components)
+        composer = cls(components)
+        if env_config.get("vehicle_params", {}).get("model") == "combined_slip_st":
+            composer.contract = {"version": 1, "observation": deepcopy(obs),
+                                 "lidar_beams": n_beams, "lidar_range": lidar_range,
+                                 "track_preview": deepcopy(env_config.get("track_preview", {}))}
+        return composer
 
     @classmethod
     def from_file(

@@ -131,6 +131,7 @@ run.py
 |---|---|
 | `src/agents/ppo/`, `src/agents/mappo/` | Policy updates and rollout buffers |
 | `src/agents/common/` | Shared actor, critic, and MLP modules |
+| `src/physics/` | Vehicle integration, tire dynamics, sensing, and collisions |
 | `src/agents/ftg.py`, `src/agents/waypoint.py`, `src/agents/mpc/` | Fixed-policy opponents |
 | `src/env/` | Simulation coordination, lifecycle, and public state contracts |
 | `src/wrappers/` | Observation, reward, and continuous action composition |
@@ -167,6 +168,20 @@ For another fixed opponent, use the existing `AgentFactory` adapter pattern in
 Preserve environment contracts, action bounds, observation dimensions, reward
 semantics, and MAPPO's decentralized actors. No additional controller framework,
 plugin system, or placeholder algorithm infrastructure is needed.
+
+Physics defaults to `legacy_st` version 1. Its optional selector, parameter
+validation, frozen PPO/MAPPO regression captures, and proposed wheel/tire state
+contract are documented in [physics model development](docs/PHYSICS_MODEL.md).
+Opt-in `combined_slip_st` physics now connects nonlinear tire forces and independent
+wheel/steering actuators to PPO/MAPPO, with explicit wheel-reference actions,
+simulated-wheel observations, and checkpoint compatibility checks. Start with
+`scenarios/ppo_combined_slip_development.yaml` or
+`scenarios/mappo_combined_slip_development.yaml`. These use uncalibrated reduced
+physics. Fixed controllers can opt into `rolling_speed_to_wheel_v1`; explicit
+train/eval friction protocols and `physics_episodes.jsonl` support reproducible
+grip experiments. Hardware validation remains outstanding. Optional bundle
+surface metadata supports calibration records. See
+[the physics roadmap](todo.md) for remaining work.
 
 Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
 `events.py`, and `interaction.py`; observations use `ego.py`, `track.py`, and

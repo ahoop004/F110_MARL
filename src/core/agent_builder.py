@@ -121,7 +121,7 @@ def split_agent_roles(
 # Agent construction
 # ---------------------------------------------------------------------------
 
-def build_fixed_policy_agents(agent_configs: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+def build_fixed_policy_agents(agent_configs: Mapping[str, Mapping[str, Any]], *, vehicle_params=None) -> Dict[str, Any]:
     """Instantiate heuristic/fixed-policy agents only.
 
     Pure PyTorch RL agents are instantiated by ``run.py``, not here.
@@ -144,6 +144,15 @@ def build_fixed_policy_agents(agent_configs: Mapping[str, Mapping[str, Any]]) ->
         if algorithm in HEURISTIC_ALGOS:
             heuristic_kwargs = dict(agent_config.get("params", {}))
             agents[agent_id] = AgentFactory.create(algorithm, heuristic_kwargs)
+            adapter = agent_config.get("action_adapter")
+            nonlinear = (vehicle_params or {}).get("model") == "combined_slip_st"
+            if nonlinear:
+                if adapter != "rolling_speed_to_wheel_v1":
+                    raise ValueError("Nonlinear fixed controllers require action_adapter: rolling_speed_to_wheel_v1")
+                from wrappers.actions.composer import WheelReferenceAdapter
+                agents[agent_id] = WheelReferenceAdapter(agents[agent_id], vehicle_params["wheel_actuators"])
+            elif adapter is not None:
+                raise ValueError("Wheel-command adapter requires combined_slip_st physics")
         else:
             logger.warning(
                 "Agent '%s' has algorithm '%s' which is neither a known RL algo "

@@ -1,0 +1,12 @@
+# Same layout as the legacy Frenet observation, explicitly different wheel semantics.
+includes:
+  - rl_racer_vehicle_track_frenet_acceleration.yaml
+
+observation:
+  frenet_vehicle_track:
+    wheel_speed_source: simulated_v1
+    wheel_radius: 0.05
+    maxima:
+      delta: 0.4189
+      delta_ref: 0.4189
+

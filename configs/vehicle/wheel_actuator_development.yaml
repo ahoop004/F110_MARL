@@ -1,0 +1,19 @@
+# Component-level development profile, NOT a scenario include or hardware fit.
+# Load wheel_actuators into physics.vehicle.WheelActuators for numerical checks.
+wheel_actuators:
+  version: 1
+  calibration:
+    id: synthetic-wheel-actuators-v1
+    status: uncalibrated
+    source: "Radius/steering bounds mirror legacy settings; time constants and wheel limits are development assumptions."
+  wheel_radius: 0.05                 # m; legacy observation assumption, not measured
+  steering_time_constant: 0.5         # s; mirrors legacy steering gain of 2/s
+  wheel_speed_time_constant: 0.15     # s; synthetic, NOT fitted from the paper
+  steering_min: -0.4189               # rad
+  steering_max: 0.4189
+  steering_rate_min: -3.2             # rad/s
+  steering_rate_max: 3.2
+  wheel_speed_min: -400.0             # rad/s; circumferential speed -20 m/s
+  wheel_speed_max: 400.0
+  wheel_rate_min: -100.0              # rad/s²; circumferential acceleration -5 m/s²
+  wheel_rate_max: 100.0

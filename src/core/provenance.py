@@ -16,6 +16,25 @@ from core.map_selection import resolve_bundle_yaml
 PROVENANCE_VERSION = "1.0"
 
 
+def physics_contract(environment: Mapping[str, Any]) -> dict | None:
+    """Strict nonlinear checkpoint identity; None preserves historical loads."""
+    params = environment.get("vehicle_params", environment.get("params", {})) or {}
+    if params.get("model", "legacy_st") == "legacy_st":
+        return None
+    from physics.dynamic_models import validate_vehicle_params
+    from src.env.friction import validate_friction_protocol
+    friction = validate_friction_protocol(environment.get("friction"), nonlinear=True)
+    return {
+        "version": 1,
+        "vehicle_params": validate_vehicle_params(params),
+        "state_layout": ["x", "y", "psi", "vx", "vy", "r", "delta", "omega"],
+        "action_units": ["rad", "rad/s"],
+        "timestep": float(environment.get("timestep", .01)),
+        "action_repeat": int(environment.get("action_repeat", 1)),
+        **({"friction_protocol": friction} if friction is not None else {}),
+    }
+
+
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -105,6 +124,7 @@ def build_run_provenance(
     repo_root = Path(__file__).resolve().parents[2]
     return {
         "version": PROVENANCE_VERSION,
+        "physics_contract": physics_contract(environment),
         "behavior_contracts": {
             "fixed_opponent_episode_reset": "1.0",
             "seeded_map_schedule": "1.0",
@@ -154,3 +174,26 @@ def provenance_mismatches(
     if map_hashes(stored.get("map_protocols")) != map_hashes(current.get("map_protocols")):
         mismatches.append("map_protocols: configured map names or YAML hashes differ")
     return mismatches
+
+
+class PhysicsEpisodeLog:
+    """One shared grip record per episode, without changing transition arrays."""
+
+    def __init__(self, output_dir) -> None:
+        self.path = Path(output_dir) / 'physics_episodes.jsonl'
+        self._seen = {}
+
+    def write(self, episode_id, map_id, physics) -> None:
+        if physics is None:
+            return
+        payload = {'episode_id': episode_id, 'map_id': map_id, 'physics': physics}
+        serialized = json.dumps(payload, sort_keys=True, allow_nan=False)
+        previous = self._seen.get(episode_id)
+        if previous is not None:
+            if previous != serialized:
+                raise ValueError('Physics changed within an episode or episode identity was reused')
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open('a', encoding='utf-8') as handle:
+            handle.write(serialized + '\n')
+        self._seen[episode_id] = serialized

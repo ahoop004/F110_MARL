@@ -106,6 +106,8 @@ class DatasetWriter:
             raise FileExistsError(f"Dataset directory must be empty: {self._dir}")
         # Exclusive creation reserves an empty directory against a second writer.
         self._write_metadata(exclusive=True)
+        from core.provenance import PhysicsEpisodeLog
+        self._physics_log = PhysicsEpisodeLog(self._dir)
 
     # ------------------------------------------------------------------
     # Write path
@@ -115,6 +117,7 @@ class DatasetWriter:
         """Buffer one transition.  Flushes automatically when buffer is full."""
         if self._closed:
             raise RuntimeError("DatasetWriter is closed — cannot add more records.")
+        self._physics_log.write(record.episode_id, record.map_id, record.info.get('physics'))
         self._buffer.append(record)
         if len(self._buffer) >= self._chunk_size:
             self._flush()

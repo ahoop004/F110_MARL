@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 
 # base classes
 from src.physics import Simulator, Integrator
+from src.physics.dynamic_models import validate_vehicle_params
 # Lazy import to avoid pyglet initialization on HPC without display
 # from src.render import EnvRenderer  # Moved to render() method
 from src.env.centerline_state import (
@@ -222,6 +223,13 @@ class F110ParallelEnv:
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
         self.params = self._configure_vehicle_params(merged)
+        from src.env.friction import EpisodeFriction, validate_friction_protocol
+        friction = validate_friction_protocol(merged.get("friction"),
+                                             nonlinear=self.params.get("model") == "combined_slip_st")
+        self._episode_physics = None
+        self._friction = (EpisodeFriction(friction, nominal_mu=self.params["mu"], seed=self.seed,
+                                         phase=merged.get("physics_phase", "train"))
+                          if self.params.get("model") == "combined_slip_st" else None)
 
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
@@ -476,7 +484,7 @@ class F110ParallelEnv:
         self.map_path = runtime.map_path
         self.yaml_path = runtime.yaml_path
 
-    def _configure_vehicle_params(self, cfg: Mapping[str, Any]) -> Dict[str, float]:
+    def _configure_vehicle_params(self, cfg: Mapping[str, Any]) -> Dict[str, Any]:
         base_vehicle_params = _default_vehicle_params()
         vehicle_params = cfg.get("vehicle_params")
         if vehicle_params is None:
@@ -484,9 +492,11 @@ class F110ParallelEnv:
         if vehicle_params is not None:
             if not isinstance(vehicle_params, Mapping):
                 raise TypeError("env.vehicle_params must be a mapping")
-            overrides = {str(key): float(value) for key, value in vehicle_params.items()}
+            overrides = validate_vehicle_params(vehicle_params)
+            if overrides.get("model") == "combined_slip_st":
+                return overrides
             base_vehicle_params.update(overrides)
-        return base_vehicle_params
+        return validate_vehicle_params(base_vehicle_params)
 
     def _load_map_metadata(
         self,
@@ -786,6 +796,8 @@ class F110ParallelEnv:
             if callable(reseed_sim):
                 reseed_sim(seed_value)
             self._spawn_manager.reseed(seed_value, self.rng)
+            if self._friction is not None:
+                self._friction.reseed(seed_value)
         self._maybe_cycle_map()
         self.agents = self.possible_agents.copy()
         self.episode_done = False
@@ -838,13 +850,20 @@ class F110ParallelEnv:
         spawn_mapping = dict(spawn_result.spawn_mapping)
         self._locked_velocities = dict(spawn_result.locked_velocities)
         self._lock_speed_steps = int(spawn_result.lock_speed_steps)
+        if self.params.get("model") == "combined_slip_st" and self._lock_speed_steps:
+            raise ValueError("combined_slip_st supports rolling starts, not repeated chassis-speed locking")
         if spawn_result.update_start_poses and poses is not None:
             self._update_start_from_poses(poses)
             poses = self.start_poses
 
         # options: (N,3) poses (x,y,theta). If None, caller must set internally.
         # poses = options if options is not None else np.zeros((self.n_agents, 3), dtype=np.float32)
-        obs_joint = self.sim.reset(poses, velocities=velocities)
+        self._episode_physics = self._friction.sample() if self._friction is not None else None
+        obs_joint = self.sim.reset(poses, velocities=velocities,
+                                   **({"friction_mu": self._episode_physics["mu"]} if self._episode_physics else {}))
+        if self.params.get("model") == "combined_slip_st":
+            for index, car in enumerate(self.sim.agents):
+                self._last_control_commands[index] = car.control_reference
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self._reset_finish_line_tracking()
@@ -861,6 +880,7 @@ class F110ParallelEnv:
             info_level=self.info_level,
         )
         self._update_centerline_observation_facts(infos)
+        self._attach_physics_metadata(infos)
         self._attach_central_state(obs)
         self._refresh_render_observations(obs)
         return obs, infos
@@ -873,6 +893,12 @@ class F110ParallelEnv:
         for aid in active_before_step:
             if aid in actions:
                 joint[agent_index[aid]] = np.asarray(actions[aid], dtype=np.float32)
+
+        if self.params.get("model") == "combined_slip_st":
+            if not np.all(np.isfinite(joint)):
+                raise ValueError("Wheel-reference actions must be finite")
+            space = self.action_space(self.possible_agents[0])
+            np.clip(joint, space.low, space.high, out=joint)
 
         self._record_control_commands(joint, active_before_step)
 
@@ -971,7 +997,7 @@ class F110ParallelEnv:
                     status=record.status,
                     terminal_step=self._elapsed_steps,
                     action=joint[agent_index[aid]],
-                    vehicle_state=self.sim.agents[agent_index[aid]].state,
+                    vehicle_state=self.sim.agents[agent_index[aid]].physics_state,
                 )
         infos = {aid: {} for aid in self.possible_agents}
         add_time_limit_info(infos, truncations=truncations)
@@ -1019,6 +1045,7 @@ class F110ParallelEnv:
         self._refresh_render_observations(obs)
 
         infos = filter_info_payloads(infos, info_level=self.info_level)
+        self._attach_physics_metadata(infos)
 
         # Advance and cull before freezing the authoritative post-step state so
         # active masks agree with the public environment state returned here.
@@ -1378,6 +1405,9 @@ class F110ParallelEnv:
             lifecycle=self.lifecycle.records[agent_id],
             metadata={
                 "map_bundle": self._map_bundle_active,
+                **({"physics_model": "combined_slip_st",
+                    "wheel_speed": float(self.sim.agents[self._agent_id_to_index[agent_id]].physics_state[7])}
+                   if self.params.get("model") == "combined_slip_st" else {}),
                 **self._spawn_manager.last_spawn_metadata,
             },
         )
@@ -1396,12 +1426,19 @@ class F110ParallelEnv:
             lifecycle_records=self.lifecycle.records,
             metadata={
                 "map_bundle": self._map_bundle_active,
+                **({"physics": self._episode_physics} if self._episode_physics else {}),
                 "vector_contract_version": GLOBAL_STATE_VECTOR_VERSION,
                 "centerline_fields": _CENTERLINE_GLOBAL_STATE_KEYS,
                 **self._spawn_manager.last_spawn_metadata,
             },
         )
         return self._global_state_cache
+
+    def _attach_physics_metadata(self, infos) -> None:
+        if self._episode_physics is not None:
+            from copy import deepcopy
+            for info in infos.values():
+                info["physics"] = deepcopy(self._episode_physics)
 
     def _invalidate_global_state_cache(self) -> None:
         """Invalidate the immutable snapshot after any environment mutation."""
@@ -1462,6 +1499,10 @@ class F110ParallelEnv:
             agent_obs["speed_reference_rate"] = np.float32(
                 self._last_speed_reference_rates[index]
             )
+            if simulator_agent.nonlinear:
+                agent_obs["wheel_speed"] = np.float32(simulator_agent.physics_state[7])
+                agent_obs["wheel_speed_reference"] = agent_obs.pop("speed_reference")
+                agent_obs["wheel_speed_reference_rate"] = agent_obs.pop("speed_reference_rate")
         return observations
 
     def _record_control_commands(

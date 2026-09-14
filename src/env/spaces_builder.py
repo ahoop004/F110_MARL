@@ -12,10 +12,17 @@ def build_action_spaces(
     possible_agents: Sequence[str],
     vehicle_params: Mapping[str, float],
 ) -> Tuple[SpaceSpec, Dict[str, SpaceSpec]]:
+    if vehicle_params.get("model") == "combined_slip_st":
+        actuators = vehicle_params["wheel_actuators"]
+        low = [actuators["steering_min"], actuators["wheel_speed_min"]]
+        high = [actuators["steering_max"], actuators["wheel_speed_max"]]
+    else:
+        low = [vehicle_params["s_min"], vehicle_params["v_min"]]
+        high = [vehicle_params["s_max"], vehicle_params["v_max"]]
     single_action_space = SpaceSpec(
         shape=(2,),
-        low=np.array([vehicle_params["s_min"], vehicle_params["v_min"]], dtype=np.float32),
-        high=np.array([vehicle_params["s_max"], vehicle_params["v_max"]], dtype=np.float32),
+        low=np.array(low, dtype=np.float32),
+        high=np.array(high, dtype=np.float32),
     )
     return single_action_space, {aid: single_action_space for aid in possible_agents}
 
@@ -39,6 +46,8 @@ def build_observation_spaces(
     pose_high = np.array([x_max, y_max, np.pi], dtype=np.float32)
     v_min = float(vehicle_params.get("v_min", -5.0))
     v_max = float(vehicle_params.get("v_max", 20.0))
+    if vehicle_params.get("model") == "combined_slip_st":
+        v_min, v_max = -np.inf, np.inf
     vel_low = np.array([v_min, v_min], dtype=np.float32)
     vel_high = np.array([v_max, v_max], dtype=np.float32)
 
@@ -47,6 +56,10 @@ def build_observation_spaces(
     accel_high = np.array([accel_cap, accel_cap], dtype=np.float32)
 
     ang_cap = float(vehicle_params.get("ang_vel_max", 10.0))
+    if vehicle_params.get("model") == "combined_slip_st":
+        accel_low.fill(-np.inf)
+        accel_high.fill(np.inf)
+        ang_cap = np.inf
 
     lap_cap = float(target_laps)
     lap_low = np.array([0.0, 0.0], dtype=np.float32)

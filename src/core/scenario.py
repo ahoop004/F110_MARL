@@ -206,6 +206,19 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("PPO/MAPPO use 'experiment.episodes'; 'total_steps' is unsupported.")
 
     environment = scenario["environment"]
+    if any(key in block for block in (scenario, environment)
+           for key in ("wheel_actuators", "combined_slip_vehicle")):
+        raise ScenarioError(
+            "wheel_actuators/combined_slip_vehicle is a component development profile, not a training "
+            "configuration; configure environment.vehicle_params explicitly."
+        )
+    from src.physics.dynamic_models import validate_vehicle_params
+    vehicle_params = environment.get("vehicle_params", environment.get("params", {}))
+    if vehicle_params is not None:
+        try:
+            validate_vehicle_params(vehicle_params)
+        except ValueError as exc:
+            raise ScenarioError(str(exc)) from exc
     if scenario.get("evaluation"):
         resolve_evaluation_protocol(scenario, "selection")
     _MAP_KEYS = {"map", "maps", "map_bundle", "map_bundles"}
@@ -220,6 +233,12 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             raise ScenarioError("'environment.target_laps' must be a positive integer.")
 
     agents = scenario["agents"]
+    from src.env.friction import validate_friction_protocol
+    try:
+        validate_friction_protocol(environment.get("friction"),
+                                   nonlinear=(vehicle_params or {}).get("model") == "combined_slip_st")
+    except ValueError as exc:
+        raise ScenarioError(str(exc)) from exc
     if not isinstance(agents, dict) or not agents:
         raise ScenarioError("'agents' must be a non-empty dictionary.")
 
@@ -242,6 +261,28 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                 f"Known RL algorithms: {sorted(PYTORCH_RL_ALGOS)}. "
                 f"Known heuristic algorithms: {sorted(HEURISTIC_ALGOS)}."
             )
+
+        nonlinear = (vehicle_params or {}).get("model") == "combined_slip_st"
+        action_mode = agent_cfg.get("action_constraints", {}).get("speed_control", "direct")
+        if nonlinear and algo not in PYTORCH_RL_ALGOS:
+            if agent_cfg.get("action_adapter") != "rolling_speed_to_wheel_v1":
+                raise ScenarioError("Nonlinear fixed controllers require action_adapter: rolling_speed_to_wheel_v1")
+            if action_mode != "direct":
+                raise ScenarioError("Fixed wheel adapters require physical controller commands, not policy action constraints")
+        elif agent_cfg.get("action_adapter") is not None:
+            raise ScenarioError("action_adapter is supported only for nonlinear fixed controllers")
+        if algo in PYTORCH_RL_ALGOS and nonlinear != (action_mode in {"wheel_speed", "wheel_acceleration"}):
+            raise ScenarioError("combined_slip_st requires wheel_speed or wheel_acceleration actions; legacy uses vehicle-speed actions")
+        if nonlinear and algo in PYTORCH_RL_ALGOS:
+            from wrappers.actions.composer import ActionComposer
+            constraints = agent_cfg.get("action_constraints", {})
+            if constraints.get("speed_index", 1) != 1:
+                raise ScenarioError("Wheel command must use speed_index 1")
+            try:
+                ActionComposer.contract_from_config(constraints,
+                    float(environment.get("timestep", .01)) * int(environment.get("action_repeat", 1)))
+            except ValueError as exc:
+                raise ScenarioError(str(exc)) from exc
 
         explicit = agent_cfg.get("trainable")
         if explicit is not None and not isinstance(explicit, bool):

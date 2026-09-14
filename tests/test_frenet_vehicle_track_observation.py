@@ -363,8 +363,8 @@ def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     variant = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
     assert variant["experiment"]["name"] != baseline["experiment"]["name"]
-    # Keep the pre-2v2 collection protocol even if the parent uses workers.
-    assert variant["experiment"]["num_envs"] == 1
+    # Preserve the explicitly selected eight-worker Frenet collection protocol.
+    assert variant["experiment"]["num_envs"] == 8
     assert variant["training_defaults"]["n_steps"] == 2048
     assert variant["wandb"]["group"] != baseline["wandb"]["group"]
     assert variant["agents"]["car_0"]["observation"].endswith(

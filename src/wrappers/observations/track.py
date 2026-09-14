@@ -108,9 +108,13 @@ class FrenetVehicleTrackComponent(ObservationComponent):
         wheel_radius: float,
         maxima: Mapping[str, float] | None = None,
         clip: bool = False,
+        wheel_speed_source: str = "rolling_estimate",
     ) -> None:
         self.points = max(int(points), 1)
         self.wheel_radius = max(float(wheel_radius), 1e-6)
+        if wheel_speed_source not in {"rolling_estimate", "simulated_v1"}:
+            raise ValueError("wheel_speed_source must be rolling_estimate or simulated_v1")
+        self.wheel_speed_source = wheel_speed_source
         configured = dict(_DEFAULT_MAXIMA)
         configured.update(dict(maxima or {}))
         self._maxima = np.asarray(
@@ -128,6 +132,16 @@ class FrenetVehicleTrackComponent(ObservationComponent):
         centerline = info.get("centerline", {}) if isinstance(info, dict) else {}
         preview = info.get("track_preview", {}) if isinstance(info, dict) else {}
         wheel_radius = self.wheel_radius
+        if self.wheel_speed_source == "simulated_v1":
+            # Missing wheel state is a contract error, never a no-slip fallback.
+            wheel = [float(raw_obs[key]) for key in (
+                "wheel_speed_reference_rate", "wheel_speed_reference", "wheel_speed")]
+            if not np.all(np.isfinite(wheel)):
+                raise ValueError("Simulated wheel observations must be finite")
+        else:
+            wheel = [_number(raw_obs.get("speed_reference_rate")) / wheel_radius,
+                     _number(raw_obs.get("speed_reference")) / wheel_radius,
+                     velocity[0] / wheel_radius]
         state = np.asarray(
             [
                 velocity[0],
@@ -137,9 +151,7 @@ class FrenetVehicleTrackComponent(ObservationComponent):
                 _number(raw_obs.get("angular_velocity")),
                 _number(raw_obs.get("steering_angle")),
                 _number(raw_obs.get("steering_reference")),
-                _number(raw_obs.get("speed_reference_rate")) / wheel_radius,
-                _number(raw_obs.get("speed_reference")) / wheel_radius,
-                velocity[0] / wheel_radius,
+                *wheel,
             ],
             dtype=np.float32,
         )

@@ -1,0 +1,32 @@
+# Independent local observations; existing centralized critic layout is retained.
+includes:
+  - ppo_combined_slip_development.yaml
+
+experiment:
+  name: mappo_combined_slip_development
+
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+  team_reward_reduction: mean
+
+environment:
+  episode_termination:
+    mode: all_agents
+
+agents:
+  car_0:
+    algorithm: mappo
+  car_1:
+    algorithm: mappo
+    role: racer
+    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
+    reward: ../configs/reward/tasks/lap_completion_frenet.yaml
+    params:
+      hidden_dims: [64, 64]
+    action_constraints:
+      speed_control: wheel_acceleration
+      max_wheel_acceleration: 100.0
+      max_wheel_deceleration: 100.0
+      prevent_reverse: true
+      speed_index: 1

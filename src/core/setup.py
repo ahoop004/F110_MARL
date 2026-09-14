@@ -42,6 +42,7 @@ def create_training_setup(
     experiment_config = scenario['experiment']
     env_config = dict(scenario['environment'])
     env_config = apply_map_split(env_config, experiment_config, mode)
+    env_config["physics_phase"] = "eval" if mode in {"eval", "evaluation", "test"} else "train"
     agent_configs = scenario['agents']
     env_config.setdefault("trainable_agents", get_trainable_agent_ids(agent_configs))
     env_config.setdefault("fixed_policy_agents", get_fixed_agent_ids(agent_configs))
@@ -96,5 +97,5 @@ def create_training_setup(
     if target_mapping:
         env.configure_agent_targets(target_mapping)
 
-    agents = build_fixed_policy_agents(agent_configs)
+    agents = build_fixed_policy_agents(agent_configs, vehicle_params=env.params)
     return env, agents, {}

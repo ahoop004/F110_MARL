@@ -99,12 +99,18 @@ class ActionComposer:
         mode = constraints.get("speed_control", "direct")
         if mode == "direct":
             return {"speed_control": "direct"}
-        if mode != "acceleration":
-            raise ValueError("speed_control must be 'direct' or 'acceleration'.")
+        wheel = mode in {"wheel_speed", "wheel_acceleration"}
+        if wheel and constraints.get("speed_index", 1) != 1:
+            raise ValueError("Wheel command must use speed_index 1")
+        if mode == "wheel_speed":
+            return {"speed_control": mode, "version": 1, "units": ["rad", "rad/s"],
+                    "prevent_reverse": bool(constraints.get("prevent_reverse", True))}
+        if mode not in {"acceleration", "wheel_acceleration"}:
+            raise ValueError("speed_control must be direct, acceleration, wheel_speed, or wheel_acceleration.")
         values = {
             "decision_dt": decision_dt,
-            "max_acceleration": constraints.get("max_acceleration"),
-            "max_deceleration": constraints.get("max_deceleration"),
+            "max_acceleration": constraints.get("max_wheel_acceleration" if wheel else "max_acceleration"),
+            "max_deceleration": constraints.get("max_wheel_deceleration" if wheel else "max_deceleration"),
         }
         for name, value in values.items():
             if value is None or not np.isfinite(float(value)) or float(value) <= 0.0:
@@ -114,6 +120,7 @@ class ActionComposer:
             **{name: float(value) for name, value in values.items()},
             "speed_index": int(constraints.get("speed_index", 1)),
             "prevent_reverse": bool(constraints.get("prevent_reverse", True)),
+            **({"version": 1, "units": ["rad", "rad/s"], "rate_units": "rad/s^2"} if wheel else {}),
         }
 
     def process(self, action: np.ndarray) -> np.ndarray:
@@ -147,7 +154,7 @@ class ActionComposer:
         low = np.asarray(action_low, dtype=np.float32).copy()
         high = np.asarray(action_high, dtype=np.float32).copy()
         integrated = None
-        if contract["speed_control"] == "acceleration":
+        if contract["speed_control"] in {"acceleration", "wheel_acceleration"}:
             index = contract["speed_index"]
             if not 0 <= index < len(low):
                 raise ValueError("Acceleration speed_index is outside the action vector.")
@@ -162,3 +169,39 @@ class ActionComposer:
             speed_index = int(constraints.get("speed_index", 1))
             components.append(PreventReverseComponent(speed_index))
         return cls(components)
+
+
+class WheelReferenceAdapter:
+    """Convert a fixed controller's physical [rad, m/s] output to [rad, rad/s].
+
+    Radius converts a requested rolling speed, not measured chassis velocity.
+    Tire slip and actuator lag still determine the resulting vehicle motion.
+    Lifecycle and environment injection remain owned by the wrapped controller.
+    """
+
+    def __init__(self, controller, actuator_config: Dict) -> None:
+        self.controller = controller
+        self.radius = float(actuator_config['wheel_radius'])
+        if not np.isfinite(self.radius) or self.radius <= 0:
+            raise ValueError('Wheel adapter requires positive finite physical radius')
+        self.low = np.array([actuator_config['steering_min'], actuator_config['wheel_speed_min']])
+        self.high = np.array([actuator_config['steering_max'], actuator_config['wheel_speed_max']])
+
+    def __getattr__(self, name):
+        return getattr(self.controller, name)
+
+    def act(self, obs, *args, **kwargs) -> np.ndarray:
+        action = np.array(self.controller.act(obs, *args, **kwargs), dtype=np.float64, copy=True)
+        if action.shape != (2,) or not np.all(np.isfinite(action)):
+            raise ValueError('Fixed controller must return finite physical [steering rad, speed m/s]')
+        action[1] /= self.radius
+        return np.clip(action, self.low, self.high).astype(np.float32)
+
+    def set_action_space(self, action_space) -> None:
+        # A controller that clips against its action space must still see m/s.
+        from src.env.spaces import SpaceSpec
+        if hasattr(self.controller, 'set_action_space'):
+            low, high = np.array(action_space.low, copy=True), np.array(action_space.high, copy=True)
+            low[1] *= self.radius
+            high[1] *= self.radius
+            self.controller.set_action_space(SpaceSpec(shape=(2,), low=low, high=high))

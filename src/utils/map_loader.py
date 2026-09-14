@@ -12,6 +12,57 @@ import yaml
 from PIL import Image
 
 
+def parse_surface_metadata(value: Any) -> Optional[Dict[str, Any]]:
+    """Validate optional uniform surface metadata, without applying tire forces.
+
+    Friction is a tire/surface measurement, not a material-only coefficient.
+    Missing data stays unknown; it never becomes an implicit mu override.
+    Return detached nested dictionaries so cached map metadata cannot leak edits.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("surface must be a mapping or null")
+    allowed = {"version", "id", "material", "condition", "friction"}
+    if set(value) - allowed or not {"version", "id"} <= set(value):
+        raise ValueError("surface requires version/id; supports only material, condition, and friction")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise ValueError("surface.version must be integer 1")
+    for name in ("id", "material", "condition"):
+        if name in value and (not isinstance(value[name], str) or not value[name].strip()):
+            raise ValueError(f"surface.{name} must be a nonempty string")
+    result = dict(value)
+    friction = value.get("friction")
+    if friction is None:
+        return result
+    required = {"mu", "reference_tire", "calibration_id", "calibration_status", "source"}
+    if (not isinstance(friction, dict) or not required <= set(friction)
+            or set(friction) - (required | {"relative_std"})):
+        raise ValueError("surface.friction requires mu, reference_tire, calibration_id, calibration_status, source; optional relative_std")
+    friction = dict(friction)
+    for name in required - {"mu"}:
+        if not isinstance(friction[name], str) or not friction[name].strip():
+            raise ValueError(f"surface.friction.{name} must be a nonempty string")
+    if friction["calibration_status"] not in {"uncalibrated", "measured"}:
+        raise ValueError("surface.friction.calibration_status must be uncalibrated or measured")
+    for name in ("mu", "relative_std"):
+        if name not in friction:
+            continue
+        number = friction[name]
+        if (isinstance(number, (bool, np.bool_, str)) or not np.isscalar(number)
+                or not isinstance(number, (int, float, np.integer, np.floating))):
+            raise ValueError(f"surface.friction.{name} must be a finite nonnegative number")
+        try:
+            number = float(number)
+        except OverflowError as exc:
+            raise ValueError(f"surface.friction.{name} must be finite") from exc
+        if not math.isfinite(number) or number < 0:
+            raise ValueError(f"surface.friction.{name} must be a finite nonnegative number")
+        friction[name] = number
+    result["friction"] = friction
+    return result
+
+
 @dataclass
 class MapData:
     metadata: Dict[str, Any]
@@ -135,6 +186,8 @@ class MapLoader:
             track_mask = mask
 
         metadata_view = dict(cached.metadata)
+        if "surface" in metadata_view:
+            metadata_view["surface"] = parse_surface_metadata(metadata_view["surface"])
 
         if cached.spawn_points is not spawn_points:
             cached.spawn_points = spawn_points

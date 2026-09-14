@@ -8,6 +8,7 @@ import yaml
 from PIL import Image
 
 from src.env.types import MapRuntimeConfig
+from src.utils.map_loader import parse_surface_metadata
 
 
 def normalize_map_identifier(identifier: Optional[Any]) -> Optional[str]:
@@ -61,6 +62,8 @@ def resolve_map_runtime_config(
     if metadata is None:
         with open(map_path, "r") as handle:
             metadata = yaml.safe_load(handle) or {}
+    if "surface" in metadata:
+        metadata["surface"] = parse_surface_metadata(metadata["surface"])
 
     preloaded_image_path = cfg.get("map_image_path")
     if preloaded_image_path is None and map_data is not None:

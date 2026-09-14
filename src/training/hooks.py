@@ -485,3 +485,16 @@ class EvaluationCheckpointHook(CheckpointHook):
                 self._dir / "best_model.pt",
                 metadata={"checkpoint_selection": record},
             )
+
+
+class PhysicsEpisodeHook(TrainingHook):
+    """Write sampled episode physics through the shared provenance logger."""
+    requires_transition_record = True
+
+    def __init__(self, output_dir) -> None:
+        from core.provenance import PhysicsEpisodeLog
+        self._log = PhysicsEpisodeLog(output_dir)
+        self.path = self._log.path
+
+    def on_step(self, record) -> None:
+        self._log.write(record.episode_id, record.map_id, record.info.get('physics'))

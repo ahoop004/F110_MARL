@@ -740,13 +740,18 @@ def test_checkpoint_directory_requires_best_model(tmp_path):
 def test_transfer_scenario_preserves_pretraining_contract():
     from core.scenario import load_and_expand_scenario
 
-    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
     transfer = load_and_expand_scenario("scenarios/ppo_lap_completion_transfer.yaml")
     assert source["agents"] == transfer["agents"]
     assert source["evaluation"] == transfer["evaluation"]
     assert source["experiment"]["name"] != transfer["experiment"]["name"]
-    for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
-        assert transfer["environment"][key] == ["Budapest_map"]
+    # The transfer track is user-selectable; all three lists must agree.
+    maps = transfer["environment"]["map_bundles"]
+    assert len(maps) == 1
+    for key in ("map_bundles_train", "map_bundles_eval"):
+        assert transfer["environment"][key] == maps
+    for key in ("vehicle_params", "timestep", "action_repeat"):
+        assert transfer["environment"][key] == source["environment"][key]
 
 
 @pytest.mark.parametrize("scenario_name", ["mappo_gaplock", "nrl_1car"])

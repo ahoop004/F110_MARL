@@ -116,7 +116,7 @@ class Simulator(object):
             self.agents.append(agent)
         self.scan_simulator = shared_scan_simulator
 
-        self._state_dim = self.agents[0].state.shape[0] if self.agents else 0
+        self._state_dim = self.agents[0].physics_state.shape[0] if self.agents else 0
         self._state_buffer = np.zeros((self.num_agents, self._state_dim), dtype=np.float64)
         self._pose_buffer = np.zeros((self.num_agents, 3), dtype=np.float64)
         self._verts_buffer_f64 = np.zeros((self.num_agents, 4, 2), dtype=np.float64)
@@ -192,7 +192,8 @@ class Simulator(object):
         Advance all agents one physics step and return vectorized observations.
 
         Args:
-            control_inputs: (N,2) array of (steer_cmd, vel_cmd) in ENV UNITS.
+            control_inputs: (N,2) array of steering rad and speed reference:
+                chassis m/s for legacy_st, wheel rad/s for combined_slip_st.
 
         Returns:
             obs_dict dict[str, np.ndarray] with shapes:
@@ -216,13 +217,18 @@ class Simulator(object):
         verts_buffer_f32 = self._verts_buffer_f32
 
         for i, agent in enumerate(self.agents):
-            np.copyto(state_buffer[i], agent.state)
+            np.copyto(state_buffer[i], agent.physics_state)
             agent.update_pose(float(control_inputs[i, 0]), float(control_inputs[i, 1]))
 
             if getattr(agent, "in_collision", False):
-                np.copyto(agent.state, state_buffer[i])
-                agent.state[3] = 0.0
-                agent.state[5] = 0.0
+                if agent.nonlinear:
+                    # Stop at contact. Lifecycle handling latches a terminal
+                    # freeze; nonterminating collision experiments may resume.
+                    agent.freeze_motion(state_buffer[i], hold=False)
+                else:
+                    np.copyto(agent.state, state_buffer[i])
+                    agent.state[3] = 0.0
+                    agent.state[5] = 0.0
                 agent.compute_scan()
                 env_collision_mask[i] = True
 
@@ -242,7 +248,8 @@ class Simulator(object):
             self.agent_poses[i, 1] = np.float32(agent.state[1])
             self.agent_poses[i, 2] = np.float32(agent.state[4])
 
-            v_long, v_lat = _body_velocity_from_state(agent.state)
+            v_long, v_lat = (agent.body_velocity if getattr(agent, "nonlinear", False)
+                                  else _body_velocity_from_state(agent.state))
             self._linear_vels_x[i] = np.float32(v_long)
             self._linear_vels_y[i] = np.float32(v_lat)
             self._ang_vels_z[i] = np.float32(agent.state[5])
@@ -323,7 +330,8 @@ class Simulator(object):
         else:
             agent.state[3] = value
 
-        v_long, v_lat = _body_velocity_from_state(agent.state)
+        v_long, v_lat = (agent.body_velocity if getattr(agent, "nonlinear", False)
+                                  else _body_velocity_from_state(agent.state))
         self._linear_vels_x[agent_idx] = np.float32(v_long)
         self._linear_vels_y[agent_idx] = np.float32(v_lat)
         self._ang_vels_z[agent_idx] = np.float32(agent.state[5])
@@ -342,7 +350,7 @@ class Simulator(object):
         }
 
 
-    def reset(self, poses: np.ndarray, velocities: Optional[np.ndarray] = None) -> dict:
+    def reset(self, poses: np.ndarray, velocities: Optional[np.ndarray] = None, *, friction_mu=None) -> dict:
         """
         Reset the simulator to the given poses and return initial vectorized observations.
 
@@ -375,17 +383,19 @@ class Simulator(object):
         pose_buffer = self._pose_buffer
 
         for i, agent in enumerate(self.agents):
-            agent.reset(poses[i])
+            if friction_mu is not None:
+                if not agent.nonlinear:
+                    raise ValueError("Episode friction requires combined_slip_st")
+                agent.reset(poses[i], friction_mu=friction_mu)
+            else:
+                agent.reset(poses[i])
 
             # Set custom initial velocity if provided (skip if NaN)
             if velocities is not None and i < len(velocities):
                 vel = float(velocities[i])
                 if not np.isnan(vel):
                     # agent.state[3] is v_long (longitudinal velocity)
-                    agent.state[3] = vel
-                    # Update v_long attribute if it exists
-                    if hasattr(agent, 'v_long'):
-                        agent.v_long = vel
+                    agent.set_longitudinal_speed(vel)
 
             pose_buffer[i, 0] = agent.state[0]
             pose_buffer[i, 1] = agent.state[1]
@@ -395,7 +405,8 @@ class Simulator(object):
             self.agent_poses[i, 1] = np.float32(agent.state[1])
             self.agent_poses[i, 2] = np.float32(agent.state[4])
 
-            v_long, v_lat = _body_velocity_from_state(agent.state)
+            v_long, v_lat = (agent.body_velocity if getattr(agent, "nonlinear", False)
+                                  else _body_velocity_from_state(agent.state))
             yaw_rate = float(getattr(agent, "yaw_rate", agent.state[5]))
 
             self._linear_vels_x[i] = np.float32(v_long)

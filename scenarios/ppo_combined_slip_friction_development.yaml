@@ -1,0 +1,28 @@
+# Synthetic grip range for implementation checks; not measured uncertainty.
+includes:
+  - ppo_combined_slip_development.yaml
+
+experiment:
+  name: ppo_combined_slip_friction_development
+
+environment:
+  friction:
+    version: 1
+    scope: shared
+    train:
+      mode: uniform
+      low: 0.8
+      high: 1.1
+    eval:
+      mode: grid
+      values: [0.8, 0.95, 1.1]
+
+evaluation:
+  enabled: true
+  every_episodes: 5
+  episodes: 3
+  seed: 10042
+  final_test:
+    episodes: 3
+    seed: 20042
+

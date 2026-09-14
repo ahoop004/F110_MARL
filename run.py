@@ -21,7 +21,7 @@ if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
 from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario
 from core.setup import create_training_setup
 from core.run_id import resolve_run_id, set_run_id_env
-from core.provenance import build_run_provenance, provenance_mismatches
+from core.provenance import build_run_provenance, provenance_mismatches, physics_contract
 from src.core.agent_builder import get_trainable_agent_ids
 from loggers.console import ConsoleLogger
 from loggers.csv_logger import CSVLogger
@@ -162,7 +162,8 @@ def resolve_training_params(agent_cfg: Dict, scenario: Dict) -> Dict:
     params = agent_cfg.get("params", {})
     environment = scenario.get("environment", {})
     decision_dt = float(environment.get("timestep", 0.01)) * int(environment.get("action_repeat", 1))
-    return {**defaults, **params, "_action_contract": ActionComposer.contract_from_config(
+    return {**defaults, **params, "_physics_contract": physics_contract(environment),
+            "_action_contract": ActionComposer.contract_from_config(
         agent_cfg.get("action_constraints", {}), decision_dt,
     )}
 
@@ -456,6 +457,8 @@ def main() -> None:
 
     # Training params (needed before banner so we can show device)
     params = resolve_training_params(agent_cfg, scenario)
+    params["_observation_contract"] = (
+        obs_composer.contract if params["_physics_contract"] is not None else None)
     if initial_checkpoint is not None:
         params["_initial_checkpoint"] = str(initial_checkpoint)
         params["_initial_checkpoint_sha256"] = hashlib.sha256(initial_checkpoint.read_bytes()).hexdigest()
@@ -581,6 +584,10 @@ def main() -> None:
     if wandb_logger:
         hooks.append(WandbHook(wandb_logger))
 
+    if params.get("_physics_contract") is not None:
+        from training.hooks import PhysicsEpisodeHook
+        hooks.append(PhysicsEpisodeHook(output_dir))
+
     # Optional dataset recording
     dataset_writer = None
     if args.dataset_dir:
@@ -605,6 +612,9 @@ def main() -> None:
                 "target_laps": scenario.get("environment", {}).get("target_laps", 1),
                 "map_protocols": provenance["map_protocols"],
                 "provenance": provenance,
+                "physics_contract": params.get("_physics_contract"),
+                "action_contract": params["_action_contract"],
+                "observation_contract": params.get("_observation_contract"),
                 "global_state_dim": len(env.get_global_state().vector),
                 "global_state_contract_version": env.get_global_state().metadata.get(
                     "vector_contract_version"
@@ -844,6 +854,8 @@ def _run_eval(
     )
     reward_composers = build_reward_composers(agent_configs, trainable_ids, scenario_dir)
     params = resolve_training_params(focal_cfg, scenario)
+    params["_observation_contract"] = (
+        obs_composers[focal_agent_id].contract if params["_physics_contract"] is not None else None)
     if algorithm == "mappo":
         params = {**params, **resolve_mappo_config(scenario)}
     action_composers = {
@@ -956,6 +968,7 @@ def _run_eval(
     target_id = str(focal_cfg.get("target_id", "") or "")
     opponent_agent_id = target_id if target_id in opponent_ids else (opponent_ids[0] if opponent_ids else None)
     eval_episodes_facts = []
+    eval_physics = {}
     team_results = []
 
     try:
@@ -1127,6 +1140,8 @@ def _run_eval(
                     )
 
             finalize_episode_facts(episode_facts)
+            if info_dict.get(focal_agent_id, {}).get("physics") is not None:
+                eval_physics[episode_facts.episode] = info_dict[focal_agent_id]["physics"]
             if has_team_rewards:
                 team_results.append({
                     **team_finish_result(info_dict, trainable_ids, opponent_ids),
@@ -1210,7 +1225,9 @@ def _run_eval(
         "action_repeat": action_repeat,
         "summary": summary,
         "episode_results": [
-            {"seed": base_seed + facts.episode, **aggregate_eval_episodes(
+            {"seed": base_seed + facts.episode,
+             **({"physics": eval_physics[facts.episode]} if facts.episode in eval_physics else {}),
+             **aggregate_eval_episodes(
                 [facts], focal_agent_id=focal_agent_id,
                 opponent_agent_id=opponent_agent_id, timestep=float(env.timestep),
             )}
@@ -1397,8 +1414,11 @@ def _run_mappo(
     # obs_dim: all trainable agents share the same local observation spec
     obs_dim = obs_composers[focal_id].obs_dim
 
-    # Probe global state dimension via one env reset (MARLTrainer will reset again per episode)
-    _obs_dict, _info_dict = env.reset()
+    # Nonlinear state dimensions are available before reset. A sizing reset
+    # would consume an unrecorded friction draw (and spawn) before episode zero.
+    # Retain the historical reset sequence for legacy experiment compatibility.
+    if params.get("_physics_contract") is None:
+        env.reset()
     global_snapshot = env.get_global_state()
     global_state_dim = len(global_snapshot.vector)
     params = {

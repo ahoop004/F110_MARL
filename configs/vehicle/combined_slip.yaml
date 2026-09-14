@@ -1,0 +1,43 @@
+# Opt-in runtime profile. Synthetic development parameters, not a hardware calibration.
+environment:
+  vehicle_params:
+    model: combined_slip_st
+    model_version: 1
+    tire_model: smooth_friction_circle  # Reduced model, NOT MF6.1/Pacejka
+    tire_id: synthetic-tire-v1
+    drivetrain: shared_speed_awd
+    calibration:
+      id: synthetic-combined-slip-v1
+      status: uncalibrated
+      source: "Geometry/grip mirror legacy assumptions; tire stiffness and low-speed regularization are synthetic."
+    m: 3.74                            # kg
+    I: 0.04712                         # kg m², yaw inertia
+    lf: 0.15875                        # m, center of mass to front axle
+    lr: 0.17145                        # m, center of mass to rear axle
+    h: 0.074                           # m, center-of-mass height
+    mu: 1.0489                         # dimensionless, same nominal tire/surface grip at both axles
+    front_longitudinal_stiffness: 10.0  # normalized by Fz, per unit slip ratio
+    front_cornering_stiffness: 5.0      # normalized by Fz, per radian near zero slip angle
+    rear_longitudinal_stiffness: 10.0
+    rear_cornering_stiffness: 5.0
+    slip_speed_floor: 0.5              # m/s; explicit creep/near-rest regularization
+    max_integration_step: 0.001        # s; RK4 chassis substep, not the policy decision interval
+    length: 0.32  # m, collision hull
+    width: 0.225  # m
+    wheel_actuators:
+      version: 1
+      calibration:
+        id: synthetic-wheel-actuators-v1
+        status: uncalibrated
+        source: "Radius/steering bounds mirror legacy settings; time constants and wheel limits are development assumptions."
+      wheel_radius: 0.05                 # m; legacy observation assumption, not measured
+      steering_time_constant: 0.5         # s; mirrors legacy steering gain of 2/s
+      wheel_speed_time_constant: 0.15     # s; synthetic, NOT fitted from the paper
+      steering_min: -0.4189               # rad
+      steering_max: 0.4189
+      steering_rate_min: -3.2             # rad/s
+      steering_rate_max: 3.2
+      wheel_speed_min: -400.0             # rad/s; circumferential speed -20 m/s
+      wheel_speed_max: 400.0
+      wheel_rate_min: -100.0              # rad/s²; circumferential acceleration -5 m/s²
+      wheel_rate_max: 100.0

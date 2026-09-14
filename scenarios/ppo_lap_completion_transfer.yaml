@@ -13,9 +13,9 @@ experiment:
 
 environment:
   # Change all three lists together when comparing another track.
-  map_bundles: [Budapest_map]
-  map_bundles_train: [Budapest_map]
-  map_bundles_eval: [Budapest_map]
+  map_bundles: [Spielberg_map]
+  map_bundles_train: [Spielberg_map]
+  map_bundles_eval: [Spielberg_map]
 
 wandb:
   group: ppo-lap-completion-transfer

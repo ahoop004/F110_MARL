@@ -1,12 +1,247 @@
 import warnings
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import numpy as np
 from numba import njit
 
-from physics.dynamic_models import vehicle_dynamics_st, pid
+from physics.dynamic_models import (
+    vehicle_dynamics_st, pid, validate_vehicle_params, first_order_actuator_step,
+    combined_slip_dynamics,
+)
 from physics.integration import Integrator
 from physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from physics.collision_models import get_vertices
+
+
+def _calibration_metadata(value: Mapping, name: str):
+    if (not isinstance(value, Mapping) or set(value) != {"id", "status", "source"}
+            or any(not isinstance(item, str) or not item.strip() for item in value.values())
+            or value["status"] not in {"uncalibrated", "measured"}):
+        raise ValueError(f"{name}.calibration needs id, status (uncalibrated/measured), and source")
+    return MappingProxyType(dict(value))
+
+
+class WheelActuators:
+    """Independent steering/wheel state for development of the nonlinear model.
+
+    State and references are [steering angle (rad), wheel speed (rad/s)]. This
+    component does not exert chassis forces and is not a selectable RaceCar
+    model. No implicit transport delay or motor-torque equation is added.
+    """
+
+    _FIELDS = frozenset({
+        "wheel_radius", "steering_time_constant", "wheel_speed_time_constant",
+        "steering_min", "steering_max", "steering_rate_min", "steering_rate_max",
+        "wheel_speed_min", "wheel_speed_max", "wheel_rate_min", "wheel_rate_max",
+    })
+
+    def __init__(self, config: Mapping):
+        if not isinstance(config, Mapping):
+            raise ValueError("wheel_actuators must be a mapping")
+        expected = self._FIELDS | {"version", "calibration"}
+        if set(config) != expected:
+            raise ValueError(f"wheel_actuators fields must be exactly {sorted(expected)}")
+        if type(config["version"]) is not int or config["version"] != 1:
+            raise ValueError("wheel_actuators.version must be integer 1")
+        calibration = _calibration_metadata(config["calibration"], "wheel_actuators")
+        values = {}
+        for name in self._FIELDS:
+            value = config[name]
+            if isinstance(value, (bool, np.bool_, str)) or not np.isscalar(value):
+                raise ValueError(f"wheel_actuators.{name} must be a finite number")
+            try:
+                value = float(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"wheel_actuators.{name} must be a finite number") from exc
+            if not np.isfinite(value):
+                raise ValueError(f"wheel_actuators.{name} must be finite")
+            values[name] = value
+        for name in ("wheel_radius", "steering_time_constant", "wheel_speed_time_constant"):
+            if values[name] <= 0:
+                raise ValueError(f"wheel_actuators.{name} must be positive")
+        for prefix in ("steering", "steering_rate", "wheel_speed", "wheel_rate"):
+            lo, hi = values[f"{prefix}_min"], values[f"{prefix}_max"]
+            if not lo <= 0 <= hi or lo >= hi or ("rate" in prefix and not lo < 0 < hi):
+                raise ValueError(f"wheel_actuators.{prefix} limits must contain zero; rate limits must straddle it")
+        if max(abs(values["steering_min"]), abs(values["steering_max"])) >= np.pi / 2:
+            raise ValueError("wheel_actuators steering limits must be inside (-pi/2, pi/2)")
+        self.params = MappingProxyType({**values, "version": 1,
+                                       "calibration": MappingProxyType(dict(calibration))})
+        self._bounds_low = np.array([values["steering_min"], values["wheel_speed_min"]])
+        self._bounds_high = np.array([values["steering_max"], values["wheel_speed_max"]])
+        self._time_constants = (values["steering_time_constant"], values["wheel_speed_time_constant"])
+        self._rate_limits = ((values["steering_rate_min"], values["steering_rate_max"]),
+                             (values["wheel_rate_min"], values["wheel_rate_max"]))
+        self._state = np.zeros(2, dtype=np.float64)
+        self._reference = self._state.copy()
+
+    @property
+    def state(self) -> np.ndarray:
+        return self._state.copy()
+
+    @property
+    def reference(self) -> np.ndarray:
+        """Applied reference after explicit command saturation."""
+        return self._reference.copy()
+
+    def reset(self, *, steering_angle=0.0, forward_speed=0.0, wheel_speed=None) -> None:
+        """Clear command history; default to rolling speed only at initialization.
+
+        An explicit wheel_speed initializes slip independently of forward_speed.
+        Public spawn/reset integration belongs to the complete vehicle model.
+        """
+        if not np.isfinite(forward_speed):
+            raise ValueError("forward_speed must be finite")
+        if wheel_speed is None:
+            wheel_speed = forward_speed / self.params["wheel_radius"]
+        state = np.array([steering_angle, wheel_speed], dtype=np.float64)
+        if (not np.all(np.isfinite(state)) or np.any(state < self._bounds_low)
+                or np.any(state > self._bounds_high)):
+            raise ValueError("Initial actuator state must be finite and within bounds")
+        self._state[:] = state
+        self._reference[:] = state
+
+    def command(self, steering_angle: float, wheel_speed: float) -> None:
+        reference = np.array([steering_angle, wheel_speed], dtype=np.float64)
+        if not np.all(np.isfinite(reference)):
+            raise ValueError("Actuator references must be finite")
+        self._reference[:] = np.clip(reference, self._bounds_low, self._bounds_high)
+
+    def sample(self, elapsed: float) -> np.ndarray:
+        """Sample a held command at an integration stage without advancing state."""
+        if not np.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("elapsed must be finite and nonnegative")
+        return np.array([
+            first_order_actuator_step(value, reference, elapsed, tau, *rates)
+            for value, reference, tau, rates in zip(
+                self._state, self._reference, self._time_constants, self._rate_limits)
+        ])
+
+    def advance(self, timestep: float) -> np.ndarray:
+        if not np.isfinite(timestep) or timestep <= 0:
+            raise ValueError("timestep must be finite and positive")
+        self._state[:] = self.sample(timestep)
+        return self.state
+
+
+class CombinedSlipVehicle:
+    """Coupled planar chassis/tire/actuator model for physics development.
+
+    State is [x, y, psi, vx, vy, yaw_rate, delta, omega] in SI units. This class
+    owns no map, sensors, trainer, or reward logic. RaceCar adapts it into the
+    environment with explicit wheel-reference action and observation contracts.
+    """
+
+    _NUMERIC_FIELDS = (
+        "m", "I", "lf", "lr", "h", "mu",
+        "front_longitudinal_stiffness", "front_cornering_stiffness",
+        "rear_longitudinal_stiffness", "rear_cornering_stiffness",
+        "slip_speed_floor", "max_integration_step",
+    )
+
+    def __init__(self, config: Mapping, actuator_config: Mapping):
+        expected = set(self._NUMERIC_FIELDS) | {
+            "model", "model_version", "tire_model", "tire_id", "drivetrain", "calibration"}
+        if not isinstance(config, Mapping) or set(config) != expected:
+            raise ValueError(f"combined_slip_vehicle fields must be exactly {sorted(expected)}")
+        for name, expected_value in (("model", "combined_slip_st"),
+                                      ("tire_model", "smooth_friction_circle"),
+                                      ("drivetrain", "shared_speed_awd")):
+            if config[name] != expected_value:
+                raise ValueError(f"combined_slip_vehicle.{name} must be {expected_value!r}")
+        if type(config["model_version"]) is not int or config["model_version"] != 1:
+            raise ValueError("combined_slip_vehicle.model_version must be integer 1")
+        if not isinstance(config["tire_id"], str) or not config["tire_id"].strip():
+            raise ValueError("combined_slip_vehicle.tire_id must be a nonempty string")
+        params = dict(config)
+        params["calibration"] = _calibration_metadata(config["calibration"], "combined_slip_vehicle")
+        for name in self._NUMERIC_FIELDS:
+            value = config[name]
+            if isinstance(value, (bool, np.bool_, str)) or not np.isscalar(value):
+                raise ValueError(f"combined_slip_vehicle.{name} must be a finite number")
+            try:
+                value = float(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"combined_slip_vehicle.{name} must be a finite number") from exc
+            if not np.isfinite(value) or value < 0 or (value == 0 and name not in {"h", "mu"}):
+                raise ValueError(f"combined_slip_vehicle.{name} must be finite and positive (h/mu may be zero)")
+            params[name] = value
+        self.params = MappingProxyType(params)
+        self._actuators = WheelActuators(actuator_config)
+        self._chassis = np.zeros(6, dtype=np.float64)
+        self._dynamics_params = tuple(params[name] for name in self._NUMERIC_FIELDS[:-1]) + (
+            self._actuators.params["wheel_radius"],)
+
+    @property
+    def state(self) -> np.ndarray:
+        return np.concatenate((self._chassis, self._actuators.state))
+
+    @property
+    def reference(self) -> np.ndarray:
+        return self._actuators.reference
+
+    def reset(self, *, pose=(0.0, 0.0, 0.0), velocity=(0.0, 0.0), yaw_rate=0.0,
+              steering_angle=0.0, wheel_speed=None) -> None:
+        pose = np.asarray(pose, dtype=np.float64)
+        velocity = np.asarray(velocity, dtype=np.float64)
+        if pose.shape != (3,) or velocity.shape != (2,):
+            raise ValueError("pose/velocity must have shapes (3,)/(2,)")
+        chassis = np.concatenate((pose, velocity, [yaw_rate]))
+        if not np.all(np.isfinite(chassis)):
+            raise ValueError("Initial chassis state must be finite")
+        # Validate the complete initial condition before changing either subsystem.
+        actuators = WheelActuators(self._actuators.params)
+        actuators.reset(steering_angle=steering_angle, forward_speed=velocity[0], wheel_speed=wheel_speed)
+        combined_slip_dynamics(chassis, actuators.state, self._dynamics_params)
+        self._chassis[:] = chassis
+        self._actuators = actuators
+
+    def command(self, steering_angle: float, wheel_speed: float) -> None:
+        """Set steering radians and wheel rad/s, not chassis-speed commands."""
+        self._actuators.command(steering_angle, wheel_speed)
+
+    def diagnostics(self) -> dict:
+        rhs, axles = combined_slip_dynamics(self._chassis, self._actuators.state, self._dynamics_params)
+        yaw_rate = self._chassis[5]
+        return {
+            "contact_velocity": axles[:, :2].copy(),
+            "slip_ratio": axles[:, 2].copy(),
+            "slip_angle": axles[:, 3].copy(),
+            "tire_forces": axles[:, 4:7].copy(),
+            "body_acceleration": np.array([rhs[3] - yaw_rate * self._chassis[4],
+                                           rhs[4] + yaw_rate * self._chassis[3]]),
+            "yaw_acceleration": float(rhs[5]),
+        }
+
+    def advance(self, timestep: float) -> np.ndarray:
+        """RK4 chassis integration with exact actuator samples at every stage.
+
+        Explicit max_integration_step limits stiffness near zero contact speed.
+        Failed steps raise without clipping, freezing, or committing partial state.
+        """
+        if not np.isfinite(timestep) or timestep <= 0:
+            raise ValueError("timestep must be finite and positive")
+        steps = int(np.ceil(timestep / self.params["max_integration_step"]))
+        dt = timestep / steps
+        state = self._chassis.copy()
+        for index in range(steps):
+            start = index * dt
+            at_start = self._actuators.sample(start)
+            at_middle = self._actuators.sample(start + dt / 2)
+            at_end = self._actuators.sample((index + 1) * dt)
+            k1, _ = combined_slip_dynamics(state, at_start, self._dynamics_params)
+            k2, _ = combined_slip_dynamics(state + dt / 2 * k1, at_middle, self._dynamics_params)
+            k3, _ = combined_slip_dynamics(state + dt / 2 * k2, at_middle, self._dynamics_params)
+            k4, _ = combined_slip_dynamics(state + dt * k3, at_end, self._dynamics_params)
+            state += dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+        final_actuators = self._actuators.sample(timestep)
+        combined_slip_dynamics(state, final_actuators, self._dynamics_params)
+        if not np.all(np.isfinite(state)):
+            raise ValueError("Nonfinite chassis state; reduce integration step or check parameters")
+        self._actuators.advance(timestep)
+        self._chassis[:] = state
+        return self.state
 
 
 class RaceCar(object):
@@ -55,11 +290,23 @@ class RaceCar(object):
         """
 
         # initialization
-        self.params = params
+        self.params = validate_vehicle_params(params)
+        self.nonlinear = self.params.get("model") == "combined_slip_st"
+        self._physics = None
+        if self.nonlinear:
+            mode = integrator.value if isinstance(integrator, Integrator) else integrator
+            if str(mode).upper() != "RK4":
+                raise ValueError("combined_slip_st requires RK4 integration")
+            self._physics = CombinedSlipVehicle(
+                {k: v for k, v in self.params.items() if k not in {"length", "width", "wheel_actuators"}},
+                self.params["wheel_actuators"])
+        self._motion_frozen = False
         self.seed = seed
         self.opp_poses = []
         self.lidar_range= 30.0
 
+        if not np.isfinite(time_step) or time_step <= 0:
+            raise ValueError("physics time_step must be positive and finite")
         self.time_step = time_step
         self.num_beams = int(num_beams)
         self.fov = fov
@@ -196,8 +443,55 @@ class RaceCar(object):
         Returns:
             None
         """
-        self.params = params
+        validated = validate_vehicle_params(params)
+        if self.nonlinear or validated.get("model") == "combined_slip_st":
+            raise ValueError("Recreate the environment to change nonlinear physics parameters or model")
+        self.params = validated
         self._refresh_param_cache()
+
+    @property
+    def physics_state(self) -> np.ndarray:
+        """Complete model state snapshot; nonlinear ordering is explicitly eight-state."""
+        return self._physics.state if self.nonlinear else self.state.copy()
+
+    @property
+    def control_reference(self) -> np.ndarray:
+        if not self.nonlinear:
+            raise ValueError("Independent actuator references are available only for combined_slip_st")
+        return self._physics.reference
+
+    def physics_diagnostics(self) -> dict:
+        if not self.nonlinear:
+            raise ValueError("Tire-force diagnostics are available only for combined_slip_st")
+        return self._physics.diagnostics()
+
+    @property
+    def body_velocity(self) -> tuple[float, float]:
+        if self.nonlinear:
+            state = self._physics.state
+            return float(state[3]), float(state[4])
+        speed = float(self.state[3])
+        if abs(speed) < 0.5:
+            return speed, 0.0
+        return speed * float(np.cos(self.state[6])), speed * float(np.sin(self.state[6]))
+
+    def _sync_physics_view(self) -> None:
+        """Project into historical indices for geometry; never integrate this view."""
+        x, y, psi, vx, vy, rate, delta, omega = self._physics.state
+        sign = -1.0 if vx < 0 else 1.0
+        speed = sign * np.hypot(vx, vy)
+        beta = np.arctan2(sign * vy, sign * vx) if speed else 0.0
+        self.state[:] = (x, y, delta, speed, (psi + np.pi) % (2*np.pi) - np.pi, rate, beta)
+
+    def freeze_motion(self, previous_state=None, *, hold: bool = True) -> None:
+        """Stop chassis and wheel motion; retain collision pose and steering."""
+        if self.nonlinear:
+            state = self.physics_state if previous_state is None else previous_state
+            self._physics.reset(pose=state[:3], steering_angle=state[6], wheel_speed=0.0)
+            self._motion_frozen = hold
+            self._sync_physics_view()
+        else:
+            self.state[[3, 5, 6]] = 0.0
 
     def set_seed(self, seed):
         """
@@ -226,7 +520,7 @@ class RaceCar(object):
         self.scan_simulator.set_map(map_path, map_ext)
         self.scan_simulator._map_cache_key = cache_key
 
-    def reset(self, pose):
+    def reset(self, pose, *, friction_mu=None):
         """
         Resets the vehicle to a pose
         
@@ -236,6 +530,17 @@ class RaceCar(object):
         Returns:
             None
         """
+        if friction_mu is not None and not self.nonlinear:
+            raise ValueError("Episode friction requires combined_slip_st")
+        if self.nonlinear:
+            physics = self._physics
+            if friction_mu is not None:
+                config = dict(self._physics.params)
+                config["mu"] = friction_mu
+                physics = CombinedSlipVehicle(config, self.params["wheel_actuators"])
+            physics.reset(pose=pose)
+            self._physics = physics
+            self._motion_frozen = False
         # clear control inputs
         self.accel = 0.0
         self.steer_angle_vel = 0.0
@@ -245,6 +550,8 @@ class RaceCar(object):
         self.state = np.zeros((7, ))
         self.state[0:2] = pose[0:2]
         self.state[4] = pose[2]
+        if self.nonlinear:
+            self._sync_physics_view()
         self.steer_buffer = np.empty((0, ))
         self._steer_buf.fill(0.0)
         self._sb_head = 0
@@ -253,6 +560,12 @@ class RaceCar(object):
 
     def set_longitudinal_speed(self, speed: float) -> None:
         """Directly assign the vehicle's forward speed without touching pose."""
+        if self.nonlinear:
+            state = self._physics.state
+            self._physics.reset(pose=state[:3], velocity=(float(speed), state[4]),
+                                yaw_rate=state[5], steering_angle=state[6])
+            self._sync_physics_view()
+            return
         try:
             value = float(speed)
         except (TypeError, ValueError):
@@ -310,6 +623,14 @@ class RaceCar(object):
         if current_scan is None or not isinstance(current_scan, np.ndarray) or current_scan.size == 0:
             self.in_collision = False
             return
+        if self.nonlinear:
+            vx, vy = self.body_velocity
+            # Project both body velocity components into each LiDAR direction.
+            projected = vx * self.cosines + vy * np.sin(self.scan_angles)
+            self.in_collision = bool(check_ttc_jit(
+                current_scan, 1.0, self.scan_angles, projected,
+                self.side_distances, self.ttc_thresh))
+            return
         try:
             in_collision = check_ttc_jit(
                 current_scan, self.state[3],
@@ -327,11 +648,19 @@ class RaceCar(object):
 
         Args:
             steer (float): desired steering angle
-            vel (float): desired longitudinal velocity
+        vel (float): desired longitudinal velocity (legacy), or wheel rad/s
+            reference (combined_slip_st)
 
         Returns:
             current_scan
         """
+
+        if self.nonlinear:
+            if not self._motion_frozen:
+                self._physics.command(raw_steer, vel)  # rad, rad/s references
+                self._physics.advance(self.time_step)
+                self._sync_physics_view()
+            return self.compute_scan()
 
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
 
