@@ -1,784 +1,305 @@
-# F110 MARL Performance Optimization Plan
-
-Completed engineering history lives in `done.md`. This file is intentionally
-limited to active performance work for the pure-PyTorch training path.
-
-## Objective
-
-Increase training throughput for the four-agent MAPPO scenarios without
-changing environment dynamics, rewards, observations, action bounds, CTDE
-behavior, lifecycle semantics, seeds, or experiment outcomes.
-
-Primary scenarios:
-
-```text
-scenarios/complete_4.yaml
-scenarios/complete_4_frenet.yaml
-scenarios/complete_4_frenet_neighbors.yaml
-```
-
-The optimizations must also preserve the single-agent PPO and off-policy paths.
-
-## Measured Baseline
-
-Profile date: 2026-09-02
-
-Workload:
-
-```bash
-PYGLET_HEADLESS=true F110_LOG_EVERY=100000 F110_SUMMARY_EVERY=100000 \
-  /usr/bin/time -f 'wall=%e user=%U sys=%S maxrss_kb=%M' \
-  venv/bin/python run.py \
-  --scenario scenarios/complete_4.yaml \
-  --no-wandb --no-render --episodes 1 --quiet \
-  --output-dir /tmp/f110_profile_complete4_wall
-```
-
-Observed result:
-
-```text
-device:                    Quadro RTX 5000
-observation dimension:    115
-global-state dimension:   48
-policy decisions:         4,497
-physics substeps:         8,993
-PPO updates:              3
-wall time:                59.02 s
-peak RSS:                 1,834,940 KiB
-decision throughput:      ~76 decisions/s
-physics throughput:       ~152 substeps/s
-```
-
-Deterministic `cProfile` run:
-
-```bash
-PYGLET_HEADLESS=true F110_LOG_EVERY=100000 F110_SUMMARY_EVERY=100000 \
-  venv/bin/python -m cProfile -o /tmp/f110_complete4.prof run.py \
-  --scenario scenarios/complete_4.yaml \
-  --no-wandb --no-render --episodes 1 --quiet \
-  --output-dir /tmp/f110_profile_complete4
-```
-
-The profiled run took 70.74 s. Important cumulative costs were:
-
-```text
-F110ParallelEnv.step                 28.86 s / 8,993 calls
-Simulator.step                      10.38 s / 8,993 calls
-MAPPOAgent.update                    9.58 s / 3 calls
-MAPPO actor action selection         9.26 s / 11,590 calls
-centerline projection                7.87 s / 71,960 calls
-track-preview injection              7.53 s / 8,995 calls
-track-preview construction           4.19 s / 2 calls
-get_global_state                     4.09 s / 48,258 calls
-reward composition                   0.81 s / 23,176 calls
-observation composition              0.41 s / 11,594 calls
-```
-
-Cumulative profiler times overlap. Use them to prioritize work, not to predict
-the exact wall-time reduction from adding percentages.
-
-## Non-Negotiable Correctness Gates
-
-Every optimization must preserve:
-
-- `run.py` as the single training entry point.
-- The `reset`, `step`, `get_global_state`, and `get_agent_state` contracts.
-- Shared MAPPO actor with local observations only.
-- Centralized, agent-conditioned critic behavior for `complete_4`.
-- One reward composer and factual reward stream per trainable agent.
-- One transition per active agent decision, with no post-terminal records.
-- Separate termination and truncation handling for GAE.
-- Existing observation dimensions and numerical values for each scenario.
-- Existing reward totals and component breakdowns under a fixed trajectory.
-- Existing map, spawn, lap, collision, and terminal-vehicle behavior.
-- Explicit seeds and reproducible scenario expansion.
-
-Do not improve speed by reducing LiDAR beams, preview points, network size,
-rollout length, PPO epochs, map set, agent count, or physics fidelity. Those are
-experiment changes, not implementation optimizations.
-
----
-
-## P0 - Build a Repeatable Benchmark Harness
-
-**Goal:** compare changes on identical work rather than variable-length random
-episodes.
-
-- [x] Add a benchmark script under `scripts/` or a focused benchmark test that
-  runs a fixed number of MAPPO decisions and physics substeps.
-- [x] Use an explicit scenario, map, spawn plan, seed, action sequence, device,
-  warm-up period, and measured interval.
-- [x] Separate timings for:
-
-  ```text
-  environment reset/map setup
-  policy action selection
-  centralized value estimation
-  physics/environment stepping
-  reward-context assembly
-  observation composition
-  rollout storage
-  PPO update
-  total wall time
-  ```
-
-- [x] Report decisions/s, physics substeps/s, update samples/s, peak RSS, and
-  peak CUDA memory.
-- [x] Support all three `complete_4` observation variants.
-- [x] Run at least three measured repetitions and report median plus spread.
-- [x] Store benchmark metadata alongside results: commit, Python, NumPy,
-  PyTorch, CUDA, GPU, CPU, scenario hash, and resolved config hash.
-- [x] Keep profiling optional so instrumentation overhead is excluded from the
-  primary throughput number.
-- [x] Add a documented command for generating `cProfile` output and a readable
-  top-function report.
-
-Exit criteria:
-
-- [ ] Repeated unchanged runs have sufficiently low variance to detect a 5%
-  throughput change.
-- [x] Baseline and optimized runs execute the same number of agent decisions,
-  environment substeps, transitions, and optimizer samples.
-
----
-
-## P1 - Gate Unused Frenet Preview and Neighbor Work
-
-**Why first:** `complete_4.yaml` pays for track-preview and relative-neighbor
-construction despite using only LiDAR, ego state, progress, and previous action.
-Track-preview work consumed 7.53 profiled seconds per episode, plus 4.19 seconds
-of geometry construction across initial map setup and reset.
-
-Primary files:
-
-```text
-run.py
-src/core/env_builder.py
-src/env/f110ParallelEnv.py
-src/utils/track_preview.py
-src/wrappers/observations/composer.py
-src/wrappers/observations/track.py
-src/wrappers/observations/neighbors.py
-```
-
-- [x] Derive explicit environment feature requirements from every active
-  observation and reward config during setup.
-- [x] Distinguish these requirements rather than treating all centerline users
-  as equivalent:
-
-  ```text
-  centerline progress/facts
-  Frenet vehicle state
-  track preview
-  relative Frenet neighbors
-  centerline rendering
-  ```
-
-- [x] Generate `track_preview` only when a configured consumer requires it.
-- [x] Generate `frenet_neighbors` only when a configured consumer requires it.
-- [x] Preserve centerline progress facts for `complete_4.yaml`; its observation
-  and lap-completion reward depend on them.
-- [x] Keep requirements aggregated across all agents so heterogeneous scenarios
-  remain valid.
-- [x] Fail clearly during setup when an enabled component requires unavailable
-  geometry.
-- [x] Add contract tests proving each scenario requests the intended features.
-- [x] Add numerical-equivalence tests for Frenet preview and neighbor payloads.
-
-Exit criteria:
-
-- [x] `complete_4.yaml` performs no track-preview projection or neighbor sorting.
-- [x] `complete_4_frenet.yaml` receives unchanged preview arrays and no unused
-  neighbor payload.
-- [x] `complete_4_frenet_neighbors.yaml` receives unchanged preview and neighbor
-  payloads.
-- [x] Reward totals, lap facts, observations, and terminal outcomes are
-  unchanged for fixed trajectories.
-
-Research implication:
-
-This changes computation cost only. It must not change the information exposed
-to any policy. Keep runtime comparisons separate from learning-quality claims.
-
----
-
-## P2 - Compute Global State Once per Substep
-
-**Why:** the profile recorded 48,258 `get_global_state()` calls for 8,993
-physics substeps. The environment, per-agent reward contexts, transition
-lifecycle fields, and trainer reconstruct overlapping state views.
-
-Primary files:
-
-```text
-src/env/f110ParallelEnv.py
-src/env/types.py
-src/training/marl_trainer.py
-src/training/reward_context.py
-src/training/on_policy_trainer.py
-src/training/off_policy_trainer.py
-```
-
-- [x] Define one authoritative post-step `GlobalState` snapshot.
-- [x] Reuse that snapshot when building `StepFacts`.
-- [x] Pass the snapshot into reward-context assembly rather than calling the
-  environment once per agent.
-- [x] Pass its lifecycle masks into transition construction rather than calling
-  the environment again per transition.
-- [x] Reuse one pre-decision and one post-decision global vector in MAPPO.
-- [x] Avoid exposing mutable internal arrays; cached public state must remain an
-  immutable snapshot for the current step.
-- [x] Invalidate the cache on reset, step, map change, lifecycle transition, and
-  any public state mutation such as initial-speed application.
-- [x] Apply the same safe reuse pattern to single-agent trainers where useful.
-- [x] Add call-count instrumentation to prevent accidental regressions.
-
-Exit criteria:
-
-- [x] Global-state reconstruction is O(1) per environment substep, not O(number
-  of trainable agents).
-- [x] `GlobalState.vector`, masks, metadata, and per-agent lifecycle fields are
-  byte-for-byte or numerically identical to the baseline at each fixed step.
-- [x] Dataset records retain independent copies where required by schema.
-
-Research implication:
-
-Never reuse a pre-step state as a post-step state. That would corrupt CTDE critic
-targets and offline datasets even if it improved throughput.
-
----
-
-## P3 - Batch MAPPO Rollout Inference
-
-**Why:** the shared actor and centralized critic are currently invoked once per
-agent, producing many tiny CUDA launches and CPU/GPU synchronizations.
-
-Primary files:
-
-```text
-src/agents/mappo/__init__.py
-src/agents/common/networks.py
-src/training/marl_trainer.py
-```
-
-- [x] Add a batched action API accepting ordered agent IDs and stacked local
-  observations.
-- [x] Run the shared actor once per joint decision.
-- [x] Return actions and log probabilities mapped back to the original agent
-  IDs without reordering transitions.
-- [x] Add a batched centralized-value API.
-- [x] For `agent_conditioned`, append the correct one-hot identity to each
-  repeated global state before the single critic call.
-- [x] Preserve `shared_team` critic behavior.
-- [x] Transfer the action/log-probability batch to CPU once per joint decision,
-  not once per agent.
-- [x] Keep deterministic evaluation supported by the batched API.
-- [x] Handle shrinking active-agent sets and one-agent batches.
-- [x] Add fixed-seed equivalence tests using controlled PyTorch RNG state.
-
-Exit criteria:
-
-- [x] One actor forward and one critic forward occur per joint decision.
-- [x] Agent IDs, actions, log probabilities, values, and stored transitions stay
-  correctly aligned.
-- [x] Batched and scalar inference agree within floating-point tolerance when
-  given identical samples.
-- [x] CTDE remains intact: actor input contains no global state.
-
-Research implication:
-
-Sampling a batch can consume random numbers in a different order than four
-scalar calls. Treat exact seeded trajectory reproduction separately from
-distributional equivalence, and start new learning curves under a new run
-version if trajectories change.
-
----
-
-## P4 - Reduce Rollout Storage Synchronization and Allocation
-
-**Why:** per-agent storage currently converts and assigns individual NumPy
-objects to CUDA tensors every decision. Transition records are also fully built
-even when no dataset hook consumes them.
-
-Primary files:
-
-```text
-src/agents/mappo/__init__.py
-src/training/marl_trainer.py
-src/training/hooks.py
-src/replay/dataset_writer.py
-src/env/types.py
-```
-
-- [x] Add batched rollout-buffer insertion for all active trainable agents.
-- [x] Minimize repeated `torch.as_tensor` calls and scalar device assignments.
-- [x] Avoid implicit CUDA synchronization from repeated Python `float(tensor)`
-  conversions in the hot path.
-- [x] Determine which hooks require full `TransitionRecord` objects.
-- [x] Skip dataset-only copies and lifecycle payload construction when dataset
-  recording is disabled, while preserving generic hook behavior.
-- [x] Do not weaken the dataset schema or omit required transition fields when
-  recording is enabled.
-- [x] Measure host allocations and CUDA memory before and after the change.
-
-Exit criteria:
-
-- [x] Buffer contents match the baseline for every agent and timestep.
-- [x] Dataset-enabled runs remain schema-compatible and complete.
-- [x] Dataset-disabled runs avoid dataset-specific state copies.
-- [x] Terminal and truncated transitions remain correct.
-
----
-
-## P5 - Cache Track Geometry Across Resets
-
-**Why:** track-width construction performs an expensive point-by-wall-segment
-intersection pass. A map cycle can construct the same immutable geometry more
-than once across training episodes and evaluation runs.
-
-Primary files:
-
-```text
-src/utils/track_preview.py
-src/env/f110ParallelEnv.py
-src/env/map_schedule.py
-src/utils/map_loader.py
-```
-
-- [x] Key cached geometry by map identity plus centerline, wall, spacing, and
-  preprocessing version.
-- [x] Reuse immutable preview geometry when returning to an unchanged map.
-- [x] Bound cache size to the configured map set.
-- [x] Keep per-agent nearest-index cursors outside the shared geometry cache and
-  reset them every episode.
-- [x] Invalidate cached geometry when source files or relevant config change.
-- [x] Consider persisting preprocessed geometry only if invalidation remains
-  explicit and auditable.
-- [x] Benchmark construction separately from per-step preview sampling.
-
-Exit criteria:
-
-- [x] The first load builds geometry once per unique cache key.
-- [x] Later resets reuse it without changing preview values.
-- [x] Map switching cannot leak indices or geometry between maps.
-
----
-
-## P6 - Optimize Track Projection Without Changing Geometry
-
-Begin only after P1-P5 are measured. Centerline projection is important, but
-algorithmic changes carry more numerical and research risk than eliminating
-unused or duplicated work.
-
-Primary files:
-
-```text
-src/utils/centerline.py
-src/utils/track_preview.py
-src/env/centerline_state.py
-tests/test_centerline_projection.py
-tests/test_frenet_vehicle_track_observation.py
-```
-
-- [x] Confirm whether preview projection can reuse the already-computed
-  centerline/Frenet projection for each agent.
-- [x] Avoid duplicate nearest-index search when the preview and progress
-  geometries have a proven index mapping.
-- [x] Reuse interpolation arrays for closed tracks rather than appending them on
-  every preview call.
-- [x] Profile NumPy allocation hot spots before introducing new kernels.
-- [x] Evaluate existing Numba paths and warm-up behavior before adding any new
-  dependency or implementation.
-- [x] Preserve seam handling, search windows, wrong-way detection, and uniform
-  arc-length sampling exactly.
-
-Review result: the original progress centerline and uniformly resampled preview
-polyline do not have an exact index or arc-length mapping. Reusing the progress
-projection, or dropping the preview-specific nearest-index search, changes
-off-track and seam-adjacent results. Those searches intentionally remain
-separate.
-
-Exit criteria:
-
-- [x] Projection results match the baseline across every configured map,
-  including seam-adjacent, off-track, reverse-heading, and invalid-input cases.
-- [x] No map-specific tolerance adjustment is required.
-
----
-
-## P7 - Tune PPO Update Throughput
-
-Begin after rollout hot paths are improved. This phase must distinguish
-implementation tuning from algorithm/hyperparameter changes.
-
-Primary files:
-
-```text
-src/agents/mappo/__init__.py
-configs/training/mappo.yaml
-```
-
-- [x] Use `torch.profiler` to measure CPU launch time, CUDA kernels, memory
-  copies, and synchronization during `MAPPOAgent.update`.
-- [x] Benchmark batch sizes 64, 128, 256, and 512 with the same stored rollout.
-- [x] Report optimizer samples/s and peak CUDA memory.
-- [x] Keep `n_steps`, `n_epochs`, shuffling, loss definitions, advantage
-  normalization, clipping, and coefficients unchanged during the batch-size
-  implementation study.
-- [x] Check whether preallocated agent-identity tensors reduce update overhead.
-- [x] Check whether pooled tensors can be assembled without repeated temporary
-  allocations.
-- [x] Consider AMP only as a separate research/configuration arm with numerical
-  validation; do not silently enable it.
-- [x] Do not use `torch.compile` by default until compile latency, dynamic active
-  sets, checkpoint behavior, and reproducibility are measured.
-
-Exit criteria:
-
-- [x] Selected defaults improve update throughput on the target GPU.
-- [x] Losses, gradients, KL, entropy, and parameter updates match within defined
-  tolerances for the same rollout and minibatch ordering.
-- [x] Any batch-size default change is recorded as an experiment-version change,
-  because minibatch composition can affect learning even with the same data.
-
----
-
-## P8 - End-to-End Regression and Research Validation
-
-- [ ] Run the fixed-work benchmark for all three primary scenarios.
-- [ ] Compare baseline and optimized profiles by function call count and time.
-- [ ] Run at least five fixed seeds for episode-level outcome checks.
-- [ ] Verify identical observation dimensions:
-
-  ```text
-  complete_4                    115
-  complete_4_frenet             158
-  complete_4_frenet_neighbors   173
-  ```
-
-- [ ] Verify identical transition counts, terminal causes, lap counts, finish
-  positions, reward components, and dataset contents for fixed scripted runs.
-- [ ] Confirm W&B-disabled and dataset-disabled benchmarks do no external I/O.
-- [ ] Measure with and without dataset recording to quantify its intentional
-  overhead.
-- [ ] Run long enough to include multiple map cycles and multiple PPO updates.
-- [ ] Record final before/after throughput and memory results in a performance
-  document under `docs/`.
-
-Target acceptance criteria:
-
-- [ ] At least 25% higher decision throughput on `complete_4.yaml` on the same
-  hardware and fixed workload.
-- [ ] No throughput regression greater than 5% for either Frenet scenario.
-- [ ] No increase greater than 5% in peak host or CUDA memory unless justified.
-- [ ] No changes to environment, observation, reward, lifecycle, dataset, or
-  CTDE contracts.
-
----
-
-## Validation Sequence
-
-Run the smallest relevant checks after each slice.
-
-Static and focused tests:
+# F110 MARL Physics Update Plan
+
+## Objective and scope
+
+Add an optional, calibrated single-track physics model that represents tire
+saturation, combined longitudinal/lateral slip, independent wheel speed, and
+actuator response. Preserve the existing physics as the reproducible baseline.
+Deliver each phase as a separate, reviewable behavior change.
+
+Reference: [On learning racing policies with reinforcement learning,
+arXiv:2504.02420v2](https://arxiv.org/html/2504.02420v2), especially Sections
+III-D, III-E, and IV-A/D. The paper uses MF6.1 combined-slip tires and first-order
+steering/wheel-speed actuators. It does not supply a complete numerical tire
+parameter set for our vehicle. The implementation steps below are project
+recommendations; a simplified tire model must not be labeled an MF6.1 replication.
+
+Completed engineering history lives in [done.md](done.md). Existing performance
+workflows live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Outstanding work
+from the previous roadmap is retained in the backlog below; this rewrite does
+not mark it complete.
+
+## Current gaps
+
+- `src/physics/dynamic_models.py` uses a linear lateral tire formulation with
+  `mu`, `C_Sf`, and `C_Sr`; longitudinal acceleration is applied directly.
+- Mass, yaw inertia, axle distances, center-of-mass height, and approximate
+  longitudinal load-transfer terms already exist and should be reused.
+- There is no independent wheel-speed state, nonlinear tire saturation, or
+  shared longitudinal/lateral tire-force constraint.
+- `src/physics/vehicle.py` already has a steering command delay and proportional
+  steering/speed control. Calibrate or replace those paths explicitly rather
+  than adding duplicate actuator delays.
+- `src/wrappers/observations/track.py` computes `omega = vx / wheel_radius`.
+  This is a no-slip estimate, not measured or simulated wheel rotation.
+- The Frenet acceleration action integrates a vehicle-speed reference. A wheel
+  speed-reference action needs an explicit units and semantics contract.
+
+## Compatibility and research gates
+
+- Keep `run.py`, the current setup/composer/trainer path, and the public `reset`,
+  `step`, `get_global_state`, and `get_agent_state` contracts.
+- Keep PPO/MAPPO supported; reject unsupported algorithms and roles explicitly.
+  Preserve MAPPO CTDE and independent per-agent reward composers.
+- Keep known-good scenarios and old checkpoint interpretation unchanged. Add
+  separate physics scenarios with unique names and explicit maps.
+- Version physics, observation semantics, action semantics, and normalization.
+  Equal tensor dimensions alone do not establish checkpoint compatibility.
+- Keep map files, spawn semantics, reward definitions, and opponent controller
+  settings fixed while isolating physics effects.
+- Use explicit seeds, resolved parameters, model versions, and calibration-data
+  identifiers in run metadata. Keep W&B optional and respect `--no-wandb`.
+- Reuse existing modules and dependencies; ask before adding a dependency.
+- Review the current README findings before starting new learning comparisons.
+
+## P0 - Freeze the baseline and define the model contract
+
+- [ ] Capture the commit, expanded configs, observation/action contracts, seeds,
+  maps, spawn plans, and scripted-action trajectories for existing PPO/MAPPO.
+- [ ] Include `ppo_lap_completion_pretrain.yaml`,
+  `ppo_lap_completion_pretrain_frenet.yaml`, and the existing track-transfer
+  workflow in the compatibility audit.
+- [ ] Define an explicit model selector and version in environment vehicle
+  configuration. Omitted selection must continue to use current physics.
+- [ ] Define state coordinates, sign conventions, SI units, wheel/axle speed
+  representation, and the mapping into existing public state fields.
+- [ ] Decide whether a shared effective wheel speed or separate front/rear axle
+  speeds match the target drivetrain; document the approximation.
+- [ ] Specify proposed parameters: rolling radius, tire coefficients, grip,
+  actuator time constants, drive/braking distribution, and parameter provenance.
+- [ ] Validate finite values, positive physical quantities, coefficient domains,
+  and incompatible model/config combinations before simulation begins.
+
+Exit gate: old scenarios reproduce baseline trajectories; the new model and
+its state/action contract are documented before implementation.
+
+## P1 - Collect and identify vehicle, tire, and actuator parameters
+
+- [ ] Measure effective rolling radius, mass, wheelbase, front/rear static weight
+  distribution, and center-of-mass location; estimate yaw inertia with a
+  documented method and uncertainty.
+- [ ] Record tire type/condition, track surface, drive layout, gearing, and the
+  conversion from measured motor RPM to wheel angular speed.
+- [ ] Collect synchronized commands, measured steering angle, wheel/motor speed,
+  position, heading, body-frame velocity, and yaw rate. Include acceleration,
+  braking, steady turns, and combined braking/acceleration through turns.
+- [ ] Fit steering and wheel-speed response constants from command/response
+  data, distinguishing transport delay from first-order lag and saturation.
+- [ ] Identify front/rear longitudinal and lateral tire behavior, including
+  small-slip stiffness, peak force, post-peak response, load dependence, and
+  combined-slip coupling. Do not reinterpret `C_Sf`/`C_Sr` as MF6.1 coefficients.
+- [ ] Fit nominal tire/surface grip and quantify uncertainty; mark provisional
+  simulator parameters as uncalibrated when hardware data is unavailable.
+- [ ] Split identification and validation data by driving sequence/session.
+  Check multi-step trajectory error on held-out maneuvers, not just one-step fit.
+- [ ] Store units, fit method, parameter bounds, data IDs/hashes, and validation
+  errors alongside the calibration configuration.
+
+Exit gate: a traceable parameter set exists. Synthetic parameters may support
+implementation tests but cannot support a sim-to-real accuracy claim.
+
+## P2 - Add wheel state and calibrated actuator dynamics
+
+Primary files: `src/physics/vehicle.py`, `src/physics/dynamic_models.py`, and the
+existing environment state/reset adapters under `src/env/`.
+
+- [ ] Add wheel angular speed independently of chassis speed for the new model.
+- [ ] Implement steering response `delta_dot = (delta_ref - delta) / T_delta`
+  and wheel-speed response `omega_dot = (omega_ref - omega) / T_omega`, with
+  explicit calibrated limits and any separately justified transport delay.
+- [ ] Keep actual and commanded steering/wheel speeds distinct. Integrate
+  actuator state at the physics timestep, including RK4 intermediate states.
+- [ ] Define rolling-start initialization through public reset/spawn options;
+  clear actuator history consistently on reset and preserve terminal behavior.
+- [ ] Verify step response, steady-state tracking, saturation, reset isolation,
+  and repeatability across multiple cars and concurrent environments.
+
+Exit gate: wheel motion can differ from chassis motion and follows the defined
+actuator response. Keep this intermediate model out of learning comparisons
+until tire-force coupling is complete.
+
+## P3 - Implement nonlinear tires and combined-slip vehicle dynamics
+
+Primary files: `src/physics/dynamic_models.py` and `src/physics/vehicle.py`.
+Extract a focused tire helper only if the implemented equations justify it.
+
+- [ ] Select and document either MF6.1 for paper replication or a named reduced
+  nonlinear model with combined-slip coupling for an initial approximation.
+  Identify the equation source and exact subset implemented.
+- [ ] Compute front/rear contact velocities in the tire frame, including yaw
+  rate and front steering; derive slip angles and longitudinal slip ratios.
+- [ ] Define stable slip behavior at rest, during braking to rest, and in reverse.
+  Document low-speed regularization and any kinematic blending explicitly.
+- [ ] Compute front/rear normal loads using existing mass/geometry and a
+  consistent acceleration/load-transfer treatment; handle invalid loads clearly.
+- [ ] Evaluate longitudinal and lateral tire forces with nonlinear saturation
+  and combined-slip coupling. Acceleration/braking must reduce remaining
+  cornering capacity according to the selected tire model.
+- [ ] Apply drive/braking distribution consistently with the chosen wheel-state
+  approximation. Rotate tire forces into the vehicle frame and derive chassis
+  acceleration and yaw acceleration from force/moment balance.
+- [ ] Remove direct commanded chassis acceleration only for the new model;
+  retain the existing baseline path.
+- [ ] Verify force signs, zero-slip behavior, saturation, straight-line symmetry,
+  left/right turn symmetry, wheelspin, braking slip, and grip sensitivity.
+- [ ] Check finite outputs and timestep convergence through low-speed crossings,
+  aggressive maneuvers, and long rollouts. State the model's validity envelope.
+
+Exit gate: deterministic physical checks pass, and held-out maneuver validation
+shows where the model is accurate and where its approximation breaks down.
+
+## P4 - Integrate actions, observations, checkpoints, and datasets
+
+Primary areas: `src/wrappers/actions/composer.py`,
+`src/wrappers/observations/track.py`, `src/env/`, existing checkpoint handling,
+`src/training/hooks.py`, and `src/replay/dataset_writer.py`.
+
+- [ ] Add an explicit wheel-reference action mode through the existing action
+  composer. Specify whether the reference derivative uses rad/s² or tire
+  circumferential m/s², and convert with the configured physical radius.
+- [ ] Preserve old vehicle-speed action semantics. Apply reference integration
+  once per intended interval and actuator integration per physics substep;
+  verify behavior with action repeat and reference clamping.
+- [ ] Expose actual wheel speed through a versioned observation option; retain
+  the old `vx / radius` estimate for legacy observations/checkpoints.
+- [ ] Use one authoritative physical rolling radius for new-model conversions;
+  validate observation configuration against it and document normalization.
+- [ ] Record layout, units, physics model, calibration ID, and action/observation
+  versions in checkpoint provenance; reject incompatible loads by default.
+- [ ] Keep any transfer across physics or observation semantics an explicit
+  experiment with documented initialization scope, not a silent resume.
+- [ ] Preserve actor-local observations and MAPPO global-state compatibility;
+  version any intentionally expanded critic input rather than changing its size
+  implicitly. Do not leak randomized ground-truth grip into actor observations.
+- [ ] Log diagnostic wheel speed, slip, forces, and sampled physics parameters
+  through optional hooks/metadata without adding noisy default per-step logs.
+- [ ] Preserve one complete `TransitionRecord` per active agent decision for
+  PPO and MAPPO, including normalized/physical action and required lifecycle,
+  map/spawn/episode/step/agent fields and global state when available.
+- [ ] Preserve the dataset schema unless a deliberate migration is necessary;
+  document any PPO/MAPPO logging differences and test terminal transitions.
+
+Exit gate: action units, observation meaning, checkpoint loading, and recorded
+transitions agree end to end for both trainable and fixed-policy agents.
+
+## P5 - Add reproducible friction randomization
+
+- [ ] Keep fixed calibrated parameters as the default for deterministic checks.
+- [ ] Add opt-in episode-level friction randomization through the public reset
+  configuration path, using an explicit RNG stream independent of sensor noise.
+- [ ] Define physically valid sampling bounds and rejection/clipping behavior.
+  Record nominal grip, distribution, seed, and actual sampled grip per episode.
+- [ ] Start with friction-only randomization. The paper's relative perturbation
+  level of 0.02 is an experimental starting point, not a measured uncertainty
+  for our platform or a universal optimum.
+- [ ] Define which surface variation is shared across cars and which tire
+  variation is car-specific; avoid accidental baseline/opponent asymmetry.
+- [ ] Keep evaluation on fixed parameter grids and held-out seeds, separate from
+  training randomization. Verify repeated resets reproduce sampled parameters.
+- [ ] Add broader parameter randomization only as a separate calibrated ablation.
+
+Exit gate: train/evaluation physics distributions are explicit and reproducible,
+including vectorized PPO and multi-agent runs.
+
+## P6 - Validate learning and transfer under the new physics
+
+- [ ] Add separate scenarios for new-physics pretraining, track transfer, and
+  MAPPO/fixed-controller comparisons. Preserve the existing scenario files.
+- [ ] Define controlled arms: legacy physics, calibrated nonlinear physics,
+  and calibrated nonlinear physics with friction randomization. Keep policies,
+  rewards, maps, opponents, decision intervals, and budgets matched where possible.
+- [ ] Separate physics changes from action/observation changes with ablations;
+  record unavoidable contract differences rather than claiming identical inputs.
+- [ ] Evaluate fixed-policy controllers and learned agents under the same test
+  physics, maps, spawn plans, and friction grid. Freeze controller tuning or give
+  each comparison arm the same documented tuning budget.
+- [ ] Train fresh policies for primary comparisons. Evaluate old checkpoints
+  separately as transfer experiments, with contract compatibility checked first.
+- [ ] Report completion, collision, lap time, progress, slip/traction diagnostics,
+  actuator tracking error, and dispersion across multiple seeds.
+- [ ] Keep checkpoint selection separate from final held-out evaluation. Report
+  track transfer separately from transfer across physics or to real hardware.
+- [ ] Measure physics substeps/s, decisions/s, and memory using fixed work after
+  correctness passes; report the fidelity cost without reducing physics silently.
+
+Exit gate: results identify which model/action/observation changed and distinguish
+simulation performance, robustness, and any measured sim-to-real evidence.
+
+## Validation sequence for implementation
+
+Run focused physical/contract checks after each phase, then the repository gates:
 
 ```bash
 venv/bin/python -m compileall -q run.py src tests
-venv/bin/python -m pytest tests/test_centerline_projection.py -q
-venv/bin/python -m pytest tests/test_frenet_vehicle_track_observation.py -q
-venv/bin/python -m pytest tests/test_mappo_terminal_handling.py -q
-venv/bin/python -m pytest tests/test_reward_motion_components.py -q
-```
-
-Full regression and dependency guard:
-
-```bash
-venv/bin/python -m pytest tests/ -q
+PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
 rg "stable_baselines3|from gymnasium|from pettingzoo" run.py src configs scenarios
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
 ```
 
-Headless smoke tests:
+The dependency guard expects no matches (`rg` exit code 1). Add headless smoke
+commands for the new physics scenarios when those files exist. Compare legacy
+trajectories against P0 and test new-model physics against physical expectations
+and held-out data; identical trajectories across different models are not a gate.
+Report commands, failures, likely causes, limitations, and experiment-validity
+implications for each implementation delivery.
 
-```bash
-PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/complete_4.yaml \
-  --no-wandb --episodes 1 --quiet
+## Retained backlog outside the physics update
 
-PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/complete_4_frenet.yaml \
-  --no-wandb --episodes 1 --quiet
+Re-audit these items against current code before implementation; unchecked items
+from the old roadmap remain pending and may have advanced independently.
 
-PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/complete_4_frenet_neighbors.yaml \
-  --no-wandb --episodes 1 --quiet
-```
+### Performance validation
 
-Single-agent regression smokes:
+- [ ] Establish fixed-work benchmark variance sufficient to detect a 5% change.
+- [ ] Finish end-to-end checks for `complete_4.yaml`, `complete_4_frenet.yaml`,
+  and `complete_4_frenet_neighbors.yaml`, including at least five fixed seeds,
+  multiple map cycles/updates, and dataset-enabled/disabled measurements.
+- [ ] Compare legacy-path observations (115/158/173 dimensions), transitions,
+  lifecycle outcomes, rewards, datasets, function counts, throughput, and memory.
+- [ ] Confirm W&B-disabled/dataset-disabled benchmarks do no external I/O.
+- [ ] Record results in `docs/PERFORMANCE.md`; evaluate the prior optimization
+  targets (25% throughput improvement for `complete_4`, no >5% Frenet throughput
+  regression, no >5% memory increase without justification) on unchanged physics.
+  Do not apply those equivalence targets to the new physics model.
 
-```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml \
-  --no-wandb --episodes 1 --quiet
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/sac.yaml \
-  --no-wandb --total-steps 10 --quiet
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/td3.yaml \
-  --no-wandb --total-steps 10 --quiet
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/dqn.yaml \
-  --no-wandb --total-steps 10 --quiet
-```
+Historical variable-episode baseline (2026-09-02, Quadro RTX 5000): 4,497
+policy decisions, 8,993 physics substeps, 59.02 s wall time, 1,834,940 KiB peak
+RSS, approximately 76 decisions/s and 152 substeps/s. Use the existing fixed-work
+benchmark scripts for new comparisons; this old timing alone is insufficient.
 
-## Delivery Order
+### Architecture and pretraining
 
-```text
-1. Repeatable fixed-work benchmark harness
-2. Feature-gated previews and neighbors
-3. One global-state snapshot per substep
-4. Batched MAPPO actor and critic inference
-5. Batched storage and lazy transition payloads
-6. Map-geometry cache
-7. Projection micro-optimizations
-8. PPO update tuning
-9. Full equivalence and research-readiness report
-```
+- [ ] Recheck the scan-isolation test's assumption about the pretraining map.
+- [ ] Add immutable observation layout/normalization metadata and checkpoint
+  provenance; coordinate with P4 rather than duplicating contract machinery.
+- [ ] Add a backward-compatible configurable MLP factory, followed by residual
+  MLP and LiDAR fusion CNN, with independent actor/critic config and CTDE checks.
+- [ ] Audit PPO/MAPPO datasets before behavior-cloning or masked-LiDAR encoder
+  pretraining; version datasets and support encoder-only save/load and freezing.
+- [ ] Strengthen full/actor/encoder-only checkpoint modes, compatible PPO-to-MAPPO
+  transfer, architecture metadata, and legacy checkpoint validation.
+- [ ] Compare architecture/initialization arms under matched online budgets,
+  held-out evaluation, multiple seeds, and explicit parameter/latency reporting.
+- [ ] Consider a small LiDAR Transformer after CNN validation; defer recurrent
+  policies until hidden-state, rollout, batching, and reset contracts are tested.
+- [ ] Consider external PyTorch/Hugging Face weights only for compatible input
+  modalities, with pinned revisions/hashes, offline support, and approval before
+  adding dependencies. Run focused, full, and headless architecture checks.
 
-Each delivery should include:
+### Other research and tooling
 
-1. Before/after benchmark results.
-2. Files changed and contract implications.
-3. Focused and full validation commands.
-4. Any failures, variance, or hardware limitations.
-5. A clear statement about whether experiment comparability is preserved.
+- [ ] Calibrate race duration from controller timing distributions.
+- [ ] Finish per-agent/team terminal-reason logging across console, CSV, and W&B.
+- [ ] Complete deterministic multi-map lap validation and multi-seed comparisons.
+- [ ] Add stronger fixed-policy opponents through AgentFactory after evaluation
+  is reliable; keep algorithm additions separate from this physics work.
+- [ ] Consider `--verbose` and `--debug` CLI flags as a separate tooling change.
 
-## Deferred Until Performance Work Is Stable
+## Suggested first delivery
 
-- Calibrate final race `max_steps` from controller duration distributions.
-- Finish per-agent/team terminal-reason logging across console, CSV, and W&B.
-- Complete multi-map deterministic lap validation.
-- Run calibrated multi-seed learning comparisons.
-- Add new RL/MARL algorithms or stronger opponents.
-- Add `--verbose` and `--debug` CLI flags.
-
-These remain worthwhile, but should not be mixed into performance patches or
-benchmarks because they make attribution and reproducibility harder.
-
----
-
-# Model Architecture and Pretraining Plan
-
-## Objective
-
-Make PPO and MAPPO policy architectures configurable, support reproducible
-encoder pretraining, and compare alternative models without changing the
-environment, observation values, action bounds, rewards, or MAPPO CTDE
-contract.
-
-The active local observation is a flat vector containing ordered LiDAR beams
-and scalar features. Generic ImageNet and language-model checkpoints are not a
-direct match. Prefer project-native LiDAR pretraining first; use external
-PyTorch or Hugging Face weights only when their input modality and
-normalization are compatible.
-
-## A0 - Stabilize PPO Before Architecture Comparisons
-
-- [x] Evaluate stored rollout actions when computing the PPO importance ratio.
-- [x] Use the current policy entropy for those stored actions.
-- [x] Store termination and truncation separately in the PPO rollout buffer.
-- [x] Bootstrap time-limit truncations from the final observation while
-  blocking bootstrap after true termination.
-- [x] Allow one-transition rollouts to update instead of discarding them.
-- [x] Add focused tests for action evaluation, GAE lifecycle handling,
-  single-transition updates, and trainer truncation bootstrapping.
-- [ ] Resolve the unrelated scan-isolation test assumption that the locally
-  edited pretraining scenario always starts on `Budapest_map`.
-
-Research implication:
-
-PPO learning behavior intentionally changed. New training runs are more
-algorithmically correct, but should not be presented as direct continuations
-of learning curves produced before these fixes.
-
-## A1 - Expose a Stable Observation Layout Contract
-
-- [ ] Add immutable component names, offsets, dimensions, and shapes to
-  `ObservationComposer` without changing its flat `float32` output.
-- [ ] Give each observation component a stable layout identifier.
-- [ ] Validate that component slices cover the complete observation exactly and
-  do not overlap.
-- [ ] Pass the layout metadata into trainable-agent construction.
-- [ ] Add tests for the existing 115-, 158-, and 173-dimensional observation
-  variants.
-- [ ] Include the resolved observation layout and normalization contract in
-  checkpoint provenance.
-
-Exit criteria:
-
-- Existing scenarios produce byte-for-byte equivalent observations.
-- Structured encoders can locate LiDAR and scalar fields without hard-coded
-  offsets or agent IDs.
-
-## A2 - Add a Backward-Compatible Model Factory
-
-- [ ] Add `src/agents/common/encoders.py` for reusable feature encoders.
-- [ ] Add `src/agents/common/model_factory.py` for validated construction from
-  scenario parameters.
-- [ ] Represent architecture configuration explicitly under
-  `agents.<id>.params.architecture`.
-- [ ] Keep omitted architecture configuration equivalent to the current MLP.
-- [ ] Configure actor and critic architectures independently.
-- [ ] Preserve the MAPPO rule that the actor receives local observations only
-  and the centralized critic receives global state only.
-- [ ] Validate unknown architecture names and incompatible parameters before
-  training begins.
-- [ ] Add construction, forward-shape, device, gradient, save/load, and legacy
-  configuration tests.
-
-Initial configuration shape:
-
-```yaml
-params:
-  architecture:
-    actor:
-      name: mlp
-      hidden_dims: [256, 256]
-      activation: tanh
-    critic:
-      name: mlp
-      hidden_dims: [256, 256]
-      activation: tanh
-```
-
-## A3 - Implement Architecture Families
-
-- [ ] Register the existing network as the `mlp` reference architecture.
-- [ ] Add `residual_mlp` with configurable width, depth, normalization, and
-  activation.
-- [ ] Add `lidar_fusion_cnn`:
-  - 1D convolutional encoder over ordered LiDAR beams.
-  - Separate MLP encoder for non-LiDAR scalar components.
-  - Configurable fusion trunk and actor head.
-- [ ] Add a small `lidar_transformer` only after the CNN baseline is validated.
-- [ ] Defer `temporal_gru` until recurrent hidden-state lifecycle, rollout
-  storage, batching, evaluation, and episode-boundary tests are designed.
-- [ ] Record parameter count and inference latency for each architecture.
-- [ ] Add separate scenario YAML files for each experiment rather than changing
-  known-good scenarios.
-
-Recommended delivery order:
-
-```text
-mlp -> residual_mlp -> lidar_fusion_cnn -> lidar_transformer -> temporal_gru
-```
-
-## A4 - Add Project-Native Pretraining
-
-- [ ] Audit `TransitionRecord` and `DatasetWriter` coverage for PPO and MAPPO
-  before consuming offline data.
-- [ ] Define a versioned encoder-pretraining dataset contract containing the
-  observation layout and normalization metadata.
-- [ ] Add behavior-cloning pretraining from fixed-policy controller datasets.
-- [ ] Add masked-LiDAR reconstruction as the first self-supervised objective.
-- [ ] Evaluate next-observation, progress, or contrastive objectives only as
-  separate experiment arms.
-- [ ] Save encoder-only checkpoints independently from RL optimizer state.
-- [ ] Support encoder freezing for a configured number of optimizer steps and
-  explicit later unfreezing.
-- [ ] Compare random initialization, frozen pretrained encoders, and full
-  fine-tuning under the same online-training budget.
-
-## A5 - Support External PyTorch and Hugging Face Models
-
-- [ ] Identify candidate checkpoints whose modality, tensor shape, scale, and
-  pretraining objective are compatible with 1D LiDAR observations.
-- [ ] Document why each candidate is expected to transfer before integrating
-  it.
-- [ ] Add optional loader adapters for:
-  - Local PyTorch state dictionaries.
-  - PyTorch Hub checkpoints when a compatible model exists.
-  - Hugging Face Hub checkpoints pinned to an immutable revision.
-- [ ] Keep external integrations optional so the core pure-PyTorch MLP path
-  works without network access or additional packages.
-- [ ] Ask before adding `torchvision`, `transformers`, `huggingface_hub`, or any
-  other dependency.
-- [ ] Cache downloaded artifacts and verify hashes for repeatable offline runs.
-- [ ] Fail clearly when weights, revisions, input contracts, or dependencies do
-  not match.
-- [ ] Consider Hugging Face Hub as a registry for project-trained LiDAR
-  encoders, even if generic public checkpoints do not transfer well.
-
-External vision checkpoints should remain deferred unless a camera or raster
-observation is introduced as an explicit new observation contract and research
-condition.
-
-## A6 - Strengthen Checkpoint and Transfer Contracts
-
-- [ ] Store architecture name and fully resolved parameters in PPO and MAPPO
-  checkpoints.
-- [ ] Store observation layout, action bounds, algorithm, normalization, and
-  library versions.
-- [ ] Store pretrained source, identifier, immutable revision, artifact hash,
-  loaded submodule, and freeze schedule.
-- [ ] Support explicit load modes: `full`, `actor`, and `encoder_only`.
-- [ ] Reject incompatible architecture, observation, action, or normalization
-  contracts before loading weights.
-- [ ] Preserve loading of current MLP PPO checkpoints where contracts match.
-- [ ] Extend PPO-to-MAPPO transfer tests to every shared-actor architecture.
-
-Proposed configuration:
-
-```yaml
-params:
-  pretrained:
-    source: local  # local | pytorch_hub | huggingface
-    identifier: outputs/pretraining/lidar_encoder.pt
-    revision: null
-    load: encoder_only
-    freeze_steps: 0
-    strict: true
-```
-
-## A7 - Run Controlled Architecture Comparisons
-
-- [ ] Establish the current `[256, 256]` MLP with random initialization as the
-  reference run.
-- [ ] Compare random-initialized MLP, residual MLP, LiDAR CNN, and LiDAR
-  Transformer policies.
-- [ ] Compare random initialization, behavior cloning, and self-supervised
-  initialization for the same architecture.
-- [ ] Pretrain single-agent PPO actors before transferring compatible actors to
-  MAPPO.
-- [ ] Hold maps, seeds, spawn plans, observations, rewards, action bounds,
-  transition budgets, evaluation episodes, and opponents fixed.
-- [ ] Run both parameter-matched and best-practical-capacity comparisons.
-- [ ] Report completion, collision, progress, return, sample efficiency,
-  decisions/s, update samples/s, inference latency, memory, and parameter count.
-- [ ] Use held-out deterministic evaluation for checkpoint selection.
-- [ ] Run enough seeds to report dispersion rather than selecting one favorable
-  run.
-
-## A8 - Validation Sequence
-
-- [ ] Run focused architecture and checkpoint tests after every implementation
-  slice.
-- [ ] Run `venv/bin/python -m compileall -q run.py src tests`.
-- [ ] Run `venv/bin/python -m pytest tests/ -q`.
-- [ ] Run the dependency guard from this document.
-- [ ] Run headless PPO and MAPPO smoke tests for every registered architecture.
-- [ ] Verify actor input contains no MAPPO global-state features.
-- [ ] Verify observation values, rewards, actions, terminations, truncations,
-  seeds, and dataset records remain unchanged for fixed trajectories.
-- [ ] Record architecture experiment commands and findings under `docs/`.
-
-## Architecture Delivery Order
-
-```text
-1. Observation layout metadata
-2. Backward-compatible MLP model factory
-3. Residual MLP
-4. LiDAR fusion CNN
-5. Project-native behavior-cloning and self-supervised pretraining
-6. Checkpoint/provenance hardening
-7. Controlled PPO comparisons
-8. PPO-to-MAPPO transfer comparisons
-9. Lightweight LiDAR Transformer
-10. Compatible external PyTorch/Hugging Face integration, if justified
-11. Recurrent policies only after feed-forward experiments are stable
-```
+Complete P0: preserve scripted baseline trajectories and specify model selection,
+physical state, units, parameter provenance, and compatibility behavior. Begin
+P1 data collection in parallel with local implementation preparation; do not
+block numerical tests on unavailable hardware or present provisional parameters
+as a calibrated model.
