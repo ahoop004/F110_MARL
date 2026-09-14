@@ -599,9 +599,12 @@ def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path,
     scenario["wandb"]["enabled"] = False
     scenario["evaluation"]["episodes"] = 2
     scenario["evaluation"]["final_test"]["episodes"] = 3
-    checkpoint = tmp_path / "ppo.pt"
+    checkpoint = tmp_path / "best_model.pt"
     trainer.agent.save(str(checkpoint))
     trainer.env.close()
+    if protocol == "final":
+        import os
+        scenario["experiment"]["checkpoint"] = os.path.relpath(checkpoint.parent, directory)
     payload = torch.load(checkpoint, weights_only=False)
     payload["provenance"] = build_run_provenance(
         scenario, scenario_path=directory / "ppo_lap_completion_pretrain.yaml",
@@ -612,7 +615,7 @@ def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path,
     monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
     monkeypatch.setattr(sys, "argv", [
         "run.py", "--scenario", str(directory / "ppo_lap_completion_pretrain.yaml"),
-        "--eval", "--checkpoint", str(checkpoint),
+        "--eval", *([] if protocol == "final" else ["--checkpoint", str(checkpoint)]),
         *(["--eval-protocol", protocol] if protocol else ["--eval-episodes", "1"]),
         "--output-dir", str(tmp_path / "eval"), "--run-id", "ppo-eval-test",
         "--no-render", "--no-wandb", "--quiet",
@@ -631,3 +634,154 @@ def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path,
     assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == checkpoint_hash
     assert scenario["experiment"]["seed"] == 42
     assert scenario["experiment"]["episodes"] == 3
+
+
+@pytest.mark.parametrize("key,value", [
+    ("algorithm", "mappo"), ("obs_dim", 2), ("action_dim", 3),
+    ("actor_hidden_dims", [8]), ("critic_hidden_dims", [8]),
+    ("activation", "relu"), ("action_low", [-2.0, -1.0]),
+    ("action_contract", {"speed_control": "acceleration"}),
+])
+def test_ppo_transfer_rejects_incompatible_checkpoint(tmp_path, key, value):
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {"hidden_dims": [4]})
+    checkpoint = tmp_path / "best_model.pt"
+    agent.save(str(checkpoint))
+    payload = torch.load(checkpoint, weights_only=False)
+    payload[key] = value
+    torch.save(payload, checkpoint)
+    with pytest.raises(ValueError, match="Incompatible PPO checkpoint"):
+        agent.load(str(checkpoint), load_optimizer=False)
+
+
+@pytest.mark.parametrize("checkpoint_source", ["cli", "yaml", "override"])
+@pytest.mark.parametrize("num_envs", [1, 2])
+def test_cli_initializes_ppo_training_from_best_checkpoint(tmp_path, monkeypatch, num_envs, checkpoint_source):
+    import hashlib
+    import json
+    import sys
+    import run
+
+    source, scenario, directory = _parallel_test_setup()
+    source.env.close()
+    # Give the source optimizer moments and a different LR to detect accidental restoration.
+    for parameter in source.agent._optim_parameters:
+        parameter.grad = torch.ones_like(parameter)
+    source.agent.optimizer.step()
+    source.agent.set_training_progress(1.0)
+    checkpoint = tmp_path / "source" / "best_model.pt"
+    source.agent.save(str(checkpoint))
+    # Pre-existing checkpoints do not have critic_hidden_dims; their tensor shapes
+    # still enforce the critic architecture when loading.
+    payload = torch.load(checkpoint, weights_only=False)
+    payload.pop("critic_hidden_dims")
+    torch.save(payload, checkpoint)
+    source_hash = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+
+    scenario["experiment"].update(num_envs=num_envs, episodes=2)
+    scenario["evaluation"].update(every_episodes=1, episodes=1)
+    for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
+        scenario["environment"][key] = ["Budapest_map"]
+    method_name = "train_parallel" if num_envs > 1 else "train"
+    original_train = getattr(OnPolicyTrainer, method_name)
+    initialized = []
+
+    def verify_initialization(trainer, *args, **kwargs):
+        for name in ("actor", "critic"):
+            expected = getattr(source.agent, name).state_dict()
+            for key, value in getattr(trainer.agent, name).state_dict().items():
+                assert torch.equal(value, expected[key])
+        assert not trainer.agent.optimizer.state
+        assert trainer.agent.optimizer.param_groups[0]["lr"] == pytest.approx(.001)
+        assert trainer.agent.buffer.size() == 0
+        initialized.append(True)
+        return original_train(trainer, *args, **kwargs)
+
+    monkeypatch.setattr(OnPolicyTrainer, method_name, verify_initialization)
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
+    if checkpoint_source == "yaml":
+        import os
+        scenario["experiment"]["checkpoint"] = (
+            os.path.relpath(checkpoint.parent, directory) if num_envs == 2 else str(checkpoint)
+        )
+    elif checkpoint_source == "override":
+        scenario["experiment"]["checkpoint"] = "/nonexistent/ignored-checkpoint.pt"
+    output = tmp_path / "transfer"
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "--scenario", str(directory / "ppo_lap_completion_transfer.yaml"),
+        *([] if checkpoint_source == "yaml" else [
+            "--checkpoint", str(checkpoint.parent if num_envs == 2 else checkpoint),
+        ]),
+        "--output-dir", str(output), "--run-id", "ppo-transfer-test",
+        "--no-render", "--no-wandb", "--quiet",
+    ])
+    run.main()
+    assert initialized == [True]
+    provenance = json.loads((output / "config_snapshot.json").read_text())["provenance"]
+    assert provenance["initial_checkpoint"] == {
+        "path": str(checkpoint), "sha256": source_hash,
+        "load_scope": "actor_and_critic", "optimizer_restored": False,
+        "training_progress_restored": False,
+    }
+    assert provenance["map_split"] == {"train": ["Budapest_map"], "eval": ["Budapest_map"]}
+    saved = torch.load(output / "best_model.pt", weights_only=False)
+    assert saved["provenance"]["initial_checkpoint"] == provenance["initial_checkpoint"]
+    assert any(not torch.equal(value, saved["actor"][key]) for key, value in payload["actor"].items())
+    assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == source_hash
+
+
+def test_checkpoint_directory_requires_best_model(tmp_path):
+    from run import resolve_checkpoint_path
+
+    (tmp_path / "checkpoint_ep000000.pt").touch()
+    with pytest.raises(FileNotFoundError, match="best_model.pt"):
+        resolve_checkpoint_path(str(tmp_path))
+
+
+def test_transfer_scenario_preserves_pretraining_contract():
+    from core.scenario import load_and_expand_scenario
+
+    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    transfer = load_and_expand_scenario("scenarios/ppo_lap_completion_transfer.yaml")
+    assert source["agents"] == transfer["agents"]
+    assert source["evaluation"] == transfer["evaluation"]
+    assert source["experiment"]["name"] != transfer["experiment"]["name"]
+    for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
+        assert transfer["environment"][key] == ["Budapest_map"]
+
+
+@pytest.mark.parametrize("scenario_name", ["mappo_gaplock", "nrl_1car"])
+def test_training_checkpoint_rejects_unsupported_roles(monkeypatch, scenario_name):
+    import sys
+    import run
+
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "--scenario", f"scenarios/{scenario_name}.yaml",
+        "--checkpoint", "/nonexistent/model.pt", "--no-wandb", "--quiet",
+    ])
+    with pytest.raises(ValueError, match="one PPO learner"):
+        run.main()
+
+
+def test_transfer_rejects_source_output_directory_before_setup(tmp_path, monkeypatch):
+    import sys
+    import run
+
+    (tmp_path / "best_model.pt").touch()
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "--scenario", "scenarios/ppo_lap_completion_transfer.yaml",
+        "--checkpoint", str(tmp_path), "--output-dir", str(tmp_path),
+        "--no-wandb", "--quiet",
+    ])
+    with pytest.raises(ValueError, match="new --output-dir"):
+        run.main()
+    assert list(tmp_path.iterdir()) == [tmp_path / "best_model.pt"]
+
+
+@pytest.mark.parametrize("value", [True, 123, [], {}, "", "   "])
+def test_scenario_rejects_invalid_checkpoint_path(value):
+    from core.scenario import ScenarioError, load_and_expand_scenario, validate_scenario
+
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_transfer.yaml")
+    scenario["experiment"]["checkpoint"] = value
+    with pytest.raises(ScenarioError, match="experiment.checkpoint"):
+        validate_scenario(scenario)

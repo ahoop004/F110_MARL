@@ -1,0 +1,24 @@
+# Evaluate the original pretraining checkpoint before fine-tuning on this track.
+# Set experiment.checkpoint below, or override it with --checkpoint.
+# With neither path set, this scenario trains a matched from-scratch baseline.
+includes:
+  - ppo_lap_completion_pretrain_frenet.yaml
+
+experiment:
+  name: ppo_lap_completion_transfer_budapest
+  # File or run directory (selects best_model.pt), for training or --eval.
+  # Relative paths start from this scenario's directory; absolute paths also work.
+  # Example: ../outputs/ppo_lap_completion_pretrain/YOUR_RUN/best_model.pt
+  checkpoint: ../outputs/ppo_lap_completion_pretrain_frenet/ppo_lap_completion_pretrain_frenet_ppo_s42_1789147365_cbef/best_model.pt
+
+environment:
+  # Change all three lists together when comparing another track.
+  map_bundles: [Budapest_map]
+  map_bundles_train: [Budapest_map]
+  map_bundles_eval: [Budapest_map]
+
+wandb:
+  group: ppo-lap-completion-transfer
+  job_type: track-transfer
+  tags: [ppo, single-agent, lap-completion, track-transfer]
+  notes: "PPO track transfer; source checkpoint and initialization scope recorded in provenance"

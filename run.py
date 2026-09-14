@@ -53,7 +53,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--torch-threads", type=int, default=None,
                    help="Parent PyTorch CPU threads; parallel collectors use one each")
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
-    p.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path for --eval")
+    p.add_argument("--checkpoint", type=str, default=None,
+                   help="Checkpoint file or run directory (best_model.pt): evaluate with --eval, "
+                        "or initialize PPO training weights with a fresh optimizer; "
+                        "overrides experiment.checkpoint in the scenario")
     p.add_argument(
         "--allow-provenance-mismatch",
         action="store_true",
@@ -168,6 +171,16 @@ def _resolve_scenario_relative_path(value: str, scenario_dir: Path) -> Path:
     """Resolve checkpoint/config paths relative to the declaring scenario."""
     path = Path(value).expanduser()
     return path if path.is_absolute() else (scenario_dir / path).resolve()
+
+
+def resolve_checkpoint_path(value: str) -> Path:
+    """CLI paths are relative to cwd; a run directory selects its best model."""
+    path = Path(value).expanduser().resolve()
+    if path.is_dir():
+        path = path / "best_model.pt"
+    if not path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    return path
 
 
 def _run_heuristic(
@@ -351,6 +364,12 @@ def main() -> None:
         import torch
         torch.set_num_threads(scenario["experiment"]["torch_threads"])
     scenario_dir = Path(args.scenario).resolve().parent
+    if args.checkpoint is None:
+        configured_checkpoint = scenario["experiment"].get("checkpoint")
+        if configured_checkpoint is not None:
+            args.checkpoint = str(_resolve_scenario_relative_path(
+                configured_checkpoint, scenario_dir
+            ))
 
     agent_configs = scenario.get("agents", {})
     exp_cfg = scenario.get("experiment", {})
@@ -362,6 +381,14 @@ def main() -> None:
     if args.eval:
         _run_eval(scenario, args, console, scenario_dir)
         return
+
+    initial_checkpoint = None
+    if args.checkpoint:
+        if len(trainable_ids) != 1 or str(
+            agent_configs[trainable_ids[0]]["algorithm"]
+        ).strip().lower() != "ppo":
+            raise ValueError("--checkpoint for training currently supports one PPO learner only.")
+        initial_checkpoint = resolve_checkpoint_path(args.checkpoint)
 
     if not trainable_ids:
         _run_heuristic(scenario, args, console)
@@ -377,6 +404,11 @@ def main() -> None:
         algorithm=algorithm,
         seed=exp_cfg.get("seed"),
     )
+    output_dir = args.output_dir or os.path.join(
+        "outputs", exp_cfg.get("name", "unnamed"), run_id
+    )
+    if initial_checkpoint is not None and Path(output_dir).resolve() == initial_checkpoint.parent:
+        raise ValueError("Use a new --output-dir for PPO transfer to preserve the source checkpoints.")
     set_run_id_env(run_id)
 
     # Loggers
@@ -424,6 +456,9 @@ def main() -> None:
 
     # Training params (needed before banner so we can show device)
     params = resolve_training_params(agent_cfg, scenario)
+    if initial_checkpoint is not None:
+        params["_initial_checkpoint"] = str(initial_checkpoint)
+        params["_initial_checkpoint_sha256"] = hashlib.sha256(initial_checkpoint.read_bytes()).hexdigest()
     if algorithm == "mappo":
         params = {**params, **resolve_mappo_config(scenario)}
         obs_dims = {aid: obs_composers[aid].obs_dim for aid in trainable_ids}
@@ -485,10 +520,6 @@ def main() -> None:
         if hasattr(ag, "set_env"):
             ag.set_env(env)
 
-    # Output directory
-    output_dir = args.output_dir or os.path.join(
-        "outputs", exp_cfg.get("name", "unnamed"), run_id
-    )
     provenance = build_run_provenance(
         scenario,
         scenario_path=args.scenario,
@@ -497,6 +528,14 @@ def main() -> None:
         trainable_agents=trainable_ids,
     )
     num_envs = int(exp_cfg.get("num_envs", 1))
+    if initial_checkpoint is not None:
+        provenance["initial_checkpoint"] = {
+            "path": str(initial_checkpoint),
+            "sha256": params["_initial_checkpoint_sha256"],
+            "load_scope": "actor_and_critic",
+            "optimizer_restored": False,
+            "training_progress_restored": False,
+        }
     if num_envs > 1:
         env_seed = env_cfg.get("seed")
         env_seed = exp_cfg["seed"] if env_seed is None else env_seed
@@ -738,13 +777,10 @@ def _run_eval(
 
     checkpoint = args.checkpoint
     if not checkpoint:
-        console.print_error("--eval requires --checkpoint")
+        console.print_error("--eval requires --checkpoint or experiment.checkpoint in the scenario")
         sys.exit(1)
 
-    checkpoint_path = Path(checkpoint).expanduser()
-    if not checkpoint_path.is_file():
-        console.print_error(f"Checkpoint not found: {checkpoint}")
-        sys.exit(1)
+    checkpoint_path = resolve_checkpoint_path(checkpoint)
 
     agent_configs = scenario.get("agents", {})
     trainable_ids = get_trainable_agent_ids(agent_configs)
@@ -1280,6 +1316,15 @@ def _run_on_policy(
         action_high=action_space.high,
         params=params,
     )
+    initial_checkpoint = params.get("_initial_checkpoint")
+    if initial_checkpoint:
+        agent.load(initial_checkpoint, load_optimizer=False)
+        if hashlib.sha256(Path(initial_checkpoint).read_bytes()).hexdigest() != params["_initial_checkpoint_sha256"]:
+            raise ValueError("Checkpoint changed while loading for training; use a stable checkpoint file.")
+        console.print_info(
+            f"Initialized PPO actor and critic from {initial_checkpoint}; "
+            "fresh optimizer, episode budget, and learning-rate schedule."
+        )
 
     # Wire checkpoint hook to the agent now that we have it
     for hook in hooks:

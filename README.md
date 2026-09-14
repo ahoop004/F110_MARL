@@ -31,6 +31,48 @@ Replace the example checkpoint path with the checkpoint produced by your run.
 For fixed-controller-only scenarios, use the ordinary episode command without
 `--eval` or a checkpoint.
 
+### Load the best PPO model on another track
+
+`--checkpoint` accepts a checkpoint file or a source run directory containing
+`best_model.pt`. With PPO training, it loads the actor and critic and starts a
+new optimizer, learning-rate schedule, and episode budget using the destination
+scenario. This is fine-tuning, not an exact interrupted-run resume. The source
+path and SHA-256 are recorded in run/checkpoint provenance. Use a new output
+directory; reusing the source checkpoint directory is rejected.
+
+You can also set the path in the scenario YAML for training or `--eval`:
+
+```yaml
+experiment:
+  checkpoint: ../outputs/ppo_lap_completion_pretrain/YOUR_RUN/best_model.pt
+```
+
+YAML paths are relative to the scenario directory; absolute paths and run
+directories also work. `--checkpoint` overrides this field and remains relative
+to the working directory. Leave `checkpoint: null` to disable YAML loading.
+
+`scenarios/ppo_lap_completion_transfer.yaml` inherits the pretraining observation,
+reward, action, and network settings and selects Budapest. To use another track,
+copy it, change its experiment name, and update all three map bundle lists.
+First evaluate the original policy, then fine-tune, then evaluate the new policy:
+
+```bash
+# Replace outputs/PRETRAIN_RUN with the directory containing your best_model.pt.
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/PRETRAIN_RUN --allow-provenance-mismatch --eval-protocol final --output-dir outputs/budapest_before --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --checkpoint outputs/PRETRAIN_RUN --output-dir outputs/budapest_finetune --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/budapest_finetune --eval-protocol final --output-dir outputs/budapest_after --no-wandb
+```
+
+Compare `evaluation_report.json` in the before/after directories for completion,
+collisions, progress, and finish times under the same final-test seeds and horizon.
+The initial evaluation measures transfer without further learning; after fine-tuning,
+the destination track is part of training. Keep final-test results out of checkpoint
+selection. Omit `--checkpoint` and leave `experiment.checkpoint: null` for a matched
+from-scratch baseline. The inherited
+learning rate is unchanged; choose any fine-tuning rate explicitly in the new YAML.
+Network dimensions, activation, and physical action contracts must match the source;
+keep observation component meanings/order compatible as well as their dimensions.
+
 ## Experiment catalog
 
 Scenario files retain their existing paths and experiment settings. Inspect each
@@ -42,6 +84,7 @@ YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a r
 | PPO centerline racing / time trial | `ppo_centerline.yaml`, `ppo_time_trial.yaml` |
 | PPO against waypoint controllers | `ppo_vs_pure_pursuit.yaml`, `ppo_vs_stanley.yaml`, `ppo_vs_hybrid_pp_ftg.yaml` |
 | PPO actor pretraining | `ppo_lap_completion_pretrain.yaml` |
+| PPO evaluation / fine-tuning on another track | `ppo_lap_completion_transfer.yaml` |
 | PPO pretraining with Frenet/track preview and acceleration actions | `ppo_lap_completion_pretrain_frenet.yaml` |
 | PPO defender against hybrid controller | `marl_defender.yaml` |
 | MAPPO gaplock | `mappo_gaplock.yaml` |

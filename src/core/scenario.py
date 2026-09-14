@@ -199,6 +199,9 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     experiment = scenario["experiment"]
     if "name" not in experiment:
         raise ScenarioError("'experiment' section must have a 'name' field.")
+    checkpoint = experiment.get("checkpoint")
+    if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
+        raise ScenarioError("'experiment.checkpoint' must be a nonempty path string or null.")
     if "total_steps" in experiment:
         raise ScenarioError("PPO/MAPPO use 'experiment.episodes'; 'total_steps' is unsupported.")
 

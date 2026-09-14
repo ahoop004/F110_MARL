@@ -115,6 +115,7 @@ class PPOAgent:
         )
         activation: str = str(params.get("activation", "tanh"))
         self.actor_hidden_dims = list(hidden_dims)
+        self.critic_hidden_dims = list(vf_dims)
         self.activation = activation
 
         device_str = str(params.get("device", "cpu"))
@@ -235,14 +236,27 @@ class PPOAgent:
                 "action_high": self.action_high,
                 "action_contract": self.action_contract,
                 "actor_hidden_dims": self.actor_hidden_dims,
+                "critic_hidden_dims": self.critic_hidden_dims,
                 "activation": self.activation,
             },
             path,
         )
 
-    def load(self, path: str) -> None:
+    def load(self, path: str, *, load_optimizer: bool = True) -> None:
+        """Load actor/critic weights; transfer runs keep their fresh optimizer."""
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        for key, expected in (
+            ("algorithm", "ppo"), ("obs_dim", self.obs_dim),
+            ("action_dim", self.action_dim),
+            ("actor_hidden_dims", self.actor_hidden_dims),
+            ("critic_hidden_dims", self.critic_hidden_dims),
+            ("activation", self.activation),
+        ):
+            if key in ckpt and ckpt[key] != expected:
+                raise ValueError(
+                    f"Incompatible PPO checkpoint {key}: checkpoint={ckpt[key]!r}, current={expected!r}."
+                )
         if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
             raise ValueError("Incompatible PPO checkpoint action contract (speed control semantics differ).")
         for key, expected in (("action_low", self.action_low), ("action_high", self.action_high)):
@@ -252,5 +266,5 @@ class PPOAgent:
                     raise ValueError(f"Incompatible PPO checkpoint {key}: action bounds differ.")
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
-        if "optimizer" in ckpt:
+        if load_optimizer and "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
