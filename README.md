@@ -86,6 +86,7 @@ YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a r
 | PPO actor pretraining | `ppo_lap_completion_pretrain.yaml` |
 | PPO evaluation / fine-tuning on another track | `ppo_lap_completion_transfer.yaml` |
 | PPO pretraining with Frenet/track preview and acceleration actions | `ppo_lap_completion_pretrain_frenet.yaml` |
+| PPO pretraining with combined-slip tires and wheel actuators | `ppo_lap_completion_pretrain_combined_slip.yaml` |
 | PPO defender against hybrid controller | `marl_defender.yaml` |
 | MAPPO gaplock | `mappo_gaplock.yaml` |
 | MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |
@@ -182,6 +183,28 @@ train/eval friction protocols and `physics_episodes.jsonl` support reproducible
 grip experiments. Hardware validation remains outstanding. Optional bundle
 surface metadata supports calibration records. See
 [the physics roadmap](todo.md) for remaining work.
+
+For full single-agent pretraining with the implemented nonlinear physics, use:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --no-wandb
+```
+
+This scenario trains a fresh PPO actor on `circle_map` for three-lap completion,
+using eight collection environments, simulated wheel observations, wheel-reference
+acceleration actions, and fixed nominal grip. It retains the Frenet reward and
+0.01 s decision interval, with a 256×256 actor and 512×512 critic. Its 10,000-episode
+budget is not the paper's environment-step budget, and its reduced tire/actuator
+parameters remain uncalibrated. Legacy checkpoints are incompatible. Selection
+uses eight fixed seeds; evaluate the selected checkpoint on the separate final set:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --eval --checkpoint outputs/YOUR_PRETRAIN_RUN --eval-protocol final --output-dir outputs/combined_slip_final --no-wandb
+```
+
+Replace the checkpoint directory with the run containing `best_model.pt`. Both
+protocols use the training track; final seeds do not establish held-out-map or
+sim-to-real generalization. Keep friction randomization as a separate ablation.
 
 Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
 `events.py`, and `interaction.py`; observations use `ego.py`, `track.py`, and
