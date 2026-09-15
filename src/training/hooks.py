@@ -384,7 +384,8 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     Completion is always first. The default then ranks collision avoidance,
     absolute progress, and finish speed. The opt-in completion_progress strategy
-    ranks earned net progress before collision avoidance. Neither uses reward.
+    ranks earned net progress before collision avoidance until every race is
+    completed, then ranks safety and finish time. Neither uses reward.
     """
 
     def __init__(
@@ -428,6 +429,10 @@ class EvaluationCheckpointHook(CheckpointHook):
             net_progress = summary.get("mean_net_progress")
             if net_progress is None or not np.isfinite(net_progress):
                 raise ValueError("completion_progress selection requires finite centerline progress deltas in every evaluation episode.")
+            if completion == 1.0:
+                # Successful episodes end just past the line. Their numerical
+                # overshoot must not outrank safety or a faster race time.
+                return (completion, 0.0, -collision, finish_speed_score)
             # Ignore sub-millionth-lap numerical jitter when selecting a model.
             return (completion, round(float(net_progress), 6), -collision, finish_speed_score)
         if strategy != "completion_safety":

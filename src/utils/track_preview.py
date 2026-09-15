@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 import numpy as np
+from numba import njit
 
 from .centerline import (
     CenterlineGeometry,
@@ -17,6 +18,31 @@ from .centerline import (
 
 
 TRACK_PREVIEW_PREPROCESSING_VERSION = 1
+
+
+@njit(cache=True)
+def _nearest_sample(points, position, closed, last_index, window):
+    """Keep first ties and seam search order without gathering point arrays."""
+    size = points.shape[0]
+    if last_index < 0 or last_index >= size:
+        start, stop = 0, size
+    elif closed:
+        start, stop = last_index - window, last_index + window + 1
+    else:
+        start, stop = max(last_index - window, 0), min(last_index + window + 1, size)
+    if stop <= start:
+        raise ValueError('attempt to get argmin of an empty sequence')
+    best, best_distance = 0, np.float32(np.inf)
+    for candidate in range(start, stop):
+        index = candidate % size
+        dx = points[index, 0] - position[0]
+        dy = points[index, 1] - position[1]
+        distance = dx * dx + dy * dy
+        if candidate == start or distance < best_distance or np.isnan(distance):
+            best, best_distance = index, distance
+            if np.isnan(distance):
+                break
+    return best
 
 
 @dataclass(frozen=True)
@@ -181,18 +207,10 @@ class TrackPreviewGeometry:
         pos = np.asarray(position, dtype=np.float32).reshape(-1)
         if pos.size < 2 or not np.isfinite(pos[:2]).all():
             return 0
-        size = self.points.shape[0]
-        if last_index is None or last_index < 0 or last_index >= size:
-            indices = np.arange(size, dtype=np.int64)
-        elif self.closed:
-            offsets = np.arange(-search_window, search_window + 1, dtype=np.int64)
-            indices = (int(last_index) + offsets) % size
-        else:
-            start = max(int(last_index) - search_window, 0)
-            stop = min(int(last_index) + search_window + 1, size)
-            indices = np.arange(start, stop, dtype=np.int64)
-        delta = self.points[indices] - pos[:2]
-        return int(indices[int(np.argmin(np.einsum("ij,ij->i", delta, delta)))])
+        return _nearest_sample(
+            self.points, pos, self.closed,
+            -1 if last_index is None else int(last_index), int(search_window),
+        )
 
     def preview(
         self,

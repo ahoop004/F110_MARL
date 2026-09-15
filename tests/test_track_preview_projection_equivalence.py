@@ -22,6 +22,35 @@ CONFIGURED_MAPS = (
 )
 
 
+def _numpy_nearest_sample(geometry, position, last_index, window=50):
+    size = len(geometry.points)
+    if last_index is None or not 0 <= last_index < size:
+        indices = np.arange(size)
+    elif geometry.closed:
+        indices = (last_index + np.arange(-window, window + 1)) % size
+    else:
+        indices = np.arange(max(last_index - window, 0), min(last_index + window + 1, size))
+    delta = geometry.points[indices] - position[:2]
+    return int(indices[np.argmin(np.einsum('ij,ij->i', delta, delta))])
+
+
+@pytest.mark.parametrize('closed', [False, True])
+def test_compiled_nearest_sample_matches_numpy_for_ties_and_windows(closed):
+    from utils.track_preview import _nearest_sample
+
+    points = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+    from types import SimpleNamespace
+    geometry = SimpleNamespace(points=points, closed=closed)
+    for position in (np.array([.5, .5], dtype=np.float32), *points):
+        for hint in (-1, 0, 3, 4):
+            for window in (0, 1, 50):
+                assert _nearest_sample(points, position, closed, hint, window) == _numpy_nearest_sample(
+                    geometry, position, hint, window,
+                )
+    with pytest.raises(ValueError, match='empty sequence'):
+        _nearest_sample(points, points[0], closed, 0, -1)
+
+
 def _legacy_preview(
     geometry: TrackPreviewGeometry,
     position: np.ndarray,
@@ -89,6 +118,7 @@ def test_precomputed_interpolation_matches_legacy_on_every_configured_map() -> N
         last_index = -1
         for position in positions:
             nearest = geometry.nearest_index(position, last_index=last_index)
+            assert nearest == _numpy_nearest_sample(geometry, position, last_index)
             expected = _legacy_preview(
                 geometry, position, 20, start_index=nearest
             )

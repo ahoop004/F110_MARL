@@ -12,7 +12,7 @@ from core.config import register_builtin_agents
 from core.provenance import physics_contract
 from core.scenario import load_and_expand_scenario, validate_scenario, ScenarioError
 from core.setup import create_training_setup
-from env.friction import EpisodeFriction, validate_friction_protocol
+from env.friction import EpisodeFriction, copy_friction_metadata, validate_friction_protocol
 from training.hooks import PhysicsEpisodeHook
 from wrappers.actions.composer import WheelReferenceAdapter
 from wrappers.observations.composer import ObservationComposer
@@ -21,6 +21,27 @@ from wrappers.observations.composer import ObservationComposer
 @pytest.fixture
 def scenario():
     return load_and_expand_scenario('scenarios/ppo_combined_slip_vs_ftg_development.yaml')
+
+
+@pytest.mark.parametrize('protocol', [
+    {'mode': 'fixed', 'mu': .9},
+    {'mode': 'uniform', 'low': .8, 'high': 1.1},
+    {'mode': 'grid', 'values': [.8, .95, 1.1]},
+])
+def test_fast_metadata_copy_matches_deepcopy_and_detaches_containers(protocol):
+    phase = 'eval' if protocol['mode'] == 'grid' else 'train'
+    config = {'version': 1, 'scope': 'shared',
+              'train': {'mode': 'fixed', 'mu': 1}, 'eval': {'mode': 'fixed', 'mu': 1}}
+    config[phase] = protocol
+    sample = EpisodeFriction(config, nominal_mu=1, seed=42, phase=phase).sample()
+    expected = deepcopy(sample)
+    first, second = copy_friction_metadata(sample), copy_friction_metadata(sample)
+    assert first == second == expected
+    first['mu'] = -1
+    first['protocol']['mode'] = 'changed'
+    if 'values' in first['protocol']:
+        first['protocol']['values'][0] = -1
+    assert sample == second == expected
 
 
 @pytest.mark.parametrize('algorithm', ['ftg', 'pure_pursuit', 'stanley', 'hybrid_pp_ftg', 'kinematic_mpc'])
@@ -101,6 +122,26 @@ def test_rng_reproducibility_and_independence(scenario):
     a.reseed(43)
     assert a.sample()['mu'] != sequence[0]
     assert len(set(sequence)) == len(sequence)
+
+
+def test_cached_snapshot_refreshes_friction_without_mutating_history(scenario):
+    env, _, _ = create_training_setup(scenario, scenario_dir=Path('scenarios'))
+    try:
+        _, infos = env.reset(seed=42)
+        before = env.get_global_state()
+        mu = before.metadata['physics']['mu']
+        infos['car_0']['physics']['protocol']['mode'] = 'changed'
+        assert infos['car_1']['physics']['protocol']['mode'] == 'uniform'
+        assert before.metadata['physics']['protocol']['mode'] == 'uniform'
+        env.step({'car_0': [0, 20], 'car_1': [0, 20]})
+        assert env.get_global_state().metadata is before.metadata
+        _, infos = env.reset(seed=43)
+        after = env.get_global_state()
+        assert after.metadata['physics']['mu'] == infos['car_0']['physics']['mu']
+        assert after.metadata['physics']['mu'] != mu
+        assert before.metadata['physics']['mu'] == mu
+    finally:
+        env.close()
 
 
 def test_reset_and_eval_grid_reproduce_without_changing_spawn(scenario):

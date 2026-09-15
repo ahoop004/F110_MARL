@@ -7,6 +7,19 @@ import numpy as np
 FRICTION_STREAM = 0x46524943  # Stable named SeedSequence stream ('FRIC').
 
 
+def copy_friction_metadata(metadata: dict) -> dict:
+    """Detach the validated sample schema for an independently mutable info.
+
+    All sample fields are scalars except the protocol dict and its optional
+    grid-values list. Copy those containers without per-scalar deepcopy work.
+    """
+    result = metadata.copy()
+    result['protocol'] = metadata['protocol'].copy()
+    if 'values' in result['protocol']:
+        result['protocol']['values'] = result['protocol']['values'].copy()
+    return result
+
+
 def validate_friction_protocol(config, *, nonlinear: bool) -> dict | None:
     if config is None:
         return None

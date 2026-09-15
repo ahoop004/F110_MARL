@@ -7,7 +7,7 @@ from numba import njit
 
 from physics.dynamic_models import (
     vehicle_dynamics_st, pid, validate_vehicle_params, first_order_actuator_step,
-    combined_slip_dynamics,
+    combined_slip_dynamics, integrate_combined_slip,
 )
 from physics.integration import Integrator
 from physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
@@ -222,24 +222,14 @@ class CombinedSlipVehicle:
         """
         if not np.isfinite(timestep) or timestep <= 0:
             raise ValueError("timestep must be finite and positive")
-        steps = int(np.ceil(timestep / self.params["max_integration_step"]))
-        dt = timestep / steps
-        state = self._chassis.copy()
-        for index in range(steps):
-            start = index * dt
-            at_start = self._actuators.sample(start)
-            at_middle = self._actuators.sample(start + dt / 2)
-            at_end = self._actuators.sample((index + 1) * dt)
-            k1, _ = combined_slip_dynamics(state, at_start, self._dynamics_params)
-            k2, _ = combined_slip_dynamics(state + dt / 2 * k1, at_middle, self._dynamics_params)
-            k3, _ = combined_slip_dynamics(state + dt / 2 * k2, at_middle, self._dynamics_params)
-            k4, _ = combined_slip_dynamics(state + dt * k3, at_end, self._dynamics_params)
-            state += dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-        final_actuators = self._actuators.sample(timestep)
-        combined_slip_dynamics(state, final_actuators, self._dynamics_params)
-        if not np.all(np.isfinite(state)):
-            raise ValueError("Nonfinite chassis state; reduce integration step or check parameters")
-        self._actuators.advance(timestep)
+        actuators = self._actuators
+        state, final_actuators = integrate_combined_slip(
+            self._chassis, actuators._state, actuators._reference,
+            actuators._time_constants, actuators._rate_limits,
+            self._dynamics_params, timestep, self.params["max_integration_step"],
+        )
+        # Commit both subsystems only after every stage and final validation pass.
+        actuators._state[:] = final_actuators
         self._chassis[:] = state
         return self.state
 

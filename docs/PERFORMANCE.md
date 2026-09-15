@@ -241,3 +241,175 @@ A local evaluation microbenchmark (115 inputs, `[256, 256]` MLP, one CPU thread,
 per action on CPU and 577 → 313 µs on a Quadro RTX 5000 when replacing full
 deterministic `act()` with `predict()`. This includes the NumPy result transfer,
 but excludes environment stepping and is not an end-to-end or L40 speed claim.
+
+## Combined-slip environment review (September 2026)
+
+An environment-only review used the current
+`ppo_lap_completion_pretrain_combined_slip.yaml`: 0.01 s physics steps, 0.001 s
+RK4 integration substeps, 108 LiDAR beams, and 20 track-preview points. A separate
+four-car scaling workload copied the same vehicle/sensor configuration into one
+environment; it did not run a multiple-PPO trainer. Fixed physical commands,
+named spawn plans, and seed 42 were reused. Original collision/termination logic
+remained enabled, with deterministic resets when the joint episode ended.
+
+Local hardware: Intel Xeon Silver 4214, Python 3.12, one Numba/BLAS thread.
+Each arm warmed 32 steps, then measured three repetitions of 1,024 joint steps
+in the same process. Separate trajectory-capture and cProfile repetitions were
+excluded from the throughput numbers. Timings below exclude reset, setup/JIT,
+policy inference, wrapper composition, PPO updates, rendering, and logging.
+
+| Workload | Current env-step time | Compiled RK4 prototype | Speedup |
+| --- | ---: | ---: | ---: |
+| circle_map, one car | 1.169 s | 0.772 s | 1.51× |
+| circle_map, four cars | 4.145 s | 2.424 s | 1.71× |
+| Budapest_map, one car | 1.170 s | 0.761 s | 1.54× |
+
+The prototype compiled the complete `CombinedSlipVehicle.advance` numerical
+loop and actuator sampling together, using the existing force/actuator kernels
+and no fastmath. It was injected only into benchmark processes; production
+physics was not edited. Physics-state, LiDAR, global-state-vector, and
+termination traces were bitwise identical across the baseline/prototype on all
+three workloads. The prototype also passed the 76 existing combined-slip
+physics/environment and friction-protocol tests. This is evidence for a narrow
+optimization candidate, not full learning equivalence or an HPC speed claim.
+
+A separate integration-only probe compared a compiled serial batch against
+`prange` with four Numba threads. It used heterogeneous states from seed 42,
+30 warmup calls, and five repetitions of 200 calls per batch size. Compilation
+was excluded, and outputs were bitwise identical to the serial batch.
+
+| Vehicles in batch | Serial kernel | Four-thread kernel | Kernel speedup |
+| ---: | ---: | ---: | ---: |
+| 1 | 34.0 µs | 43.3 µs | 0.79× |
+| 4 | 132.8 µs | 52.3 µs | 2.54× |
+| 8 | 262.8 µs | 86.3 µs | 3.04× |
+| 32 | 1062.6 µs | 338.3 µs | 3.14× |
+
+These are integration-only measurements, not additional end-to-end speedups.
+One-car threading lost to scheduling overhead. Larger batches provide independent
+work, but geometry/snapshots/scans remain outside this kernel. When combining
+Numba threading with environment processes, budget CPU cores across both layers
+to avoid oversubscription. The parallel prototype uses numeric parameter arrays;
+passing the existing nested rate-limit tuples directly failed Numba's parallel
+wrapper compilation, so a production batch kernel needs an explicit packed input
+contract. `batch_probe.py` and its JSON/log are beside the environment profiles.
+
+Priorities from the baseline cProfile runs (inclusive timings overlap):
+
+1. **Compile the full RK4 loop first.** `CombinedSlipVehicle.advance` accounted
+   for 31.7% of one-car and 38.5% of four-car profiled env time. Each car-step
+   currently invokes 32 Python actuator samplings and 41 dynamics evaluations.
+   RK4 stages and successive substeps are sequential dependencies; parallelize
+   independent cars only after removing Python orchestration overhead.
+2. **Compile/batch centerline projection.** `project_to_centerline` accounted
+   for 14.1% / 15.9%. Progress and preview use different geometries and must keep
+   independent indices. Fuse the small search/projection array operations and
+   batch agents over each geometry, preserving candidate order, tie-breaking,
+   float precision, and seam behavior. Preview also performs a separate nearest
+   sample search; changing it requires the existing projection-equivalence tests.
+3. **Cache immutable episode metadata.** Recursive global-state metadata freezing
+   consumed 10.9% / 3.8%; copying physics metadata into public infos consumed
+   another 4.1% / 4.2%. Cache the already-frozen episode metadata at reset/map or
+   friction changes, while preserving independent mutable public info payloads
+   and immutable historical snapshots. Avoid copying LiDAR arrays through
+   `Simulator.current_observation` solely to construct the centralized vector.
+4. **Batch scans and opponent ray casting after those changes.** Scanning was
+   about 4.9% in both baselines; opponent ray casting added 5.0% with four cars.
+   These numerical kernels already use Numba. Batched car/scan rows are a better
+   candidate than launching threads separately for just 108 beams. Preserve
+   per-car noise streams and the current float beam-index recurrence. Pairwise
+   collision writes need deterministic reduction if parallelized; several pairs
+   can write the same car's collision index. The `opp_poses` packing loop has no
+   reader in the current source and is a smaller deletion candidate.
+5. **Parallel evaluation and worker transport are separate candidates.** Fixed
+   evaluation episodes can use isolated environments and a frozen policy, with
+   deterministic result ordering. Training currently exchanges observations and
+   actions through pipes every decision. Shared-memory buffers could reduce that
+   transport cost without changing fragment boundaries or policy-update barriers.
+   Neither opportunity was timed by this environment-only benchmark.
+
+Raw profiles, trace arrays, JSON timings, prototype test output, and the portable
+benchmark harness are in `/tmp/f110_env_review` for this review session. Run the
+harness from the repository root after copying it to the target node:
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+PYGLET_HEADLESS=true venv/bin/python /tmp/f110_env_review/benchmark.py \
+  --agents 1 --map circle_map --steps 1024 --repetitions 3
+# Repeat with --compiled, and separately with --agents 4.
+```
+
+### Implemented environment optimizations
+
+The measured environment work is now implemented in the active path:
+
+- `physics.dynamic_models.integrate_combined_slip` compiles the complete RK4
+  loop and exact held-reference actuator sampling. `CombinedSlipVehicle.advance`
+  validates the timestep and commits both subsystems only after successful
+  integration and final validation. Stage order and arithmetic are retained;
+  fastmath and additional worker threads are disabled.
+- `utils.centerline` and `utils.track_preview` compile the closest-segment and
+  nearest-sample searches. They avoid temporary candidate/gather arrays while
+  retaining float32 arithmetic, first-candidate ties, local windows, and seam
+  wrapping. Progress and preview retain their separate geometries and cursors.
+- `env.state_views.FrozenSnapshotMapping` detaches metadata once and permits
+  sharing it between immutable global-state snapshots. The environment drops
+  this cache on reset and map changes, so newly sampled friction and spawn
+  metadata enter the next snapshot. Public info dictionaries still get separate
+  mutable physics metadata; a schema-specific copy replaces generic recursive
+  deepcopy, including an independent evaluation-grid list.
+- `Simulator.current_observation(include_scans=False)` lets central-state
+  construction omit the LiDAR copy. Its default still returns the full copied
+  observation.
+
+Final measurements used the same baseline harness, seeds, resolved configurations,
+actions, warmup, and three unprofiled repetitions described above. Times are
+median wall seconds for 1,024 joint environment steps, excluding reset, JIT,
+policy inference, PPO updates, logging, and rendering:
+
+| Workload | Before | Implemented | Speedup |
+| --- | ---: | ---: | ---: |
+| Circle, one car | 1.169 s | 0.555 s | 2.11× |
+| Circle, four cars | 4.145 s | 1.830 s | 2.27× |
+| Budapest, one car | 1.170 s | 0.566 s | 2.07× |
+
+Physics states, scans, central vectors, and termination traces were **bitwise
+identical** to the saved pre-optimization baseline for every workload. Regression
+tests also compare compiled integration to the previous Python RK4 driver across
+three timestep lengths and three grip values; compare projection/search results
+to NumPy references; and check metadata mutation isolation and cache refresh.
+No reward, observation shape, action bound, rollout horizon, or learning
+hyperparameter was changed by this optimization pass. This evidence covers the
+tested numerical workloads, not learning convergence or an HPC throughput claim.
+
+Final timing JSON, traces, and cProfile output are in
+`/tmp/f110_env_implemented_final`; `comparison.json` records exact trace and
+configuration checks against `/tmp/f110_env_review`. To measure production code
+with that harness, **omit `--compiled`**: that switch installs the old integration
+prototype. The retained `_baseline` filename suffix identifies the harness arm,
+not the implementation being measured.
+
+Parallel evaluation, shared-memory PPO transport, and batched sensor/raycast
+execution remain follow-up candidates. Profile the complete HPC training job
+with these environment changes before choosing the next optimization.
+
+Validation for this implementation (headless, with OMP/MKL/OpenBLAS threads
+limited to one):
+
+```bash
+venv/bin/python -m compileall -q run.py src tests
+PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_ppo
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_mappo
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_slip
+rg 'stable_baselines3|from gymnasium|from pettingzoo' run.py src configs scenarios
+git diff --check
+```
+
+Compilation, all three smoke runs, and whitespace checks passed; the dependency
+guard found no matches (normal `rg` exit code 1). The focused suite passed all
+107 tests. The full suite finished with **570 passed, one failed**:
+`tests/test_ppo_correctness.py::test_transfer_scenario_preserves_pretraining_contract`
+still compares the transfer scenario to Frenet pretraining, while the existing
+user-edited scenario inherits combined-slip pretraining. This failure was already
+observed before the performance implementation and is unrelated to it.

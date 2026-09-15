@@ -470,7 +470,12 @@ def validate_finish_line(
 
 
 class LapTracker:
-    """Shared-line, forward-only multi-lap tracker for every physical agent."""
+    """Count net forward passages through a track-spanning finish segment.
+
+    A backward passage must be undone before another lap can be earned. This
+    distinguishes a circuit of the track from local loops across the line,
+    without depending on optional centerline observation features.
+    """
 
     def __init__(
         self,
@@ -487,6 +492,8 @@ class LapTracker:
         self._previous = np.zeros(len(self.agent_ids), dtype=np.float32)
         self._armed = np.zeros(len(self.agent_ids), dtype=bool)
         self._initial_crossing_seen = np.zeros(len(self.agent_ids), dtype=bool)
+        self._previous_points = np.zeros((len(self.agent_ids), 2), dtype=np.float32)
+        self._reverse_crossings = np.zeros(len(self.agent_ids), dtype=np.int64)
 
         segment = np.asarray(self.finish_line["segment"], dtype=np.float32)
         normal = np.array([-segment[1], segment[0]], dtype=np.float32)
@@ -499,11 +506,13 @@ class LapTracker:
     def reset(self, poses_x: np.ndarray, poses_y: np.ndarray) -> None:
         self.lifecycle.reset()
         self._initial_crossing_seen.fill(False)
+        self._reverse_crossings.fill(0)
         hysteresis = float(self.finish_line["hysteresis"])
         for idx, _agent_id in enumerate(self.agent_ids):
             point = np.array([poses_x[idx], poses_y[idx]], dtype=np.float32)
             oriented = self._oriented_distance(point)
             self._previous[idx] = oriented
+            self._previous_points[idx] = point
             # Spawning on or beyond the completed side cannot count immediately.
             self._armed[idx] = oriented <= -hysteresis
 
@@ -520,7 +529,6 @@ class LapTracker:
         self.lifecycle.begin_step()
         crossings = {agent_id: False for agent_id in self.agent_ids}
         hysteresis = float(self.finish_line["hysteresis"])
-        direction = np.asarray(self.finish_line["direction"], dtype=np.float32)
         min_speed = float(self.finish_line["min_speed"])
 
         for idx, agent_id in enumerate(self.agent_ids):
@@ -530,21 +538,35 @@ class LapTracker:
             self._previous[idx] = current
             record = self.lifecycle.records[agent_id]
             if not record.is_active:
+                self._previous_points[idx] = point
+                continue
+            forward = previous < 0.0 <= current
+            backward = current < 0.0 <= previous
+            within_segment = (forward or backward) and self._crossing_within_segment(
+                self._previous_points[idx], point, previous, current,
+            )
+            self._previous_points[idx] = point
+            # Body speed stays positive when a car turns around and drives the
+            # wrong way. Use the oriented *segment* crossing, not speed's sign.
+            # Count both directions before hysteresis/speed gating so small
+            # recrossings cannot manufacture a new lap or erase reverse debt.
+            if within_segment and backward:
+                self._reverse_crossings[idx] += 1
+            elif within_segment and forward and self._reverse_crossings[idx] > 0:
+                self._reverse_crossings[idx] -= 1
+                self._armed[idx] = False
                 continue
             if not self._armed[idx]:
                 if current <= -hysteresis:
                     self._armed[idx] = True
                 continue
-            if not (previous < 0.0 <= current):
+            if not (forward and within_segment):
                 continue
 
             # Simulator ``linear_vels_x`` is longitudinal/body-frame speed;
             # the oriented sign change supplies the world-frame direction.
             if float(linear_vels_x[idx]) < min_speed:
                 continue
-            if not self._crossing_within_segment(point, previous, current):
-                continue
-
             self._armed[idx] = False
             if (
                 not self.count_initial_crossing_as_lap
@@ -565,6 +587,7 @@ class LapTracker:
 
     def _crossing_within_segment(
         self,
+        previous_point: np.ndarray,
         current_point: np.ndarray,
         previous_distance: float,
         current_distance: float,
@@ -573,10 +596,8 @@ class LapTracker:
         if abs(denom) <= 1e-9:
             return False
         velocity_fraction = -previous_distance / denom
-        # Recover the prior point from this step's displacement direction is
-        # unavailable here; using the current point is safe at simulator-scale
-        # steps and the configured endpoint padding covers the small offset.
-        rel = current_point - self.finish_line["start"]
+        crossing_point = previous_point + velocity_fraction * (current_point - previous_point)
+        rel = crossing_point - self.finish_line["start"]
         projection = float(np.dot(rel, self.finish_line["segment"]) / self.finish_line["segment_length_sq"])
         padding = float(self.finish_line["padding"])
         return 0.0 <= velocity_fraction <= 1.0 and -padding <= projection <= 1.0 + padding

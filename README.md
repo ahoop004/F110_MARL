@@ -191,7 +191,7 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_complet
 ```
 
 This scenario trains a fresh PPO actor on `circle_map` for three-lap completion,
-using eight collection environments, simulated wheel observations, wheel-reference
+using simulated wheel observations, wheel-reference
 acceleration actions, and fixed nominal grip. It retains the Frenet reward and
 0.01 s decision interval, with a 256×256 actor and 512×512 critic. Its 10,000-episode
 budget is not the paper's environment-step budget, and its reduced tire/actuator
@@ -205,6 +205,29 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_complet
 Replace the checkpoint directory with the run containing `best_model.pt`. Both
 protocols use the training track; final seeds do not establish held-out-map or
 sim-to-real generalization. Keep friction randomization as a separate ablation.
+
+Lap counting cancels backward passages through the finite finish segment before
+granting another forward lap. Local loops and reversing across the line cannot
+earn extra laps; `count_initial_crossing_as_lap` still controls the first valid
+forward crossing. Finish segments must span the drivable track width. With
+`completion_progress` selection, earned progress breaks ties while some races
+remain incomplete. Once every evaluation race finishes, safety and finish time
+determine the best checkpoint, ignoring finish-line overshoot. These behavior
+changes are recorded in run provenance. Re-evaluate older checkpoints before
+comparing completion rates or selected-model lap times across this change;
+`--eval --allow-provenance-mismatch` explicitly acknowledges the changed behavior
+when loading an older checkpoint for evaluation.
+
+For parallel PPO in this repository, `n_steps` is the **pooled** rollout limit:
+`steps_per_worker = n_steps / num_envs`. Episode ends flush shorter fragments,
+so the actual update size can be smaller. At a 0.01 s decision interval,
+`n_steps=2048` gives at most 20.48 s per worker with one environment, 5.12 s with
+four, and 2.56 s with eight. More workers at fixed `n_steps` therefore shorten
+the sampled GAE trajectories and increase dependence on critic bootstrapping.
+To preserve the fragment horizon, scale `n_steps` proportionally to `num_envs`;
+this also increases the pooled batch and changes update frequency. Compare runs
+at matched environment-decision budgets as well as wall time: the current
+episode-based budget and learning-rate decay do not guarantee equal samples.
 
 Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
 `events.py`, and `interaction.py`; observations use `ego.py`, `track.py`, and

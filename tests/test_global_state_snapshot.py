@@ -49,6 +49,55 @@ def test_global_state_snapshot_is_recursively_immutable() -> None:
     assert state.metadata["values"] == (1, 2)
 
 
+def test_frozen_metadata_detaches_mutable_sources_and_can_be_reused():
+    from env.state_views import FrozenSnapshotMapping
+
+    source = {"nested": {"values": [1, 2]}, "array": np.array([3.0])}
+    metadata = FrozenSnapshotMapping(source)
+    source["nested"]["values"][0] = 9
+    source["array"][0] = 9
+    state = build_global_state(
+        possible_agents=[], active_agents=[], central_vector=np.zeros(0),
+        metadata=metadata,
+    )
+    assert state.metadata is metadata
+    assert metadata["nested"]["values"] == (1, 2)
+    assert metadata["nested"] == {"values": (1, 2)}
+    np.testing.assert_array_equal(metadata["array"], [3.0])
+    with pytest.raises(TypeError):
+        metadata["nested"]["values"] = ()
+    with pytest.raises(ValueError):
+        metadata["array"][0] = 7
+
+
+def test_episode_metadata_reused_until_reset_or_map_change(monkeypatch):
+    env = _complete4_env()
+    original = env.sim.current_observation
+    scan_requests = []
+
+    def observed(*, include_scans=True):
+        scan_requests.append(include_scans)
+        return original(include_scans=include_scans)
+
+    monkeypatch.setattr(env.sim, "current_observation", observed)
+    try:
+        env.reset(seed=42)
+        before = env.get_global_state()
+        old_vector = before.vector.copy()
+        env.step({aid: np.zeros(2) for aid in env.decision_agents})
+        after = env.get_global_state()
+        assert after.metadata is before.metadata
+        np.testing.assert_array_equal(before.vector, old_vector)
+        assert scan_requests and not any(scan_requests)
+        env.reset(seed=43)
+        reset = env.get_global_state()
+        assert reset.metadata is not before.metadata
+        env._apply_map_data(env._map_data, bundle=env._map_bundle_active)
+        assert env.get_global_state().metadata is not reset.metadata
+    finally:
+        env.close()
+
+
 def test_global_state_reconstructs_once_per_mutation(monkeypatch) -> None:
     env = _complete4_env()
     module = sys.modules[env.__class__.__module__]

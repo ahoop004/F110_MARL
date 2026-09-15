@@ -409,6 +409,23 @@ def test_frenet_progress_selection_replaces_idle_but_prioritizes_completion(tmp_
             score({**idle, "mean_net_progress": progress}, "completion_progress")
 
 
+def test_complete_checkpoint_selection_ignores_overshoot_and_prefers_fast_safe_finish(tmp_path):
+    fast = dict(completion_rate=1.0, collision_rate=0.0, mean_progress=0.0,
+                mean_net_progress=3.50001, mean_finish_steps=3000.0)
+    slow = {**fast, "mean_net_progress": 3.50010, "mean_finish_steps": 6000.0}
+    unsafe = {**fast, "collision_rate": 0.125, "mean_finish_steps": 1000.0}
+    agent = _SavingAgent()
+    hook = EvaluationCheckpointHook(agent, str(tmp_path),
+                                    _SequenceEvaluator([slow, fast, slow, unsafe]), 1,
+                                    selection_strategy="completion_progress")
+    for episode in range(4):
+        agent.version = episode
+        hook.on_episode_end(episode, 0.0, {}, {})
+    records = [json.loads(line) for line in (tmp_path / "evaluation_history.jsonl").read_text().splitlines()]
+    assert [record["is_best"] for record in records] == [True, True, False, False]
+    assert torch.load(tmp_path / "best_model.pt", weights_only=False)["version"] == 1
+
+
 def test_net_progress_ignores_spawn_position_counts_laps_and_cancels_reverse():
     from metrics.racing_eval import aggregate_eval_episodes, create_episode_facts, update_agent_step_facts
 

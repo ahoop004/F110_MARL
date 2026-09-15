@@ -367,3 +367,37 @@ def pid(speed, steer, current_speed, current_steer, max_sv, max_a, max_v, min_v)
             accl = kp * vel_diff
 
     return accl, sv
+
+
+@njit(cache=True)
+def sample_wheel_actuators(state, reference, elapsed, constants, rates):
+    """Sample both held actuator references without changing their initial state."""
+    return np.array([first_order_actuator_step(state[i], reference[i], elapsed,
+                    constants[i], rates[i][0], rates[i][1]) for i in range(2)])
+
+
+@njit(cache=True)
+def integrate_combined_slip(
+    chassis, actuator_state, reference, constants, rates, params, timestep, max_step,
+):
+    """Integrate and validate a proposed state; the caller commits it atomically."""
+    # Keep stage arithmetic and held-reference sampling identical to scalar RK4.
+    # No fastmath: tire/load validation and reproducible rounding are intentional.
+    steps = int(np.ceil(timestep / max_step))
+    dt = timestep / steps
+    state = chassis.copy()
+    for index in range(steps):
+        start = index * dt
+        at_start = sample_wheel_actuators(actuator_state, reference, start, constants, rates)
+        at_middle = sample_wheel_actuators(actuator_state, reference, start + dt / 2, constants, rates)
+        at_end = sample_wheel_actuators(actuator_state, reference, (index + 1) * dt, constants, rates)
+        k1, _ = combined_slip_dynamics(state, at_start, params)
+        k2, _ = combined_slip_dynamics(state + dt / 2 * k1, at_middle, params)
+        k3, _ = combined_slip_dynamics(state + dt / 2 * k2, at_middle, params)
+        k4, _ = combined_slip_dynamics(state + dt * k3, at_end, params)
+        state += dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    final_actuators = sample_wheel_actuators(actuator_state, reference, timestep, constants, rates)
+    combined_slip_dynamics(state, final_actuators, params)
+    if not np.all(np.isfinite(state)):
+        raise ValueError("Nonfinite chassis state; reduce integration step or check parameters")
+    return state, final_actuators

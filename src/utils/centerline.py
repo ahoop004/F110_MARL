@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
+from numba import njit
 
 
 @dataclass
@@ -85,6 +86,37 @@ def prepare_centerline_geometry(centerline: np.ndarray) -> CenterlineGeometry:
     )
 
 
+@njit(cache=True)
+def _closest_segment(starts, vectors, lengths, position, closed, last_index, window):
+    """Search without candidate arrays, preserving float32 math and first ties."""
+    count = lengths.size
+    if last_index < 0 or last_index >= count:
+        start, stop = 0, count
+    elif closed:
+        start, stop = last_index - window, last_index + window + 1
+    else:
+        start = max(last_index - window, 0)
+        stop = min(last_index + window + 1, count)
+    best_index = 0
+    best_fraction = np.float32(0.0)
+    best_distance = np.float32(np.inf)
+    for candidate in range(start, stop):
+        index = candidate % count
+        dx = position[0] - starts[index, 0]
+        dy = position[1] - starts[index, 1]
+        vx, vy = vectors[index, 0], vectors[index, 1]
+        fraction = (dx * vx + dy * vy) / (lengths[index] * lengths[index])
+        fraction = min(max(fraction, np.float32(0.0)), np.float32(1.0))
+        rx = position[0] - (starts[index, 0] + fraction * vx)
+        ry = position[1] - (starts[index, 1] + fraction * vy)
+        distance = rx * rx + ry * ry
+        if candidate == start or distance < best_distance or np.isnan(distance):
+            best_index, best_fraction, best_distance = index, fraction, distance
+            if np.isnan(distance):
+                break  # Match np.argmin's first-NaN behavior on overflow.
+    return best_index, best_fraction
+
+
 def project_to_centerline(
     centerline: Union[np.ndarray, CenterlineGeometry],
     position: np.ndarray,
@@ -119,37 +151,16 @@ def project_to_centerline(
     if not np.isfinite(position_array).all():
         raise ValueError("position must contain finite values")
 
-    segment_count = geometry.segment_lengths.size
-    if last_index is None or not 0 <= int(last_index) < segment_count:
-        candidates = np.arange(segment_count, dtype=np.int64)
-    elif geometry.closed:
-        window = max(int(search_window), 0)
-        offsets = np.arange(-window, window + 1, dtype=np.int64)
-        candidates = (int(last_index) + offsets) % segment_count
-    else:
-        window = max(int(search_window), 0)
-        start = max(int(last_index) - window, 0)
-        stop = min(int(last_index) + window + 1, segment_count)
-        candidates = np.arange(start, stop, dtype=np.int64)
-
-    starts = geometry.segment_starts[candidates]
-    vectors = geometry.segment_vectors[candidates]
-    lengths = geometry.segment_lengths[candidates]
-    relative = position_array - starts
-    fractions = np.clip(
-        np.einsum("ij,ij->i", relative, vectors) / np.square(lengths),
-        0.0,
-        1.0,
+    segment_index, fraction = _closest_segment(
+        geometry.segment_starts, geometry.segment_vectors, geometry.segment_lengths,
+        position_array, geometry.closed,
+        -1 if last_index is None else int(last_index), max(int(search_window), 0),
     )
-    projected = starts + fractions[:, None] * vectors
-    residuals = position_array - projected
-    distances_sq = np.einsum("ij,ij->i", residuals, residuals)
-    local_best = int(np.argmin(distances_sq))
-    segment_index = int(candidates[local_best])
-    fraction = float(fractions[local_best])
-    tangent = vectors[local_best] / lengths[local_best]
+    vector = geometry.segment_vectors[segment_index]
+    projected = geometry.segment_starts[segment_index] + np.float32(fraction) * vector
+    tangent = vector / geometry.segment_lengths[segment_index]
     normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
-    residual = residuals[local_best]
+    residual = position_array - projected
     lateral_error = float(np.dot(residual, normal))
     longitudinal_error = float(np.dot(residual, tangent))
     tangent_heading = float(np.arctan2(tangent[1], tangent[0]))

@@ -42,8 +42,11 @@ from src.env.render_adapter import (
     flush_render_state,
 )
 from src.env.spawn_manager import SpawnManager
+from src.env.friction import copy_friction_metadata
 from src.env.spaces_builder import build_action_spaces, build_observation_spaces
-from src.env.state_views import build_agent_state, build_global_state, central_state_tensor
+from src.env.state_views import (
+    FrozenSnapshotMapping, build_agent_state, build_global_state, central_state_tensor,
+)
 from src.utils.track_preview import (
     TrackPreviewGeometry,
     TrackPreviewGeometryCache,
@@ -267,6 +270,7 @@ class F110ParallelEnv:
         
         self.state_buffers = StateBuffers.build(self.n_agents)
         self._global_state_cache: Optional[GlobalState] = None
+        self._global_state_metadata: Optional[FrozenSnapshotMapping] = None
         self._bind_state_views()
 
         default_terminate = bool(merged.get("terminate_on_collision", True))
@@ -577,6 +581,7 @@ class F110ParallelEnv:
         if bundle is not None:
             self._map_bundle_active = bundle
             self._map_scheduler.active_bundle = bundle
+        self._global_state_metadata = None
         self._invalidate_global_state_cache()
 
     def _maybe_cycle_map(self) -> None:
@@ -785,6 +790,7 @@ class F110ParallelEnv:
         ):
             raise ValueError("map_episode_index requires an explicit seed and a nonnegative integer")
         self._invalidate_global_state_cache()
+        self._global_state_metadata = None
         self.last_step_facts = None
         if seed is not None:
             seed_value = int(seed)
@@ -1415,8 +1421,18 @@ class F110ParallelEnv:
     def get_global_state(self) -> GlobalState:
         if self._global_state_cache is not None:
             return self._global_state_cache
-        joint = self.sim.current_observation()
+        joint = self.sim.current_observation(include_scans=False)
         central = self._central_state_tensor(joint)
+        if self._global_state_metadata is None:
+            # Map, spawn plan and sampled friction stay fixed within an episode.
+            # Detach once; public info dictionaries retain their independent copies.
+            self._global_state_metadata = FrozenSnapshotMapping({
+                "map_bundle": self._map_bundle_active,
+                **({"physics": self._episode_physics} if self._episode_physics else {}),
+                "vector_contract_version": GLOBAL_STATE_VECTOR_VERSION,
+                "centerline_fields": _CENTERLINE_GLOBAL_STATE_KEYS,
+                **self._spawn_manager.last_spawn_metadata,
+            })
         self._global_state_cache = build_global_state(
             possible_agents=self.possible_agents,
             active_agents=self.agents,
@@ -1424,21 +1440,14 @@ class F110ParallelEnv:
             controlled_agents=self.controlled_agents,
             trainable_agents=self.trainable_agents,
             lifecycle_records=self.lifecycle.records,
-            metadata={
-                "map_bundle": self._map_bundle_active,
-                **({"physics": self._episode_physics} if self._episode_physics else {}),
-                "vector_contract_version": GLOBAL_STATE_VECTOR_VERSION,
-                "centerline_fields": _CENTERLINE_GLOBAL_STATE_KEYS,
-                **self._spawn_manager.last_spawn_metadata,
-            },
+            metadata=self._global_state_metadata,
         )
         return self._global_state_cache
 
     def _attach_physics_metadata(self, infos) -> None:
         if self._episode_physics is not None:
-            from copy import deepcopy
             for info in infos.values():
-                info["physics"] = deepcopy(self._episode_physics)
+                info["physics"] = copy_friction_metadata(self._episode_physics)
 
     def _invalidate_global_state_cache(self) -> None:
         """Invalidate the immutable snapshot after any environment mutation."""

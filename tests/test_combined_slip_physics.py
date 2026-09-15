@@ -208,6 +208,35 @@ def test_chassis_timestep_convergence(profile):
     np.testing.assert_allclose(results[-2], results[-1], atol=2e-5, rtol=2e-5)
 
 
+@pytest.mark.parametrize('mu', [0.0, 0.3, 1.05])
+@pytest.mark.parametrize('timestep', [.001, .0073, .01])
+def test_compiled_integration_matches_original_python_rk4(profile, mu, timestep):
+    """An independent Python stage driver guards compiler/rounding changes."""
+    from physics.vehicle import WheelActuators
+
+    car = vehicle(profile, mu=mu)
+    actuators = WheelActuators(profile['wheel_actuators'])
+    car.reset(velocity=(2, .1), yaw_rate=.1)
+    actuators.reset(forward_speed=2)
+    expected = car.state[:6].copy()
+    steps = int(np.ceil(timestep / car.params['max_integration_step']))
+    dt = timestep / steps
+    for index in range(60):
+        command = (.15 * np.sin(index / 5), 80 if index < 30 else -20)
+        car.command(*command)
+        actuators.command(*command)
+        for stage in range(steps):
+            start = stage * dt
+            middle = actuators.sample(start + dt / 2)
+            k1, _ = combined_slip_dynamics(expected, actuators.sample(start), car._dynamics_params)
+            k2, _ = combined_slip_dynamics(expected + dt / 2 * k1, middle, car._dynamics_params)
+            k3, _ = combined_slip_dynamics(expected + dt / 2 * k2, middle, car._dynamics_params)
+            k4, _ = combined_slip_dynamics(expected + dt * k3, actuators.sample((stage + 1) * dt), car._dynamics_params)
+            expected += dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+        actuators.advance(timestep)
+        np.testing.assert_array_equal(car.advance(timestep), np.r_[expected, actuators.state])
+
+
 def test_failed_step_and_reset_do_not_commit_partial_subsystem_state(profile):
     car = vehicle(profile, h=1.0)
     car.command(0, 400)

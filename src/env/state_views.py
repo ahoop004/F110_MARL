@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -10,12 +11,33 @@ import numpy as np
 from src.env.types import AgentLifecycleRecord, AgentRaceStatus, AgentState, GlobalState, ProgressState
 
 
+@dataclass(frozen=True, eq=False)
+class FrozenSnapshotMapping(Mapping):
+    """Owned, recursively detached metadata that snapshots can safely share."""
+
+    _items: Mapping
+
+    def __post_init__(self):
+        object.__setattr__(self, "_items", MappingProxyType({
+            key: _freeze_snapshot_value(value) for key, value in self._items.items()
+        }))
+
+    def __getitem__(self, key):
+        return self._items[key]
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self):
+        return len(self._items)
+
+
 def _freeze_snapshot_value(value: Any) -> Any:
     """Detach and recursively freeze metadata stored in a cached state view."""
+    if isinstance(value, FrozenSnapshotMapping):
+        return value
     if isinstance(value, Mapping):
-        return MappingProxyType(
-            {key: _freeze_snapshot_value(item) for key, item in value.items()}
-        )
+        return FrozenSnapshotMapping(value)
     if isinstance(value, np.ndarray):
         array = value.copy()
         array.setflags(write=False)
@@ -182,5 +204,5 @@ def build_global_state(
         agent_ids=tuple(possible_agents),
         vector=vector,
         masks=MappingProxyType(masks),
-        metadata=_freeze_snapshot_value(dict(metadata or {})),
+        metadata=_freeze_snapshot_value(metadata if metadata is not None else {}),
     )

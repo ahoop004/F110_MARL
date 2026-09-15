@@ -129,6 +129,8 @@ def build_run_provenance(
             "fixed_opponent_episode_reset": "1.0",
             "seeded_map_schedule": "1.0",
             "evaluation_action_repeat_boundary": "1.0",
+            "net_finish_line_crossings": "1.0",
+            "completion_progress_finish_time_selection": "1.0",
         },
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,

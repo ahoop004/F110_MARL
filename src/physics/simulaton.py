@@ -336,10 +336,10 @@ class Simulator(object):
         self._linear_vels_y[agent_idx] = np.float32(v_lat)
         self._ang_vels_z[agent_idx] = np.float32(agent.state[5])
 
-    def current_observation(self) -> dict:
-        """Return a copy of the latest joint observation buffer."""
+    def current_observation(self, *, include_scans: bool = True) -> dict:
+        """Copy the joint buffers, optionally omitting LiDAR for state-only users."""
         return {
-            "scans": self._scan_buffer.copy(),
+            **({"scans": self._scan_buffer.copy()} if include_scans else {}),
             "poses_x": self.agent_poses[:, 0].copy(),
             "poses_y": self.agent_poses[:, 1].copy(),
             "poses_theta": self.agent_poses[:, 2].copy(),
