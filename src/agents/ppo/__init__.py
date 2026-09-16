@@ -20,6 +20,7 @@ class RolloutBuffer:
         self.device = device
         self.obs = torch.zeros(n_steps, obs_dim, device=device)
         self.actions = torch.zeros(n_steps, action_dim, device=device)
+        self.raw_actions = torch.full_like(self.actions, float("nan"))
         self.rewards = torch.zeros(n_steps, device=device)
         self.log_probs = torch.zeros(n_steps, device=device)
         self.values = torch.zeros(n_steps, device=device)
@@ -36,10 +37,13 @@ class RolloutBuffer:
         value: float,
         terminated: bool,
         truncated: bool,
+        raw_action: Optional[np.ndarray] = None,
     ) -> None:
         i = self.ptr % self.n_steps
         self.obs[i] = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         self.actions[i] = torch.as_tensor(action, dtype=torch.float32, device=self.device)
+        self.raw_actions[i] = (float("nan") if raw_action is None else
+                               torch.as_tensor(raw_action, dtype=torch.float32, device=self.device))
         self.rewards[i] = float(reward)
         self.log_probs[i] = float(log_prob)
         self.values[i] = float(value)
@@ -108,6 +112,16 @@ class PPOAgent:
         self.n_steps = int(params.get("n_steps", 2048))
         self.n_epochs = int(params.get("n_epochs", 10))
         self.batch_size = int(params.get("batch_size", 64))
+        self.min_rollout_steps = int(params.get("min_rollout_steps", 1))
+        if self.min_rollout_steps < 1:
+            raise ValueError("min_rollout_steps must be positive")
+        self.target_kl = params.get("target_kl")
+        if self.target_kl is not None:
+            self.target_kl = float(self.target_kl)
+            if not np.isfinite(self.target_kl) or self.target_kl <= 0:
+                raise ValueError("target_kl must be finite and positive")
+        self._pending_rollouts = []
+        self._pending_steps = 0
 
         hidden_dims: List[int] = list(
             params.get("pi_hidden_dims", params.get("hidden_dims", [64, 64]))
@@ -124,6 +138,11 @@ class PPOAgent:
         self.device = resolve_device([device_str])
 
         self.actor = Actor(obs_dim, self.action_dim, hidden_dims, activation).to(self.device)
+        log_std_init = float(params.get("log_std_init", 0.0))
+        if not np.isfinite(log_std_init) or not self.actor.LOG_STD_MIN <= log_std_init <= self.actor.LOG_STD_MAX:
+            raise ValueError("log_std_init must be within the actor's log standard deviation bounds")
+        with torch.no_grad():
+            self.actor.log_std.fill_(log_std_init)
         self.critic = Critic(obs_dim, vf_dims, activation).to(self.device)
         self._optim_parameters = tuple(self.actor.parameters()) + tuple(self.critic.parameters())
         self.optimizer = optim.Adam(self._optim_parameters, lr=self.lr)
@@ -168,10 +187,13 @@ class PPOAgent:
     @torch.no_grad()
     def act_batch(self, observations: np.ndarray, deterministic: bool = False):
         obs_t = torch.as_tensor(observations, dtype=torch.float32, device=self.device)
-        actions, log_probs = self.actor.get_action(obs_t, deterministic=deterministic)
+        actions, log_probs, raw_actions = self.actor.get_action(
+            obs_t, deterministic=deterministic, return_raw=True
+        )
         values = self.critic(obs_t)
         # One device-to-host transfer for all environments and policy outputs.
-        outputs = torch.cat((actions, log_probs[:, None], values[:, None]), dim=1).cpu().numpy()
+        outputs = torch.cat((actions, raw_actions, log_probs[:, None], values[:, None]), dim=1).cpu().numpy()
+        self.last_raw_actions = outputs[:, self.action_dim:2 * self.action_dim].copy()
         return outputs[:, :self.action_dim], outputs[:, -2], outputs[:, -1]
 
     def update(self, next_value: float) -> Dict[str, float]:
@@ -188,10 +210,10 @@ class PPOAgent:
             self.gae_lambda,
         )
         n = self.buffer.size()
-        return self._update(
+        return self._queue_update((
             self.buffer.obs[:n], self.buffer.actions[:n], self.buffer.log_probs[:n],
-            advantages, returns,
-        )
+            advantages, returns, self.buffer.raw_actions[:n],
+        ))
 
     def update_rollouts(self, rollouts) -> Dict[str, float]:
         """Pool independently bootstrapped worker rollouts from one frozen policy."""
@@ -199,15 +221,35 @@ class PPOAgent:
             torch.as_tensor(np.concatenate(parts), dtype=torch.float32, device=self.device)
             for parts in zip(*rollouts)
         ]
+        return self._queue_update(tuple(tensors))
+
+    def _queue_update(self, tensors) -> Dict[str, float]:
+        # Each fragment already has its own terminal/truncation bootstrap.
+        # Copy before collectors reuse their buffers; keep the actor frozen
+        # until enough decisions have accumulated across episodes/workers.
+        self._pending_rollouts.append(tuple(t.detach().clone() for t in tensors))
+        self._pending_steps += len(tensors[0])
+        if self._pending_steps < self.min_rollout_steps:
+            return {}
+        return self.flush_pending_update()
+
+    def flush_pending_update(self) -> Dict[str, float]:
+        if not self._pending_rollouts:
+            return {}
+        tensors = tuple(torch.cat(parts) for parts in zip(*self._pending_rollouts))
+        self._pending_rollouts.clear()
+        self._pending_steps = 0
         return self._update(*tensors)
 
-    def _update(self, observations, actions, log_probs, advantages, returns) -> Dict[str, float]:
+    def _update(self, observations, actions, log_probs, advantages, returns, raw_actions=None) -> Dict[str, float]:
         # Normalize advantages — use correction=0 so std is always valid for n>=1
         adv_std = advantages.std(correction=0)
         advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
 
         n = len(observations)
         metric_rows = []
+        early_stop = False
+        measured_kl = 0.0
         for _ in range(self.n_epochs):
             indices = torch.randperm(n, device=self.device)
             for start in range(0, n, self.batch_size):
@@ -215,13 +257,33 @@ class PPOAgent:
                 obs_b, act_b, old_lp_b = observations[idx], actions[idx], log_probs[idx]
                 adv_b = advantages[idx]
                 ret_b = returns[idx]
+                raw_b = raw_actions[idx] if raw_actions is not None else None
+                if self.target_kl is not None:
+                    with torch.no_grad():
+                        current_lp, _ = self.actor.evaluate_actions(obs_b, act_b, raw_b)
+                        log_ratio = current_lp - old_lp_b
+                        measured_kl = float((torch.expm1(log_ratio) - log_ratio).mean())
+                    if not np.isfinite(measured_kl) or measured_kl > self.target_kl:
+                        early_stop = True
+                        break
 
                 metric_rows.append(ppo_minibatch_step(
                     self, obs_b, obs_b, act_b, old_lp_b, adv_b, ret_b,
+                    raw_actions=raw_b,
                 ))
+            if early_stop:
+                break
 
         metrics = mean_update_metrics(metric_rows)
         metrics["train/learning_rate"] = self.optimizer.param_groups[0]["lr"]
+        metrics["train/rollout_steps"] = n
+        metrics["train/optimizer_steps"] = len(metric_rows)
+        metrics["train/kl_early_stop"] = float(early_stop)
+        metrics["train/last_checked_kl"] = measured_kl
+        metrics["train/action_saturation"] = float((actions.abs() >= 1 - 1e-6).float().mean())
+        with torch.no_grad():
+            metrics["train/action_std"] = float(self.actor.log_std.clamp(
+                self.actor.LOG_STD_MIN, self.actor.LOG_STD_MAX).exp().mean())
         return metrics
 
     def save(self, path: str) -> None:

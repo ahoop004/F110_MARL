@@ -37,7 +37,7 @@ def compute_gae(
 
 
 def ppo_minibatch_step(agent, observations, critic_inputs, actions,
-                       old_log_probs, advantages, returns) -> torch.Tensor:
+                       old_log_probs, advantages, returns, raw_actions=None) -> torch.Tensor:
     """Update the shared PPO objective; only the critic receives critic_inputs.
 
     Each caller retains its rollout packing, advantage normalization, and
@@ -45,7 +45,10 @@ def ppo_minibatch_step(agent, observations, critic_inputs, actions,
     critic inputs while its actor continues to consume local observations.
     """
     # Score the actions actually collected, preserving PPO's importance ratio.
-    log_probs, entropies = agent.actor.evaluate_actions(observations, actions)
+    if raw_actions is None:
+        log_probs, entropies = agent.actor.evaluate_actions(observations, actions)
+    else:
+        log_probs, entropies = agent.actor.evaluate_actions(observations, actions, raw_actions)
     ratio = (log_probs - old_log_probs).exp()
     policy_loss = torch.max(
         -advantages * ratio,
@@ -59,7 +62,8 @@ def ppo_minibatch_step(agent, observations, critic_inputs, actions,
     nn.utils.clip_grad_norm_(agent._optim_parameters, agent.max_grad_norm)
     agent.optimizer.step()
     with torch.no_grad():
-        approx_kl = (old_log_probs - log_probs).mean().abs()
+        log_ratio = log_probs - old_log_probs
+        approx_kl = (torch.expm1(log_ratio) - log_ratio).mean()
         return torch.stack((policy_loss, value_loss, entropy, approx_kl))
 
 

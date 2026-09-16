@@ -119,7 +119,8 @@ def _legacy_update(
             nn.utils.clip_grad_norm_(agent._optim_parameters, agent.max_grad_norm)
             agent.optimizer.step()
             with torch.no_grad():
-                approx_kl = ((old_lp_b - new_lp_b).mean()).abs().item()
+                log_ratio = new_lp_b - old_lp_b
+                approx_kl = (torch.expm1(log_ratio) - log_ratio).mean().item()
             totals[0] += pi_loss.item()
             totals[1] += vf_loss.item()
             totals[2] += entropy.item()
@@ -238,7 +239,9 @@ def test_shared_ppo_update_matches_reference_with_partial_minibatch(device):
     # LR reporting is new; the legacy loss metrics and parameter update must
     # still agree exactly within the original numerical tolerances.
     assert actual_metrics.pop("train/learning_rate") == reference.optimizer.param_groups[0]["lr"]
-    assert actual_metrics == pytest.approx(expected_metrics, rel=1e-6, abs=1e-7)
+    assert {key: actual_metrics[key] for key in expected_metrics} == pytest.approx(
+        expected_metrics, rel=1e-6, abs=1e-7
+    )
     for expected, observed in zip(reference._optim_parameters, actual._optim_parameters):
         torch.testing.assert_close(observed, expected, rtol=0, atol=0)
         torch.testing.assert_close(observed.grad, expected.grad, rtol=0, atol=0)

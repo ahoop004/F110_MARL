@@ -30,7 +30,7 @@ def test_joint_returns_use_team_boundary_instead_of_individual_terminal(terminal
     assert returns.tolist() == pytest.approx([expected])
     captured = []
     monkeypatch.setattr(agent, "evaluate_states", lambda state, ids: {a: next_value for a in ids})
-    def capture(*args):
+    def capture(*args, **kwargs):
         captured.extend(args[-1].tolist())
         return torch.zeros(4)
     monkeypatch.setattr(module, "ppo_minibatch_step", capture)
@@ -210,9 +210,9 @@ def test_mappo_update_accepts_single_step_agent_buffers() -> None:
     evaluated_actions = []
     evaluate_actions = agent.actor.evaluate_actions
 
-    def record_evaluated_actions(obs, actions):
+    def record_evaluated_actions(obs, actions, raw_actions=None):
         evaluated_actions.append(actions.detach().clone())
-        return evaluate_actions(obs, actions)
+        return evaluate_actions(obs, actions, raw_actions)
 
     def reject_resampling(*_args, **_kwargs):
         raise AssertionError("MAPPO update must not sample replacement actions")
@@ -803,6 +803,28 @@ def test_batched_stochastic_inference_preserves_controlled_rng_order() -> None:
             actions[agent_id], scalar[index][0], rtol=0, atol=1e-6
         )
         assert log_probs[agent_id] == pytest.approx(scalar[index][1], abs=1e-6)
+
+
+def test_mappo_update_scores_retained_saturated_samples():
+    agent = MAPPOAgent(2, 1, -np.ones(2), np.ones(2), ["a", "b"], {
+        "hidden_dims": [4], "n_steps": 4, "n_epochs": 1, "batch_size": 8,
+    })
+    with torch.no_grad():
+        agent.actor.net[-1].bias.fill_(12.)
+        agent.actor.log_std.fill_(2.)
+    ids = agent.agent_ids
+    observations = np.zeros((2, 2), dtype=np.float32)
+    actions, lp = agent.act_batch(ids, observations)
+    agent.store_batch(ids, observations=dict(zip(ids, observations)),
+        global_state=np.zeros(1), actions=actions, log_probs=lp,
+        rewards={aid: 1. for aid in ids}, values={aid: 0. for aid in ids},
+        terminated={aid: True for aid in ids}, truncated={aid: False for aid in ids},
+        raw_actions=agent.last_raw_actions)
+    for aid in ids:
+        buffer = agent.buffers[aid]
+        torch.testing.assert_close(buffer.raw_actions[:1].tanh(), buffer.actions[:1])
+    metrics = agent.update(np.zeros(1))
+    assert metrics["train/approx_kl"] == pytest.approx(0., abs=1e-6)
 
 
 def test_batched_inference_handles_empty_single_and_invalid_agent_sets() -> None:

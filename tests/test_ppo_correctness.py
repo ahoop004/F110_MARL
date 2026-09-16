@@ -61,9 +61,9 @@ def test_ppo_update_scores_stored_actions_without_resampling() -> None:
     evaluated_actions = []
     evaluate_actions = agent.actor.evaluate_actions
 
-    def record_evaluated_actions(obs, actions):
+    def record_evaluated_actions(obs, actions, raw_actions=None):
         evaluated_actions.append(actions.detach().clone())
-        return evaluate_actions(obs, actions)
+        return evaluate_actions(obs, actions, raw_actions)
 
     def reject_resampling(*_args, **_kwargs):
         raise AssertionError("PPO update must not sample replacement actions")
@@ -100,6 +100,110 @@ def test_ppo_updates_a_single_transition_rollout() -> None:
 
     assert "train/policy_loss" in metrics
     assert "train/value_loss" in metrics
+
+
+@pytest.mark.parametrize("mean", [0.0, 12.0, -12.0])
+def test_saturated_policy_retains_unit_importance_ratios(mean):
+    from agents.common import Actor
+
+    torch.manual_seed(42)
+    actor = Actor(1, 2, [])
+    with torch.no_grad():
+        actor.net[0].weight.zero_()
+        actor.net[0].bias.fill_(mean)
+        actor.log_std.fill_(2.0)
+    observations = torch.zeros(1024, 1)
+    actions, old_lp, raw = actor.get_action(observations, return_raw=True)
+    assert (actions.abs() >= 1 - 1e-6).any()
+    new_lp, entropy = actor.evaluate_actions(observations, actions, raw.detach())
+    torch.testing.assert_close((new_lp - old_lp).exp(), torch.ones(1024))
+    assert torch.isfinite(new_lp).all() and torch.isfinite(entropy).all()
+    (-new_lp.mean() - .001 * entropy.mean()).backward()
+    assert all(torch.isfinite(p.grad).all() for p in actor.parameters())
+
+
+def test_bounded_entropy_discourages_excessive_gaussian_variance():
+    from agents.common import Actor
+
+    actor = Actor(1, 2, [])
+    with torch.no_grad():
+        actor.net[0].weight.zero_()
+        actor.net[0].bias.zero_()
+        actor.log_std.fill_(2.0)
+    _, entropy = actor.evaluate_actions(torch.zeros(1, 1), torch.zeros(1, 2))
+    entropy.sum().backward()
+    assert (actor.log_std.grad < 0).all()
+    # The quadrature estimate agrees with an independent Monte Carlo integral.
+    torch.manual_seed(42)
+    raw = torch.randn(100000, 2) * np.exp(2.0)
+    expected = (torch.distributions.Normal(0.0, np.exp(2.0)).entropy()
+                + 2 * (np.log(2) - raw - torch.nn.functional.softplus(-2 * raw))).sum(-1).mean()
+    assert entropy.item() == pytest.approx(expected.item(), abs=0.2)
+
+
+def test_ppo_pools_owned_fragments_without_cross_episode_bootstrap():
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {
+        "hidden_dims": [4], "n_steps": 2, "min_rollout_steps": 2, "gamma": .9,
+    })
+    captured = []
+    agent._update = lambda *tensors: captured.extend(tensors) or {"updated": 1}
+    agent.buffer.add(np.zeros(1), np.zeros(2), 1., 0., 0., False, True)
+    assert agent.update(10.) == {}
+    agent.buffer.clear()
+    agent.buffer.add(np.ones(1), np.zeros(2), 100., 0., 0., True, False)
+    assert agent.update(999.) == {"updated": 1}
+    torch.testing.assert_close(captured[0], torch.tensor([[0.], [1.]]))
+    torch.testing.assert_close(captured[3], torch.tensor([10., 100.]))
+    assert agent.flush_pending_update() == {}
+
+
+def test_ppo_kl_limit_stops_further_optimizer_steps():
+    torch.manual_seed(42)
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {
+        "hidden_dims": [4], "learning_rate": 1., "target_kl": 1e-5,
+        "n_epochs": 10, "batch_size": 64,
+    })
+    obs = np.zeros((64, 1), dtype=np.float32)
+    actions, lp, _ = agent.act_batch(obs)
+    metrics = agent._update(
+        torch.from_numpy(obs), torch.from_numpy(actions), torch.from_numpy(lp),
+        torch.from_numpy(actions[:, 0].copy()), torch.ones(64),
+        torch.from_numpy(agent.last_raw_actions),
+    )
+    assert 1 <= metrics["train/optimizer_steps"] < 10
+    assert metrics["train/kl_early_stop"] == 1
+    assert metrics["train/last_checked_kl"] > agent.target_kl
+
+
+@pytest.mark.parametrize("params", [
+    {"target_kl": 0}, {"target_kl": float("nan")},
+    {"min_rollout_steps": 0}, {"log_std_init": 3},
+])
+def test_invalid_stability_parameters_are_rejected(params):
+    with pytest.raises(ValueError):
+        PPOAgent(1, -np.ones(2), np.ones(2), {"hidden_dims": [4], **params})
+
+
+def test_circle_stability_scenario_preserves_physics_and_rewards_slow_progress():
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario
+    from run import build_reward_composer, resolve_training_params
+
+    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_combined_slip.yaml")
+    stable = load_and_expand_scenario("scenarios/ppo_combined_slip_circle_stable.yaml")
+    assert stable["environment"] == baseline["environment"]
+    assert stable["evaluation"] == baseline["evaluation"]
+    for key in ("observation", "action_constraints"):
+        assert stable["agents"]["car_0"][key] == baseline["agents"]["car_0"][key]
+    rewards = [build_reward_composer(s["agents"]["car_0"], Path("scenarios"))
+               for s in (baseline, stable)]
+    # A 0.5 m/s forward decision on a ~350 m circle becomes worth exploring.
+    step = {"info": {"centerline": {"progress_delta": .5 * .01 / 350}}}
+    assert rewards[0].compute(step)[0] < 0 < rewards[1].compute(step)[0]
+    params = resolve_training_params(stable["agents"]["car_0"], stable)
+    agent = PPOAgent(158, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
+    assert agent.min_rollout_steps == agent.n_steps
+    assert agent.gamma > resolve_training_params(baseline["agents"]["car_0"], baseline)["gamma"]
 
 
 def test_pretraining_networks_and_physical_discount_contract(tmp_path):
@@ -286,6 +390,27 @@ def test_on_policy_trainer_bootstraps_a_truncated_final_observation() -> None:
     _, lifecycle = agent.buffer.transitions[0]
     assert lifecycle["terminated"] is False
     assert lifecycle["truncated"] is True
+
+
+def test_trainer_preserves_raw_samples_and_flushes_final_partial_pool():
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {
+        "hidden_dims": [4], "n_steps": 2, "min_rollout_steps": 2,
+    })
+    captured = []
+    def update(*tensors):
+        captured.append(tensors)
+        return {"train/rollout_steps": len(tensors[0])}
+    agent._update = update
+    OnPolicyTrainer(
+        _OneStepTruncationEnv(), "car_0", agent, {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(),
+    ).train(3)
+    assert [len(row[0]) for row in captured] == [2, 1]
+    for obs, actions, old_lp, _, _, raw in captured:
+        assert torch.isfinite(raw).all()
+        torch.testing.assert_close(raw.tanh(), actions)
+        new_lp, _ = agent.actor.evaluate_actions(obs, actions, raw)
+        torch.testing.assert_close(new_lp, old_lp)
 
 
 def test_ppo_dataset_state_precedes_repeated_action(tmp_path):
@@ -586,6 +711,26 @@ def test_parallel_worker_failure_is_reported_and_children_are_reaped():
     assert {child.pid for child in mp.active_children()} == existing
 
 
+def test_parallel_pooling_keeps_raw_samples_and_flushes_at_shutdown():
+    trainer, scenario, directory = _parallel_test_setup()
+    trainer.agent.min_rollout_steps = 16  # Entire 12-decision run is a partial pool.
+    captured = []
+    def update(*tensors):
+        captured.append(tensors)
+        return {"train/rollout_steps": len(tensors[0])}
+    trainer.agent._update = update
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=3)
+    finally:
+        trainer.env.close()
+    assert len(captured) == 1
+    obs, actions, old_lp, _, _, raw = captured[0]
+    assert len(obs) == 12 and torch.isfinite(raw).all()
+    torch.testing.assert_close(raw.tanh(), actions)
+    new_lp, _ = trainer.agent.actor.evaluate_actions(obs, actions, raw)
+    torch.testing.assert_close(new_lp, old_lp)
+
+
 @pytest.mark.parametrize("accelerated", [False, True])
 @pytest.mark.parametrize("protocol", [None, "selection", "final"])
 def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path, monkeypatch, accelerated, protocol):
@@ -740,7 +885,7 @@ def test_checkpoint_directory_requires_best_model(tmp_path):
 def test_transfer_scenario_preserves_pretraining_contract():
     from core.scenario import load_and_expand_scenario
 
-    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_combined_slip.yaml")
     transfer = load_and_expand_scenario("scenarios/ppo_lap_completion_transfer.yaml")
     assert source["agents"] == transfer["agents"]
     assert source["evaluation"] == transfer["evaluation"]

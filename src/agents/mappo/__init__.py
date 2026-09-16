@@ -88,6 +88,7 @@ class MAPPORolloutBuffer:
         self.obs = storage[:, :obs_end]
         self.global_states = storage[:, obs_end:global_state_end]
         self.actions = storage[:, global_state_end:action_end]
+        self.raw_actions = torch.full_like(self.actions, float("nan"))
         self.rewards = storage[:, action_end]
         self.log_probs = storage[:, action_end + 1]
         self.values = storage[:, action_end + 2]
@@ -105,6 +106,7 @@ class MAPPORolloutBuffer:
         value: float,
         terminated: bool,
         truncated: bool,
+        raw_action: Optional[np.ndarray] = None,
     ) -> None:
         i = self.ptr % self.n_steps
         self.obs[i] = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -112,6 +114,8 @@ class MAPPORolloutBuffer:
             global_state, dtype=torch.float32, device=self.device
         )
         self.actions[i] = torch.as_tensor(action, dtype=torch.float32, device=self.device)
+        self.raw_actions[i] = (float("nan") if raw_action is None else
+                               torch.as_tensor(raw_action, dtype=torch.float32, device=self.device))
         self.rewards[i] = float(reward)
         self.log_probs[i] = float(log_prob)
         self.values[i] = float(value)
@@ -124,6 +128,7 @@ class MAPPORolloutBuffer:
 
     def clear(self) -> None:
         self.ptr = 0
+        self.raw_actions.fill_(float("nan"))
 
     def size(self) -> int:
         return min(self.ptr, self.n_steps)
@@ -332,11 +337,15 @@ class MAPPOAgent:
                 f"({len(ordered_ids)}, {self.obs_dim}), got {obs.shape}."
             )
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        action_t, log_prob_t = self.actor.get_action(
-            obs_t, deterministic=deterministic
+        action_t, log_prob_t, raw_t = self.actor.get_action(
+            obs_t, deterministic=deterministic, return_raw=True
         )
         # One device-to-host transfer for the complete joint decision.
-        result = torch.cat((action_t, log_prob_t.unsqueeze(-1)), dim=-1).cpu().numpy()
+        result = torch.cat((action_t, log_prob_t.unsqueeze(-1), raw_t), dim=-1).cpu().numpy()
+        self.last_raw_actions = {
+            aid: result[index, self.action_dim + 1:].copy()
+            for index, aid in enumerate(ordered_ids)
+        }
         actions = {
             agent_id: result[index, : self.action_dim].copy()
             for index, agent_id in enumerate(ordered_ids)
@@ -480,6 +489,7 @@ class MAPPOAgent:
         values: Mapping[str, float],
         terminated: Mapping[str, bool],
         truncated: Mapping[str, bool],
+        raw_actions: Optional[Mapping[str, np.ndarray]] = None,
     ) -> None:
         """Insert one transition per ordered active agent with one tensor transfer."""
         ordered_ids = self._validate_agent_batch(agent_ids)
@@ -528,9 +538,17 @@ class MAPPOAgent:
             ),
             axis=1,
         )
+        if raw_actions is not None:
+            raw_batch = np.stack([raw_actions[aid] for aid in ordered_ids])
+            if raw_batch.shape != action_batch.shape or not np.isfinite(raw_batch).all():
+                raise ValueError("Pre-tanh actions must be finite and match the action batch shape")
+            packed = np.concatenate((packed, raw_batch), axis=1)
         packed_t = torch.as_tensor(
             packed, dtype=torch.float32, device=self.device
         )
+        raw_t = None
+        if raw_actions is not None:
+            packed_t, raw_t = packed_t[:, :-self.action_dim], packed_t[:, -self.action_dim:]
         id_key = tuple(ordered_ids)
         agent_indices = self._rollout_agent_indices.get(id_key)
         if agent_indices is None:
@@ -550,7 +568,11 @@ class MAPPOAgent:
                 buffer_indices, dtype=torch.long, device=self.device
             )
             self._rollout_storage[agent_indices, step_indices] = packed_t
-        for agent_id in ordered_ids:
+        for index, agent_id in enumerate(ordered_ids):
+            buffer = self.buffers[agent_id]
+            buffer.raw_actions[buffer.ptr % self.n_steps] = (
+                float("nan") if raw_t is None else raw_t[index]
+            )
             self.buffers[agent_id].ptr += 1
 
     def any_buffer_full(self) -> bool:
@@ -626,6 +648,8 @@ class MAPPOAgent:
         update_pool = torch.empty(
             (n_pool, ret_index + 1), dtype=torch.float32, device=self.device
         )
+        raw_pool = torch.cat([self.buffers[aid].raw_actions[:self.buffers[aid].size()]
+                              for aid in rollout_agent_ids])
 
         next_values = self.evaluate_states(next_global_state, rollout_agent_ids)
         team_gae = (
@@ -681,6 +705,7 @@ class MAPPOAgent:
 
                 metric_rows.append(ppo_minibatch_step(
                     self, obs_b, gs_b, acts_b, old_lp_b, adv_b, ret_b,
+                    raw_actions=raw_pool[idx],
                 ))
 
         return mean_update_metrics(metric_rows)

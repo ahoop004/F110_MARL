@@ -69,7 +69,7 @@ class OnPolicyTrainer:
     def train_parallel(self, scenario: Dict, scenario_dir, num_envs: int, n_episodes: int) -> None:
         """Batch CPU collector requests; update only when all live workers pause.
 
-        n_steps is the maximum pooled rollout size, divided evenly across
+        n_steps is the maximum pooled collection-round size, divided evenly across
         workers. Episode ends flush shorter fragments, preserving each final
         observation's bootstrap and keeping GAE within one environment.
         """
@@ -152,16 +152,19 @@ class OnPolicyTrainer:
                 if requests:
                     actions, log_probs, values = self.agent.act_batch(np.stack(list(requests.values())))
                     for row, worker_id in enumerate(requests):
-                        connections[worker_id].send((actions[row], float(log_probs[row]), float(values[row])))
+                        connections[worker_id].send((actions[row], float(log_probs[row]), float(values[row]),
+                                                     self.agent.last_raw_actions[row]))
                 if waiting and len(waiting) == len(connections):
                     metrics = self.agent.update_rollouts([waiting[i] for i in sorted(waiting)])
-                    for hook in self.hooks:
-                        hook.on_update(metrics)
+                    if metrics:
+                        for hook in self.hooks:
+                            hook.on_update(metrics)
                     for worker_id in waiting:
                         connections[worker_id].send(metrics)
                     waiting.clear()
             if completed != n_episodes:
                 raise RuntimeError(f"PPO workers completed {completed} of {n_episodes} episodes.")
+            self._flush_pending_update()
             for hook in self.hooks:
                 hook.on_training_end()
         finally:
@@ -267,6 +270,8 @@ class OnPolicyTrainer:
                     if self._transition_hooks else None
                 )
                 action_norm, log_prob, value = self.agent.act(obs)
+                raw_batch = getattr(self.agent, "last_raw_actions", None)
+                raw_action = raw_batch[0].copy() if raw_batch is not None else None
                 action_phys = self.action_composer.process(action_norm)
                 actions = self._build_actions(action_phys, obs_dict)
                 acted_agents = set(actions)
@@ -373,6 +378,7 @@ class OnPolicyTrainer:
                     value,
                     terminated=rl_term,
                     truncated=rl_trunc,
+                    **({"raw_action": raw_action} if raw_action is not None else {}),
                 )
 
                 if self.agent.buffer.is_full() or done:
@@ -384,8 +390,9 @@ class OnPolicyTrainer:
                         next_value = 0.0
                     update_metrics = self.agent.update(next_value)
                     self.agent.buffer.clear()
-                    for hook in self.hooks:
-                        hook.on_update(update_metrics)
+                    if update_metrics:
+                        for hook in self.hooks:
+                            hook.on_update(update_metrics)
 
                 obs = next_obs
 
@@ -398,8 +405,16 @@ class OnPolicyTrainer:
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
 
+        self._flush_pending_update()
         for hook in self.hooks:
             hook.on_training_end()
+
+    def _flush_pending_update(self) -> None:
+        flush = getattr(self.agent, "flush_pending_update", None)
+        metrics = flush() if flush is not None else {}
+        if metrics:
+            for hook in self.hooks:
+                hook.on_update(metrics)
 
 
 # Spawned CPU collectors reuse the exact single-environment trainer above.
@@ -419,7 +434,9 @@ class _RemotePolicy:
 
     def act(self, obs):
         self.connection.send(("act", obs))
-        return self.connection.recv()
+        action, log_prob, value, raw_action = self.connection.recv()
+        self.last_raw_actions = np.asarray(raw_action)[None]
+        return action, log_prob, value
 
     def update(self, next_value):
         buffer = self.buffer
@@ -427,6 +444,7 @@ class _RemotePolicy:
         advantages, returns = buffer.compute_gae(next_value, self.gamma, self.gae_lambda)
         self.connection.send(("rollout", tuple(t.numpy() for t in (
             buffer.obs[:n], buffer.actions[:n], buffer.log_probs[:n], advantages, returns,
+            buffer.raw_actions[:n],
         ))))
         return self.connection.recv()
 

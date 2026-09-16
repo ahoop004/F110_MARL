@@ -1,0 +1,13 @@
+includes:
+  - lap_completion_frenet.yaml
+
+task:
+  name: lap_completion_circle_stable
+  description: Circle lap completion with a lower barrier to slow forward exploration.
+
+reward:
+  # +20 per lap remains signed. At 100 Hz this costs 0.01/s, so forward
+  # progress breaks even near 0.175 m/s on the 349.45 m circle (was 1.75).
+  # Retain collision/timeout penalties and the final completion bonus.
+  step_time_penalty:
+    penalty: -0.0001

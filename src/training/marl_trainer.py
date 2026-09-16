@@ -455,6 +455,8 @@ class MARLTrainer:
                     values=values,
                     terminated=decision_terminated,
                     truncated=decision_truncated,
+                    **({"raw_actions": self.agent.last_raw_actions}
+                       if hasattr(self.agent, "last_raw_actions") else {}),
                 )
                 if self.team_return_mode == "joint" and ordered_ids:
                     self.agent.store_team_step(

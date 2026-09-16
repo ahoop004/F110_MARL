@@ -206,6 +206,40 @@ Replace the checkpoint directory with the run containing `best_model.pt`. Both
 protocols use the training track; final seeds do not establish held-out-map or
 sim-to-real generalization. Keep friction randomization as a separate ablation.
 
+For the circle convergence experiment, use
+`scenarios/ppo_combined_slip_circle_stable.yaml` with the same `run.py` command.
+It preserves the three-lap task, observations, physical actions, spawn protocol,
+and tires. It reduces the time cost from 0.1 to 0.01 per simulated second,
+lowers the initial learning rate to 1e-4, uses four epochs and 256-decision
+minibatches, and stops further minibatches when sampled KL exceeds 0.01.
+Discount and GAE horizons are approximately 20 s and 5 s. Initial Gaussian
+log standard deviation is -0.5 and the entropy coefficient is 0.001.
+These are experimental settings, not evidence of convergence. Compare
+deterministic completion/progress and finish time at matched decision budgets;
+raw rewards are not comparable to the original reward configuration.
+
+PPO's optional `min_rollout_steps: 2048` pools independently bootstrapped
+fragments across short episodes and parallel collector rounds while the actor
+stays frozen. Episode boundaries still stop GAE. The last partial pool is
+updated at training shutdown, so the final update may be smaller. Without this
+option the historical immediate fragment-update behavior remains available.
+The threshold is checked after each fragment/collector round, so a pooled
+update may exceed `min_rollout_steps` by the size of the final collected group.
+Metrics include rollout size, optimizer steps, KL early stopping, Gaussian
+standard deviation, and action saturation. For circle fine-tuning, pass a
+compatible combined-slip checkpoint with `--checkpoint` to this circle scenario;
+the optimizer/schedule restart, while the checkpoint's learned standard deviation
+overrides `log_std_init`. The original transfer YAML still targets Spielberg.
+
+PPO and MAPPO now retain pre-tanh action samples internally to score saturated
+actions correctly and use the entropy of the squashed Gaussian (32-point
+quadrature). The Gaussian KL estimate uses `mean(exp(log_ratio)-1-log_ratio)`.
+Observation/action dimensions, deterministic inference, checkpoint parameter
+layouts, and dataset schemas are unchanged. These training behavior changes
+are recorded in provenance; older evaluation checkpoints require the existing
+explicit provenance-mismatch override. Historical training curves must be
+identified by code revision, even when using the original scenario YAML.
+
 Lap counting cancels backward passages through the finite finish segment before
 granting another forward lap. Local loops and reversing across the line cannot
 earn extra laps; `count_initial_crossing_as_lap` still controls the first valid
@@ -218,9 +252,9 @@ comparing completion rates or selected-model lap times across this change;
 `--eval --allow-provenance-mismatch` explicitly acknowledges the changed behavior
 when loading an older checkpoint for evaluation.
 
-For parallel PPO in this repository, `n_steps` is the **pooled** rollout limit:
+For parallel PPO in this repository, `n_steps` is the **pooled collection-round** limit:
 `steps_per_worker = n_steps / num_envs`. Episode ends flush shorter fragments,
-so the actual update size can be smaller. At a 0.01 s decision interval,
+so without `min_rollout_steps` the actual update size can be smaller. At a 0.01 s decision interval,
 `n_steps=2048` gives at most 20.48 s per worker with one environment, 5.12 s with
 four, and 2.56 s with eight. More workers at fixed `n_steps` therefore shorten
 the sampled GAE trajectories and increase dependence on critic bootstrapping.
