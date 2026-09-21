@@ -17,6 +17,8 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 @pytest.mark.parametrize("scenario_name", [
     "mappo_2v2_completion",
     "mappo_2v2_combined",
+    "mappo_2v2_penalties_scratch",
+    "mappo_2v2_penalties_pretrained",
 ])
 def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scenario_name):
     from pathlib import Path

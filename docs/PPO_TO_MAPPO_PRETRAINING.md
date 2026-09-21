@@ -15,8 +15,15 @@ rollout size. The existing 400-worker HPC configuration is retained.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/ppo_lap_completion_pretrain.yaml --seed 42
+  --scenario scenarios/ppo_lap_completion_pretrain.yaml --seed 42 \
+  --output-dir outputs/ppo_current_pretrain_s42
 ```
+
+This output directory supplies the default source checkpoint for the current
+three-lap transfer and pretrained team-penalty scenarios. Use a new output
+directory for each independent run; override downstream checkpoint paths when
+using another source. Freeze the selected checkpoint before matrix training.
+The older downloaded `outputs/L_map_best_model.pt` is not the matrix source.
 
 Use seeds 43 and 44 for independent training repeats. The optional W&B grid is
 `sweeps/ppo_pretrain_seed_sweep.yaml`; schedule its runs within the allocated

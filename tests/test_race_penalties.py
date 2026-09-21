@@ -72,7 +72,7 @@ def test_scratch_pretrained_pair_differs_only_in_initialization_and_name():
     a = load_and_expand_scenario('scenarios/mappo_2v2_penalties_scratch.yaml')
     b = load_and_expand_scenario('scenarios/mappo_2v2_penalties_pretrained.yaml')
     assert a['training_defaults']['pretrained_actor_checkpoint'] is None
-    assert b['training_defaults']['pretrained_actor_checkpoint'] == '../outputs/L_map_best_model.pt'
+    assert b['training_defaults']['pretrained_actor_checkpoint'] == '../outputs/ppo_current_pretrain_s42/best_model.pt'
     b['training_defaults']['pretrained_actor_checkpoint'] = None
     b['experiment']['name'] = a['experiment']['name']
     assert a == b

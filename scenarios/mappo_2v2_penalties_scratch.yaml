@@ -1,4 +1,4 @@
-# Scratch control: same race and network as the downloaded-actor arm.
+# Scratch control: same race and network as the current-pretrained-actor arm.
 includes:
   - ../configs/scenarios/mappo_2v2_penalties_base.yaml
 experiment:

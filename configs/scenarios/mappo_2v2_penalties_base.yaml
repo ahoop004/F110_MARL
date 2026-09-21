@@ -1,27 +1,18 @@
-# Matched scratch/pretrained experiments for the downloaded L-map actor.
+# Matched scratch/pretrained experiments for the current PPO pretraining setup.
 includes:
   - mappo_2v2_base.yaml
-  - l_map_downloaded_checkpoint.yaml
 experiment:
   name: mappo_2v2_penalties_scratch
 training_defaults:
   pretrained_actor_checkpoint: null
 agents:
   car_0:
-    observation: ../configs/observations/l_map_checkpoint_team.yaml
     reward: ../configs/reward/tasks/race_team_2v2_penalties.yaml
   car_1:
-    observation: ../configs/observations/l_map_checkpoint_team.yaml
     reward: ../configs/reward/tasks/race_team_2v2_penalties.yaml
-  car_2:
-    params:
-      ftg: {vehicle_width: 0.225}
-  car_3:
-    params:
-      ftg: {vehicle_width: 0.225}
 evaluation:
   selection_strategy: team_combined_penalties
 wandb:
-  group: mappo-2v2-penalties-v1
-  tags: [mappo, 2v2, terminal-incidents-v1, downloaded-checkpoint-physics]
+  group: mappo-2v2-penalties-current-physics
+  tags: [mappo, 2v2, terminal-incidents-v1, current-pretrain-physics]
   notes: "Matched physics, observations, opponents and rewards. Both-finished rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful ties."

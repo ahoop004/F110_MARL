@@ -1,7 +1,7 @@
 # Initial 2v2 comparison: recorded race penalties
 
 The first pair compares full MAPPO training from scratch with actor initialization
-from `outputs/L_map_best_model.pt`. Both use the same 68-input observation, vehicle
+from a newly trained current-setup PPO checkpoint. Both use the same 68-input observation, vehicle
 physics, three-lap races, opponents, reward, seed, and 5,000-episode budget. The
 critic and optimizer start fresh in both arms. Only the actor initialization and
 experiment name differ.
@@ -9,7 +9,23 @@ experiment name differ.
 | Scenario | Initialization |
 |---|---|
 | `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic |
-| `scenarios/mappo_2v2_penalties_pretrained.yaml` | Downloaded PPO actor; random centralized critic |
+| `scenarios/mappo_2v2_penalties_pretrained.yaml` | Current-setup PPO actor; random centralized critic |
+
+Train the new source with the unchanged 400-environment pretraining scenario:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_pretrain.yaml --seed 42 \
+  --output-dir outputs/ppo_current_pretrain_s42
+```
+
+The pretrained arm defaults to `outputs/ppo_current_pretrain_s42/best_model.pt`.
+It fails if this file is missing. For a different run, pass
+`--pretrained-actor outputs/YOUR_RUN/best_model.pt`. Validate the source using
+the [pretraining workflow](PPO_TO_MAPPO_PRETRAINING.md#select-and-validate-a-model)
+before starting B. Freeze the selected source checkpoint for all pretrained
+arms; record its hash and pretraining cost. Do not compare arms initialized from
+different updates of a still-running source job.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
@@ -19,11 +35,13 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_penalties_pretrained.yaml
 ```
 
-These scenarios intentionally use the downloaded checkpoint's older physics and
-per-map driving-observation scaling. The first 50 inputs retain their source
+These scenarios inherit the current shared vehicle profile and fixed track
+observation scaling. The first 50 inputs retain their source
 semantics, and 18 neighbor/team inputs are appended with zero initial weights
-when loading PPO. The fixed hybrid opponents use the matching 0.225 m width.
-The active current-physics scenarios and the downloaded checkpoint are unchanged.
+when loading PPO. The fixed hybrid opponents use the matching 0.31 m width.
+The downloaded `outputs/L_map_best_model.pt` is a historical artifact and is not
+used by this matrix. Results from the previous older-physics A/B pair should be
+kept separate; rerun A under this configuration for the new comparison.
 
 ## Penalty policy: terminal_incidents_v1
 
@@ -86,9 +104,8 @@ as the training penalty component.
 Equal episode counts are not equal sample budgets. Record environment decisions,
 learner samples, and wall time; add a MAPPO transition-budget control before making
 strict sample-efficiency claims. Pretraining cost should be reported separately.
-The source checkpoint's saved zero-lap evaluation used an L-map with no finish
-line, so those lap metrics are invalid. Re-evaluate with the corrected map before
-judging its driving quality. Fixed-opponent completion still needs benchmarking.
+The new source must use the corrected L-map finish line and report valid timed
+laps. Fixed-opponent completion still needs benchmarking under the current physics.
 
 ## Subsequent comparisons
 

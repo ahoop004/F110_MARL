@@ -19,48 +19,49 @@ physics calibration work.
 | `mappo_2v2_validate.yaml` | Held-out Silverstone/Spa evaluation |
 
 Both validation scenarios require `--eval --checkpoint PATH`. Training MAPPO
-from a PPO source uses `--pretrained-actor PATH`; omitting it trains from scratch.
+from a PPO source uses `--pretrained-actor PATH`; omitting it uses the scenario
+default (scratch except for the explicitly pretrained penalty arm).
 MAPPO's observation has 68 inputs, including explicit teammate identity. Its
 shared settings live in `configs/scenarios/mappo_2v2_base.yaml`; edit that fragment
 when a setting should apply to every team objective.
 
-## Downloaded L-map checkpoint: three-lap circle transfer
+## Current-setup three-lap transfer
 
-`ppo_lap_completion_transfer_3lap.yaml` loads `outputs/L_map_best_model.pt`,
-ends training and evaluation episodes at three laps, and limits episodes to
-16,000 physics steps (800 simulated seconds). Training retains geometric
-boundary resets; evaluation also terminates on collisions. Checkpoint selection
-uses completion and net progress. The transfer budget remains 4,096,000 decisions.
-It inherits the local worker count from pretraining (currently one).
-
-This is an exception to the current shared physics profile: the downloaded model
-uses the older 0.32 × 0.225 m footprint, ±0.5 rad steering, ±10 rad/s steering-rate
-limits, and per-map track normalization. Its exact contracts and source SHA256
-are recorded in `configs/scenarios/l_map_downloaded_checkpoint.yaml`. The current
-vehicle and observation presets are unchanged. Do not use this compatibility
-snapshot for a checkpoint trained with the newer reference physics.
+`ppo_lap_completion_transfer_3lap.yaml` loads
+`outputs/ppo_current_pretrain_s42/best_model.pt` and currently targets Budapest.
+It inherits the current vehicle profile, fixed track observation scaling, and
+400 workers. Episodes end after three laps or 16,000 steps (800 simulated seconds).
+Training uses geometric boundary resets; evaluation also terminates on collisions.
+Checkpoint selection uses completion and net progress. The destination budget is
+4,096,000 decisions. Override the source with `--checkpoint PATH` for another run.
 
 ```bash
-# Fine-tune actor and critic with a fresh optimizer.
-PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml
-
-# Evaluate the downloaded policy on one three-lap circle episode first.
+# Evaluate the new source before destination fine-tuning.
 # The provenance override acknowledges the changed scenario/map, not changed physics.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml \
-  --eval --eval-episodes 1 --allow-provenance-mismatch --no-wandb \
-  --output-dir outputs/circle_3lap_before
+  --eval --allow-provenance-mismatch --no-wandb \
+  --output-dir outputs/budapest_3lap_before
+
+# Fine-tune actor and critic with a fresh optimizer in a separate output directory.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml
 ```
+
+The older downloaded model and its compatibility configuration are retained as
+historical artifacts. Active transfer scenarios no longer include that profile.
+The generic `ppo_lap_completion_transfer.yaml` remains a scratch baseline unless
+`--checkpoint PATH` is supplied.
 
 ## Matched team penalty experiments
 
 `mappo_2v2_penalties_scratch.yaml` and `mappo_2v2_penalties_pretrained.yaml`
-compare random initialization with the downloaded L-map actor under identical
-checkpoint-compatible physics, observations, opponents, and event-based penalties.
-They are exceptions to the current vehicle profile, like the three-lap downloaded
-checkpoint transfer above. See [the experiment protocol](../docs/TEAM_RACING_EXPERIMENTS.md)
-for penalty definitions, scoring, commands, and remaining comparison limits.
+compare random initialization with the new current-setup L-map actor under
+identical physics, observations, opponents, and event-based penalties. The
+pretrained arm defaults to `outputs/ppo_current_pretrain_s42/best_model.pt`;
+use `--pretrained-actor PATH` to select a different current-setup source.
+See [the experiment protocol](../docs/TEAM_RACING_EXPERIMENTS.md)
+for pretraining, penalty definitions, scoring, and remaining comparison limits.
 
 ## Migration
 

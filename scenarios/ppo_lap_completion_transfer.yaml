@@ -10,7 +10,7 @@ experiment:
   # File or run directory (selects best_model.pt), for training or --eval.
   # Relative paths start from this scenario's directory; absolute paths also work.
   # Example: ../outputs/ppo_lap_completion_pretrain/YOUR_RUN/best_model.pt
-  checkpoint: ../outputs/L_map_best_model.pt
+  checkpoint: null
 environment:
   # Change all three lists together when comparing another track.
   map_bundles: [circle_map]
