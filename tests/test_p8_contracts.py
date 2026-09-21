@@ -72,7 +72,7 @@ def test_2v2_reward_presets_preserve_every_frenet_ppo_term(objective):
     from core.scenario import load_yaml_config
     from wrappers.rewards.composer import RewardComposer
     path = f"configs/reward/tasks/race_team_2v2_{objective}.yaml"
-    reference = load_yaml_config("configs/reward/tasks/lap_completion_normalized_progress.yaml")
+    reference = load_yaml_config("configs/reward/tasks/race_team_completion.yaml")
     preset = load_yaml_config(path)
     shared = preset["reward"].pop("team_race_result")
     assert shared["objective"] == objective
@@ -80,7 +80,7 @@ def test_2v2_reward_presets_preserve_every_frenet_ppo_term(objective):
     reference_composer = RewardComposer.from_config(reference)
     composer = RewardComposer.from_file(path)
     for delta, reason in [(.01, None), (-.01, None), (.04, None), (0, "collision"), (0, "time_limit")]:
-        context = {"info": {"centerline": {"progress_delta": delta}, "terminal_reason": reason}}
+        context = {"timestep": .05, "info": {"centerline": {"progress_delta": delta}, "terminal_reason": reason}}
         assert composer.compute(context) == reference_composer.compute(context)
 
 
@@ -247,7 +247,7 @@ def test_dataset_rejects_unrelated_files_without_modifying_them(tmp_path):
 
 
 def test_2v2_scenario_expands_explicit_race_contract() -> None:
-    scenario = load_and_expand_scenario("scenarios/mappo_2v2_vs_hybrid_pp_ftg.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/mappo_2v2_vs_hybrid_pp_ftg.yaml")
     env = apply_map_split(scenario["environment"], scenario["experiment"], "train")
     kwargs = build_env_kwargs(env, scenario["agents"], seed=42)
 
@@ -266,10 +266,10 @@ def test_2v2_scenario_expands_explicit_race_contract() -> None:
 @pytest.mark.parametrize(
     ("scenario_path", "reward_mode", "critic_mode"),
     [
-        ("scenarios/complete_4_individual.yaml", "individual", "agent_conditioned"),
-        ("scenarios/complete_4_team_shared.yaml", "team_shared", "shared_team"),
-        ("scenarios/mappo_2v2_individual.yaml", "individual", "agent_conditioned"),
-        ("scenarios/mappo_2v2_team_shared.yaml", "team_shared", "shared_team"),
+        ("scenarios/legacy/complete_4_individual.yaml", "individual", "agent_conditioned"),
+        ("scenarios/legacy/complete_4_team_shared.yaml", "team_shared", "shared_team"),
+        ("scenarios/legacy/mappo_2v2_individual.yaml", "individual", "agent_conditioned"),
+        ("scenarios/legacy/mappo_2v2_team_shared.yaml", "team_shared", "shared_team"),
     ],
 )
 def test_mappo_comparison_scenarios_have_explicit_contracts(
@@ -287,7 +287,7 @@ def test_mappo_comparison_scenarios_have_explicit_contracts(
 
 
 def test_individual_rewards_reject_shared_team_critic() -> None:
-    scenario = load_and_expand_scenario("scenarios/complete_4_individual.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/complete_4_individual.yaml")
     scenario["mappo"]["critic_mode"] = "shared_team"
 
     with pytest.raises(ScenarioError, match="individual rewards require"):
@@ -296,7 +296,7 @@ def test_individual_rewards_reject_shared_team_critic() -> None:
 
 @pytest.mark.parametrize("field", ["observation", "params", "action_constraints"])
 def test_shared_mappo_agents_reject_inconsistent_policy_contracts(field: str) -> None:
-    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/mappo_gaplock.yaml")
     if field == "observation":
         scenario["agents"]["car_1"][field] = "different_observation.yaml"
     elif field == "params":
@@ -413,7 +413,7 @@ def test_cooperative_team_collision_rate_does_not_require_opponents() -> None:
 
 
 def test_finished_vehicle_remains_physical_and_can_crash_active_vehicle() -> None:
-    scenario = load_and_expand_scenario("scenarios/mappo_2v2_vs_hybrid_pp_ftg.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/mappo_2v2_vs_hybrid_pp_ftg.yaml")
     env_cfg = apply_map_split(scenario["environment"], scenario["experiment"], "train")
     env_cfg = dict(env_cfg)
     env_cfg["map_cycle"] = ""

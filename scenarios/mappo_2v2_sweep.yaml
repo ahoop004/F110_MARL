@@ -1,0 +1,18 @@
+includes:
+  - ../configs/scenarios/mappo_2v2_base.yaml
+
+experiment:
+  name: mappo_2v2_sweep
+
+agents:
+  car_0:
+    reward: ../configs/reward/tasks/race_team_2v2_sweep.yaml
+  car_1:
+    reward: ../configs/reward/tasks/race_team_2v2_sweep.yaml
+
+wandb:
+  group: mappo-2v2-sweep
+  notes: "Shared completion shaping plus first-and-second-place team objective"
+
+evaluation:
+  selection_strategy: team_sweep

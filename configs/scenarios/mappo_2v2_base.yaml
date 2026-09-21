@@ -1,15 +1,15 @@
 # PPO driving actor transfer to two MAPPO teammates under the same MF6.1 physics.
 # Set training_defaults.pretrained_actor_checkpoint to a NEW PPO best_model.pt.
 # null deliberately runs the matched from-scratch arm. Fifty driving inputs are
-# preserved; 15 appended relative-neighbor inputs start with zero actor weights.
+# preserved; 18 appended relative-neighbor inputs start with zero actor weights.
 # Fixed opponents retain their controller settings, with an explicit wheel adapter.
 includes:
-- ../configs/env/default.yaml
-- ../configs/vehicle/combined_slip.yaml
-- ../configs/training/mappo.yaml
-- ../configs/wandb.yaml
+- ../env/default.yaml
+- ../vehicle/combined_slip.yaml
+- ../training/mappo.yaml
+- ../wandb.yaml
 experiment:
-  name: mappo_2v2_frenet_ppo_pretrained
+  name: mappo_2v2_completion
   episodes: 5000
   seed: 42
   num_envs: 1
@@ -24,6 +24,7 @@ mappo:
   critic_mode: shared_team
   team_reward_reduction: mean
 environment:
+  agent_teams: {car_0: learners, car_1: learners, car_2: opponents, car_3: opponents}
   timestep: 0.05
   lidar_beams: 108
   lidar_range: 10.0
@@ -57,6 +58,7 @@ environment:
   - circle_map
   map_bundles_eval:
   - circle_map
+  - Budapest_map
   lap_counting:
     count_initial_crossing_as_lap: false
   friction:
@@ -70,7 +72,9 @@ environment:
       mu: 1.0489
   terminate_on_collision: true
 evaluation:
-  enabled: false
+  enabled: true
+  every_episodes: 100
+  selection_strategy: team_completion
   episodes: 8
   seed: 10042
   max_steps: 16000
@@ -84,7 +88,7 @@ agents:
     role: racer
     target_id: car_2
     observation: ../configs/observations/rl_racer_simulated_wheel_neighbors.yaml
-    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
+    reward: ../configs/reward/tasks/race_team_completion.yaml
     params: &learner_params
       learning_rate: 0.0001
       pi_hidden_dims:
@@ -108,7 +112,7 @@ agents:
     role: racer
     target_id: car_3
     observation: ../configs/observations/rl_racer_simulated_wheel_neighbors.yaml
-    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
+    reward: ../configs/reward/tasks/race_team_completion.yaml
     params: *learner_params
     action_constraints: *learner_actions
   car_2:
@@ -143,7 +147,7 @@ agents:
         wall_avoid_kick: 0.01
         use_disparity_extender: true
         disparity_threshold: 0.35
-        vehicle_width: 0.225
+        vehicle_width: 0.31
         safety_margin: 0.1
     action_adapter: rolling_speed_to_wheel_v1
   car_3:
@@ -178,18 +182,18 @@ agents:
         wall_avoid_kick: 0.01
         use_disparity_extender: true
         disparity_threshold: 0.35
-        vehicle_width: 0.225
+        vehicle_width: 0.31
         safety_margin: 0.1
     action_adapter: rolling_speed_to_wheel_v1
 wandb:
   enabled: false
   project: marl-f110-complete
-  group: mappo-2v2-frenet-ppo-pretrained
-  job_type: pretrained-mappo-team
+  group: mappo-2v2-completion
+  job_type: mappo-team
   tags:
   - mappo
   - 2v2
-  - ppo-pretrained
+  - scratch-or-ppo-initialized
   - mf61-planar
   - wheel-acceleration
   - neighbors

@@ -3,6 +3,7 @@
 includes:
   - ppo_lap_completion_pretrain.yaml
 experiment:
+  evaluation_only: true
   name: ppo_lap_completion_validate
   checkpoint: null
 environment:

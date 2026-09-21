@@ -1,0 +1,5 @@
+# Two teammates learn reliable completion in traffic; optional PPO initialization.
+includes:
+  - ../configs/scenarios/mappo_2v2_base.yaml
+experiment:
+  name: mappo_2v2_completion

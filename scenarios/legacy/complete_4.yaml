@@ -5,10 +5,10 @@
 # independently after completing its lap or crashing; the joint episode ends
 # only after every car is terminal or the step limit is reached.
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/mappo.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/mappo.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: complete_4
@@ -75,8 +75,8 @@ agents:
     algorithm: mappo
     trainable: true
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/complete_4_lap_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -89,8 +89,8 @@ agents:
     algorithm: mappo
     trainable: true
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/complete_4_lap_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -103,8 +103,8 @@ agents:
     algorithm: mappo
     trainable: true
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/complete_4_lap_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -117,8 +117,8 @@ agents:
     algorithm: mappo
     trainable: true
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/complete_4_lap_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/complete_4_lap_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

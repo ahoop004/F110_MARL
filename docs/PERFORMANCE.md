@@ -10,7 +10,7 @@ Default three-repetition CPU benchmark:
 
 ```bash
 PYGLET_HEADLESS=true python3 scripts/benchmark_complete4.py \
-  --scenario scenarios/complete_4.yaml \
+  --scenario scenarios/legacy/complete_4.yaml \
   --map Budapest_map --seed 42 --physics-substeps 256 \
   --device cpu --repetitions 3 \
   --output /tmp/f110_complete4_benchmark.json
@@ -19,9 +19,9 @@ PYGLET_HEADLESS=true python3 scripts/benchmark_complete4.py \
 Run the same command for these scenario arms:
 
 ```text
-scenarios/complete_4.yaml
-scenarios/complete_4_frenet.yaml
-scenarios/complete_4_frenet_neighbors.yaml
+scenarios/legacy/complete_4.yaml
+scenarios/legacy/complete_4_frenet.yaml
+scenarios/legacy/complete_4_frenet_neighbors.yaml
 ```
 
 On a CUDA host, use `--device cuda`. The benchmark synchronizes CUDA around
@@ -33,7 +33,7 @@ Optional additional profiled repetition:
 
 ```bash
 PYGLET_HEADLESS=true python3 scripts/benchmark_complete4.py \
-  --scenario scenarios/complete_4.yaml \
+  --scenario scenarios/legacy/complete_4.yaml \
   --map Budapest_map --seed 42 --physics-substeps 256 \
   --device cpu --repetitions 3 \
   --profile /tmp/f110_complete4.prof \
@@ -399,9 +399,9 @@ limited to one):
 ```bash
 venv/bin/python -m compileall -q run.py src tests
 PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_ppo
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_mappo
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_slip
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_ppo
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_mappo
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --no-wandb --episodes 1 --quiet --output-dir /tmp/f110_optimization_smoke_slip
 rg 'stable_baselines3|from gymnasium|from pettingzoo' run.py src configs scenarios
 git diff --check
 ```

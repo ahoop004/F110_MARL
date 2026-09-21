@@ -156,6 +156,7 @@ class ObservationComposer:
                     max_neighbors=int(neighbors_cfg.get("max_neighbors", 1)),
                     maxima=neighbors_cfg.get("maxima", {}),
                     clip=bool(neighbors_cfg.get("clip", False)),
+                    include_team=bool(neighbors_cfg.get("include_team", False)),
                 )
             )
 

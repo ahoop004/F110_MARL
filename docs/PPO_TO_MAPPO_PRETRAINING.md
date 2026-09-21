@@ -1,6 +1,7 @@
 # PPO pretraining and transfer
 
-The current pipeline uses synthetic planar MF6.1 physics, 0.05 s decisions,
+The current pipeline uses F1TENTH Gym chassis/steering defaults with synthetic
+planar MF6.1 tires, 0.05 s decisions,
 wheel-reference acceleration, and a 50-value driving observation. It follows the
 paper's main time-trial recipe, with explicit changes for reuse across tracks.
 It is not a calibrated reproduction of the authors' car.
@@ -40,6 +41,12 @@ Vehicle-state scales and N=20 remain provisional.
 Training resets on geometric boundary violations; there is no lap or time-limit
 termination. Reward is signed metre progress, replaced by -1 outside the track.
 The current implementation still uses uncalibrated tire and actuator parameters.
+The shared vehicle profile now uses a 0.58 x 0.31 m footprint, ±0.4189 rad steering
+and ±3.2 rad/s steering-rate limits from a pinned F1TENTH Gym revision (see
+[physics configuration and sources](PHYSICS_MODEL.md#configuration-and-calibration)).
+This changes the physics contract relative to the earlier 0.32 x 0.225 m,
+±0.5 rad profile. Existing processes retain their loaded configuration; new
+checkpoints and downstream transfer must use the same revised physics contract.
 
 Each PPO episode line includes `laps` (the environment's completed lap count)
 and `lap_time` (the most recent timed lap, in simulation seconds). Episodes with
@@ -137,36 +144,93 @@ resume. Older reduced-physics checkpoints are incompatible.
 
 ## Transfer the driving actor into MAPPO
 
-`mappo_2v2_frenet_ppo_pretrained.yaml` now uses the same MF6.1 dynamics, friction
-protocol, 0.05 s decision interval, and wheel-acceleration action contract. Its
-local actor observation has 65 inputs: the original 50 driving values followed by
-three relative-neighbor slots (delta_s, delta_d, delta_vs, delta_vd, presence).
-These are privileged simulator measurements, not inferred LiDAR detections.
+All active `mappo_2v2_*.yaml` training scenarios share
+`configs/scenarios/mappo_2v2_base.yaml`: the same MF6.1 dynamics, friction
+protocol, 0.05 s decisions, wheel-acceleration actions, and two fixed hybrid
+opponents. MAPPO currently runs one environment. PPO retains 400.
 
-Set `training_defaults.pretrained_actor_checkpoint` to a new compatible PPO
-`best_model.pt`. With null it trains the matched scratch arm. The explicit
-`pretrained_actor_observation_extension: frenet_neighbors` permits only this
-appended block after an unchanged Frenet driving observation. The first-layer
-weights for the 15 new inputs start at zero; all driving weights and exploration
-parameters are copied. Initial actions match PPO even with neighbors present.
-The new inputs receive gradients during MAPPO training. The centralized critic
-and optimizer start fresh. Arbitrary input changes, scaling changes, and physics
-mismatches still fail loading.
+The actor has 68 inputs: the original 50 driving values followed by three slots
+of `(delta_s, delta_d, delta_vs, delta_vd, present, is_teammate)`. Slots are ordered
+by longitudinal distance. Team identity follows the physical agent when slots
+reorder. These are privileged simulator measurements, not LiDAR detections.
 
-Fixed hybrid opponents retain their controller settings and use the explicit
-`rolling_speed_to_wheel_v1` adapter. Their nominal 2.5 m/s setting is a starting
-baseline, not evidence that they maintain this speed under MF6.1. The 800 s race
-horizon is 16,000 steps; finish-clearance time remains 2 s. Reward presets retain
-their per-decision coefficients, so the old 0.01 s time-cost rate is not preserved.
+Use `--pretrained-actor` with a compatible PPO checkpoint or run directory.
+Omitting it runs scratch; no scenario silently chooses a checkpoint. The explicit
+`pretrained_actor_observation_extension: frenet_neighbors` allows the appended
+block after an unchanged driving observation. Its 18 new first-layer weights per
+hidden unit start at zero, preserving the PPO actions at initialization. They
+receive gradients during MAPPO training. Driving weights and exploration
+parameters are copied; the centralized critic and optimizer start fresh. Old
+65-input MAPPO checkpoints are incompatible with this new team observation.
+
+| Scenario | Purpose |
+|---|---|
+| `mappo_2v2_completion.yaml` | Learn to finish together in traffic; shared completion reward |
+| `mappo_2v2_combined.yaml` | Main team-racing experiment; combined finishing-position objective |
+| `mappo_2v2_first_place.yaml` | First-place objective comparison |
+| `mappo_2v2_sweep.yaml` | First-and-second-place objective comparison |
+| `mappo_2v2_individual.yaml` | Matched completion baseline with individual rewards and agent-conditioned critic |
+| `mappo_2v2_validate.yaml` | Evaluation only on held-out Silverstone and Spa |
+
+Start with completion to diagnose traffic adaptation, then run combined from the
+same PPO source. `--pretrained-actor` accepts PPO actors, not a MAPPO checkpoint;
+completion-to-combined MAPPO continuation is not implemented. Compare scratch and
+pretrained arms within each objective with the same seeds and destination budget.
+MAPPO currently has an episode budget; record actual transitions because episode
+lengths vary. Do not claim equal sample budgets from equal episode counts.
 
 ```bash
-# After setting pretrained_actor_checkpoint in the YAML:
+# Actor transfer into the main team objective.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_frenet_ppo_pretrained.yaml
+  --scenario scenarios/mappo_2v2_combined.yaml \
+  --pretrained-actor outputs/PRETRAIN_RUN --output-dir outputs/team_transfer
+
+# Matched scratch configuration.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_combined.yaml --output-dir outputs/team_scratch
+
+# Final starts on the development maps after checkpoint selection.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_combined.yaml --eval \
+  --checkpoint outputs/team_transfer --eval-protocol final \
+  --output-dir outputs/team_final --no-wandb
+
+# Held-out maps, once the model and settings are frozen.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_validate.yaml --eval \
+  --checkpoint outputs/team_transfer --allow-provenance-mismatch \
+  --eval-protocol final --output-dir outputs/team_heldout --no-wandb
 ```
 
-The combined, first-place, and sweep reward variants inherit this contract.
-Their team outcome rewards remain distinct experimental objectives. Automatic
-checkpoint selection is PPO-only; select MAPPO checkpoints using its evaluation
-selection seeds, then evaluate once on its final seeds. Keep actor transfer,
-traffic adaptation, and unseen-map performance as separately reported results.
+Deterministic evaluation runs every 100 training episodes on eight fixed starts
+across Budapest and circle. It uses a separate environment and preserves training
+random-number states. Checkpoint selection ranks both teammates finishing first,
+then the configured objective, fewer learner collisions, and net progress
+(or faster clean finishes once every start finishes).
+`best_model.pt` records its evaluation in `checkpoint_selection`, and every
+selection result is saved in `evaluation_history.jsonl`. Twenty separate starts
+are reserved for final evaluation. Held-out validation uses separate seeds and
+never participates in checkpoint selection. Neither validation entry point can
+start training accidentally: both require `--eval`.
+
+Fixed opponents use `rolling_speed_to_wheel_v1` and the current 0.31 m vehicle
+width. Their nominal 2.5 m/s setting is a starting baseline; the earlier legacy
+physics calibration does not establish their performance under MF6.1. Check their
+completion and collision rates before interpreting team wins. The 800 s race
+horizon is 16,000 steps and finish clearance remains 2 s. Team reward presets now
+express time cost as -0.00025 per simulated second, preserving the prior -0.2
+maximum over 800 s at 0.05 s steps.
+
+## Scenario cleanup
+
+The nine active entry points live directly under `scenarios/`. The two duplicate
+PPO pretraining aliases were removed; use `ppo_lap_completion_pretrain.yaml`.
+The former `mappo_2v2_frenet_ppo_pretrained*` names became the four completion/team
+objective names above. Fifteen older experiments remain under `scenarios/legacy/`
+for historical comparisons, including the old individual/team-shared pair.
+Their physics and checkpoint contracts have not been migrated.
+
+The circle convergence ablation lives under `scenarios/experiments/` and explicitly
+uses circle for training and evaluation. Historical fixed-controller calibration
+files remain under `scenarios/calibration/`; their results apply to legacy physics.
+See [the scenario index](../scenarios/README.md) before creating another entry point.

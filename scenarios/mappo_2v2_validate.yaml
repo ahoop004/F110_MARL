@@ -1,0 +1,17 @@
+# Evaluation only: pass --eval with a trained MAPPO checkpoint.
+# Do not select checkpoints or tune on these held-out maps.
+includes:
+  - mappo_2v2_combined.yaml
+experiment:
+  evaluation_only: true
+  name: mappo_2v2_validate
+environment:
+  map_bundles: [Silverstone_map, Spa_map]
+  map_bundles_eval: [Silverstone_map, Spa_map]
+evaluation:
+  enabled: false
+  episodes: 8
+  seed: 30042
+  final_test: {episodes: 20, seed: 40042}
+wandb:
+  job_type: held-out-team-validation

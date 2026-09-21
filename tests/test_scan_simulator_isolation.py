@@ -9,13 +9,13 @@ from core.setup import create_training_setup
 
 @pytest.mark.parametrize("pick,shuffle", [("random", False), ("round_robin", False), ("round_robin", True)])
 def test_seeded_map_schedule_replays_independently_of_reset_history(pick, shuffle):
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["environment"].update(
         map_bundles_train=["line2", "circle_map"],
         map_bundles_eval=["line2", "circle_map"],
         map_cycle="per_episode", map_pick=pick, epoch_shuffle=shuffle,
     )
-    env, _, _ = create_training_setup(scenario, mode="eval", scenario_dir=Path("scenarios").resolve())
+    env, _, _ = create_training_setup(scenario, mode="eval", scenario_dir=Path("scenarios/legacy").resolve())
     try:
         def snapshot(index):
             obs, _ = env.reset(seed=123, options={"map_episode_index": index})

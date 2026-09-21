@@ -1,8 +1,8 @@
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/on_policy.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/on_policy.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: ppo_time_trial
@@ -35,8 +35,8 @@ agents:
   car_0:
     algorithm: ppo
     role: racer
-    observation: ../configs/observations/rl_racer_frenet.yaml
-    reward: ../configs/reward/tasks/time_trial_3lap.yaml
+    observation: ../../configs/observations/rl_racer_frenet.yaml
+    reward: ../../configs/reward/tasks/time_trial_3lap.yaml
     params:
       learning_rate: 0.0001
       hidden_dims: [124, 64]

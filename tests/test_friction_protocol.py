@@ -20,7 +20,7 @@ from wrappers.observations.composer import ObservationComposer
 
 @pytest.fixture
 def scenario():
-    config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_combined_slip.yaml')
+    config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
     config['environment'].pop('spawn')
     # This fixture exercises annotated multi-car spawns, unlike the L-map's
     # centerline-relative pretraining spawn. Declare its own map explicitly.
@@ -91,7 +91,7 @@ def test_adapter_conversion_negative_speed_clipping_and_no_input_mutation(scenar
     np.testing.assert_allclose(adapter.act({}), [.2, -40])
     np.testing.assert_array_equal(values, [.2, -2])
     values[:] = [2, 30]
-    np.testing.assert_allclose(adapter.act({}), [.5, 400])
+    np.testing.assert_allclose(adapter.act({}), [.4189, 400])
     adapter.set_action_space(SimpleNamespace(low=np.array([-.4, -400]), high=np.array([.4, 400])))
     np.testing.assert_allclose(controller.space.high, [.4, 20])
     values[1] = np.nan
@@ -242,7 +242,7 @@ def test_legacy_adapter_and_missing_opt_in_rejected(scenario):
     del config['agents']['car_1']['action_adapter']
     with pytest.raises(ScenarioError, match='adapter'):
         validate_scenario(config)
-    legacy = load_and_expand_scenario('scenarios/ppo.yaml')
+    legacy = load_and_expand_scenario('scenarios/legacy/ppo.yaml')
     legacy['agents']['car_1']['action_adapter'] = 'rolling_speed_to_wheel_v1'
     with pytest.raises(ScenarioError, match='adapter'):
         validate_scenario(legacy)

@@ -1,0 +1,11 @@
+# Shared completion shaping for the current 0.05 s MAPPO driving setup.
+includes:
+  - lap_completion_normalized_progress.yaml
+task:
+  name: race_team_completion
+  description: Lap-normalized progress, clean finish bonus, and time cost in seconds.
+reward:
+  step_time_penalty:
+    # Preserve the previous effective cost: -0.2 over an 800 s race.
+    penalty: null
+    per_second: -0.00025

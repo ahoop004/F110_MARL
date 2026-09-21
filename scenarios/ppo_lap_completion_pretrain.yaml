@@ -1,5 +1,6 @@
 # Paper-inspired time-trial PPO with fixed track scales for actor transfer.
-# Synthetic coefficients: this is not a calibrated reproduction of the paper.
+# F1TENTH Gym chassis/steering bounds with synthetic MF6.1 tire coefficients.
+# This is not a calibrated reproduction of the paper.
 # Train fresh: previous legacy/reduced-physics checkpoints are incompatible.
 includes:
   - ../configs/env/default.yaml
@@ -146,6 +147,6 @@ wandb:
   name: null
   group: ppo-lap-completion-pretrain
   job_type: actor-pretraining
-  tags: [ppo, single-agent, time-trial, actor-pretraining, mf61-planar, uncalibrated]
-  notes: "Planar MF6.1 physics test with synthetic coefficients, 50-value Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward, continuous resets, and a 120M-transition budget"
+  tags: [ppo, single-agent, time-trial, actor-pretraining, mf61-planar, f1tenth-gym-reference, uncalibrated]
+  notes: "F1TENTH Gym chassis/steering bounds with synthetic MF6.1 tires and provisional actuator response, 50-value Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward, continuous resets, and a 120M-transition budget"
   mode: online

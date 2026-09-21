@@ -84,7 +84,7 @@ def test_command_clipping_and_reference_derivative_use_wheel_units(env):
     assert raw['wheel_speed_reference'] == 400
     assert raw['wheel_speed_reference_rate'] == pytest.approx(400 / .02)
     assert 'speed_reference' not in raw
-    assert raw['steering_reference'] == pytest.approx(.5)
+    assert raw['steering_reference'] == pytest.approx(.4189)
     assert raw['wheel_speed'] == pytest.approx(400 * (1 - np.exp(-.01/.15)))
     with pytest.raises(ValueError, match='finite'):
         env.step({'car_0': np.array([0, np.nan])})

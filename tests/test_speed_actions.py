@@ -78,7 +78,7 @@ def test_invalid_speed_control_is_rejected(overrides, dt):
 @pytest.mark.parametrize("mode", ["train", "eval"])
 @pytest.mark.parametrize("repeat", [1, 3])
 def test_frenet_environment_observes_applied_reference_rate(mode, repeat):
-    path = Path("scenarios/ppo_lap_completion_pretrain_frenet.yaml").resolve()
+    path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
     scenario["environment"]["action_repeat"] = repeat
     cfg = scenario["agents"]["car_0"]
@@ -118,7 +118,7 @@ def test_mappo_agents_have_independent_integrators():
 
 
 def test_checkpoint_control_contract_prevents_same_shape_misinterpretation(tmp_path):
-    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     params = resolve_training_params(scenario['agents']['car_0'], scenario)
     params.update(pi_hidden_dims=[4], vf_hidden_dims=[4], n_steps=2, device="cpu")
     accelerated = PPOAgent(3, LOW, HIGH, params)

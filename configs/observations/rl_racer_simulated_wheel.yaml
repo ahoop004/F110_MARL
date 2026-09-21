@@ -14,5 +14,6 @@ observation:
     # This transfer-oriented choice differs from per-track normalization.
     track_maxima: {curvature: 1.0, width: 1.0}
     maxima:
+      # Fixed observation scales; physical steering bounds come from the vehicle.
       delta: 0.5
       delta_ref: 0.5

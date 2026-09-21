@@ -8,13 +8,13 @@ experiment:
 
 agents:
   car_0:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
   car_1:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
   car_2:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
   car_3:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml
 
 wandb:
   group: complete4-frenet-neighbors-v1

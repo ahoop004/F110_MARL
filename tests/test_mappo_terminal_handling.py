@@ -112,7 +112,8 @@ def test_delayed_sweep_reward_reaches_early_finisher_without_dummy_decisions(tmp
         {aid: RewardComposer.from_file("configs/reward/tasks/race_team_2v2_sweep.yaml") for aid in ids},
         _ActionComposer(), hooks=[hook, DatasetHook(writer)], reward_mode="team_shared").train(1)
     assert [r.agent_id for r in hook.records] == ["car_0", "car_1", "car_1"]
-    first, last = .5 - .0000125, 2.5 - .0000125/2
+    time_cost = .00025 * env.timestep
+    first, last = .5 - time_cost, 2.5 - time_cost/2
     assert [r.reward for r in hook.records] == pytest.approx([first, first, last])
     assert hook.records[-1].reward_components["team_result/sweep"] == 2.
     assert returns == pytest.approx([first + .9*last, last])
@@ -127,7 +128,7 @@ def test_delayed_sweep_reward_reaches_early_finisher_without_dummy_decisions(tmp
     import run
     from core.scenario import load_and_expand_scenario
 
-    scenario_path = Path("scenarios/mappo_2v2_frenet_ppo_pretrained_sweep.yaml").resolve()
+    scenario_path = Path("scenarios/mappo_2v2_sweep.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
     # This one-value mock environment exercises reward timing, not MF6.1.
     scenario['environment']['vehicle_params'] = {}

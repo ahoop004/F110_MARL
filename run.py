@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
                    help="Checkpoint file or run directory (best_model.pt): evaluate with --eval, "
                         "or initialize PPO training weights with a fresh optimizer; "
                         "overrides experiment.checkpoint in the scenario")
+    p.add_argument("--pretrained-actor", type=str, default=None,
+                   help="PPO checkpoint file or run directory to initialize a MAPPO actor; fresh critic and optimizer")
     p.add_argument(
         "--allow-provenance-mismatch",
         action="store_true",
@@ -389,6 +391,11 @@ def main() -> None:
     # Scenario validation guarantees a single PPO agent or a homogeneous MAPPO team.
     trainable_ids = get_trainable_agent_ids(agent_configs)
 
+    if args.pretrained_actor and (args.eval or not trainable_ids or any(
+            str(agent_configs[aid]["algorithm"]).lower() != "mappo" for aid in trainable_ids)):
+        raise ValueError("--pretrained-actor requires MAPPO training; use --checkpoint for evaluation.")
+    if exp_cfg.get("evaluation_only") and not args.eval:
+        raise ValueError("This scenario is evaluation-only; pass --eval and --checkpoint.")
     if args.eval:
         _run_eval(scenario, args, console, scenario_dir)
         return
@@ -495,6 +502,8 @@ def main() -> None:
                 )
 
     pretrained_actor_path: Optional[Path] = None
+    if getattr(args, "pretrained_actor", None):
+        params["pretrained_actor_checkpoint"] = str(resolve_checkpoint_path(args.pretrained_actor))
     pretrained_actor_value = params.get("pretrained_actor_checkpoint")
     if algorithm == "mappo" and pretrained_actor_value:
         pretrained_actor_path = _resolve_scenario_relative_path(
@@ -575,7 +584,7 @@ def main() -> None:
     eval_cfg = scenario.get("evaluation", {}) or {}
     if not isinstance(eval_cfg, dict):
         raise ValueError("Scenario 'evaluation' must be a mapping when provided.")
-    evaluation_selection_enabled = bool(eval_cfg.get("enabled", False)) and algorithm == "ppo"
+    evaluation_selection_enabled = bool(eval_cfg.get("enabled", False)) and algorithm in {"ppo", "mappo"}
 
     hooks = [
         ConsoleHook(
@@ -590,6 +599,7 @@ def main() -> None:
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
             provenance=provenance,
             save_best_training_reward=not evaluation_selection_enabled,
+            save_final=algorithm == "mappo",
             save_every_steps=(int(params.get("checkpoint_every_steps", 4096000))
                               if exp_cfg.get("total_steps") is not None else None),
         ),  # agent set below
@@ -706,6 +716,8 @@ def main() -> None:
                 hooks, exp_cfg, output_dir, console,
                 focal_agent_id=rl_agent_id,
                 run_id=run_id,
+                scenario=scenario, scenario_dir=scenario_dir,
+                provenance=provenance, wandb_logger=wandb_logger,
             )
         elif algorithm == "ppo":
             _run_on_policy(
@@ -1434,6 +1446,7 @@ def _run_mappo(
     hooks, exp_cfg, output_dir, console,
     focal_agent_id=None,
     run_id="run",
+    scenario=None, scenario_dir=None, provenance=None, wandb_logger=None,
 ) -> None:
     from agents.mappo import MAPPOAgent
     from training.marl_trainer import MARLTrainer
@@ -1507,7 +1520,63 @@ def _run_mappo(
         f"critic_mode={params.get('critic_mode')}  "
         f"team_reward_reduction={params.get('team_reward_reduction')}"
     )
-    trainer.train(n_episodes=n_episodes)
+    evaluator = None
+    eval_cfg = (scenario or {}).get("evaluation", {}) or {}
+    if eval_cfg.get("enabled", False):
+        from training.mappo_evaluator import DeterministicMAPPOEvaluator
+        import torch
+
+        protocol = resolve_evaluation_protocol(scenario, "selection")
+        if protocol["max_steps"] <= 0:
+            raise ValueError("MAPPO checkpoint evaluation requires a finite max_steps")
+        eval_scenario = copy.deepcopy(scenario)
+        eval_scenario["experiment"]["seed"] = protocol["seed"]
+        eval_scenario["environment"]["max_steps"] = protocol["max_steps"]
+        np_state, py_state = np.random.get_state(), random.getstate()
+        torch_state = torch.random.get_rng_state()
+        cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        try:
+            eval_env, eval_agents, _ = create_training_setup(
+                eval_scenario, mode="eval", scenario_dir=scenario_dir)
+        finally:
+            np.random.set_state(np_state)
+            random.setstate(py_state)
+            torch.random.set_rng_state(torch_state)
+            if cuda_states is not None:
+                torch.cuda.set_rng_state_all(cuda_states)
+        try:
+            eval_obs = build_obs_composers(scenario["agents"], trainable_ids,
+                                           eval_scenario["environment"], scenario_dir)
+            for aid in trainable_ids:
+                space = eval_env.action_spaces[aid]
+                if (eval_obs[aid].contract != obs_composers[aid].contract
+                        or not np.array_equal(space.low, action_low)
+                        or not np.array_equal(space.high, action_high)):
+                    raise ValueError("MAPPO evaluation observation/action contracts must match training")
+            for controller in eval_agents.values():
+                if hasattr(controller, "set_env"):
+                    controller.set_env(eval_env)
+            evaluator = DeterministicMAPPOEvaluator(
+                env=eval_env, trainable_ids=trainable_ids, other_agents=eval_agents,
+                obs_composers=eval_obs, action_composer=action_composer,
+                episodes=protocol["episodes"], base_seed=protocol["seed"],
+                action_repeat=action_repeat,
+            ).bind_agent(agent)
+            trainer.hooks.append(EvaluationCheckpointHook(
+                agent, str(output_dir), evaluator,
+                evaluate_every=int(eval_cfg.get("every_episodes", 100)),
+                selection_strategy=eval_cfg.get("selection_strategy", "team_completion"),
+                provenance=provenance, console=console, wandb_logger=wandb_logger,
+            ))
+            console.print_info("Best MAPPO checkpoint selected by deterministic team evaluation.")
+        except Exception:
+            eval_env.close()
+            raise
+    try:
+        trainer.train(n_episodes=n_episodes)
+    finally:
+        if evaluator is not None:
+            evaluator.close()
 
 
 if __name__ == "__main__":

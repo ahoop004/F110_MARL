@@ -10,8 +10,8 @@ Use the project virtual environment when available. Dependencies are listed in
 `requirements.txt`; development checks use pytest. Headless examples:
 
 ```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_gaplock.yaml --no-wandb --episodes 1
 ```
 
 Use `--seed` for repeatability, `--output-dir` for a specific output location,
@@ -25,7 +25,7 @@ Evaluate a checkpoint with the same scenario and experiment overrides used for
 training (the resolved configuration is checked against checkpoint provenance):
 
 ```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --eval --checkpoint outputs/example/checkpoint_ep000000.pt --eval-episodes 5
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1 --eval --checkpoint outputs/example/checkpoint_ep000000.pt --eval-episodes 5
 ```
 
 Replace the example checkpoint path with the checkpoint produced by your run.
@@ -77,34 +77,25 @@ keep observation component meanings/order compatible as well as their dimensions
 
 ## Experiment catalog
 
-Scenario files retain their existing paths and experiment settings. Inspect each
-YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a run.
+The active scenarios share the current MF6.1 physics and driving observation.
+See [the scenario index](scenarios/README.md) for the retained historical files.
 
 | Experiment | Scenario files under `scenarios/` |
 |---|---|
-| PPO attacker against FTG | `ppo.yaml`, `ppo_curriculum.yaml` |
-| PPO centerline racing / time trial | `ppo_centerline.yaml`, `ppo_time_trial.yaml` |
-| PPO against waypoint controllers | `ppo_vs_pure_pursuit.yaml`, `ppo_vs_stanley.yaml`, `ppo_vs_hybrid_pp_ftg.yaml` |
-| PPO actor pretraining | `ppo_lap_completion_pretrain.yaml` |
-| PPO evaluation / fine-tuning on another track | `ppo_lap_completion_transfer.yaml` |
-| PPO pretraining with Frenet/track preview and acceleration actions | `ppo_lap_completion_pretrain_frenet.yaml` |
-| PPO pretraining with combined-slip tires and wheel actuators | `ppo_lap_completion_pretrain_combined_slip.yaml` |
-| PPO defender against hybrid controller | `marl_defender.yaml` |
-| MAPPO gaplock | `mappo_gaplock.yaml` |
-| MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |
-| Forward-only Frenet PPO transfer to a MAPPO 2v2 team | `mappo_2v2_frenet_ppo_pretrained.yaml` (configure a current MF6.1 `best_model.pt`; null runs scratch) |
-| Frenet 2v2 team objectives using the PPO reward | `mappo_2v2_frenet_ppo_pretrained_combined.yaml`, `mappo_2v2_frenet_ppo_pretrained_first_place.yaml`, `mappo_2v2_frenet_ppo_pretrained_sweep.yaml` |
-| MAPPO observation variants | `complete_4.yaml`, `complete_4_frenet.yaml`, `complete_4_frenet_neighbors.yaml` |
-| MAPPO against two hybrid opponents | `mappo_2v2.yaml`, `mappo_2v2_vs_hybrid_pp_ftg.yaml`, `mappo_2v2_individual.yaml`, `mappo_2v2_team_shared.yaml` |
-| Fixed-controller baselines | `nrl_1car.yaml` through `nrl_4car.yaml` |
-| Race-duration calibration | `calibration/*.yaml` |
+| PPO pretraining (400 environments) | `ppo_lap_completion_pretrain.yaml` |
+| PPO transfer versus scratch | `ppo_lap_completion_transfer.yaml` |
+| PPO cross-map evaluation | `ppo_lap_completion_validate.yaml` |
+| MAPPO traffic adaptation | `mappo_2v2_completion.yaml` |
+| MAPPO main team objective | `mappo_2v2_combined.yaml` |
+| MAPPO objective comparisons | `mappo_2v2_first_place.yaml`, `mappo_2v2_sweep.yaml` |
+| MAPPO individual completion baseline | `mappo_2v2_individual.yaml` |
+| MAPPO held-out evaluation | `mappo_2v2_validate.yaml` |
+| Circle convergence ablation | `experiments/ppo_combined_slip_circle_stable.yaml` |
+| Historical experiments / controller calibration | `legacy/*.yaml`, `calibration/*.yaml` |
 
-The historical planning templates `circle_attacker.yaml`, `circle_defender.yaml`,
-and `marl_attacker.yaml` declare multiple PPO learners and are intentionally
-rejected by validation. They require an explicit experiment redesign before use.
-A supported training scenario has one PPO learner or a homogeneous MAPPO team.
-Frozen PPO/MAPPO opponents and mixed trainable algorithms are not implemented.
-Scenario curriculum is currently supported for PPO only.
+Use `--pretrained-actor outputs/PRETRAIN_RUN` for PPO-to-MAPPO initialization;
+omit it for scratch. Active team scenarios select checkpoints with deterministic
+evaluation every 100 episodes. The `*_validate.yaml` entry points require `--eval`.
 
 MAPPO's individual arm uses per-agent rewards and an agent-conditioned critic,
 `V_i(s)`. The team arm uses a configured team reward reduction and shared team
@@ -190,8 +181,8 @@ Learning-rate decay, periodic checkpoints, and evaluation use transition counts.
 Evaluation measures 20 laps with nominal grip and permits excursions to measure
 off-track error. Selection uses eight starts and the final protocol uses 20 independent starts
 on the same map. `final_model.pt` contains the final update; `best_model.pt` uses
-the documented lap-time selection rule. The existing `_frenet` and
-`_combined_slip` entries retain their smaller worker counts and other overrides.
+the documented lap-time selection rule. Duplicate `_frenet` and
+`_combined_slip` pretraining entry points have been removed.
 For a smaller parallel experiment, set pooled `params.n_steps = num_envs * 1024`.
 
 Vehicle parameters belong in `configs/vehicle/combined_slip.yaml`, under
@@ -214,12 +205,12 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_complet
 
 Replace the run directory with one produced by the same scenario and physics
 contract. Final seeds use the configured evaluation track and do not establish
-sim-to-real performance. The migrated `mappo_2v2_frenet_ppo_pretrained.yaml` supports the new actor
-with 15 appended neighbor inputs initialized to zero weight. Other legacy MAPPO
+sim-to-real performance. The migrated `mappo_2v2_completion.yaml` supports the new actor
+with 18 appended neighbor/team inputs initialized to zero weight. Other legacy MAPPO
 scenarios still need compatible physics/observation/action configurations.
 
 For the circle convergence experiment, use
-`scenarios/ppo_combined_slip_circle_stable.yaml` with the same `run.py` command.
+`scenarios/experiments/ppo_combined_slip_circle_stable.yaml` with the same `run.py` command.
 It preserves the three-lap task, observations, physical actions, spawn protocol,
 and tires. It reduces the time cost from 0.1 to 0.01 per simulated second,
 lowers the initial learning rate to 1e-4, uses four epochs and 256-decision
@@ -322,8 +313,8 @@ algorithm labels should be interpreted accordingly.
 ```bash
 venv/bin/python -m compileall -q run.py src tests
 PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
 rg "stable_baselines3|from gymnasium|from pettingzoo" run.py src configs scenarios
 ```
 

@@ -109,6 +109,7 @@ class MARLTrainer:
         self.action_composers = {aid: copy.deepcopy(action_composer) for aid in self.trainable_ids}
         self.action_repeat = max(1, int(action_repeat))
         self.hooks = hooks or []
+        self._environment_steps = 0
         self._transition_hooks = transition_record_hooks(self.hooks)
         self.render = render
         self.focal_id = focal_agent_id or (trainable_ids[0] if trainable_ids else "")
@@ -503,6 +504,7 @@ class MARLTrainer:
 
                 global_state = next_global_state
                 step_idx += 1
+                self._environment_steps += 1
 
                 # --- Trigger update when any buffer is full or episode ends ---
                 if self.agent.any_buffer_full() or episode_done:
@@ -510,6 +512,7 @@ class MARLTrainer:
                         next_global_state=next_global_state,
                     )
                     self.agent.clear_buffers()
+                    update_metrics["train/environment_steps"] = self._environment_steps
                     for hook in self.hooks:
                         hook.on_update(update_metrics)
 

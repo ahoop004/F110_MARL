@@ -368,6 +368,14 @@ def aggregate_eval_episodes(
 
     if len(trainable_ids) > 1 or len(opponent_ids) > 1:
         summary.update(_aggregate_team(episodes, trainable_ids, opponent_ids))
+    if len(trainable_ids) == 2 and len(opponent_ids) == 2:
+        results = [team_finish_result(
+            {aid: {"terminal_reason": facts.terminal_reason,
+                   "finish_position": facts.finish_position}
+             for aid, facts in ep.agents.items()}, trainable_ids, opponent_ids,
+        ) for ep in episodes]
+        for key in ("rank_score", "first_place", "sweep"):
+            summary[f"team_{key}"] = _mean(result[key] for result in results)
 
     return summary
 

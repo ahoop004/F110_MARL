@@ -1,8 +1,8 @@
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/mappo.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/mappo.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: mappo_gaplock
@@ -32,8 +32,8 @@ agents:
     algorithm: mappo
     role: attacker
     target_id: car_1
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/tasks/gaplock_attack.yaml
+    observation: ../../configs/observations/rl_attacker.yaml
+    reward: ../../configs/reward/tasks/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -46,8 +46,8 @@ agents:
     algorithm: mappo
     role: defender
     target_id: car_0
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/tasks/gaplock_attack.yaml
+    observation: ../../configs/observations/rl_attacker.yaml
+    reward: ../../configs/reward/tasks/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

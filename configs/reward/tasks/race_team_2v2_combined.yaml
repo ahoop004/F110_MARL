@@ -1,9 +1,9 @@
 includes:
-  - lap_completion_normalized_progress.yaml
+  - race_team_completion.yaml
 
 task:
   name: race_team_2v2_combined
-  description: Mean Frenet PPO reward plus clean team completion and finish-rank points.
+  description: Mean completion shaping plus clean team completion and finish-rank points.
 
 reward:
   team_race_result:

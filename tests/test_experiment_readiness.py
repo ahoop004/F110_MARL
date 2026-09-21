@@ -52,7 +52,7 @@ def test_builtin_factory_and_training_setup_contract():
     from src.core.setup import create_training_setup
     register_builtin_agents()
     assert {"ftg", "pure_pursuit", "stanley", "hybrid_pp_ftg"} <= set(AgentFactory.available_agents())
-    env, agents, reward_strategies = create_training_setup(load_and_expand_scenario("scenarios/ppo.yaml"))
+    env, agents, reward_strategies = create_training_setup(load_and_expand_scenario("scenarios/legacy/ppo.yaml"))
     try:
         assert set(agents) == {"car_1"}
         assert reward_strategies == {}
@@ -63,7 +63,7 @@ def test_builtin_factory_and_training_setup_contract():
 @pytest.mark.parametrize("algorithm", ["a2c", "ddpg", "sac", "td3", "dqn", "qrdqn", "tqc", "typo"])
 @pytest.mark.parametrize("explicit", [None, True, False])
 def test_unsupported_algorithms_cannot_become_fixed_opponents(algorithm, explicit) -> None:
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     agent = scenario["agents"]["car_0"]
     agent["algorithm"] = algorithm
     if explicit is not None:
@@ -76,7 +76,7 @@ def test_unsupported_algorithms_cannot_become_fixed_opponents(algorithm, explici
 
 @pytest.mark.parametrize("second_algorithm", ["ppo", "mappo"])
 def test_unsupported_trainable_teams_fail_during_validation(second_algorithm) -> None:
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["agents"]["car_2"] = copy.deepcopy(scenario["agents"]["car_0"])
     scenario["agents"]["car_2"]["algorithm"] = second_algorithm
     with pytest.raises(ScenarioError, match="exactly one|Mixed trainable"):
@@ -85,20 +85,20 @@ def test_unsupported_trainable_teams_fail_during_validation(second_algorithm) ->
 
 @pytest.mark.parametrize("algorithm,trainable", [("ppo", False), ("ftg", True), ("ppo", "false")])
 def test_unsupported_explicit_roles_are_rejected(algorithm, trainable) -> None:
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["agents"]["car_0"].update(algorithm=algorithm, trainable=trainable)
     with pytest.raises(ScenarioError, match="trainable"):
         validate_scenario(scenario)
 
 
 def test_ignored_training_options_are_rejected() -> None:
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["experiment"]["total_steps"] = 10
     validate_scenario(scenario)  # PPO now supports an explicit transition budget.
     scenario["experiment"]["total_steps"] = 0
     with pytest.raises(ScenarioError, match="total_steps"):
         validate_scenario(scenario)
-    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/mappo_gaplock.yaml")
     scenario["curriculum"] = {"phases": [{"name": "first"}]}
     with pytest.raises(ScenarioError, match="curriculum"):
         validate_scenario(scenario)
@@ -107,7 +107,7 @@ def test_ignored_training_options_are_rejected() -> None:
 def test_unsupported_algorithm_exits_before_setup_or_logging(tmp_path, monkeypatch) -> None:
     import run
 
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["agents"]["car_0"]["algorithm"] = "sac"
     path = tmp_path / "unsupported.yaml"
     path.write_text(yaml.safe_dump(scenario))
@@ -163,7 +163,7 @@ def test_sweep_parameters_reach_supported_cli_options(path, monkeypatch) -> None
 
 
 def test_complete_4_has_consistent_full_circuit_contract_and_held_out_maps() -> None:
-    scenario = load_and_expand_scenario("scenarios/complete_4.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/complete_4.yaml")
     environment = scenario["environment"]
 
     assert environment["target_laps"] == 1
@@ -274,13 +274,13 @@ def test_ppo_pretraining_uses_paper_distance_and_boundary_reward() -> None:
 
 def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
     scenario = load_and_expand_scenario(
-        "scenarios/mappo_2v2_frenet_ppo_pretrained.yaml"
+        "scenarios/mappo_2v2_completion.yaml"
     )
     environment = scenario["environment"]
 
     assert environment["map_bundles"] == ["Budapest_map", "circle_map"]
     assert environment["map_bundles_train"] == ["Budapest_map", "circle_map"]
-    assert environment["map_bundles_eval"] == ["circle_map"]
+    assert environment["map_bundles_eval"] == ["circle_map", "Budapest_map"]
     assert environment["target_laps"] == 3
     assert environment["action_repeat"] == 1
     assert scenario["mappo"] == {
@@ -300,8 +300,8 @@ def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
 
 @pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])
 def test_frenet_team_variants_only_change_reward_and_experiment_labels(objective):
-    baseline = load_and_expand_scenario("scenarios/mappo_2v2_frenet_ppo_pretrained.yaml")
-    variant = load_and_expand_scenario(f"scenarios/mappo_2v2_frenet_ppo_pretrained_{objective}.yaml")
+    baseline = load_and_expand_scenario("scenarios/mappo_2v2_completion.yaml")
+    variant = load_and_expand_scenario(f"scenarios/mappo_2v2_{objective}.yaml")
     assert variant["experiment"]["name"] != baseline["experiment"]["name"]
     assert variant["environment"] == baseline["environment"]
     assert variant["training_defaults"] == baseline["training_defaults"]
@@ -311,6 +311,8 @@ def test_frenet_team_variants_only_change_reward_and_experiment_labels(objective
         variant["agents"][aid]["reward"] = baseline["agents"][aid]["reward"]
     variant["experiment"]["name"] = baseline["experiment"]["name"]
     variant["wandb"] = baseline["wandb"]
+    assert variant["evaluation"]["selection_strategy"] == f"team_{objective}"
+    variant["evaluation"] = baseline["evaluation"]
     assert variant == baseline
     variant["mappo"]["critic_mode"] = "agent_conditioned"
     with pytest.raises(ScenarioError, match="Joint team returns"):
@@ -370,7 +372,7 @@ def test_frenet_observations_are_bounded_for_experiment_configs() -> None:
 @pytest.mark.parametrize("field,value", [("num_envs", 0), ("num_envs", True),
                                          ("torch_threads", 0), ("torch_threads", 1.5)])
 def test_parallel_settings_require_positive_integers(field, value):
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["experiment"][field] = value
     with pytest.raises(ScenarioError, match="positive integer"):
         validate_scenario(scenario)
@@ -384,7 +386,7 @@ def test_parallel_settings_require_positive_integers(field, value):
     ({"curriculum": {"phases": [{}]}}, "curriculum"),
 ])
 def test_parallel_ppo_rejects_unsupported_contracts(change, match):
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["experiment"]["num_envs"] = 2
     for key, fields in change.items():
         scenario.setdefault(key, {}).update(fields)
@@ -393,7 +395,7 @@ def test_parallel_ppo_rejects_unsupported_contracts(change, match):
 
 
 def test_parallel_mappo_is_explicitly_rejected():
-    scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/mappo_gaplock.yaml")
     scenario["experiment"]["num_envs"] = 2
     with pytest.raises(ScenarioError, match="PPO only"):
         validate_scenario(scenario)

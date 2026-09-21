@@ -1,14 +1,18 @@
 # Circle-only convergence experiment on the shared MF6.1 pretraining physics.
 includes:
-  - ppo_lap_completion_pretrain_combined_slip.yaml
+  - ../ppo_lap_completion_pretrain.yaml
 
 experiment:
   name: ppo_combined_slip_circle_stable
   checkpoint: null
   total_steps: null
   episodes: 10000
+  num_envs: 1
 
 environment:
+  map_bundles: [circle_map]
+  map_bundles_train: [circle_map]
+  map_bundles_eval: [circle_map]
   target_laps: 3
   max_steps: 16000
   episode_termination: {lap_completion: true}
@@ -22,7 +26,8 @@ evaluation:
 
 agents:
   car_0:
-    reward: ../configs/reward/tasks/lap_completion_circle_stable.yaml
+    observation: ../../configs/observations/rl_racer_simulated_wheel.yaml
+    reward: ../../configs/reward/tasks/lap_completion_circle_stable.yaml
     params:
       learning_rate: 0.0001
       learning_rate_end: 0.00003

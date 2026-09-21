@@ -271,8 +271,8 @@ Run focused physical/contract checks after each phase, then the repository gates
 venv/bin/python -m compileall -q run.py src tests
 PYGLET_HEADLESS=true venv/bin/python -m pytest tests/ -q
 rg "stable_baselines3|from gymnasium|from pettingzoo" run.py src configs scenarios
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo.yaml --no-wandb --episodes 1 --quiet
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1 --quiet
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_gaplock.yaml --no-wandb --episodes 1 --quiet
 ```
 
 The dependency guard expects no matches (`rg` exit code 1). Add headless smoke

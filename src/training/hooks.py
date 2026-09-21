@@ -336,6 +336,7 @@ class CheckpointHook(TrainingHook):
         provenance: Optional[Dict[str, Any]] = None,
         save_best_training_reward: bool = True,
         save_every_steps: Optional[int] = None,
+        save_final: bool = False,
     ) -> None:
         from pathlib import Path
         self._agent = agent
@@ -346,6 +347,7 @@ class CheckpointHook(TrainingHook):
         self._recent_rewards: Deque[float] = deque(maxlen=50)
         self._provenance = dict(provenance or {})
         self._save_best_training_reward = bool(save_best_training_reward)
+        self._save_final = bool(save_final)
         if save_every_steps is not None and (isinstance(save_every_steps, bool)
                 or not isinstance(save_every_steps, int) or save_every_steps <= 0):
             raise ValueError("save_every_steps must be a positive integer")
@@ -361,7 +363,7 @@ class CheckpointHook(TrainingHook):
             self._next_save_step = (self._environment_steps // self._save_every_steps + 1) * self._save_every_steps
 
     def on_training_end(self) -> None:
-        if self._save_every_steps is not None:
+        if self._save_every_steps is not None or self._save_final:
             self._save(self._dir / "final_model.pt",
                        metadata={"environment_steps": self._environment_steps})
 
@@ -432,7 +434,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"completion_safety", "completion_progress", "lap_time"}:
+        if selection_strategy not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -456,6 +458,21 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+        if strategy.startswith("team_"):
+            objective_key = {"team_completion": "team_completion_rate",
+                             "team_combined": "team_rank_score",
+                             "team_first_place": "team_first_place",
+                             "team_sweep": "team_sweep"}[strategy]
+            complete = float(summary["team_both_finished_rate"])
+            finish = summary.get("mean_clean_finish_time_s")
+            if complete == 1.0:
+                tie_break = -float(finish) if finish is not None else float("-inf")
+            else:
+                tie_break = round(float(summary.get("mean_net_progress") or 0.0), 6)
+            return (complete,
+                    float(summary[objective_key]),
+                    -float(summary["team_collision_rate"]),
+                    tie_break)
         if strategy == "lap_time":
             fastest = summary.get("fastest_valid_lap_s")
             error = summary.get("offtrack_error_m_s_per_lap")

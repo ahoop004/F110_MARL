@@ -111,7 +111,7 @@ def load_scenario(path: str) -> Dict[str, Any]:
         ScenarioError: If file not found or invalid YAML
 
     Example:
-        >>> scenario = load_scenario('scenarios/ppo.yaml')
+        >>> scenario = load_scenario('scenarios/legacy/ppo.yaml')
         >>> scenario['experiment']['name']
         'gaplock_ppo'
     """
@@ -128,12 +128,12 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time"}:
-        raise ScenarioError("evaluation.selection_strategy must be completion_safety, completion_progress, or lap_time.")
+    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep"}:
+        raise ScenarioError("Unknown evaluation.selection_strategy.")
     for key in ("terminate_on_track_limit", "terminate_on_collision"):
         if key in evaluation and not isinstance(evaluation[key], bool):
             raise ScenarioError(f"evaluation.{key} must be boolean")
-    for key in ("target_laps", "every_steps"):
+    for key in ("target_laps", "every_steps", "every_episodes"):
         value = evaluation.get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
             raise ScenarioError(f"evaluation.{key} must be a positive integer")
@@ -206,6 +206,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     experiment = scenario["experiment"]
     if "name" not in experiment:
         raise ScenarioError("'experiment' section must have a 'name' field.")
+    if "evaluation_only" in experiment and not isinstance(experiment["evaluation_only"], bool):
+        raise ScenarioError("experiment.evaluation_only must be boolean.")
     checkpoint = experiment.get("checkpoint")
     if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
         raise ScenarioError("'experiment.checkpoint' must be a nonempty path string or null.")
@@ -250,6 +252,11 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError(str(exc)) from exc
     if not isinstance(agents, dict) or not agents:
         raise ScenarioError("'agents' must be a non-empty dictionary.")
+
+    teams = environment.get("agent_teams")
+    if teams is not None and (not isinstance(teams, dict) or set(teams) != set(agents)
+                              or any(not isinstance(team, str) or not team.strip() for team in teams.values())):
+        raise ScenarioError("environment.agent_teams must assign every physical agent a nonempty team name.")
 
     # --- Per-agent checks ---
     for agent_id, agent_cfg in agents.items():
@@ -475,7 +482,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
         ScenarioError: If scenario is invalid
 
     Example:
-        >>> scenario = load_and_expand_scenario('scenarios/ppo.yaml')
+        >>> scenario = load_and_expand_scenario('scenarios/legacy/ppo.yaml')
         >>> # Ready to use for training
     """
     # Load raw scenario

@@ -15,7 +15,7 @@ Examples
 
 Recording
 ---------
-    python run.py --scenario scenarios/ppo_time_trial.yaml --no-wandb \\
+    python run.py --scenario scenarios/legacy/ppo_time_trial.yaml --no-wandb \\
         --dataset-dir datasets/run1
 """
 from __future__ import annotations

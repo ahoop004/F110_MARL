@@ -265,6 +265,7 @@ def build_relative_frenet_facts(
     *,
     track_length: float,
     closed: bool,
+    agent_teams: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Build deterministic ego-relative Frenet facts for every other agent."""
     length = max(float(track_length), 0.0)
@@ -290,6 +291,9 @@ def build_relative_frenet_facts(
                     - float(ego.get("vd", 0.0)),
                 }
             )
+        if agent_teams:
+            for neighbor in neighbors:
+                neighbor["is_teammate"] = agent_teams[ego_id] == agent_teams[neighbor["agent_id"]]
         neighbors.sort(key=lambda item: (abs(item["delta_s"]), item["agent_id"]))
         relative[str(ego_id)] = neighbors
     return relative

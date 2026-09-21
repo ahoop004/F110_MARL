@@ -270,10 +270,17 @@ class TeamRelativeProgressBonusComponent(RewardComponent):
 
 
 class StepTimePenaltyComponent(RewardComponent):
-    """Small per-decision penalty to prefer shorter completion times."""
+    """Time cost per physics step, optionally specified per simulated second."""
 
     def __init__(self, config: dict) -> None:
-        self.penalty = float(config.get("penalty", -0.01))
+        self.penalty = float(config["penalty"] if config.get("penalty") is not None else -0.01)
+        self.per_second = config.get("per_second")
+        if self.per_second is not None:
+            if config.get("penalty") is not None:
+                raise ValueError("Specify either step_time_penalty.penalty or per_second")
+            self.per_second = float(self.per_second)
+            if not math.isfinite(self.per_second) or self.per_second > 0:
+                raise ValueError("Time cost per_second must be finite and nonpositive")
         self.apply_on_terminal = bool(config.get("apply_on_terminal", True))
 
     def compute(self, step_info: dict) -> Dict[str, float]:
@@ -281,7 +288,13 @@ class StepTimePenaltyComponent(RewardComponent):
             step_info.get("done") or step_info.get("terminated") or step_info.get("truncated")
         ):
             return {}
-        return {"step_time/penalty": self.penalty}
+        penalty = self.penalty
+        if self.per_second is not None:
+            timestep = float(step_info["timestep"])
+            if not math.isfinite(timestep) or timestep <= 0:
+                raise ValueError("Time cost requires a positive finite timestep")
+            penalty = self.per_second * timestep
+        return {"step_time/penalty": penalty}
 
 
 class LapCompletionComponent(RewardComponent):

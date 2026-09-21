@@ -464,6 +464,9 @@ class F110ParallelEnv:
         self.episode_done = False
         self.controlled_agents = list(cfg.get("controlled_agents") or self.possible_agents)
         self.trainable_agents = list(cfg.get("trainable_agents") or [])
+        self.agent_teams = dict(cfg.get("agent_teams") or {})
+        if self.agent_teams and set(self.agent_teams) != set(self.possible_agents):
+            raise ValueError("agent_teams must assign every physical agent to a team")
         self.fixed_policy_agents = list(cfg.get("fixed_policy_agents") or [])
 
     @property
@@ -1576,6 +1579,7 @@ class F110ParallelEnv:
             self._last_centerline_facts,
             track_length=self._centerline_progress_tracker.track_length,
             closed=self._centerline_progress_tracker.closed,
+            agent_teams=self.agent_teams,
         )
         for agent_id, neighbors in relative.items():
             if agent_id not in self._frenet_neighbor_agents:

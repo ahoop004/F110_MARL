@@ -14,9 +14,8 @@ matching its vehicle or real-world performance.
 ## Run a bounded test
 
 The canonical entry point is `scenarios/ppo_lap_completion_pretrain.yaml`.
-The existing `_frenet` and `_combined_slip` filenames inherit its physics,
-observation, action, and task configuration. Their worker counts and training
-hyperparameters can still differ.
+The duplicate `_frenet` and `_combined_slip` entry points have been removed.
+The separate circle convergence ablation lives in `scenarios/experiments/`.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
@@ -42,13 +41,21 @@ must be nested under `environment.vehicle_params`. The standalone component
 profile `combined_slip_development.yaml` contains the same physics values for
 numerical tests and is not a training-scenario include.
 
-Parameters are explicitly marked `calibration.status: uncalibrated`. The current
-values are development assumptions, including mass/inertia, geometry, wheel
-radius, actuator time constants, and MF coefficients. The steering reference
-bound of ±0.5 rad and wheel-reference acceleration of ±5 m/s² follow the paper;
-the wheel-speed bound is still provisional. To reproduce the authors' vehicle,
-obtain their parameters or identification data rather than treating these
-synthetic values as measurements.
+Parameters are explicitly marked `calibration.status: uncalibrated`. Mass,
+inertia, axle distances, center-of-mass height, nominal friction, footprint and
+steering bounds use the [classic F1TENTH Gym defaults](https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py).
+The footprint is 0.58 x 0.31 m, steering reference bounds are ±0.4189 rad and
+steering rate bounds are ±3.2 rad/s. The steering bound differs from the paper's
+±0.5 rad. Wheel-reference acceleration remains ±5 m/s² at the provisional
+0.05 m wheel radius. Observation steering normalization stays at 0.5 rad;
+normalization is independent of the physical action bounds.
+
+These are simulator reference values, not measurements of our hardware. Tire
+coefficients, wheel radius, actuator time constants and wheel-speed/rate bounds
+remain provisional. ForzaETH's NUC2 steering time constant is not imported into
+this Gym-based profile, and its four-coefficient lateral Pacejka fit cannot
+directly supply our longitudinal and combined-slip MF6.1 coefficients. To
+reproduce the authors' vehicle, obtain their parameters or identification data.
 
 Each `front_tire` / `rear_tire` block describes **one effective axle**. `FNOMIN`
 is the axle's nominal vertical load in newtons, not a full-size road-car tire
@@ -147,7 +154,8 @@ are covered by tests.
 The existing `WheelActuators` component integrates held-reference first-order
 steering and wheel-speed responses. Its rate-limiting capability remains tested,
 but the runtime profile uses limits that are nonbinding over its configured
-state/reference bounds, matching the form of the paper's first-order equations.
+state/reference bounds at the current time constants. In particular, the largest
+steering slope is 2 * 0.4189 / 0.5 = 1.6756 rad/s, below the 3.2 rad/s bound.
 The provisional time constants are 0.5 s (steering) and 0.15 s (wheel speed).
 
 The action wrapper integrates wheel-reference acceleration once per policy
@@ -229,7 +237,8 @@ deviation; change pooled `n_steps` to keep 1,024 steps per worker.
 
 ## Remaining differences from the paper
 
-Vehicle coefficients and actuator time constants remain synthetic. Enter fitted
+Tire coefficients and actuator time constants remain synthetic; the chassis and
+steering bounds use public F1TENTH Gym reference values. Enter fitted
 values in `configs/vehicle/combined_slip.yaml` under `environment.vehicle_params`,
 including its existing `calibration` metadata. No vehicle constants are added to
 the scenario. The paper's identified dataset/parameters, observation sample count
@@ -237,12 +246,12 @@ and normalization maxima, and unspecified PPO settings are still required for an
 exact reproduction. The L-map has the reported 17 m length and 1 m width but its
 corner geometry is an approximation, not the authors' original track.
 
-The migrated `mappo_2v2_frenet_ppo_pretrained.yaml` receives a compatible
-50-value PPO actor and appends 15 neighbor inputs with zero initial weights.
+The migrated `mappo_2v2_completion.yaml` receives a compatible
+50-value PPO actor and appends 18 neighbor/team inputs with zero initial weights.
 Other legacy MAPPO scenarios still require migration before receiving this actor.
-Experimental scenario aliases may use
-smaller worker counts or different PPO settings; only the canonical scenario
-selects the paper's stated parallelism and main training settings.
+The circle convergence ablation uses a smaller worker count and different PPO
+settings; only the canonical pretraining scenario selects the paper's stated
+parallelism and main training settings.
 
 ## Checks and checkpoint compatibility
 

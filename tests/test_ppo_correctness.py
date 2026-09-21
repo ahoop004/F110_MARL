@@ -189,15 +189,16 @@ def test_circle_stability_scenario_preserves_physics_and_rewards_slow_progress()
     from core.scenario import load_and_expand_scenario
     from run import build_reward_composer, resolve_training_params
 
-    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_combined_slip.yaml")
-    stable = load_and_expand_scenario("scenarios/ppo_combined_slip_circle_stable.yaml")
+    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    stable = load_and_expand_scenario("scenarios/experiments/ppo_combined_slip_circle_stable.yaml")
     assert stable["environment"]["vehicle_params"] == baseline["environment"]["vehicle_params"]
     assert stable["environment"]["episode_termination"]["lap_completion"]
     assert stable["experiment"]["total_steps"] is None
-    for key in ("observation", "action_constraints"):
-        assert stable["agents"]["car_0"][key] == baseline["agents"]["car_0"][key]
-    rewards = [build_reward_composer(s["agents"]["car_0"], Path("scenarios"))
-               for s in (baseline, stable)]
+    assert stable["agents"]["car_0"]["action_constraints"] == baseline["agents"]["car_0"]["action_constraints"]
+    dirs = [Path("scenarios"), Path("scenarios/experiments")]
+    assert (dirs[0] / baseline["agents"]["car_0"]["observation"]).resolve() == (dirs[1] / stable["agents"]["car_0"]["observation"]).resolve()
+    rewards = [build_reward_composer(s["agents"]["car_0"], directory)
+               for s, directory in zip((baseline, stable), dirs)]
     # A 0.25 m/s forward decision on a ~350 m circle becomes worth exploring.
     step = {"track_length": 350., "info": {"track_limits": {"exceeded": False},
             "centerline": {"progress_delta": .25 * stable["environment"]["timestep"] / 350}}}
@@ -981,7 +982,7 @@ def test_transfer_scenario_preserves_pretraining_contract():
         assert transfer["environment"][key] == source["environment"][key]
 
 
-@pytest.mark.parametrize("scenario_name", ["mappo_gaplock", "calibration/hybrid_pp_ftg_1lap"])
+@pytest.mark.parametrize("scenario_name", ["legacy/mappo_gaplock", "calibration/hybrid_pp_ftg_1lap"])
 def test_training_checkpoint_rejects_unsupported_roles(monkeypatch, scenario_name):
     import sys
     import run

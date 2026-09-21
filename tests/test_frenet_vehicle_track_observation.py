@@ -72,8 +72,8 @@ def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
     try:
         assert env.params['model_version'] == 2
         assert env.params['tire_model'] == 'mf61_planar'
-        np.testing.assert_allclose(env.action_spaces["car_0"].low, [-.5, -400])
-        np.testing.assert_allclose(env.action_spaces["car_0"].high, [.5, 400])
+        np.testing.assert_allclose(env.action_spaces["car_0"].low, [-.4189, -400])
+        np.testing.assert_allclose(env.action_spaces["car_0"].high, [.4189, 400])
         observations, infos = env.reset(seed=42)
         wrapped = composer.wrap(observations["car_0"], infos["car_0"])
         np.testing.assert_array_equal(wrapped[[0, 1, 4]], np.zeros(3))
@@ -346,7 +346,7 @@ def test_latest_speed_reference_rate_survives_repeated_physics_actions() -> None
 
 
 def test_complete_4_frenet_scenario_is_opt_in() -> None:
-    scenario = load_and_expand_scenario("scenarios/complete_4_frenet.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/complete_4_frenet.yaml")
     assert scenario["experiment"]["name"] == "complete_4_frenet"
     assert scenario["environment"]["track_preview"] == {
         "points": 20,
@@ -358,7 +358,7 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
         )
     composer = ObservationComposer.from_file(
         str(
-            (Path("scenarios") / scenario["agents"]["car_0"]["observation"])
+            (Path("scenarios/legacy") / scenario["agents"]["car_0"]["observation"])
             .resolve()
         ),
         scenario["environment"],
@@ -376,20 +376,19 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
 
 def test_pretraining_entry_points_share_mf61_physics_and_control():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
-    for name, workers in [('frenet', 8), ('combined_slip', 1)]:
-        variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_pretrain_{name}.yaml")
-        assert variant['environment'] == baseline['environment']
-        assert variant['experiment']['num_envs'] == workers
+    assert baseline['experiment']['num_envs'] == 400
+    for name in ('transfer', 'validate'):
+        variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_{name}.yaml")
+        assert variant['environment']['vehicle_params'] == baseline['environment']['vehicle_params']
         actor = variant['agents']['car_0']
         for key in ('observation', 'reward', 'action_constraints'):
             assert actor[key] == baseline['agents']['car_0'][key]
         assert actor['action_constraints']['speed_control'] == 'wheel_acceleration'
-        assert actor['params']['n_steps'] == workers * 1024
 
 
 @pytest.mark.parametrize("mode", ["train", "eval"])
 def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
-    path = Path("scenarios/ppo_lap_completion_pretrain_frenet.yaml").resolve()
+    path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
     composer = ObservationComposer.from_file(
         str(path.parent / scenario["agents"]["car_0"]["observation"]),
@@ -424,12 +423,12 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
 
 def test_complete_4_frenet_neighbors_is_a_separate_privileged_arm() -> None:
     scenario = load_and_expand_scenario(
-        "scenarios/complete_4_frenet_neighbors.yaml"
+        "scenarios/legacy/complete_4_frenet_neighbors.yaml"
     )
     assert scenario["experiment"]["name"] == "complete_4_frenet_neighbors"
     assert "privileged-neighbors" in scenario["wandb"]["tags"]
     observation_path = str(
-        (Path("scenarios") / scenario["agents"]["car_0"]["observation"]).resolve()
+        (Path("scenarios/legacy") / scenario["agents"]["car_0"]["observation"]).resolve()
     )
     composer = ObservationComposer.from_file(
         observation_path,
@@ -441,14 +440,14 @@ def test_complete_4_frenet_neighbors_is_a_separate_privileged_arm() -> None:
 @pytest.mark.parametrize(
     ("scenario_path", "preview", "neighbors"),
     [
-        ("scenarios/complete_4.yaml", (), ()),
+        ("scenarios/legacy/complete_4.yaml", (), ()),
         (
-            "scenarios/complete_4_frenet.yaml",
+            "scenarios/legacy/complete_4_frenet.yaml",
             ("car_0", "car_1", "car_2", "car_3"),
             (),
         ),
         (
-            "scenarios/complete_4_frenet_neighbors.yaml",
+            "scenarios/legacy/complete_4_frenet_neighbors.yaml",
             ("car_0", "car_1", "car_2", "car_3"),
             ("car_0", "car_1", "car_2", "car_3"),
         ),
@@ -578,7 +577,7 @@ def test_feature_setup_accepts_all_available_geometry() -> None:
 
 
 def test_setup_enables_centerline_facts_required_by_inherited_reward() -> None:
-    scenario_path = Path("scenarios/ppo.yaml").resolve()
+    scenario_path = Path("scenarios/legacy/ppo.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
     assert scenario["environment"]["centerline_autoload"] is False
 
@@ -612,6 +611,7 @@ def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
     env._track_preview_points = 8
     env._track_preview_last_indices = {"car_0": -1, "car_1": -1}
     env.possible_agents = ["car_0", "car_1"]
+    env.agent_teams = {}
     env._agent_id_to_index = {"car_0": 0, "car_1": 1}
     env.poses_x = np.array([10.0, 0.0], dtype=np.float32)
     env.poses_y = np.array([0.0, 10.0], dtype=np.float32)
@@ -653,9 +653,9 @@ def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
 @pytest.mark.parametrize(
     ("scenario_path", "has_preview", "has_neighbors"),
     [
-        ("scenarios/complete_4.yaml", False, False),
-        ("scenarios/complete_4_frenet.yaml", True, False),
-        ("scenarios/complete_4_frenet_neighbors.yaml", True, True),
+        ("scenarios/legacy/complete_4.yaml", False, False),
+        ("scenarios/legacy/complete_4_frenet.yaml", True, False),
+        ("scenarios/legacy/complete_4_frenet_neighbors.yaml", True, True),
     ],
 )
 def test_complete_4_reset_emits_only_required_frenet_payloads(
@@ -685,9 +685,9 @@ def test_complete_4_reset_emits_only_required_frenet_payloads(
 @pytest.mark.parametrize(
     "scenario_path",
     [
-        "scenarios/complete_4.yaml",
-        "scenarios/complete_4_frenet.yaml",
-        "scenarios/complete_4_frenet_neighbors.yaml",
+        "scenarios/legacy/complete_4.yaml",
+        "scenarios/legacy/complete_4_frenet.yaml",
+        "scenarios/legacy/complete_4_frenet_neighbors.yaml",
     ],
 )
 def test_complete_4_feature_gating_preserves_fixed_trajectory(

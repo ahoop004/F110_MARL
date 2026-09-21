@@ -8,10 +8,10 @@
 # mappo_gaplock scenario's track). Hockenheim_map has no spawn_point
 # annotations and is also excluded to avoid degenerate random-spawn overlap.
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/mappo.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/mappo.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: mappo_2v2
@@ -52,8 +52,8 @@ agents:
     algorithm: mappo
     role: attacker
     target_id: car_2
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/tasks/gaplock_attack.yaml
+    observation: ../../configs/observations/rl_attacker.yaml
+    reward: ../../configs/reward/tasks/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -66,8 +66,8 @@ agents:
     algorithm: mappo
     role: attacker
     target_id: car_3
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/tasks/gaplock_attack.yaml
+    observation: ../../configs/observations/rl_attacker.yaml
+    reward: ../../configs/reward/tasks/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

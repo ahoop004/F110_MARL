@@ -7,10 +7,12 @@ combined_slip_vehicle:
   tire_id: synthetic-mf61-planar-v2
   drivetrain: shared_speed_awd
   calibration:
-    id: synthetic-mf61-planar-v2
+    id: f1tenth-gym-chassis-mf61-v1
     status: uncalibrated
-    source: Synthetic effective-axle MF6.1 coefficients for software testing; not
-      fitted to the paper or a physical tire.
+    source: >-
+      Chassis, footprint and nominal mu from F1TENTH Gym defaults:
+      https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+      MF6.1 effective-axle tire coefficients remain synthetic, not hardware fitted.
   m: 3.74
   I: 0.04712
   lf: 0.15875
@@ -118,17 +120,19 @@ combined_slip_vehicle:
 wheel_actuators:
   version: 1
   calibration:
-    id: synthetic-wheel-actuators-v2
+    id: f1tenth-gym-steering-wheel-v1
     status: uncalibrated
-    source: Paper steering bound; provisional radius, time constants and speed bounds.
-      Rate limits nonbinding over configured state/reference bounds.
+    source: >-
+      Steering angle/rate bounds from F1TENTH Gym defaults:
+      https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+      Radius, time constants and wheel speed/rate bounds remain provisional.
   wheel_radius: 0.05
   steering_time_constant: 0.5
   wheel_speed_time_constant: 0.15
-  steering_min: -0.5
-  steering_max: 0.5
-  steering_rate_min: -10.0
-  steering_rate_max: 10.0
+  steering_min: -0.4189
+  steering_max: 0.4189
+  steering_rate_min: -3.2
+  steering_rate_max: 3.2
   wheel_speed_min: -400.0
   wheel_speed_max: 400.0
   wheel_rate_min: -10000.0

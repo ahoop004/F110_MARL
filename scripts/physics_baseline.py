@@ -26,11 +26,10 @@ from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
 
 SCENARIOS = (
-    "ppo.yaml",
+    "legacy/ppo.yaml",
     "ppo_lap_completion_pretrain.yaml",
-    "ppo_lap_completion_pretrain_frenet.yaml",
     "ppo_lap_completion_transfer.yaml",
-    "mappo_gaplock.yaml",
+    "legacy/mappo_gaplock.yaml",
 )
 DEFAULT_OUTPUT = ROOT / "tests/fixtures/physics_baseline"
 PHYSICS_SOURCES = (

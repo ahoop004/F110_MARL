@@ -15,13 +15,13 @@ environment:
 
 agents:
   car_0:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet.yaml
   car_1:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet.yaml
   car_2:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet.yaml
   car_3:
-    observation: ../configs/observations/rl_racer_vehicle_track_frenet.yaml
+    observation: ../../configs/observations/rl_racer_vehicle_track_frenet.yaml
 
 wandb:
   group: complete4-vehicle-track-frenet-v1

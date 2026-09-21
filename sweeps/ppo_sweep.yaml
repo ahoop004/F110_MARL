@@ -6,9 +6,9 @@ name: PPO_opponent_seeds
 parameters:
   scenario:
     values:
-      - scenarios/ppo_vs_pure_pursuit.yaml
-      - scenarios/ppo_vs_stanley.yaml
-      - scenarios/ppo_vs_hybrid_pp_ftg.yaml
+      - scenarios/legacy/ppo_vs_pure_pursuit.yaml
+      - scenarios/legacy/ppo_vs_stanley.yaml
+      - scenarios/legacy/ppo_vs_hybrid_pp_ftg.yaml
   seed:
     values: [42, 23452, 8675309, 32456]
 command:

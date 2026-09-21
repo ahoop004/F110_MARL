@@ -6,10 +6,10 @@
 # Completion-focused three-lap race. Six maps are used for training and two
 # held-out maps are reserved for evaluation; the split is explicit and stable.
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/mappo.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/mappo.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: mappo_2v2_vs_hybrid_pp_ftg
@@ -75,8 +75,8 @@ agents:
     trainable: true
     role: racer
     target_id: car_2
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/race_team_2v2_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -90,8 +90,8 @@ agents:
     trainable: true
     role: racer
     target_id: car_3
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/race_team_2v2_completion.yaml
+    observation: ../../configs/observations/rl_racer.yaml
+    reward: ../../configs/reward/tasks/race_team_2v2_completion.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]

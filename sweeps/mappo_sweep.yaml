@@ -6,8 +6,8 @@ name: MAPPO_reward_critic_seeds
 parameters:
   scenario:
     values:
-      - scenarios/complete_4_individual.yaml
-      - scenarios/complete_4_team_shared.yaml
+      - scenarios/mappo_2v2_individual.yaml
+      - scenarios/mappo_2v2_completion.yaml
   seed:
     values: [42, 123, 789]
 command:

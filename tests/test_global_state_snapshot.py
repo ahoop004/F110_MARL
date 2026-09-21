@@ -13,7 +13,7 @@ from training.reward_context import build_reward_context, transition_lifecycle_f
 
 
 def _complete4_env():
-    scenario_path = Path("scenarios/complete_4.yaml").resolve()
+    scenario_path = Path("scenarios/legacy/complete_4.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
     environment = scenario["environment"]
     environment["map_bundles"] = ["circle_map"]

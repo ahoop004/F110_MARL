@@ -306,7 +306,7 @@ def test_invalid_model_parameters_are_rejected(profile, key, value):
 
 
 def test_complete_development_profile_cannot_be_mistaken_for_training_config(profile):
-    scenario = load_and_expand_scenario('scenarios/ppo.yaml')
+    scenario = load_and_expand_scenario('scenarios/legacy/ppo.yaml')
     scenario['combined_slip_vehicle'] = profile['combined_slip_vehicle']
     with pytest.raises(ScenarioError, match='development profile'):
         validate_scenario(scenario)

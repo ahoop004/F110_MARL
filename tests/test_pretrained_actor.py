@@ -15,8 +15,8 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 
 
 @pytest.mark.parametrize("scenario_name", [
-    "mappo_2v2_frenet_ppo_pretrained",
-    "mappo_2v2_frenet_ppo_pretrained_combined",
+    "mappo_2v2_completion",
+    "mappo_2v2_combined",
 ])
 def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scenario_name):
     from pathlib import Path
@@ -30,7 +30,7 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
     from core.provenance import physics_contract
     pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     assert physics_contract(pretraining['environment']) == physics_contract(scenario['environment'])
-    baseline = load_and_expand_scenario("scenarios/mappo_2v2_team_shared.yaml")
+    baseline = load_and_expand_scenario("scenarios/legacy/mappo_2v2_team_shared.yaml")
     ids = get_trainable_agent_ids(scenario["agents"])
     assert ids == ["car_0", "car_1"]
     assert scenario["experiment"]["num_envs"] == 1
@@ -38,7 +38,9 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
     assert scenario["environment"]["lap_counting"]["count_initial_crossing_as_lap"] is False
     for aid in ["car_2", "car_3"]:
         assert scenario["agents"][aid] == {**baseline["agents"][aid],
-                                            "action_adapter": "rolling_speed_to_wheel_v1"}
+                                            "action_adapter": "rolling_speed_to_wheel_v1",
+                                            "params": {**baseline["agents"][aid]["params"],
+                                                       "ftg": {**baseline["agents"][aid]["params"]["ftg"], "vehicle_width": .31}}}
     for aid in ids:
         assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is True
     assert scenario["agents"]["car_0"]["params"] == scenario["agents"]["car_1"]["params"]
@@ -49,7 +51,7 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
         env.reset(seed=42)
         assert len(env.agents) == 4
         composers = build_obs_composers(scenario["agents"], ids, scenario["environment"], Path("scenarios").resolve())
-        assert [composers[aid].obs_dim for aid in ids] == [65, 65]
+        assert [composers[aid].obs_dim for aid in ids] == [68, 68]
         source_composer = build_obs_composers(pretraining['agents'], ['car_0'],
             pretraining['environment'], Path('scenarios').resolve())['car_0']
         assert source_composer.obs_dim == 50
@@ -65,7 +67,7 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
         checkpoint = tmp_path / "forward_frenet.pt"
         source.save(str(checkpoint))
         recipient = MAPPOAgent(
-            65, len(env.get_global_state().vector), space.low, space.high, ids,
+            68, len(env.get_global_state().vector), space.low, space.high, ids,
             {**params, **resolve_mappo_config(scenario), "device": "cpu"},
         )
         critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
@@ -79,7 +81,7 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
         for key, value in recipient.critic.state_dict().items():
             torch.testing.assert_close(value, critic_before[key])
         assert not recipient.optimizer.state
-        observations = np.random.default_rng(42).normal(size=(2, 65)).astype(np.float32)
+        observations = np.random.default_rng(42).normal(size=(2, 68)).astype(np.float32)
         actions, _ = recipient.act_batch(ids, observations, deterministic=True)
         for i, aid in enumerate(ids):
             np.testing.assert_allclose(actions[aid], source.predict(observations[i, :50]), atol=1e-7)
@@ -388,7 +390,7 @@ def test_fixed_evaluation_protocols_are_disjoint_and_inherit_training_horizon():
     import copy
     from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol
 
-    for name in ("ppo_lap_completion_pretrain", "ppo_lap_completion_pretrain_frenet"):
+    for name in ("ppo_lap_completion_pretrain", "ppo_lap_completion_transfer"):
         scenario = load_and_expand_scenario(f"scenarios/{name}.yaml")
         original = copy.deepcopy(scenario)
         selection = resolve_evaluation_protocol(scenario, "selection")
@@ -501,7 +503,7 @@ def test_pretraining_reward_favors_forward_motion_and_penalizes_boundaries():
     from core.scenario import load_and_expand_scenario
     from run import build_reward_composer, resolve_training_params
 
-    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     cfg = scenario["agents"]["car_0"]
     params = resolve_training_params(cfg, scenario)
     dt = scenario["environment"]["timestep"]

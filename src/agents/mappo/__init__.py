@@ -740,7 +740,7 @@ class MAPPOAgent:
             raise ValueError("Neighbor extension requires an unchanged Frenet-only observation prefix")
         points = int(source_obs["frenet_vehicle_track"].get("points", 20))
         source_dim = 10 + 2 * points
-        added_dim = 5 * int(neighbors.get("max_neighbors", 1))
+        added_dim = (6 if neighbors.get("include_team", False) else 5) * int(neighbors.get("max_neighbors", 1))
         if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
                 or self.obs_dim != source_dim + added_dim):
             raise ValueError("Neighbor extension observation dimensions do not match the contracts")

@@ -58,7 +58,7 @@ def test_benchmark_summary_requires_results() -> None:
 
 def test_benchmark_supports_all_complete_4_observation_arms() -> None:
     assert SUPPORTED_SCENARIOS == (
-        "scenarios/complete_4.yaml",
-        "scenarios/complete_4_frenet.yaml",
-        "scenarios/complete_4_frenet_neighbors.yaml",
+        "scenarios/legacy/complete_4.yaml",
+        "scenarios/legacy/complete_4_frenet.yaml",
+        "scenarios/legacy/complete_4_frenet_neighbors.yaml",
     )

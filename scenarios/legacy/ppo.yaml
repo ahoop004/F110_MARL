@@ -1,8 +1,8 @@
 includes:
-  - ../configs/env/default.yaml
-  - ../configs/vehicle/default.yaml
-  - ../configs/training/on_policy.yaml
-  - ../configs/wandb.yaml
+  - ../../configs/env/default.yaml
+  - ../../configs/vehicle/default.yaml
+  - ../../configs/training/on_policy.yaml
+  - ../../configs/wandb.yaml
 
 experiment:
   name: ppo_gaplock
@@ -27,8 +27,8 @@ agents:
     algorithm: ppo
     role: attacker
     target_id: car_1
-    observation: ../configs/observations/rl_attacker.yaml
-    reward: ../configs/reward/tasks/gaplock_attack.yaml
+    observation: ../../configs/observations/rl_attacker.yaml
+    reward: ../../configs/reward/tasks/gaplock_attack.yaml
     params:
       learning_rate: 0.0003
       hidden_dims: [256, 256]
@@ -40,7 +40,7 @@ agents:
   car_1:
     algorithm: ftg
     role: defender
-    observation: ../configs/observations/ftg.yaml
+    observation: ../../configs/observations/ftg.yaml
     params:
       max_distance: 10.0
       window_size: 4

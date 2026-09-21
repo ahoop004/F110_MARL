@@ -1,9 +1,10 @@
-# Preserve the 50 driving inputs, then append three relative neighbor slots.
+# Preserve the 50 driving inputs, then append three slots including team identity.
 includes:
   - rl_racer_simulated_wheel.yaml
 observation:
   frenet_neighbors:
     enabled: true
     max_neighbors: 3
+    include_team: true
     maxima: {delta_s: 30.0, delta_d: 5.0, delta_vs: 20.0, delta_vd: 20.0}
     clip: false

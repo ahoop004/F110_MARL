@@ -111,6 +111,7 @@ class FrenetNeighborsComponent(ObservationComponent):
 
     Neighbors are ordered by absolute wrapped longitudinal distance, with
     agent ID used only as a deterministic tie-breaker. Missing slots are zero.
+    With ``include_team``, each slot appends an explicit ``is_teammate`` flag.
     """
 
     def __init__(
@@ -119,6 +120,7 @@ class FrenetNeighborsComponent(ObservationComponent):
         max_neighbors: int,
         maxima: Mapping[str, float] | None = None,
         clip: bool = False,
+        include_team: bool = False,
     ) -> None:
         self.max_neighbors = max(int(max_neighbors), 1)
         configured = dict(_DEFAULT_MAXIMA)
@@ -128,10 +130,11 @@ class FrenetNeighborsComponent(ObservationComponent):
             dtype=np.float32,
         )
         self.clip = bool(clip)
+        self.include_team = bool(include_team)
 
     @property
     def dim(self) -> int:
-        return 5 * self.max_neighbors
+        return (6 if self.include_team else 5) * self.max_neighbors
 
     def compute_into(self, raw_obs: Dict, info: Dict, out: np.ndarray) -> None:
         out.fill(0.0)
@@ -141,13 +144,17 @@ class FrenetNeighborsComponent(ObservationComponent):
         for slot, neighbor in enumerate(neighbors[: self.max_neighbors]):
             if not isinstance(neighbor, Mapping):
                 continue
-            start = 5 * slot
+            start = (6 if self.include_team else 5) * slot
             values = np.asarray(
                 [_finite_number(neighbor.get(field)) for field in _FIELDS],
                 dtype=np.float32,
             )
             out[start : start + 4] = values / self._maxima
             out[start + 4] = 1.0
+            if self.include_team:
+                if "is_teammate" not in neighbor:
+                    raise ValueError("Team neighbor observations require explicit agent_teams facts")
+                out[start + 5] = float(neighbor["is_teammate"])
         np.nan_to_num(out, copy=False)
         if self.clip:
             np.clip(out, -1.0, 1.0, out=out)

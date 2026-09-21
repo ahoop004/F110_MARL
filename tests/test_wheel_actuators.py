@@ -123,7 +123,7 @@ def test_failed_operations_do_not_mutate_state_or_reference(config):
 
 def test_development_profile_cannot_be_silently_used_as_training_config(config):
     from core.scenario import ScenarioError, load_and_expand_scenario, validate_scenario
-    scenario = load_and_expand_scenario('scenarios/ppo.yaml')
+    scenario = load_and_expand_scenario('scenarios/legacy/ppo.yaml')
     scenario['wheel_actuators'] = config
     with pytest.raises(ScenarioError, match='development profile'):
         validate_scenario(scenario)

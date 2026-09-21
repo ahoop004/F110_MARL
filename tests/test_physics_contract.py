@@ -40,7 +40,7 @@ def test_frozen_ppo_and_mappo_physics_rollouts(explicit_model):
     ({"s_max": np.pi / 2}, "s_max"),
 ])
 def test_invalid_physics_fails_scenario_validation(overrides, field):
-    scenario = load_and_expand_scenario("scenarios/ppo.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/ppo.yaml")
     scenario["environment"].setdefault("vehicle_params", {}).update(overrides)
     with pytest.raises(ScenarioError, match=field):
         validate_scenario(scenario)

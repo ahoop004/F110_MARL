@@ -29,7 +29,7 @@ command:
 - python3
 - ${program}
 - --scenario
-- scenarios/ppo.yaml
+- scenarios/legacy/ppo.yaml
 - --wandb
 - ${args}
 name: PPO_seed_sweep
