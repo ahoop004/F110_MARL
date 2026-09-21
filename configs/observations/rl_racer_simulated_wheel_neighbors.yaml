@@ -1,7 +1,10 @@
-# Preserve the 50 driving inputs, then append three slots including team identity.
+# Retained privileged comparison: 50 driving inputs plus three neighbor slots.
+# Active PPO and MAPPO scenarios use rl_racer_simulated_wheel.yaml with LiDAR.
 includes:
   - rl_racer_simulated_wheel.yaml
 observation:
+  lidar:
+    enabled: false
   frenet_neighbors:
     enabled: true
     max_neighbors: 3

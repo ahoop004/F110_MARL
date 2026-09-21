@@ -1,11 +1,13 @@
-# Paper Eq. (2) layout, with actual simulated wheel state: 10 + 2*N values.
+# Shared PPO/MAPPO layout: LiDAR, then actual simulated wheel/track state.
+# With 108 beams and N=20: 108 + 10 + 2*N = 158 values.
 # N=20 and normalization maxima are provisional until identified data is available.
 includes:
   - rl_racer_vehicle_track_frenet_acceleration.yaml
 
 observation:
   lidar:
-    enabled: false
+    enabled: true
+    normalize: true
   frenet_vehicle_track:
     clip: false
     wheel_speed_source: simulated_v1

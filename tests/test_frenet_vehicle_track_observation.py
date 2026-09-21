@@ -67,7 +67,7 @@ def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
     scenario["environment"]["max_steps"] = 32
     composer = ObservationComposer.from_file(
         str(path.parent / scenario["agents"]["car_0"]["observation"]), scenario["environment"])
-    assert composer.obs_dim == 50
+    assert composer.obs_dim == 158
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     try:
         assert env.params['model_version'] == 2
@@ -75,18 +75,18 @@ def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
         np.testing.assert_allclose(env.action_spaces["car_0"].low, [-.4189, -400])
         np.testing.assert_allclose(env.action_spaces["car_0"].high, [.4189, 400])
         observations, infos = env.reset(seed=42)
-        wrapped = composer.wrap(observations["car_0"], infos["car_0"])
+        wrapped = composer.wrap(observations["car_0"], infos["car_0"])[108:]
         np.testing.assert_array_equal(wrapped[[0, 1, 4]], np.zeros(3))
         for _ in range(10):
             observations, _, _, _, infos = env.step({"car_0": np.array([0.1, 40.0], dtype=np.float32)})
         raw = observations["car_0"]
-        wrapped = composer.wrap(raw, infos["car_0"])
+        wrapped = composer.wrap(raw, infos["car_0"])[108:]
         assert abs(float(raw["angular_velocity"])) > 1e-4
         np.testing.assert_allclose(wrapped[:2], np.asarray(raw["velocity"]) / 20.)
         assert wrapped[4] == pytest.approx(raw["angular_velocity"] / 10.)
         observations, infos = env.reset(seed=42)
         composer.reset()
-        assert composer.wrap(observations["car_0"], infos["car_0"])[4] == 0.0
+        assert composer.wrap(observations["car_0"], infos["car_0"])[108 + 4] == 0.0
     finally:
         env.close()
 
@@ -377,7 +377,7 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
 def test_pretraining_entry_points_share_mf61_physics_and_control():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     assert baseline['experiment']['num_envs'] == 400
-    for name in ('transfer', 'validate'):
+    for name in ('transfer', 'transfer_3lap', 'validate'):
         variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_{name}.yaml")
         assert variant['environment']['vehicle_params'] == baseline['environment']['vehicle_params']
         actor = variant['agents']['car_0']
@@ -394,7 +394,7 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
         str(path.parent / scenario["agents"]["car_0"]["observation"]),
         scenario["environment"],
     )
-    assert composer.obs_dim == 50
+    assert composer.obs_dim == 158
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     try:
         assert env.track_preview_available
@@ -402,18 +402,20 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
         for step in range(3):
             raw, info = observations["car_0"], infos["car_0"]
             observation = composer.wrap(raw, info)
-            assert observation.shape == (50,)
+            assert observation.shape == (158,)
             assert np.isfinite(observation).all()
+            np.testing.assert_allclose(observation[:108], np.minimum(raw['lidar'] / 10., 1.), atol=1e-7)
+            assert np.any(observation[:108] > 0.)
             preview = info["track_preview"]
             assert len(preview["curvature"]) == len(preview["width"]) == 20
             assert np.all(np.asarray(preview["width"]) > 0.0)
             # Check the actor receives geometry, rather than zero-filled slots
             # due to a missing feature request or an incomplete info payload.
-            np.testing.assert_allclose(observation[10:30], preview['curvature'], atol=1e-6)
-            np.testing.assert_allclose(observation[30:50], preview['width'], atol=1e-6)
+            np.testing.assert_allclose(observation[118:138], preview['curvature'], atol=1e-6)
+            np.testing.assert_allclose(observation[138:158], preview['width'], atol=1e-6)
             if step:
                 assert raw["wheel_speed_reference"] == pytest.approx(2.0)
-                assert observation[8] == pytest.approx(2.0 / 400.0)
+                assert observation[108 + 8] == pytest.approx(2.0 / 400.0)
             observations, _, _, _, infos = env.step({
                 "car_0": np.array([0.1, 2.0], dtype=np.float32),
             })

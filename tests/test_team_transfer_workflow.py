@@ -67,7 +67,7 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
         params = run.resolve_training_params(cfg, pretrain)
         params.update(device='cpu', n_steps=4, _observation_contract=composer.contract)
         space, _ = build_action_spaces(["car_0"], pretrain["environment"]["vehicle_params"])
-        actor = PPOAgent(50, space.low, space.high, params)
+        actor = PPOAgent(composer.obs_dim, space.low, space.high, params)
         checkpoint = tmp_path / 'source.pt'
         actor.save(str(checkpoint))
         extra_args = ['--pretrained-actor', str(checkpoint)]
@@ -110,7 +110,7 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
     assert 'circle_map' in record['per_map']
     checkpoint = safe_load(str(tmp_path / 'best_model.pt'), map_location='cpu')
     assert checkpoint['checkpoint_selection'] == record
-    assert checkpoint['obs_dim'] == 68
+    assert checkpoint['obs_dim'] == 158
     assert (tmp_path / 'final_model.pt').exists()
 
 

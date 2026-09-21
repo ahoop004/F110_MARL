@@ -2,7 +2,7 @@
 
 Run the base scratch/pretrained comparison first, then the penalty pair, then
 LoRA combinations once adapter training is implemented. All four current arms use
-the same 68-input observation, vehicle physics, MPC opponents, seed, and 400
+the same 158-input LiDAR/driving observation, vehicle physics, MPC opponents, seed, and 400
 environments across 100 workers. Collection, minibatch size, and evaluation
 cadence come from `configs/training/mappo_parallel.yaml`. Within each pair only
 actor initialization and experiment name differ. The critic and optimizer start
@@ -72,9 +72,11 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 ```
 
 These scenarios inherit the current shared vehicle profile and fixed track
-observation scaling. The first 50 inputs retain their source
-semantics, and 18 neighbor/team inputs are appended with zero initial weights
-when loading PPO. Both fixed racing MPC opponents use the same 3.5 m/s speed cap
+observation scaling. PPO and MAPPO share 108 normalized LiDAR ranges followed
+by 50 driving inputs, so the complete actor transfers without input expansion.
+Explicit neighbor states and teammate labels are not actor inputs. Older 50-input
+PPO and 68-input MAPPO checkpoints require fresh training under this layout.
+Both fixed racing MPC opponents use the same 3.5 m/s speed cap
 and the environment's 0.58 m by 0.31 m vehicle geometry. Their traffic sensing
 uses perfect current simulator states within 10 m; this is privileged sensing.
 The downloaded `outputs/L_map_best_model.pt` is a historical artifact and is not

@@ -295,7 +295,7 @@ def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
         for agent in scenario["agents"].values() if agent.get('trainable')
     )
     assert scenario["training_defaults"]["pretrained_actor_checkpoint"] is None
-    assert scenario["training_defaults"]["pretrained_actor_observation_extension"] == 'frenet_neighbors'
+    assert scenario["training_defaults"]["pretrained_actor_observation_extension"] is None
 
 
 @pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])

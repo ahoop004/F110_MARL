@@ -1,7 +1,7 @@
 # PPO driving actor transfer to two MAPPO teammates under the same MF6.1 physics.
 # Set training_defaults.pretrained_actor_checkpoint to a NEW PPO best_model.pt.
-# null deliberately runs the matched from-scratch arm. Fifty driving inputs are
-# preserved; 18 appended relative-neighbor inputs start with zero actor weights.
+# null deliberately runs the matched from-scratch arm. The 158-input LiDAR/driving
+# layout matches PPO pretraining exactly; no observation extension is needed.
 # Both fixed opponents use the validated racing MPC with an explicit wheel adapter.
 # MPC reads perfect current traffic state within 10 m; this is privileged sensing.
 includes:
@@ -18,7 +18,7 @@ experiment:
 training_defaults:
   team_return_mode: joint
   pretrained_actor_checkpoint: null
-  pretrained_actor_observation_extension: frenet_neighbors
+  pretrained_actor_observation_extension: null
   device: cuda
 mappo:
   reward_mode: team_shared
@@ -88,7 +88,7 @@ agents:
     trainable: true
     role: racer
     target_id: car_2
-    observation: ../configs/observations/rl_racer_simulated_wheel_neighbors.yaml
+    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
     reward: ../configs/reward/tasks/race_team_completion.yaml
     params: &learner_params
       learning_rate: 0.0001
@@ -112,7 +112,7 @@ agents:
     trainable: true
     role: racer
     target_id: car_3
-    observation: ../configs/observations/rl_racer_simulated_wheel_neighbors.yaml
+    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
     reward: ../configs/reward/tasks/race_team_completion.yaml
     params: *learner_params
     action_constraints: *learner_actions
@@ -150,8 +150,8 @@ wandb:
   - scratch-or-ppo-initialized
   - mf61-planar
   - wheel-acceleration
-  - neighbors
+  - lidar
   - racing-mpc-opponents
-  notes: Current MF6.1 driving actor plus three relative neighbor slots; new input
-    weights start at zero. Critic and optimizer start fresh. Both opponents use
+  notes: Shared PPO/MAPPO 158-input LiDAR and MF6.1 driving observation; the full
+    actor transfers directly. Critic and optimizer start fresh. Both opponents use
     racing_mpc with a 3.5 m/s rolling-speed cap and range-limited perfect traffic state.

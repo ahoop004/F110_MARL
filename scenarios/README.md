@@ -14,7 +14,7 @@ physics calibration work.
 
 | Entry point | Use |
 |---|---|
-| `ppo_lap_completion_pretrain.yaml` | Train the reusable 50-input driving actor on L_map |
+| `ppo_lap_completion_pretrain.yaml` | Train the reusable 158-input LiDAR/driving actor on L_map |
 | `ppo_lap_completion_transfer.yaml` | Circle fine-tuning or matched scratch training |
 | `ppo_lap_completion_validate.yaml` | Evaluate driving on L_map, circle, and Budapest |
 | `mappo_2v2_base_scratch.yaml` | Stage 1: continuous metre progress, random initialization |
@@ -31,7 +31,8 @@ physics calibration work.
 Both validation scenarios require `--eval --checkpoint PATH`. Training MAPPO
 from a PPO source uses `--pretrained-actor PATH`; omitting it uses the scenario
 default (scratch except for the explicitly pretrained base and penalty arms).
-MAPPO's observation has 68 inputs, including explicit teammate identity. Its
+PPO and MAPPO share 158 observation inputs: 108 normalized LiDAR ranges followed
+by 50 driving values, with no explicit neighbor states or teammate identity. MAPPO's
 shared settings live in `configs/scenarios/mappo_2v2_base.yaml`; edit that fragment
 when a setting should apply to every team objective.
 
@@ -108,9 +109,9 @@ for pretraining, penalty definitions, scoring, and remaining comparison limits.
 
 The removed PPO aliases had different worker counts and hyperparameters. The
 canonical replacement deliberately uses the retained 400-worker configuration;
-it is not a bit-for-bit recreation of an old alias run. New 68-input team actors
-cannot load old 65-input MAPPO checkpoints. Compatible 50-input PPO actors still
-transfer with the 18 additional inputs initialized to zero weight.
+it is not a bit-for-bit recreation of an old alias run. Current 158-input actors
+cannot load old 50-input PPO or 65/68-input MAPPO checkpoints. Train a fresh
+LiDAR-enabled PPO source; it transfers directly without adding input weights.
 
 ## Retained comparisons
 

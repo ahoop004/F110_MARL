@@ -163,8 +163,10 @@ decision and clamps the stored reference to prevent windup. At R=0.05 m,
 100 rad/s² corresponds to 5 m/s². This is a reference-change limit, not an
 instantaneous chassis-acceleration constraint.
 
-The pretraining observation is the paper's Eq. (2) layout with real simulated
-wheel state and no LiDAR: 10 vehicle values plus 20 curvature and 20 width values.
+Pretraining and MAPPO share 158 inputs: 108 LiDAR ranges normalized by 10 m
+and capped at one, followed by the paper-inspired driving layout with real
+simulated wheel state: 10 vehicle values plus 20 curvature and 20 width values.
+Adding LiDAR is an explicit change from the paper's observation layout.
 Track samples are 0.3 m apart. N=20 and vehicle-state normalization maxima
 remain provisional. For transfer, curvature and full width now use fixed scales
 of 1 m^-1 and 1 m on every map, without clipping. This is an explicit deviation
@@ -247,7 +249,9 @@ exact reproduction. The L-map has the reported 17 m length and 1 m width but its
 corner geometry is an approximation, not the authors' original track.
 
 The migrated `mappo_2v2_completion.yaml` receives a compatible
-50-value PPO actor and appends 18 neighbor/team inputs with zero initial weights.
+158-value PPO actor directly: 108 normalized LiDAR ranges followed by 50
+vehicle/Frenet/track values. Explicit neighbor/team slots are no longer used.
+Older 50-input PPO and 68-input MAPPO checkpoints are incompatible.
 Other legacy MAPPO scenarios still require migration before receiving this actor.
 The circle convergence ablation uses a smaller worker count and different PPO
 settings; only the canonical pretraining scenario selects the paper's stated

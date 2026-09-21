@@ -59,8 +59,8 @@ def test_rolling_reset_actual_wheel_observation_and_public_velocity(env, scenari
     assert env.get_agent_state('car_0').metadata['wheel_speed'] == pytest.approx(40)
     composer = ObservationComposer.from_file('configs/observations/rl_racer_simulated_wheel.yaml', scenario['environment'])
     wrapped = composer.wrap(observations['car_0'], infos['car_0'])
-    assert wrapped.shape == (50,)
-    assert wrapped[9] == pytest.approx(40 / 400)
+    assert wrapped.shape == (158,)
+    assert wrapped[108 + 9] == pytest.approx(40 / 400)
     global_size = env.get_global_state().vector.size
     for _ in range(8):
         obs, *_ = env.step({'car_0': np.array([.15, 100.0]), 'car_1': np.array([0, -20.0])})

@@ -150,5 +150,5 @@ wandb:
   group: ppo-lap-completion-pretrain
   job_type: actor-pretraining
   tags: [ppo, single-agent, time-trial, actor-pretraining, mf61-planar, f1tenth-gym-reference, uncalibrated]
-  notes: "F1TENTH Gym chassis/steering bounds with synthetic MF6.1 tires and provisional actuator response, 50-value Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward, continuous resets, and a 120M-transition budget"
+  notes: "F1TENTH Gym chassis/steering bounds with synthetic MF6.1 tires and provisional actuator response, 158-value LiDAR/Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward, continuous resets, and a 120M-transition budget"
   mode: online

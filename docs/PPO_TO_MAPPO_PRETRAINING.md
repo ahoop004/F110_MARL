@@ -2,7 +2,7 @@
 
 The current pipeline uses F1TENTH Gym chassis/steering defaults with synthetic
 planar MF6.1 tires, 0.05 s decisions,
-wheel-reference acceleration, and a 50-value driving observation. It follows the
+wheel-reference acceleration, and a 158-value LiDAR/driving observation. It follows the
 paper's main time-trial recipe, with explicit changes for reuse across tracks.
 It is not a calibrated reproduction of the authors' car.
 
@@ -42,7 +42,7 @@ Curvature and width use fixed scales of **1 m^-1 and 1 m** across maps, with no
 clipping. Thus a 2 m lane is distinguishable from a 1 m lane. Older observation
 presets without `track_maxima` retain their per-map normalization. Changing these
 scales changes the checkpoint observation contract even when its dimension stays
-50. Start a fresh run; an old checkpoint cannot be relabeled as compatible.
+158. Start a fresh run; an old checkpoint cannot be relabeled as compatible.
 Vehicle-state scales and N=20 remain provisional.
 
 Training resets on geometric boundary violations; there is no lap or time-limit
@@ -181,21 +181,21 @@ opponents. The explicit base and penalty scratch/pretrained pairs use 400
 environments across 100 workers. Other MAPPO objectives retain their serial
 defaults. PPO retains 400 environments.
 
-The actor has 68 inputs: the original 50 driving values followed by three slots
-of `(delta_s, delta_d, delta_vs, delta_vd, present, is_teammate)`. Slots are ordered
-by longitudinal distance. Team identity follows the physical agent when slots
-reorder. These are privileged simulator measurements, not LiDAR detections.
+PPO and MAPPO use the same 158-input actor observation: 108 LiDAR ranges,
+normalized by the 10 m sensor range and capped at one, followed by the same
+50 vehicle/Frenet/track values. There are no explicit neighbor slots, relative
+velocities, or teammate labels. LiDAR observes walls and visible vehicles as
+obstacles; the driving block retains the same fixed scales and 20-point preview.
+Single-car transfer and validation inherit this observation from pretraining.
 
 Use `--pretrained-actor` with a compatible PPO checkpoint or run directory.
 Omitting it uses the scenario default: the explicitly pretrained base and penalty
 arms require `outputs/ppo_current_pretrain_s42/best_model.pt`; other training arms
-start from scratch. The explicit
-`pretrained_actor_observation_extension: frenet_neighbors` allows the appended
-block after an unchanged driving observation. Its 18 new first-layer weights per
-hidden unit start at zero, preserving the PPO actions at initialization. They
-receive gradients during MAPPO training. Driving weights and exploration
-parameters are copied; the centralized critic and optimizer start fresh. Old
-65-input MAPPO checkpoints are incompatible with this new team observation.
+start from scratch. `pretrained_actor_observation_extension` is null because
+both actors have identical observation contracts. All actor weights and exploration
+parameters are copied directly; the centralized critic and optimizer start fresh.
+Old 50-input PPO and 65/68-input MAPPO checkpoints are incompatible. Train a fresh
+LiDAR-enabled PPO source before running the pretrained arms.
 
 | Scenario | Purpose |
 |---|---|
