@@ -12,8 +12,8 @@ experiment:
   name: ppo_lap_completion_pretrain
   total_steps: 120000000  # aggregate policy decisions across all environments
   seed: 42
-  num_envs: 1
-  # num_envs: 400
+  # num_envs: 1
+  num_envs: 400
   torch_threads: 1
   # Limit concurrent initialization; all 400 environments still collect together.
   worker_startup_batch_size: 16
@@ -57,6 +57,7 @@ environment:
   timestep: 0.05
   target_laps: 20  # used for evaluation; training does not finish at this count
   lap_counting:
+    require_finish_line: true  # fail instead of silently reporting zero laps
     count_initial_crossing_as_lap: false
   max_steps: 0  # no artificial training episode time limit
   action_repeat: 1

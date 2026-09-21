@@ -86,8 +86,9 @@ as the training penalty component.
 Equal episode counts are not equal sample budgets. Record environment decisions,
 learner samples, and wall time; add a MAPPO transition-budget control before making
 strict sample-efficiency claims. Pretraining cost should be reported separately.
-The source checkpoint's saved evaluation did not demonstrate lap completion, and
-fixed-opponent completion under these physics still needs benchmarking.
+The source checkpoint's saved zero-lap evaluation used an L-map with no finish
+line, so those lap metrics are invalid. Re-evaluate with the corrected map before
+judging its driving quality. Fixed-opponent completion still needs benchmarking.
 
 ## Subsequent comparisons
 

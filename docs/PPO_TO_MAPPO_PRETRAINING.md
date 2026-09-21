@@ -55,6 +55,29 @@ values are saved as `lap_count` and `lap_time_s` in `episode_metrics.csv` and as
 `episode/lap_count` and `episode/lap_time_s` in W&B. Missing lap times are blank
 in CSV and omitted from W&B rather than recorded as zero.
 
+## L-map lap-counter correction
+
+The original generated `L_map.yaml` lacked a finish-line annotation. Forward
+metre rewards continued to accumulate, but no lap tracker existed, so training
+and evaluation reported zero laps and no lap times regardless of distance.
+The map now defines a 1 m finish segment across centerline sample 51 (~2.55 m
+along the CSV), oriented in the positive track direction. Geometry, physics,
+reward weights, and continuous-training termination are unchanged.
+
+Pretraining now requires a finish line and fails at environment setup or map
+switch if it is missing. Preserve the annotation when regenerating this map with
+the external map editor. With random spawning, the first forward crossing starts
+the lap clock; each subsequent full circuit increments the completed-lap count.
+Short episodes can therefore still correctly show zero laps.
+
+Existing processes retain their loaded map; deploy the updated files and restart
+the process to enable the fix. Old zero-lap metrics cannot establish whether laps
+were completed, and old `best_model.pt` selection may not have ranked checkpoints
+meaningfully. Re-evaluate saved periodic/final checkpoints with the corrected map
+and matching physics/observation profiles before choosing a pretrained model.
+The annotation changes map provenance; cross-version evaluation may require
+`--allow-provenance-mismatch`, which does not bypass physics compatibility.
+
 ## Select and validate a model
 
 Every 4,096,000 transitions, deterministic selection evaluates eight starting

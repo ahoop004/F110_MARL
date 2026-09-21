@@ -8,6 +8,21 @@ occupied_thresh: 0.45
 free_thresh: 0.196
 negate: 0
 annotations:
+  # Track-spanning gate at centerline sample 51 (~2.55 m); positive track direction.
+  finish_line:
+    version: 1
+    start:
+    - 3.436785009714141
+    - -0.3418337743841774
+    end:
+    - 3.4377349902858594
+    - 0.6581657743841774
+    direction:
+    - 0.9999995487683548
+    - -0.0009499805717183391
+    min_speed: 0.1
+    hysteresis: 0.1
+    padding: 0.05
   centerline:
   - - 1.035759961987442
     - 0.8631333016562016

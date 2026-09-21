@@ -328,6 +328,11 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("PPO requires exactly one trainable agent; use MAPPO for a trainable team.")
     if total_steps is not None and trainable_algos != {"ppo"}:
         raise ScenarioError("A total_steps budget currently supports PPO only.")
+    lap_counting = environment.get("lap_counting", {}) or {}
+    if not isinstance(lap_counting, dict):
+        raise ScenarioError("environment.lap_counting must be a mapping")
+    if "require_finish_line" in lap_counting and not isinstance(lap_counting["require_finish_line"], bool):
+        raise ScenarioError("lap_counting.require_finish_line must be boolean")
     limits = environment.get("track_limits", {}) or {}
     if not isinstance(limits, dict) or set(limits) - {"enabled", "terminate"}:
         raise ScenarioError("track_limits accepts enabled and terminate booleans")

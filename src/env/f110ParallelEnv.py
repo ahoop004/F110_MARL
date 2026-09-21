@@ -366,6 +366,9 @@ class F110ParallelEnv:
         lap_counting_cfg = merged.get("lap_counting") or {}
         if not isinstance(lap_counting_cfg, Mapping):
             raise TypeError("environment.lap_counting must be a mapping")
+        self._require_finish_line = lap_counting_cfg.get("require_finish_line", False)
+        if not isinstance(self._require_finish_line, bool):
+            raise ValueError("lap_counting.require_finish_line must be boolean")
         self._count_initial_crossing_as_lap = bool(
             lap_counting_cfg.get("count_initial_crossing_as_lap", True)
         )
@@ -1088,6 +1091,8 @@ class F110ParallelEnv:
     ) -> None:
         config = resolve_finish_line_config(self._finish_line_override, metadata)
         if config is None:
+            if self._require_finish_line:
+                raise ValueError(f"Lap counting requires a finish_line annotation or override: {self.yaml_path}")
             self._finish_line_data = None
             self._lap_tracker = None
             self._finish_crossed.fill(False)
