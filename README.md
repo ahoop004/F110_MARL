@@ -16,7 +16,9 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_gaplock.y
 
 Use `--seed` for repeatability, `--output-dir` for a specific output location,
 `--dataset-dir` for transition recording, and `--render` for local visualization.
-PPO and MAPPO use `--episodes`; the retired `--total-steps` option is unsupported.
+PPO supports `experiment.total_steps` for a transition budget; PPO and MAPPO also
+support episode budgets with `--episodes`. An explicit `--episodes` overrides
+the transition budget. There is no `--total-steps` CLI option.
 W&B is optional and `--no-wandb` overrides scenario logging settings.
 
 Evaluate a checkpoint with the same scenario and experiment overrides used for
@@ -110,7 +112,7 @@ MAPPO's individual arm uses per-agent rewards and an agent-conditioned critic,
 critic, `V(s)`. Actors use local observations in both modes. Raw shaped rewards
 across these arms are not interchangeable evaluation scores.
 
-The pretraining scenario currently uses `circle_map` for both train and evaluation;
+The pretraining scenario currently uses `L_map` for both train and evaluation;
 it does not measure generalization to held-out maps. The `complete_4` experiment
 has explicit disjoint splits. See [actor transfer](docs/PPO_TO_MAPPO_PRETRAINING.md),
 [duration calibration](docs/RACE_DURATION_CALIBRATION.md), and
@@ -177,25 +179,27 @@ reduced friction-circle implementation has been replaced. Legacy physics remains
 available for existing legacy scenarios. Parameters are synthetic and explicitly
 uncalibrated; see [physics details and limitations](docs/PHYSICS_MODEL.md).
 
-Start a bounded software test with:
+The canonical `scenarios/ppo_lap_completion_pretrain.yaml` configures the paper's
+120-million-transition budget, 400 environments, and 1,024 transitions per worker
+per rollout. It uses 50 normalized vehicle/Frenet/track values, wheel-reference
+acceleration, 0.05 s decisions, and episode friction randomization (relative
+standard deviation 0.02). Reward is signed distance progress in metres, replaced
+by -1 on a geometric boundary violation. Training resets only at that boundary;
+lap crossings do not end an episode. Rollouts continue across resets.
 
-```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --episodes 2 --num-envs 1 --max-steps 64 --no-wandb
-```
+Learning-rate decay, periodic checkpoints, and evaluation use transition counts.
+Evaluation measures 20 laps with nominal grip and permits excursions to measure
+off-track error. `final_model.pt` contains the final update; `best_model.pt` uses
+the documented lap-time selection rule. The existing `_frenet` and
+`_combined_slip` entries retain their smaller worker counts and other overrides.
+For a smaller parallel experiment, set pooled `params.n_steps = num_envs * 1024`.
 
-`--max-steps` bounds training and evaluation episodes. The pretraining path uses
-50 normalized vehicle/Frenet/track values, wheel-reference acceleration, a 0.05 s
-decision interval, and per-episode Gaussian friction variation with relative
-standard deviation 0.02. Evaluation uses fixed nominal grip. The existing
-`_frenet` and `_combined_slip` scenario names share this physics path; their
-worker counts and PPO settings may differ. Train fresh: old physics checkpoints
-are incompatible.
-
-The current three-lap completion reward and episode-based training schedule are
-still a test task, not a reproduction of the paper's boundary-reset reward and
-120-million-step protocol. The new map and identified tire/actuator coefficients
-are also outstanding. To train beyond a smoke test, omit the episode/worker/
-horizon overrides. Configure all three map bundle lists when changing tracks.
+Vehicle parameters belong in `configs/vehicle/combined_slip.yaml`, under
+`environment.vehicle_params`. They remain uncalibrated, and observation maxima
+and N=20 remain provisional. `L_map` matches the reported dimensions but is an
+approximation. See [physics and protocol details](docs/PHYSICS_MODEL.md) for the
+remaining reproduction limits. No result on this map establishes sim-to-real
+performance. Configure all three map bundle lists when changing tracks.
 
 Use the independent final evaluation seeds after selecting a checkpoint:
 

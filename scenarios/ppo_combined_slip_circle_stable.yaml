@@ -5,6 +5,20 @@ includes:
 experiment:
   name: ppo_combined_slip_circle_stable
   checkpoint: null
+  total_steps: null
+  episodes: 10000
+
+environment:
+  target_laps: 3
+  max_steps: 16000
+  episode_termination: {lap_completion: true}
+  track_limits: {enabled: false}
+  terminate_on_collision: true
+
+evaluation:
+  every_steps: null
+  every_episodes: 100
+  selection_strategy: completion_progress
 
 agents:
   car_0:

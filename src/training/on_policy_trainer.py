@@ -59,6 +59,7 @@ class OnPolicyTrainer:
         self.render = render
         self.run_id = run_id
         self.spawn_plan_fn = spawn_plan_fn
+        self.collected_steps = 0
 
     def _set_training_progress(self, completed: int, total: int) -> None:
         # Remote collectors own no optimizer; the parent uses global progress.
@@ -154,6 +155,7 @@ class OnPolicyTrainer:
                         elif kind == "rollout":
                             waiting[worker_id] = payload
                             collected += len(payload[0])
+                            self.collected_steps = collected
                             break
                         elif kind == "done":
                             connections.pop(worker_id).close()
@@ -397,6 +399,7 @@ class OnPolicyTrainer:
                 step_idx += 1
 
                 collected += 1
+                self.collected_steps = collected
                 budget_done = total_steps is not None and collected >= total_steps
                 final_value = (self.agent.value(next_obs)
                                if total_steps is not None and rl_trunc and not rl_term else None)
@@ -457,6 +460,7 @@ class OnPolicyTrainer:
         flush = getattr(self.agent, "flush_pending_update", None)
         metrics = flush() if flush is not None else {}
         if metrics:
+            metrics["train/environment_steps"] = self.collected_steps
             for hook in self.hooks:
                 hook.on_update(metrics)
 

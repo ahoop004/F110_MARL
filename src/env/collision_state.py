@@ -50,6 +50,7 @@ class RaceLifecycle:
             agent_id: AgentLifecycleRecord(
                 agent_id=agent_id,
                 target_laps=self.target_laps,
+                finish_on_laps=self.finish_on_laps,
             )
             for agent_id in self.agent_ids
         }
@@ -78,6 +79,9 @@ class RaceLifecycle:
             return False
         record.lap_crossed = True
         record.lap_count += 1
+        record.lap_time_steps = (None if record.lap_start_step is None
+                                 else int(step) - record.lap_start_step)
+        record.lap_start_step = int(step)
         if self.finish_on_laps and record.race_completed:
             return self._transition(
                 agent_id,

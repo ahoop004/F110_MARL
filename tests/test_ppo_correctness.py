@@ -191,15 +191,18 @@ def test_circle_stability_scenario_preserves_physics_and_rewards_slow_progress()
 
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_combined_slip.yaml")
     stable = load_and_expand_scenario("scenarios/ppo_combined_slip_circle_stable.yaml")
-    assert stable["environment"] == baseline["environment"]
-    assert stable["evaluation"] == baseline["evaluation"]
+    assert stable["environment"]["vehicle_params"] == baseline["environment"]["vehicle_params"]
+    assert stable["environment"]["episode_termination"]["lap_completion"]
+    assert stable["experiment"]["total_steps"] is None
     for key in ("observation", "action_constraints"):
         assert stable["agents"]["car_0"][key] == baseline["agents"]["car_0"][key]
     rewards = [build_reward_composer(s["agents"]["car_0"], Path("scenarios"))
                for s in (baseline, stable)]
     # A 0.25 m/s forward decision on a ~350 m circle becomes worth exploring.
-    step = {"info": {"centerline": {"progress_delta": .25 * stable["environment"]["timestep"] / 350}}}
-    assert rewards[0].compute(step)[0] < 0 < rewards[1].compute(step)[0]
+    step = {"track_length": 350., "info": {"track_limits": {"exceeded": False},
+            "centerline": {"progress_delta": .25 * stable["environment"]["timestep"] / 350}}}
+    assert rewards[0].compute(step)[0] > 0
+    assert rewards[1].compute(step)[0] > 0
     params = resolve_training_params(stable["agents"]["car_0"], stable)
     agent = PPOAgent(158, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
     assert agent.min_rollout_steps == agent.n_steps
@@ -597,7 +600,13 @@ def _parallel_test_setup(device="cpu", accelerated=False):
 
     path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
-    scenario["experiment"].update(num_envs=2, episodes=3, seed=42)
+    scenario["experiment"].update(num_envs=2, episodes=3, seed=42, total_steps=None)
+    scenario["environment"].pop("track_limits", None)
+    scenario["environment"]["episode_termination"]["lap_completion"] = True
+    scenario["environment"]["terminate_on_collision"] = True
+    scenario["agents"]["car_0"]["reward"] = "../configs/reward/tasks/lap_completion_circle_stable.yaml"
+    scenario["evaluation"].pop("every_steps", None)
+    scenario["evaluation"]["selection_strategy"] = "completion_safety"
     # Exercise the retained legacy direct/chassis-acceleration trainer contracts.
     from env.f110ParallelEnv import _default_vehicle_params
     scenario["environment"].update(max_steps=4, timestep=.01, vehicle_params=_default_vehicle_params())
@@ -956,3 +965,186 @@ def test_bounded_smoke_cli_caps_training_and_evaluation():
     args.max_steps = 0
     with pytest.raises(ValueError, match='positive'):
         apply_cli_overrides(config, args)
+
+
+def test_paper_buffer_internal_truncation_uses_final_state_not_reset_state():
+    buffer = RolloutBuffer(3, 1, 2, torch.device('cpu'))
+    for value, terminal, truncated, final in [(10., True, False, None), (2., False, True, 7.), (100., True, False, None)]:
+        buffer.add(np.zeros(1), np.zeros(2), 1., 0., value, terminal, truncated, final_value=final)
+    _, returns = buffer.compute_gae(123., .9, .95)
+    torch.testing.assert_close(returns, torch.tensor([1., 7.3, 1.]))
+
+
+@pytest.mark.parametrize('terminal', [True, False])
+def test_paper_fixed_rollouts_cross_resets_and_stop_at_exact_budget(terminal):
+    from training.hooks import TrainingHook
+
+    class Env(_OneStepTruncationEnv):
+        def step(self, actions):
+            obs, rewards, terms, truncs, info = super().step(actions)
+            terms['car_0'], truncs['car_0'] = terminal, not terminal
+            return obs, rewards, terms, truncs, info
+
+    class Capture(TrainingHook):
+        def __init__(self):
+            self.metrics = []
+        def on_update(self, metrics):
+            self.metrics.append(dict(metrics))
+
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {'hidden_dims': [4], 'n_steps': 4,
+        'n_epochs': 1, 'batch_size': 4, 'learning_rate': .001, 'lr_schedule': 'linear', 'learning_rate_end': .0001})
+    sizes = []
+    update = agent.update
+    def capture_update(next_value):
+        sizes.append(agent.buffer.size())
+        return update(next_value)
+    agent.update = capture_update
+    capture = Capture()
+    trainer = OnPolicyTrainer(Env(), 'car_0', agent, {}, _ObservationComposer(),
+                               _RewardComposer(), _ActionComposer(), hooks=[capture])
+    trainer.train(total_steps=10)
+    assert sizes == [4, 4, 2]
+    assert [m['train/environment_steps'] for m in capture.metrics] == [4, 8, 10]
+    assert [m['train/learning_rate'] for m in capture.metrics] == pytest.approx([.00064, .00028, .0001])
+
+
+def test_paper_budget_cut_bootstraps_without_marking_environment_terminal():
+    class Env(_OneStepTruncationEnv):
+        def step(self, actions):
+            obs, rewards, terms, truncs, info = super().step(actions)
+            self.agents = ['car_0']
+            truncs['car_0'] = False
+            return obs, rewards, terms, truncs, info
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {'hidden_dims': [4], 'n_steps': 4})
+    captured = []
+    def update(next_value):
+        captured.append((agent.buffer.size(), agent.buffer.terminated[:2].clone(),
+                         agent.buffer.truncated[:2].clone(), next_value))
+        return {}
+    agent.update = update
+    agent.value = lambda obs: 7.
+    trainer = OnPolicyTrainer(Env(), 'car_0', agent, {}, _ObservationComposer(), _RewardComposer(), _ActionComposer())
+    trainer.train(total_steps=2)
+    size, terms, truncs, bootstrap = captured[0]
+    assert size == 2 and bootstrap == 7.
+    assert not terms.any() and not truncs.any()
+
+
+def test_paper_configuration_declares_transition_budget_and_continuous_task():
+    from core.scenario import load_and_expand_scenario, validate_scenario
+    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
+    validate_scenario(scenario)
+    assert scenario['experiment']['total_steps'] == 120000000
+    assert scenario['experiment']['num_envs'] == 400
+    assert scenario['agents']['car_0']['params']['n_steps'] == 400 * 1024
+    assert scenario['environment']['max_steps'] == 0
+    assert scenario['environment']['episode_termination']['lap_completion'] is False
+    assert scenario['evaluation']['target_laps'] == 20
+
+
+def test_paper_parallel_budget_and_value_requests_with_mock_collectors(monkeypatch):
+    """Exercise the parent protocol without spawning processes or a simulator."""
+    import multiprocessing
+    from collections import deque
+    from types import SimpleNamespace
+    from training.hooks import TrainingHook
+
+    def rollout(n):
+        return (np.zeros((n, 1)), np.zeros((n, 2)), np.zeros(n), np.ones(n), np.ones(n), np.zeros((n, 2)))
+    pipes, processes = [], []
+    class Connection:
+        def __init__(self):
+            self.messages = deque()
+            self.sent = []
+        def poll(self, timeout): return bool(self.messages)
+        def recv(self): return self.messages.popleft()
+        def send(self, message): self.sent.append(message)
+        def close(self): pass
+    class Process:
+        def __init__(self, **kwargs):
+            args = kwargs['args']
+            self.budget = args[-1]
+            pipe = args[0]
+            pipe.messages.append(('ready', (1, -np.ones(2), np.ones(2))))
+            # Bootstrap values and sampled actions use separate requests.
+            pipe.messages.extend([('value', np.zeros(1)), ('act', np.zeros(1))])
+            remaining = self.budget
+            while remaining:
+                n = min(args[6], remaining)
+                pipe.messages.append(('rollout', rollout(n)))
+                remaining -= n
+            pipe.messages.append(('done', None))
+            processes.append(self)
+        def start(self): pass
+        def join(self, **kwargs): pass
+        def is_alive(self): return False
+    def pipe():
+        connection = Connection()
+        pipes.append(connection)
+        return connection, connection
+    monkeypatch.setattr(multiprocessing, 'get_context', lambda *_: SimpleNamespace(Pipe=pipe, Process=Process))
+
+    class Capture(TrainingHook):
+        def __init__(self): self.steps = []
+        def on_update(self, metrics): self.steps.append(metrics['train/environment_steps'])
+    agent = PPOAgent(1, -np.ones(2), np.ones(2), {'n_steps': 8, 'hidden_dims': [4],
+        'learning_rate': .001, 'lr_schedule': 'linear', 'learning_rate_end': .0001})
+    sizes = []
+    def update(rollouts):
+        sizes.append([len(r[0]) for r in rollouts])
+        return {'train/learning_rate': agent.optimizer.param_groups[0]['lr']}
+    agent.update_rollouts = update
+    capture = Capture()
+    trainer = OnPolicyTrainer(None, 'car_0', agent, {}, None, _RewardComposer(), None, hooks=[capture])
+    trainer.train_parallel({}, '.', 2, 0, total_steps=11)
+    assert [p.budget for p in processes] == [6, 5]
+    assert sizes == [[4, 4], [2, 1]]
+    assert capture.steps == [8, 11]
+    assert agent.optimizer.param_groups[0]['lr'] == pytest.approx(.0001)
+    assert all(isinstance(p.sent[0], float) for p in pipes)
+
+
+def test_paper_evaluation_metrics_exclude_partial_start_and_count_excursions():
+    from metrics.racing_eval import create_episode_facts, update_agent_step_facts, aggregate_eval_episodes
+    facts = create_episode_facts(episode=0, agent_ids=['car_0'], trainable_ids=['car_0'], opponent_ids=[])
+    for step, start, duration, crossed, distance in [
+        (1, None, None, False, .5), # random-spawn approach is not a full lap
+        (2, 1, None, False, 0.),   # initial forward crossing starts timing
+        (3, 1, None, False, .2),
+        (4, 3, 2, True, 0.),      # first full lap had an excursion
+        (5, 3, None, False, 0.),
+        (6, 5, 2, True, 0.),      # second lap stayed in bounds
+    ]:
+        update_agent_step_facts(facts, step_idx=step, infos={'car_0': {
+            'lap_start_step': start, 'lap_time_steps': duration, 'lap_crossed': crossed,
+            'track_limits': {'offtrack_distance': distance, 'exceeded': distance > 0},
+        }})
+    summary = aggregate_eval_episodes([facts], timestep=.05)
+    assert summary['measured_laps'] == 2 and summary['valid_laps'] == 1
+    assert summary['fastest_valid_lap_s'] == pytest.approx(.1)
+    assert summary['mean_lap_time_s'] == pytest.approx(.1)
+    assert summary['offtrack_error_m_s_per_lap'] == pytest.approx(.005)
+    assert summary['boundary_violation_lap_rate'] == .5
+
+
+def test_paper_checkpoint_and_evaluation_cadence_uses_transitions(tmp_path):
+    from training.hooks import CheckpointHook, EvaluationCheckpointHook
+    from types import SimpleNamespace
+    saved, evaluations = [], []
+    hook = CheckpointHook(None, tmp_path, save_every_steps=8)
+    hook._save = lambda path, metadata=None: saved.append((path.name, metadata))
+    hook.on_episode_end(0, 0, {}, {})
+    for steps in (4, 8, 10): hook.on_update({'train/environment_steps': steps})
+    hook.on_training_end()
+    assert [x[0] for x in saved] == ['checkpoint_step000000008.pt', 'final_model.pt']
+    assert saved[-1][1]['environment_steps'] == 10
+    evaluator = SimpleNamespace(evaluate=lambda: evaluations.append(True) or {
+        'completion_rate': 1., 'valid_laps': 20, 'fastest_valid_lap_s': 5.6,
+        'offtrack_error_m_s_per_lap': .001,
+    })
+    selection = EvaluationCheckpointHook(None, tmp_path, evaluator, evaluate_every=1,
+                                        evaluate_every_steps=8, selection_strategy='lap_time')
+    selection._save = lambda *args, **kwargs: None
+    selection.on_episode_end(0, 0, {}, {})
+    for steps in (4, 8, 10): selection.on_update({'train/environment_steps': steps})
+    assert len(evaluations) == 1

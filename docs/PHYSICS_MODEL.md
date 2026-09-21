@@ -175,24 +175,60 @@ Actual samples, seed/stream/draw metadata, and nominal configuration remain in
 `physics_episodes.jsonl` and environment info. Friction is not exposed as a policy
 observation. Map `surface` metadata is descriptive and does not override grip.
 
+## Paper time-trial protocol
+
+`ppo_lap_completion_pretrain.yaml` now configures 400 environments, 1,024
+transitions per environment per rollout, and 120,000,000 aggregate transitions.
+`params.n_steps` is pooled (409,600). Resets remain inside a rollout; the final
+budget remainder is collected exactly. True terminals block value bootstrapping,
+truncations use their final observation value, and both stop cross-episode GAE.
+The learning-rate schedule uses collected transitions. The stated endpoints are
+from the paper; linear interpolation is an explicit implementation choice.
+
+The existing progress component computes signed, seam-corrected progress in
+metres. If `info.track_limits.exceeded` is true, it returns only -1 instead.
+There are no finish bonuses, time costs, collision penalties, or progress clamps.
+Training has no lap or artificial time-limit termination. Boundary violations
+reset to a random centerline position and resample friction.
+
+`track_limits.enabled` selects a center-point boundary test, consistent with the
+paper's Frenet lateral-distance criterion. Full wall-to-wall width is interpolated
+at the current projection, then halved. This assumes a lane-bisecting centerline;
+the supplied 1 m L-map satisfies this assumption. It does not use upcoming preview
+widths or the vehicle footprint. Wall-contact stopping is disabled for this
+single-vehicle task; otherwise the footprint could hit a wall before the vehicle
+center reaches the geometric boundary. Ordinary race scenarios retain collisions.
+
+Evaluation uses nominal grip, 20 completed laps, and an 800 s safety horizon.
+It records excursions without resetting on them. The first accepted forward
+crossing starts timing, excluding the random-spawn approach. Reports include
+fastest valid lap, mean/std lap time, fraction of laps with violations, and
+mean time-integrated off-track distance in m*s per complete lap. Unfinished laps
+are excluded from these lap metrics; completion and timeout remain reported.
+Timing and integration are sampled at the 0.05 s decision interval.
+
+Checkpoint/evaluation cadence is measured in transitions, rounded up to a
+completed PPO update. The default interval is ten full rollouts (4,096,000
+transitions). `final_model.pt` saves the final update even when the budget ends
+mid-episode. `lap_time` checkpoint selection ranks completion, valid-lap count,
+fastest valid lap, then off-track error. This selection rule is an implementation
+choice, not a claimed paper setting. A smaller worker count is an experimental
+deviation; change pooled `n_steps` to keep 1,024 steps per worker.
+
 ## Remaining differences from the paper
 
-This migration makes the physics path testable; it does not replace the training
-objective with the full experimental protocol. Pretraining still uses the
-three-lap completion task, normalized progress, completion/crash/timeout terms,
-and episode-based learning-rate decay. The time penalty was scaled by five to
-preserve its per-second cost at the new 0.05 s interval. Boundary-triggered resets,
-the paper's exclusive distance-progress/boundary reward, fixed-length rollouts
-across resets, and the 120-million-decision training schedule remain future work.
-Worker counts are practical local settings, not the paper's 400-instance setup.
-A pooled n_steps value of 1024 per worker is only a maximum: episode ends can
-still flush shorter fragments in the existing trainer.
+Vehicle coefficients and actuator time constants remain synthetic. Enter fitted
+values in `configs/vehicle/combined_slip.yaml` under `environment.vehicle_params`,
+including its existing `calibration` metadata. No vehicle constants are added to
+the scenario. The paper's identified dataset/parameters, observation sample count
+and normalization maxima, and unspecified PPO settings are still required for an
+exact reproduction. The L-map has the reported 17 m length and 1 m width but its
+corner geometry is an approximation, not the authors' original track.
 
-The current circle is approximately 349.45 m long; it is a software test map,
-not the authors' 17 m L-shaped track. A similar map, fitted model coefficients,
-normalization data, and held-out maneuver validation are needed before making
-performance comparisons. Existing legacy MAPPO scenarios still require their own
-physics/observation/action migration before receiving a new 50-value PPO actor.
+Legacy MAPPO scenarios require a compatible physics/observation/action contract
+before receiving a new 50-value PPO actor. Experimental scenario aliases may use
+smaller worker counts or different PPO settings; only the canonical scenario
+selects the paper's stated parallelism and main training settings.
 
 ## Checks and checkpoint compatibility
 

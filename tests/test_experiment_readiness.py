@@ -94,7 +94,9 @@ def test_unsupported_explicit_roles_are_rejected(algorithm, trainable) -> None:
 def test_ignored_training_options_are_rejected() -> None:
     scenario = load_and_expand_scenario("scenarios/ppo.yaml")
     scenario["experiment"]["total_steps"] = 10
-    with pytest.raises(ScenarioError, match="episodes"):
+    validate_scenario(scenario)  # PPO now supports an explicit transition budget.
+    scenario["experiment"]["total_steps"] = 0
+    with pytest.raises(ScenarioError, match="total_steps"):
         validate_scenario(scenario)
     scenario = load_and_expand_scenario("scenarios/mappo_gaplock.yaml")
     scenario["curriculum"] = {"phases": [{"name": "first"}]}
@@ -259,50 +261,15 @@ def test_signed_progress_delta_clamps_projection_jumps_symmetrically() -> None:
     assert negative["progress_delta/bonus"] == pytest.approx(-2.5)
 
 
-def test_ppo_pretraining_uses_lap_normalized_progress_reward() -> None:
+def test_ppo_pretraining_uses_paper_distance_and_boundary_reward() -> None:
     scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
-    assert scenario["agents"]["car_0"]["reward"].endswith(
-        "configs/reward/tasks/lap_completion_pretraining.yaml"
-    )
-
-    composer = RewardComposer.from_file(
-        "configs/reward/tasks/lap_completion_pretraining.yaml"
-    )
-    component_names = {type(component).__name__ for component in composer._components}
-    assert "ReverseVelocityPenaltyComponent" not in component_names
-    assert "WrongWayPenaltyComponent" not in component_names
-
-    active_info = {
-        "terminal_reason": None,
-        "lap_crossed": False,
-        "race_completed": False,
-        "collision": False,
-    }
-    forward_total, forward = composer.compute(
-        {"info": {**active_info, "centerline": {"progress_delta": 0.01}}}
-    )
-    reverse_total, reverse = composer.compute(
-        {"info": {**active_info, "centerline": {"progress_delta": -0.01}}}
-    )
-    crash_total, crash = composer.compute(
-        {
-            "done": True,
-            "terminated": True,
-            "info": {
-                **active_info,
-                "terminal_reason": "collision",
-                "collision": True,
-                "centerline": {"progress_delta": 0.0},
-            },
-        }
-    )
-
-    assert forward["progress_delta/bonus"] == pytest.approx(0.01)
-    assert reverse["progress_delta/bonus"] == pytest.approx(-0.01)
-    assert forward_total == pytest.approx(0.01 - 1.0 / 16_000)
-    assert reverse_total == pytest.approx(-0.01 - 1.0 / 16_000)
-    assert crash["collision/penalty"] == pytest.approx(-1.0)
-    assert crash_total == pytest.approx(-1.0 - 1.0 / 16_000)
+    assert scenario["agents"]["car_0"]["reward"].endswith("configs/reward/tasks/lap_completion_pretraining.yaml")
+    composer = RewardComposer.from_file("configs/reward/tasks/lap_completion_pretraining.yaml")
+    assert len(composer._components) == 1
+    for delta, outside, expected in ((.01, False, .17), (-.01, False, -.17), (.01, True, -1)):
+        reward, _ = composer.compute({"track_length": 17., "info": {
+            "centerline": {"progress_delta": delta}, "track_limits": {"exceeded": outside}}})
+        assert reward == pytest.approx(expected)
 
 
 def test_circle_mappo_scenario_uses_ppo_actor_contract() -> None:

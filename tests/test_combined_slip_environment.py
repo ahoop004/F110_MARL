@@ -19,7 +19,10 @@ from wrappers.observations.track import FrenetVehicleTrackComponent
 @pytest.fixture
 def scenario():
     config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
-    config['experiment']['num_envs'] = 1
+    config['experiment'].update(num_envs=1, total_steps=None)
+    config['environment'].pop('track_limits', None)
+    config['environment']['terminate_on_collision'] = True
+    config['environment']['episode_termination']['lap_completion'] = True
     config['environment'].pop('spawn')
     config['environment'].pop('friction')
     config['environment'].update(timestep=.01, action_repeat=2, max_steps=32)

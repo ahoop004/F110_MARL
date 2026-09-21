@@ -576,6 +576,7 @@ class LapTracker:
                 # first forward crossing starts the lap; the following
                 # crossing is the first completed full circuit.
                 self._initial_crossing_seen[idx] = True
+                record.lap_start_step = int(step)
                 continue
 
             crossings[agent_id] = True

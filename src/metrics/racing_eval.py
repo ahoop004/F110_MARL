@@ -72,6 +72,13 @@ class AgentEpisodeFacts:
     final_lap_count: int = 0
     net_progress: float = 0.0
     progress_delta_samples: int = 0
+    lap_times_steps: list[int] = field(default_factory=list)
+    valid_lap_times_steps: list[int] = field(default_factory=list)
+    lap_offtrack_sums: list[float] = field(default_factory=list)
+    lap_boundary_violations: list[bool] = field(default_factory=list)
+    _lap_started: bool = False
+    _lap_offtrack_sum: float = 0.0
+    _lap_exceeded: bool = False
 
     @property
     def completed(self) -> bool:
@@ -153,6 +160,22 @@ def update_agent_step_facts(
         if facts.done_step is not None:
             continue
         facts.active_steps += 1
+        limits = info.get("track_limits")
+        if isinstance(limits, Mapping):
+            if facts._lap_started:
+                facts._lap_offtrack_sum += float(limits["offtrack_distance"])
+                facts._lap_exceeded |= bool(limits["exceeded"])
+            if info.get("lap_crossed") and info.get("lap_time_steps") is not None:
+                duration = int(info["lap_time_steps"])
+                facts.lap_times_steps.append(duration)
+                facts.lap_offtrack_sums.append(facts._lap_offtrack_sum)
+                facts.lap_boundary_violations.append(facts._lap_exceeded)
+                if not facts._lap_exceeded:
+                    facts.valid_lap_times_steps.append(duration)
+                facts._lap_offtrack_sum = 0.0
+                facts._lap_exceeded = False
+            if info.get("lap_start_step") is not None:
+                facts._lap_started = True
         facts.final_lap_count = int(info.get("lap_count", facts.final_lap_count))
         terminal_reason = info.get("terminal_reason")
         if terminal_reason:
@@ -309,6 +332,20 @@ def aggregate_eval_episodes(
         summary["mean_clean_finish_time_s"] = float(np.mean(finish_times)) if finish_times else None
     summary["self_crash_rate"] = summary["collision_rate"]
     progress_facts = [ep.agents[aid] for ep in episodes for aid in trainable_ids if aid in ep.agents]
+    if timestep is not None:
+        laps = [v * timestep for f in progress_facts for v in f.lap_times_steps]
+        valid = [v * timestep for f in progress_facts for v in f.valid_lap_times_steps]
+        offtrack = [v * timestep for f in progress_facts for v in f.lap_offtrack_sums]
+        violations = [v for f in progress_facts for v in f.lap_boundary_violations]
+        summary.update({
+            "measured_laps": len(laps),
+            "valid_laps": len(valid),
+            "fastest_valid_lap_s": min(valid) if valid else None,
+            "mean_lap_time_s": float(np.mean(laps)) if laps else None,
+            "std_lap_time_s": float(np.std(laps)) if laps else None,
+            "offtrack_error_m_s_per_lap": float(np.mean(offtrack)) if offtrack else None,
+            "boundary_violation_lap_rate": float(np.mean(violations)) if violations else None,
+        })
     summary["mean_net_progress"] = (
         _mean(facts.net_progress for facts in progress_facts)
         if progress_facts and all(facts.progress_delta_samples for facts in progress_facts)

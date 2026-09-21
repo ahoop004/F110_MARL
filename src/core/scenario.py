@@ -128,8 +128,12 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress"}:
-        raise ScenarioError("evaluation.selection_strategy must be completion_safety or completion_progress.")
+    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time"}:
+        raise ScenarioError("evaluation.selection_strategy must be completion_safety, completion_progress, or lap_time.")
+    for key in ("target_laps", "every_steps"):
+        value = evaluation.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+            raise ScenarioError(f"evaluation.{key} must be a positive integer")
     if protocol not in {"selection", "final"}:
         raise ScenarioError(f"Unknown evaluation protocol: {protocol!r}.")
     selection = {

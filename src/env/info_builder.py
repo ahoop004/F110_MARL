@@ -10,6 +10,7 @@ from src.env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFac
 
 
 MINIMAL_INFO_KEYS = {
+    "lap_start_step", "lap_time_steps",
     "track_limits",
     "collision",
     "target_collision",
@@ -36,6 +37,7 @@ MINIMAL_INFO_KEYS = {
 # New keys should be added here only when their semantics are settled.
 STABLE_STEP_INFO_KEYS: frozenset = frozenset(
     {
+        "lap_start_step", "lap_time_steps",
         "track_limits",      # current center-position boundary test, in metres
         "collision",         # bool — this agent collided this step
         "target_collision",  # bool — target agent collided this step
@@ -111,6 +113,8 @@ def add_step_info_fields(
                 {
                     "lap_crossed": bool(record.lap_crossed),
                     "lap_count": int(record.lap_count),
+                    "lap_start_step": record.lap_start_step,
+                    "lap_time_steps": record.lap_time_steps,
                     "target_laps": int(record.target_laps),
                     "race_completed": bool(record.race_completed),
                     "terminal_reason": (

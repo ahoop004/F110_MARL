@@ -22,6 +22,9 @@ from wrappers.observations.composer import ObservationComposer
 def scenario():
     config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_combined_slip.yaml')
     config['environment'].pop('spawn')
+    config['environment'].pop('track_limits', None)
+    config['environment']['terminate_on_collision'] = True
+    config['environment']['episode_termination']['lap_completion'] = True
     config['environment']['friction'] = {
         'version': 1, 'scope': 'shared',
         'train': {'mode': 'uniform', 'low': .8, 'high': 1.1},

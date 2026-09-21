@@ -41,6 +41,7 @@ def build_observation_spaces(
     x_max: float,
     y_min: float,
     y_max: float,
+    continuous_laps: bool = False,
 ) -> Dict[str, DictSpaceSpec]:
     pose_low = np.array([x_min, y_min, -np.pi], dtype=np.float32)
     pose_high = np.array([x_max, y_max, np.pi], dtype=np.float32)
@@ -61,7 +62,7 @@ def build_observation_spaces(
         accel_high.fill(np.inf)
         ang_cap = np.inf
 
-    lap_cap = float(target_laps)
+    lap_cap = np.inf if continuous_laps else float(target_laps)
     lap_low = np.array([0.0, 0.0], dtype=np.float32)
     lap_high = np.array([lap_cap, 1e5], dtype=np.float32)
 

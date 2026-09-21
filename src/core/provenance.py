@@ -146,6 +146,9 @@ def build_run_provenance(
         "trainable_agents": list(trainable_agents),
         "target_laps": environment.get("target_laps", 1),
         "max_steps": environment.get("max_steps"),
+        "training_total_steps": experiment.get("total_steps"),
+        "track_limits": environment.get("track_limits"),
+        "episode_termination": environment.get("episode_termination"),
         "map_split": {
             "train": list(environment.get("map_bundles_train") or []),
             "eval": list(environment.get("map_bundles_eval") or []),

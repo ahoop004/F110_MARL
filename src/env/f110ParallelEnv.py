@@ -1311,6 +1311,7 @@ class F110ParallelEnv:
             lidar_range=self.lidar_range,
             vehicle_params=self.params,
             target_laps=getattr(self, "target_laps", 1),
+            continuous_laps=not self.lifecycle.finish_on_laps,
             x_min=x_min,
             x_max=x_max,
             y_min=y_min,
@@ -1586,7 +1587,7 @@ class F110ParallelEnv:
     ) -> None:
         """Populate Frenet facts for the initial observation after reset."""
         if self.track_limits_enabled and (not self.centerline_features_enabled
-                                          or self._track_preview_geometry is None):
+                                          or self._track_preview_geometry is None or not self.walls):
             raise ValueError("Track limits require centerline features and wall geometry")
         if not self.centerline_features_enabled or self.centerline_points is None:
             self._last_centerline_facts = {}

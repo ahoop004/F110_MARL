@@ -589,6 +589,8 @@ def main() -> None:
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
             provenance=provenance,
             save_best_training_reward=not evaluation_selection_enabled,
+            save_every_steps=(int(params.get("checkpoint_every_steps", 4096000))
+                              if exp_cfg.get("total_steps") is not None else None),
         ),  # agent set below
     ]
     if wandb_logger:
@@ -1367,14 +1369,16 @@ def _run_on_policy(
                 evaluator=evaluator,
                 evaluate_every=int(eval_cfg.get("every_episodes", 100)),
                 selection_strategy=eval_cfg.get("selection_strategy", "completion_safety"),
+                evaluate_every_steps=eval_cfg.get("every_steps"),
                 provenance=provenance,
                 console=console,
                 wandb_logger=wandb_logger,
             )
         )
         console.print_info(
-            "Best-model selection: deterministic lap-completion evaluation "
-            f"every {int(eval_cfg.get('every_episodes', 100))} episodes "
+            "Best-model selection: deterministic evaluation "
+            + (f"every {eval_cfg['every_steps']} transitions " if eval_cfg.get("every_steps")
+               else f"every {int(eval_cfg.get('every_episodes', 100))} episodes ") +
             f"over {int(eval_cfg.get('episodes', 8))} fixed-seed episodes; "
             f"strategy={eval_cfg.get('selection_strategy', 'completion_safety')}."
         )

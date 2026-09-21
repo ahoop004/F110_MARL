@@ -85,7 +85,7 @@ def _aggregate_progress_delta(
 
 
 class ProgressDeltaBonusComponent(RewardComponent):
-    """Reward positive lap-fraction progress from the centerline tracker."""
+    """Signed or forward-only progress, with optional exclusive boundary cost."""
 
     def __init__(self, config: dict) -> None:
         self.weight = float(config.get("weight", 100.0))

@@ -48,3 +48,13 @@ def test_complete_four_reward_enables_reverse_velocity_penalty() -> None:
         isinstance(component, ReverseVelocityPenaltyComponent)
         for component in composer._components
     )
+
+
+@pytest.mark.parametrize('delta,exceeded,expected', [(.02, False, .34), (-.02, False, -.34), (.2, True, -1), (-.2, True, -1)])
+def test_paper_progress_reward_is_metres_or_exclusive_boundary(delta, exceeded, expected):
+    composer = RewardComposer.from_file('configs/reward/tasks/lap_completion_pretraining.yaml')
+    reward, _ = composer.compute({'track_length': 17., 'info': {
+        'centerline': {'progress_delta': delta}, 'track_limits': {'exceeded': exceeded},
+        'collision': True, 'race_completed': True, 'time_limit': True,
+    }, 'done': True, 'terminated': True, 'truncated': False})
+    assert reward == pytest.approx(expected)

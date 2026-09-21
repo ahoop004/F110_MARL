@@ -324,6 +324,7 @@ class CheckpointHook(TrainingHook):
         save_every: int = 100,
         provenance: Optional[Dict[str, Any]] = None,
         save_best_training_reward: bool = True,
+        save_every_steps: Optional[int] = None,
     ) -> None:
         from pathlib import Path
         self._agent = agent
@@ -334,6 +335,24 @@ class CheckpointHook(TrainingHook):
         self._recent_rewards: Deque[float] = deque(maxlen=50)
         self._provenance = dict(provenance or {})
         self._save_best_training_reward = bool(save_best_training_reward)
+        if save_every_steps is not None and (isinstance(save_every_steps, bool)
+                or not isinstance(save_every_steps, int) or save_every_steps <= 0):
+            raise ValueError("save_every_steps must be a positive integer")
+        self._save_every_steps = save_every_steps
+        self._next_save_step = save_every_steps
+        self._environment_steps = 0
+
+    def on_update(self, metrics: Dict[str, float]) -> None:
+        self._environment_steps = int(metrics.get("train/environment_steps", self._environment_steps))
+        if self._next_save_step is not None and self._environment_steps >= self._next_save_step:
+            self._save(self._dir / f"checkpoint_step{self._environment_steps:09d}.pt",
+                       metadata={"environment_steps": self._environment_steps})
+            self._next_save_step = (self._environment_steps // self._save_every_steps + 1) * self._save_every_steps
+
+    def on_training_end(self) -> None:
+        if self._save_every_steps is not None:
+            self._save(self._dir / "final_model.pt",
+                       metadata={"environment_steps": self._environment_steps})
 
     def _save(self, path: Any, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Save atomically enough to preserve the original agent checkpoint on error."""
@@ -364,6 +383,8 @@ class CheckpointHook(TrainingHook):
             annotated.unlink(missing_ok=True)
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
+        if self._save_every_steps is not None:
+            return
         self._recent_rewards.append(reward)
         mean = float(np.mean(self._recent_rewards))
 
@@ -398,8 +419,9 @@ class EvaluationCheckpointHook(CheckpointHook):
         console: Optional[ConsoleLogger] = None,
         wandb_logger: Optional[WandbLogger] = None,
         selection_strategy: str = "completion_safety",
+        evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"completion_safety", "completion_progress"}:
+        if selection_strategy not in {"completion_safety", "completion_progress", "lap_time"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -411,6 +433,11 @@ class EvaluationCheckpointHook(CheckpointHook):
         )
         self._evaluator = evaluator
         self._evaluate_every = max(1, int(evaluate_every))
+        if evaluate_every_steps is not None and (isinstance(evaluate_every_steps, bool)
+                or not isinstance(evaluate_every_steps, int) or evaluate_every_steps <= 0):
+            raise ValueError("evaluate_every_steps must be a positive integer")
+        self._evaluate_every_steps = evaluate_every_steps
+        self._next_evaluation_step = evaluate_every_steps
         self._console = console
         self._wandb = wandb_logger
         self._best_score: Optional[tuple[float, float, float, float]] = None
@@ -418,6 +445,13 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+        if strategy == "lap_time":
+            fastest = summary.get("fastest_valid_lap_s")
+            error = summary.get("offtrack_error_m_s_per_lap")
+            return (float(summary.get("completion_rate", 0.0)),
+                    float(summary.get("valid_laps", 0)),
+                    -float(fastest) if fastest is not None else float("-inf"),
+                    -float(error) if error is not None else float("-inf"))
         completion = float(summary.get("completion_rate", 0.0))
         collision = float(summary.get("collision_rate", 1.0))
         progress = float(summary.get("mean_progress", 0.0))
@@ -440,20 +474,29 @@ class EvaluationCheckpointHook(CheckpointHook):
         return (completion, -collision, progress, finish_speed_score)
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
+        if self._evaluate_every_steps is not None:
+            return
         if (episode + 1) % self._evaluate_every != 0:
             return
+        self._evaluate_checkpoint(episode + 1)
+
+    def on_update(self, metrics: Dict[str, float]) -> None:
+        self._environment_steps = int(metrics.get("train/environment_steps", self._environment_steps))
+        if self._next_evaluation_step is not None and self._environment_steps >= self._next_evaluation_step:
+            self._evaluate_checkpoint(None)
+            self._next_evaluation_step = (self._environment_steps // self._evaluate_every_steps + 1) * self._evaluate_every_steps
+
+    def _evaluate_checkpoint(self, completed_episodes: Optional[int]) -> None:
 
         summary = dict(self._evaluator.evaluate())
         score = self.selection_score(summary, self._selection_strategy)
         is_best = self._best_score is None or score > self._best_score
         record = {
-            "training_episode": episode + 1,
+            "training_episode": completed_episodes,
+            "environment_steps": self._environment_steps,
             "selection_strategy": self._selection_strategy,
             "selection_score": [
-                score[0],
-                score[1],
-                score[2],
-                score[3] if np.isfinite(score[3]) else None,
+                value if np.isfinite(value) else None for value in score
             ],
             "is_best": is_best,
             **summary,
@@ -467,7 +510,9 @@ class EvaluationCheckpointHook(CheckpointHook):
                 for key, value in summary.items()
                 if isinstance(value, (int, float)) and value is not None
             }
-            scalar_metrics["eval/training_episode"] = episode + 1
+            if completed_episodes is not None:
+                scalar_metrics["eval/training_episode"] = completed_episodes
+            scalar_metrics["eval/environment_steps"] = self._environment_steps
             self._wandb.log_metrics(scalar_metrics)
 
         if self._console is not None:
@@ -476,7 +521,7 @@ class EvaluationCheckpointHook(CheckpointHook):
             progress_key = "mean_net_progress" if self._selection_strategy == "completion_progress" else "mean_progress"
             self._console.print_info(
                 "checkpoint eval  "
-                f"episode={episode + 1}  "
+                f"episode={completed_episodes}  steps={self._environment_steps}  "
                 f"completion={float(summary.get('completion_rate', 0.0)):.1%}  "
                 f"collision={float(summary.get('collision_rate', 0.0)):.1%}  "
                 f"timeout={float(summary.get('timeout_rate', 0.0)):.1%}  "

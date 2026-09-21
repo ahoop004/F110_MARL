@@ -67,3 +67,18 @@ def test_reset_clears_results_and_finish_order() -> None:
     assert all(record.terminal_reason is None for record in lifecycle.records.values())
     lifecycle.record_lap_crossing("car_0", step=2)
     assert lifecycle.records["car_0"].finish_position == 1
+
+
+def test_time_trial_continues_after_laps_and_ends_at_boundary():
+    lifecycle = RaceLifecycle(['car_0'], 2, finish_on_laps=False)
+    for step in (10, 20, 30):
+        assert not lifecycle.record_lap_crossing('car_0', step=step)
+    record = lifecycle.records['car_0']
+    assert record.is_active and not record.race_completed
+    assert record.lap_count == 3
+    assert record.lap_time_steps == 10
+    assert lifecycle.record_track_boundary('car_0', step=31)
+    assert record.terminal_reason == TerminalReason.TRACK_BOUNDARY
+    assert not lifecycle.record_collision('car_0', step=32)
+    lifecycle.reset()
+    assert lifecycle.records['car_0'].lap_start_step is None

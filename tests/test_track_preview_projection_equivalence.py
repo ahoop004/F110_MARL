@@ -186,3 +186,26 @@ def test_projection_preserves_off_track_reverse_heading_and_invalid_input() -> N
         project_to_centerline(
             geometry, np.array([np.nan, 0.0], dtype=np.float32), heading=0.0
         )
+
+
+@pytest.mark.parametrize('lateral,exceeded,distance', [(0.5, False, 0.), (0.6, True, .1), (-.6, True, .1)])
+def test_paper_boundary_uses_current_full_width_not_lookahead(lateral, exceeded, distance):
+    from env.f110ParallelEnv import F110ParallelEnv
+    from types import SimpleNamespace
+    geometry = SimpleNamespace(nearest_index=lambda *a, **kw: 0,
+        preview=lambda *a, **kw: {'current_width': 1., 'current_lateral_error': lateral,
+                                  'width': np.array([10.])})
+    env = F110ParallelEnv.__new__(F110ParallelEnv)
+    env._track_preview_geometry = geometry
+    env._track_preview_agents = frozenset(['car_0'])
+    env.possible_agents = ['car_0']
+    env._agent_id_to_index = {'car_0': 0}
+    env.poses_x, env.poses_y = np.array([0.]), np.array([lateral])
+    env._track_preview_last_indices = {'car_0': -1}
+    env._track_preview_points = 1
+    env.track_limits_enabled = True
+    info = {}
+    env._inject_track_previews(info)
+    assert info['car_0']['track_limits']['half_width'] == .5
+    assert info['car_0']['track_limits']['exceeded'] is exceeded
+    assert info['car_0']['track_limits']['offtrack_distance'] == pytest.approx(distance)

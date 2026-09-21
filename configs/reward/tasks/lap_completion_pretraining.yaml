@@ -1,22 +1,11 @@
 task:
   name: lap_completion_pretraining
-  description: Lap-completion physics test at a 0.05 s decision interval.
+  description: Paper Eq. (3), signed distance progress or exclusive boundary penalty.
 
-# One full forward lap contributes approximately +1 from progress. Reverse
-# travel contributes the corresponding negative delta, while a crash or a
-# timeout costs one lap-equivalent. The per-substep time cost sums to -1 only
-# when the environment consumes its full 16,000-step horizon.
 reward:
   progress_delta_bonus:
     enabled: true
     weight: 1.0
+    units: metres
     positive_only: false
-    max_delta: 0.025
-
-  collision: {enabled: true, penalty: -1.0}
-
-  timeout_penalty: {enabled: true, penalty: -1.0}
-
-  lap_completion: {enabled: true, bonus: 1.0, require_clean: true}
-
-  step_time_penalty: {enabled: true, penalty: -0.0000625, apply_on_terminal: true}
+    boundary_penalty: -1.0

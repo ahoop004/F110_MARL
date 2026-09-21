@@ -1,4 +1,4 @@
-# Single-agent PPO testing/pretraining with planar MF6.1 and wheel actuators.
+# Paper time-trial PPO protocol with planar MF6.1 and wheel actuators.
 # Synthetic coefficients: this is not a calibrated reproduction of the paper.
 # Train fresh: previous legacy/reduced-physics checkpoints are incompatible.
 includes:
@@ -9,9 +9,9 @@ includes:
 
 experiment:
   name: ppo_lap_completion_pretrain
-  episodes: 10000
+  total_steps: 120000000  # aggregate policy decisions across all environments
   seed: 42
-  num_envs: 4
+  num_envs: 400
   torch_threads: 1
 
 environment:
@@ -47,12 +47,12 @@ environment:
     # - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
-  # Keep the existing lap-completion test task while the new map is prepared.
+  # Continuous time-trial training: only a boundary violation resets the car.
   timestep: 0.05
-  target_laps: 3
+  target_laps: 20  # used for evaluation; training does not finish at this count
   lap_counting:
     count_initial_crossing_as_lap: false
-  max_steps: 16000
+  max_steps: 0  # no artificial training episode time limit
   action_repeat: 1
   centerline_autoload: true
   centerline_features: true
@@ -62,6 +62,9 @@ environment:
   walls_autoload: true
   episode_termination:
     mode: any_agent
+    lap_completion: false
+  track_limits: {enabled: true, terminate: true}
+  terminate_on_collision: false  # use geometric limits; wall contacts do not stop physics
   random_spawn:
     enabled: true
     allow_reuse: true
@@ -80,17 +83,18 @@ environment:
     train: {mode: gaussian, relative_std: 0.02}
     eval: {mode: fixed, mu: 1.0489}
 
-# Selection replays fixed seeds on the same track as training. Checkpoints are
-# ranked by completion rate, lower collision rate, progress, then finish steps.
+# Evaluation follows full laps and records excursions without boundary resets.
+# Checkpoint cadence/selection is an explicit implementation choice.
 evaluation:
   enabled: true
-  every_episodes: 500
-  episodes: 8
+  every_steps: 4096000  # ten complete 400 x 1024 collection rounds
+  episodes: 1
+  target_laps: 20
+  max_steps: 16000  # finite evaluation limit, 800 seconds
   seed: 10042
-  # Inherit environment.max_steps: 16000 decisions = 800 s at dt=0.05.
-  # Run the independent final set explicitly after checkpoint selection.
+  selection_strategy: lap_time
   final_test:
-    episodes: 20
+    episodes: 1
     seed: 20042
 
 agents:
@@ -101,8 +105,8 @@ agents:
     observation: ../configs/observations/rl_racer_simulated_wheel.yaml
     reward: ../configs/reward/tasks/lap_completion_pretraining.yaml
     params:
-      # arXiv:2504.02420v2, Sec. III-E. Decay is linear over completed
-      # episodes here; the paper uses a fixed environment-step budget.
+      # Sec. III-E endpoints; linear interpolation is an explicit assumption.
+      # Schedule progress counts collected transitions, including boundary resets.
       learning_rate: 0.001
       lr_schedule: linear
       learning_rate_end: 0.0001
@@ -111,9 +115,9 @@ agents:
       vf_hidden_dims: [512, 512]
       activation: leaky_relu  # fixed negative slope 0.2
       # Paper decision interval and discount; rollout size is pooled across workers.
-      n_steps: 4096  # 1024 decisions per worker with four workers
+      n_steps: 409600  # pooled: 400 environments x 1024 decisions, across resets
       gamma: 0.99
-      checkpoint_every: 500
+      checkpoint_every_steps: 4096000
       device: cuda
     action_constraints:
       speed_control: wheel_acceleration
@@ -129,6 +133,6 @@ wandb:
   name: null
   group: ppo-lap-completion-pretrain
   job_type: actor-pretraining
-  tags: [ppo, single-agent, lap-completion, actor-pretraining, mf61-planar, uncalibrated]
-  notes: "Planar MF6.1 physics test with synthetic coefficients, 50-value Frenet observation, wheel acceleration, Gaussian grip, and the existing lap-completion task"
+  tags: [ppo, single-agent, time-trial, actor-pretraining, mf61-planar, uncalibrated]
+  notes: "Planar MF6.1 physics test with synthetic coefficients, 50-value Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward, continuous resets, and a 120M-transition budget"
   mode: online

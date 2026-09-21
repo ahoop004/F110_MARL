@@ -85,12 +85,14 @@ def test_initial_crossing_can_start_race_without_completing_a_lap() -> None:
     # Crossing from the starting grid begins the lap.
     assert _update(tracker, 0.1, 1.0, 1) is False
     assert lifecycle.records["car_0"].lap_count == 0
+    assert lifecycle.records["car_0"].lap_start_step == 1
     assert lifecycle.records["car_0"].status == AgentRaceStatus.ACTIVE
 
     # The car must travel back around and cross again to complete one circuit.
     _return_around_finish(tracker, 2)
     assert _update(tracker, 0.1, 1.0, 5) is True
     assert lifecycle.records["car_0"].lap_count == 1
+    assert lifecycle.records["car_0"].lap_time_steps == 4
     assert lifecycle.records["car_0"].status == AgentRaceStatus.FINISHED
 
 

@@ -43,16 +43,19 @@ class AgentLifecycleRecord:
 
     agent_id: str
     target_laps: int
+    finish_on_laps: bool = True
     status: AgentRaceStatus = AgentRaceStatus.ACTIVE
     terminal_reason: Optional[TerminalReason] = None
     terminal_step: Optional[int] = None
     finish_position: Optional[int] = None
     lap_crossed: bool = False
     lap_count: int = 0
+    lap_start_step: Optional[int] = None
+    lap_time_steps: Optional[int] = None
 
     @property
     def race_completed(self) -> bool:
-        return self.lap_count >= self.target_laps
+        return self.finish_on_laps and self.lap_count >= self.target_laps
 
     @property
     def is_active(self) -> bool:
