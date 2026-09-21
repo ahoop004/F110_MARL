@@ -341,32 +341,36 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     if limits.get("enabled") and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)
-    for name in ("num_envs", "torch_threads", "worker_startup_batch_size",
+    for name in ("num_envs", "num_workers", "torch_threads", "worker_startup_batch_size",
                  "worker_startup_timeout_s", "worker_response_timeout_s"):
         value = experiment.get(name, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ScenarioError(f"'experiment.{name}' must be a positive integer.")
     if num_envs > 1:
-        if trainable_algos != {"ppo"}:
-            raise ScenarioError("Parallel environments currently support PPO only; MAPPO uses num_envs=1.")
+        if trainable_algos not in ({"ppo"}, {"mappo"}):
+            raise ScenarioError("Parallel environments require PPO or MAPPO.")
         if environment.get("render") or scenario.get("curriculum"):
-            raise ScenarioError("Parallel PPO requires headless training without curriculum.")
+            raise ScenarioError("Parallel training requires headless training without curriculum.")
         seed = experiment.get("seed")
         env_seed = environment.get("seed", seed)
         if env_seed is None:
             env_seed = seed
         if any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < 2 ** 32
                for v in (seed, env_seed)):
-            raise ScenarioError("Parallel PPO requires explicit integer seeds in [0, 2**32).")
+            raise ScenarioError("Parallel training requires explicit integer seeds in [0, 2**32).")
         if total_steps is not None and total_steps < num_envs:
             raise ScenarioError("Parallel PPO total_steps must be at least num_envs")
         if total_steps is None and int(experiment.get("episodes", 1000)) < num_envs:
-            raise ScenarioError("Parallel PPO requires at least num_envs total episodes.")
+            raise ScenarioError("Parallel training requires at least num_envs total episodes.")
         params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
         n_steps = params.get("n_steps", 2048)
-        if (isinstance(n_steps, bool) or not isinstance(n_steps, int)
+        if trainable_algos == {"ppo"} and (isinstance(n_steps, bool) or not isinstance(n_steps, int)
                 or n_steps < num_envs or n_steps % num_envs):
             raise ScenarioError("Parallel PPO n_steps must be a positive multiple of num_envs.")
+        if trainable_algos == {"mappo"}:
+            horizon = scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256)
+            if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 1:
+                raise ScenarioError("MAPPO rollout_steps_per_env must be a positive integer")
     trainable_mappo = trainable_ids if trainable_algos == {"mappo"} else []
     if trainable_mappo:
         if scenario.get("curriculum"):

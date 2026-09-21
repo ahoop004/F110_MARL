@@ -1,6 +1,7 @@
 # Matched scratch/pretrained experiments for the current PPO pretraining setup.
 includes:
   - mappo_2v2_base.yaml
+  - ../training/mappo_parallel.yaml
 experiment:
   name: mappo_2v2_penalties_scratch
 training_defaults:
@@ -14,5 +15,5 @@ evaluation:
   selection_strategy: team_combined_penalties
 wandb:
   group: mappo-2v2-penalties-current-physics
-  tags: [mappo, 2v2, terminal-incidents-v1, current-pretrain-physics]
-  notes: "Matched physics, observations, opponents and rewards. Both-finished rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful ties."
+  tags: [mappo, 2v2, terminal-incidents-v1, current-pretrain-physics, racing-mpc-opponents]
+  notes: "Matched physics, observations, racing MPC opponents and rewards. Both-finished rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful ties."

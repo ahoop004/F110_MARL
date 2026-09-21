@@ -1,0 +1,9 @@
+# Stage 1 transfer: full actor fine-tuning; critic and optimizer start fresh.
+includes:
+  - mappo_2v2_base_scratch.yaml
+experiment:
+  name: mappo_2v2_base_pretrained
+training_defaults:
+  # Same frozen PPO source as the pretrained penalty arm; override with --pretrained-actor PATH.
+  # A missing checkpoint fails instead of silently running from scratch.
+  pretrained_actor_checkpoint: ../outputs/ppo_current_pretrain_s42/best_model.pt

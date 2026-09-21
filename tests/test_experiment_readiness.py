@@ -394,8 +394,7 @@ def test_parallel_ppo_rejects_unsupported_contracts(change, match):
         validate_scenario(scenario)
 
 
-def test_parallel_mappo_is_explicitly_rejected():
+def test_parallel_mappo_is_supported():
     scenario = load_and_expand_scenario("scenarios/legacy/mappo_gaplock.yaml")
     scenario["experiment"]["num_envs"] = 2
-    with pytest.raises(ScenarioError, match="PPO only"):
-        validate_scenario(scenario)
+    validate_scenario(scenario)

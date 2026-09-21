@@ -51,7 +51,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-steps", type=int, default=None,
                    help="Positive per-episode physics-step limit for bounded testing; also caps evaluation")
     p.add_argument("--num-envs", type=int, default=None,
-                   help="Parallel CPU environments for PPO training (default: 1)")
+                   help="Parallel CPU environments for PPO or MAPPO training")
+    p.add_argument("--num-workers", type=int, default=None,
+                   help="MAPPO CPU worker processes; capped at num-envs")
     p.add_argument("--torch-threads", type=int, default=None,
                    help="Parent PyTorch CPU threads; parallel collectors use one each")
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
@@ -104,7 +106,7 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
         scenario.setdefault("environment", {})["render"] = True
     elif args.no_render:
         scenario.setdefault("environment", {})["render"] = False
-    for name in ("num_envs", "torch_threads"):
+    for name in ("num_envs", "num_workers", "torch_threads"):
         value = getattr(args, name, None)
         if value is not None:
             scenario.setdefault("experiment", {})[name] = value
@@ -558,7 +560,7 @@ def main() -> None:
             "optimizer_restored": False,
             "training_progress_restored": False,
         }
-    if num_envs > 1:
+    if num_envs > 1 and algorithm == "ppo":
         env_seed = env_cfg.get("seed")
         env_seed = exp_cfg["seed"] if env_seed is None else env_seed
         provenance["ppo_collection"] = {
@@ -566,6 +568,17 @@ def main() -> None:
             "worker_seeds": [(exp_cfg["seed"] + i) % (2 ** 32) for i in range(num_envs)],
             "environment_seeds": [(env_seed + i) % (2 ** 32) for i in range(num_envs)],
             "max_steps_per_worker_rollout": int(params.get("n_steps", 2048)) // num_envs,
+        }
+    if num_envs > 1 and algorithm == "mappo":
+        provenance["mappo_collection"] = {
+            "mode": "synchronous_grouped_workers_v1", "num_envs": num_envs,
+            "num_workers": min(num_envs, int(exp_cfg.get("num_workers", num_envs))),
+            "worker_threads": 1,
+            "rollout_steps_per_env": scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256),
+            "environment_step_unit": "joint_environment_decisions_including_opponent_only_steps",
+            "policy_seeds": "parent RNG; deterministic worker/environment ordering",
+            "environment_seeds": [((env_cfg.get("seed") if env_cfg.get("seed") is not None
+                                    else exp_cfg["seed"]) + i) % (2 ** 32) for i in range(num_envs)],
         }
     if pretrained_actor_path is not None:
         provenance["pretrained_actor"] = {
@@ -601,7 +614,9 @@ def main() -> None:
             save_best_training_reward=not evaluation_selection_enabled,
             save_final=algorithm == "mappo",
             save_every_steps=(int(params.get("checkpoint_every_steps", 4096000))
-                              if exp_cfg.get("total_steps") is not None else None),
+                              if exp_cfg.get("total_steps") is not None or
+                              (algorithm == "mappo" and params.get("checkpoint_every_steps") is not None)
+                              else None),
         ),  # agent set below
     ]
     if wandb_logger:
@@ -1512,7 +1527,8 @@ def _run_mappo(
 
     console.print_info(
         f"Starting MAPPO training for {n_episodes} episodes "
-        f"| agents={trainable_ids} | obs_dim={obs_dim} | global_state_dim={global_state_dim}"
+        f"| num_envs={exp_cfg.get('num_envs', 1)} | agents={trainable_ids} "
+        f"| obs_dim={obs_dim} | global_state_dim={global_state_dim}"
     )
     console.print_info(
         "MAPPO contract: "
@@ -1566,6 +1582,7 @@ def _run_mappo(
                 agent, str(output_dir), evaluator,
                 evaluate_every=int(eval_cfg.get("every_episodes", 100)),
                 selection_strategy=eval_cfg.get("selection_strategy", "team_completion"),
+                evaluate_every_steps=eval_cfg.get("every_steps"),
                 provenance=provenance, console=console, wandb_logger=wandb_logger,
             ))
             console.print_info("Best MAPPO checkpoint selected by deterministic team evaluation.")
@@ -1573,7 +1590,11 @@ def _run_mappo(
             eval_env.close()
             raise
     try:
-        trainer.train(n_episodes=n_episodes)
+        num_envs = int(exp_cfg.get("num_envs", 1))
+        if num_envs > 1:
+            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes)
+        else:
+            trainer.train(n_episodes=n_episodes)
     finally:
         if evaluator is not None:
             evaluator.close()

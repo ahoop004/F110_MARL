@@ -24,8 +24,9 @@ from utils.track_preview import _resample_uniform
 
 def scenario_for(controller, map_name, mode, seed, max_steps, laps):
     scenario = load_and_expand_scenario(str(ROOT/'scenarios/mappo_2v2_penalties_scratch.yaml'))
-    hybrid = deepcopy(scenario['agents']['car_2'])
-    hybrid.pop('target_id', None)
+    # The experiment opponents may change; keep the named hybrid comparison
+    # independent so it can never silently become a mislabeled MPC baseline.
+    hybrid = yaml.safe_load((ROOT/'configs/controllers/hybrid_pp_ftg.yaml').read_text())
     candidate = yaml.safe_load((ROOT/'configs/controllers/racing_mpc.yaml').read_text())
     scenario['agents'] = {'car_0': deepcopy(candidate if controller == 'racing_mpc' else hybrid)}
     if mode in ('traffic', 'pair'):

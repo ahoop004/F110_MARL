@@ -176,8 +176,10 @@ resume. Older reduced-physics checkpoints are incompatible.
 
 All active `mappo_2v2_*.yaml` training scenarios share
 `configs/scenarios/mappo_2v2_base.yaml`: the same MF6.1 dynamics, friction
-protocol, 0.05 s decisions, wheel-acceleration actions, and two fixed hybrid
-opponents. MAPPO currently runs one environment. PPO retains 400.
+protocol, 0.05 s decisions, wheel-acceleration actions, and two fixed racing MPC
+opponents. The explicit base and penalty scratch/pretrained pairs use 400
+environments across 100 workers. Other MAPPO objectives retain their serial
+defaults. PPO retains 400 environments.
 
 The actor has 68 inputs: the original 50 driving values followed by three slots
 of `(delta_s, delta_d, delta_vs, delta_vd, present, is_teammate)`. Slots are ordered
@@ -185,7 +187,9 @@ by longitudinal distance. Team identity follows the physical agent when slots
 reorder. These are privileged simulator measurements, not LiDAR detections.
 
 Use `--pretrained-actor` with a compatible PPO checkpoint or run directory.
-Omitting it runs scratch; no scenario silently chooses a checkpoint. The explicit
+Omitting it uses the scenario default: the explicitly pretrained base and penalty
+arms require `outputs/ppo_current_pretrain_s42/best_model.pt`; other training arms
+start from scratch. The explicit
 `pretrained_actor_observation_extension: frenet_neighbors` allows the appended
 block after an unchanged driving observation. Its 18 new first-layer weights per
 hidden unit start at zero, preserving the PPO actions at initialization. They
@@ -202,8 +206,10 @@ parameters are copied; the centralized critic and optimizer start fresh. Old
 | `mappo_2v2_individual.yaml` | Matched completion baseline with individual rewards and agent-conditioned critic |
 | `mappo_2v2_validate.yaml` | Evaluation only on held-out Silverstone and Spa |
 
-Start with completion to diagnose traffic adaptation, then run combined from the
-same PPO source. `--pretrained-actor` accepts PPO actors, not a MAPPO checkpoint;
+Run the explicit base scratch/pretrained pair first, the penalty pair second,
+then LoRA combinations once implemented; see the
+[experiment matrix](TEAM_RACING_EXPERIMENTS.md). The standalone combined objective
+below remains available as a separate comparison using the same PPO source. `--pretrained-actor` accepts PPO actors, not a MAPPO checkpoint;
 completion-to-combined MAPPO continuation is not implemented. Compare scratch and
 pretrained arms within each objective with the same seeds and destination budget.
 MAPPO currently has an episode budget; record actual transitions because episode
@@ -232,8 +238,9 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --eval-protocol final --output-dir outputs/team_heldout --no-wandb
 ```
 
-Deterministic evaluation runs every 100 training episodes on eight fixed starts
-across Budapest and circle. It uses a separate environment and preserves training
+Deterministic evaluation uses eight fixed starts across Budapest and circle.
+The four explicit matrix arms evaluate every 1,024,000 aggregate environment
+decisions after an update; the other team objectives retain their 100-episode cadence. It uses a separate environment and preserves training
 random-number states. Checkpoint selection ranks both teammates finishing first,
 then the configured objective, fewer learner collisions, and net progress
 (or faster clean finishes once every start finishes).
@@ -243,17 +250,19 @@ are reserved for final evaluation. Held-out validation uses separate seeds and
 never participates in checkpoint selection. Neither validation entry point can
 start training accidentally: both require `--eval`.
 
-Fixed opponents use `rolling_speed_to_wheel_v1` and the current 0.31 m vehicle
-width. Their nominal 2.5 m/s setting is a starting baseline; the earlier legacy
-physics calibration does not establish their performance under MF6.1. Check their
-completion and collision rates before interpreting team wins. The 800 s race
+Fixed MPC opponents use `rolling_speed_to_wheel_v1`, a 3.5 m/s speed cap, and
+vehicle dimensions from the environment. See the
+[controller contract and initial completion results](RACING_MPC_OPPONENTS.md),
+including its privileged traffic sensing. Broader starts, randomized grip, and
+learned traffic still need qualification before interpreting team wins; keep
+earlier hybrid-opponent results separate. The 800 s race
 horizon is 16,000 steps and finish clearance remains 2 s. Team reward presets now
 express time cost as -0.00025 per simulated second, preserving the prior -0.2
 maximum over 800 s at 0.05 s steps.
 
 ## Scenario cleanup
 
-The nine active entry points live directly under `scenarios/`. The two duplicate
+The active entry points live directly under `scenarios/`. The two duplicate
 PPO pretraining aliases were removed; use `ppo_lap_completion_pretrain.yaml`.
 The former `mappo_2v2_frenet_ppo_pretrained*` names became the four completion/team
 objective names above. Fifteen older experiments remain under `scenarios/legacy/`

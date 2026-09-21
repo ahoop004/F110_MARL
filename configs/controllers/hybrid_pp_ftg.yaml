@@ -1,0 +1,34 @@
+# Historical current-physics hybrid baseline for benchmarks and comparisons.
+algorithm: hybrid_pp_ftg
+trainable: false
+role: opponent
+params:
+  lookahead: 2.0
+  min_speed: 0.8
+  max_speed: 2.5
+  max_steer: 0.35
+  wheelbase: 0.3302
+  curvature_slowdown_threshold: 0.2
+  speed_horizon: 3.0
+  blend_distance: 2.0
+  full_ftg_distance: 0.75
+  ftg:
+    max_distance: 10.0
+    window_size: 6
+    bubble_radius: 2.5
+    max_steer: 0.3
+    min_speed: 0.8
+    max_speed: 2.5
+    steering_gain: 0.2
+    fov: 4.71238898
+    normalized: false
+    steer_smooth: 0.7
+    mode: lidar
+    gap_min_range: 0.5
+    target_mode: center
+    wall_avoid_kick: 0.01
+    use_disparity_extender: true
+    disparity_threshold: 0.35
+    vehicle_width: 0.31
+    safety_margin: 0.1
+action_adapter: rolling_speed_to_wheel_v1

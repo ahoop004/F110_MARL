@@ -79,6 +79,60 @@ def test_invalid_configuration_rejected(config):
         RacingMPCAgent(config)
 
 
+def test_active_team_scenarios_use_one_fixed_mpc_opponent_profile():
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario, load_yaml_config
+    profile = load_yaml_config(Path('configs/controllers/racing_mpc.yaml'))
+    paths = sorted(Path('scenarios').glob('mappo_2v2_*.yaml'))
+    assert len(paths) == 8
+    for path in paths:
+        scenario = load_and_expand_scenario(str(path))
+        for aid, target in [('car_2', 'car_0'), ('car_3', 'car_1')]:
+            assert scenario['agents'][aid] == {**profile, 'role': 'opponent', 'target_id': target}
+        assert [aid for aid, cfg in scenario['agents'].items() if cfg['trainable']] == ['car_0', 'car_1']
+
+
+def test_hybrid_benchmark_stays_hybrid_after_matrix_opponent_change():
+    from scripts.benchmark_racing_opponents import scenario_for
+    for focal in ('hybrid_pp_ftg', 'racing_mpc'):
+        scenario = scenario_for(focal, 'circle_map', 'traffic', 10042, 10, 3)
+        assert scenario['agents']['car_0']['algorithm'] == focal
+        assert all(scenario['agents'][aid]['algorithm'] == 'hybrid_pp_ftg'
+                   for aid in ['car_1', 'car_2', 'car_3'])
+
+
+def test_mpc_opponents_act_in_actual_training_setup_on_both_maps():
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario
+    from core.setup import create_training_setup
+    path = Path('scenarios/mappo_2v2_penalties_scratch.yaml').resolve()
+    scenario = load_and_expand_scenario(str(path))
+    env, opponents, _ = create_training_setup(scenario, mode='train', scenario_dir=path.parent)
+    try:
+        for agent in opponents.values():
+            agent.set_env(env)
+        for index in range(2):
+            obs, _ = env.reset(seed=42, options={'map_episode_index': index})
+            for agent in opponents.values():
+                agent.reset()
+            moved = False
+            for _ in range(10):
+                actions = {aid: np.zeros(2) for aid in ('car_0', 'car_1') if aid in env.agents}
+                for aid, agent in opponents.items():
+                    if aid not in env.agents:
+                        continue
+                    actions[aid] = agent.act(obs[aid])  # same implicit id as training/evaluation
+                    assert np.isfinite(actions[aid]).all()
+                    assert abs(actions[aid][0]) <= .418901
+                    assert 0 <= actions[aid][1] <= 70.00001
+                    assert agent.last_plan['traffic_count'] <= 3
+                    moved |= actions[aid][1] > 0
+                obs, _, _, _, _ = env.step(actions)
+            assert moved
+    finally:
+        env.close()
+
+
 def test_real_setup_identity_action_units_limits_reset_and_map_switch():
     from scripts.benchmark_racing_opponents import ROOT, scenario_for
     from core.setup import create_training_setup

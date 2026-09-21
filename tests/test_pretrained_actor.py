@@ -17,6 +17,8 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 @pytest.mark.parametrize("scenario_name", [
     "mappo_2v2_completion",
     "mappo_2v2_combined",
+    "mappo_2v2_base_scratch",
+    "mappo_2v2_base_pretrained",
     "mappo_2v2_penalties_scratch",
     "mappo_2v2_penalties_pretrained",
 ])
@@ -32,17 +34,19 @@ def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scena
     from core.provenance import physics_contract
     pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     assert physics_contract(pretraining['environment']) == physics_contract(scenario['environment'])
-    baseline = load_and_expand_scenario("scenarios/legacy/mappo_2v2_team_shared.yaml")
+    from core.scenario import load_yaml_config
+    opponent_profile = load_yaml_config(Path('configs/controllers/racing_mpc.yaml'))
     ids = get_trainable_agent_ids(scenario["agents"])
     assert ids == ["car_0", "car_1"]
-    assert scenario["experiment"]["num_envs"] == 1
+    parallel = scenario_name.startswith(("mappo_2v2_base_", "mappo_2v2_penalties_"))
+    assert scenario["experiment"]["num_envs"] == (400 if parallel else 1)
     assert scenario["environment"]["vehicle_params"] == pretraining["environment"]["vehicle_params"]
     assert scenario["environment"]["lap_counting"]["count_initial_crossing_as_lap"] is False
     for aid in ["car_2", "car_3"]:
-        assert scenario["agents"][aid] == {**baseline["agents"][aid],
-                                            "action_adapter": "rolling_speed_to_wheel_v1",
-                                            "params": {**baseline["agents"][aid]["params"],
-                                                       "ftg": {**baseline["agents"][aid]["params"]["ftg"], "vehicle_width": .31}}}
+        assert scenario["agents"][aid] == {
+            **opponent_profile, "role": "opponent",
+            "target_id": "car_0" if aid == "car_2" else "car_1",
+        }
     for aid in ids:
         assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is True
     assert scenario["agents"]["car_0"]["params"] == scenario["agents"]["car_1"]["params"]

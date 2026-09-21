@@ -685,6 +685,25 @@ class MAPPOAgent:
             rows[:, ret_index] = ret
             row_start += n
 
+        return self._update_pool(update_pool, raw_pool)
+
+    def update_rollouts(self, rollouts) -> Dict[str, float]:
+        """Pool independently bootstrapped collector fragments for one PPO update."""
+        rollouts = [item for item in rollouts if len(item[0])]
+        if not rollouts:
+            return {}
+        pool = torch.as_tensor(np.concatenate([r[0] for r in rollouts]),
+                               dtype=torch.float32, device=self.device)
+        raw = torch.as_tensor(np.concatenate([r[1] for r in rollouts]),
+                              dtype=torch.float32, device=self.device)
+        return self._update_pool(pool, raw)
+
+    def _update_pool(self, update_pool, raw_pool) -> Dict[str, float]:
+        n_pool = len(update_pool)
+        obs_end = self.obs_dim
+        gs_end = obs_end + self.critic_input_dim
+        acts_end = gs_end + self.action_dim
+        old_lp_index, adv_index, ret_index = acts_end, acts_end + 1, acts_end + 2
         # Normalize advantages over the pooled set
         adv_pool = update_pool[:, adv_index]
         adv_std = adv_pool.std(correction=0)

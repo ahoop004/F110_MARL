@@ -1,0 +1,18 @@
+# Matched collection/optimization settings for the 2v2 experiment matrix.
+# Include after the task's base scenario. PPO uses a different n_steps contract.
+experiment:
+  num_envs: 400
+  num_workers: 100
+  torch_threads: 1
+  worker_startup_batch_size: 8
+  worker_startup_timeout_s: 600
+  worker_response_timeout_s: 120
+training_defaults:
+  update_version: parallel-mappo-grouped256-batch2048-v1
+  # Independent race decisions per environment before each pooled policy update.
+  rollout_steps_per_env: 256
+  # Up to 204800 actor samples per round (400 races x 256 x 2 learners).
+  batch_size: 2048
+  checkpoint_every_steps: 1024000
+evaluation:
+  every_steps: 1024000  # ten full collection rounds; evaluated after an update

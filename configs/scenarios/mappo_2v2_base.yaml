@@ -2,7 +2,8 @@
 # Set training_defaults.pretrained_actor_checkpoint to a NEW PPO best_model.pt.
 # null deliberately runs the matched from-scratch arm. Fifty driving inputs are
 # preserved; 18 appended relative-neighbor inputs start with zero actor weights.
-# Fixed opponents retain their controller settings, with an explicit wheel adapter.
+# Both fixed opponents use the validated racing MPC with an explicit wheel adapter.
+# MPC reads perfect current traffic state within 10 m; this is privileged sensing.
 includes:
 - ../env/default.yaml
 - ../vehicle/combined_slip.yaml
@@ -116,74 +117,27 @@ agents:
     params: *learner_params
     action_constraints: *learner_actions
   car_2:
-    algorithm: hybrid_pp_ftg
+    algorithm: racing_mpc
     trainable: false
     role: opponent
     target_id: car_0
-    params:
-      lookahead: 2.0
-      min_speed: 0.8
-      max_speed: 2.5
-      max_steer: 0.35
-      wheelbase: 0.3302
-      curvature_slowdown_threshold: 0.2
-      speed_horizon: 3.0
-      blend_distance: 2.0
-      full_ftg_distance: 0.75
-      ftg:
-        max_distance: 10.0
-        window_size: 6
-        bubble_radius: 2.5
-        max_steer: 0.3
-        min_speed: 0.8
-        max_speed: 2.5
-        steering_gain: 0.2
-        fov: 4.71238898
-        normalized: false
-        steer_smooth: 0.7
-        mode: lidar
-        gap_min_range: 0.5
-        target_mode: center
-        wall_avoid_kick: 0.01
-        use_disparity_extender: true
-        disparity_threshold: 0.35
-        vehicle_width: 0.31
-        safety_margin: 0.1
+    # Match configs/controllers/racing_mpc.yaml (validated bounded solver).
+    params: &opponent_params
+      max_speed: 3.5
+      max_acceleration: 5.0
+      horizon: 30
+      knots: 6
+      iterations: 18
+      max_evaluations: 260
+      margin: 0.1
+      sensing_range: 10.0
     action_adapter: rolling_speed_to_wheel_v1
   car_3:
-    algorithm: hybrid_pp_ftg
+    algorithm: racing_mpc
     trainable: false
     role: opponent
     target_id: car_1
-    params:
-      lookahead: 2.0
-      min_speed: 0.8
-      max_speed: 2.5
-      max_steer: 0.35
-      wheelbase: 0.3302
-      curvature_slowdown_threshold: 0.2
-      speed_horizon: 3.0
-      blend_distance: 2.0
-      full_ftg_distance: 0.75
-      ftg:
-        max_distance: 10.0
-        window_size: 6
-        bubble_radius: 2.5
-        max_steer: 0.3
-        min_speed: 0.8
-        max_speed: 2.5
-        steering_gain: 0.2
-        fov: 4.71238898
-        normalized: false
-        steer_smooth: 0.7
-        mode: lidar
-        gap_min_range: 0.5
-        target_mode: center
-        wall_avoid_kick: 0.01
-        use_disparity_extender: true
-        disparity_threshold: 0.35
-        vehicle_width: 0.31
-        safety_margin: 0.1
+    params: *opponent_params
     action_adapter: rolling_speed_to_wheel_v1
 wandb:
   enabled: false
@@ -197,5 +151,7 @@ wandb:
   - mf61-planar
   - wheel-acceleration
   - neighbors
+  - racing-mpc-opponents
   notes: Current MF6.1 driving actor plus three relative neighbor slots; new input
-    weights start at zero. Critic and optimizer start fresh.
+    weights start at zero. Critic and optimizer start fresh. Both opponents use
+    racing_mpc with a 3.5 m/s rolling-speed cap and range-limited perfect traffic state.

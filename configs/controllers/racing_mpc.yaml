@@ -1,4 +1,4 @@
-# Candidate only; not included by the experiment matrix.
+# Validated MPC profile used by active MAPPO 2v2 opponents and render previews.
 # Perfect range-limited traffic state; no occlusion model. Reduced prediction
 # physics, validated against the actual MF6.1 simulator by the benchmark script.
 algorithm: racing_mpc

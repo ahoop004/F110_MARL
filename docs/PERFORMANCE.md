@@ -198,8 +198,10 @@ remain in the parent, at the configured total completed-episode cadence.
 
 Parallel collection changes sampling order, rollout horizons, and pooled
 advantage normalization. Compare learning quality on new runs; do not expect the
-single-environment learning trajectory. MAPPO, rendering, and curriculum remain
-single-environment paths and reject `num_envs > 1` explicitly. Checkpoint actors
+single-environment learning trajectory. Rendering and curriculum remain
+single-environment paths. MAPPO supports grouped parallel collectors; see
+[Parallel MAPPO](PARALLEL_MAPPO.md) for the 400-environment configuration and
+its separate per-environment rollout horizon. Checkpoint actors
 remain loadable for evaluation and MAPPO initialization. For `--eval`, retain the
 training collection CLI settings when checking provenance; evaluation itself is
 serial. Workers report errors to the parent and are reaped on failure.

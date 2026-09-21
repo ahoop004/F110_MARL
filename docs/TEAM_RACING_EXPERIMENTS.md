@@ -1,15 +1,25 @@
-# Initial 2v2 comparison: recorded race penalties
+# 2v2 experiment sequence: base, penalties, then LoRA
 
-The first pair compares full MAPPO training from scratch with actor initialization
-from a newly trained current-setup PPO checkpoint. Both use the same 68-input observation, vehicle
-physics, three-lap races, opponents, reward, seed, and 5,000-episode budget. The
-critic and optimizer start fresh in both arms. Only the actor initialization and
-experiment name differ.
+Run the base scratch/pretrained comparison first, then the penalty pair, then
+LoRA combinations once adapter training is implemented. All four current arms use
+the same 68-input observation, vehicle physics, three-lap races, MPC opponents,
+seed, 5,000-episode budget, and 400 environments across 100 workers. Collection,
+minibatch size, and evaluation cadence come from `configs/training/mappo_parallel.yaml`.
+Within each pair only actor initialization and experiment name differ. The critic
+and optimizer start fresh, and all actor parameters are trained in both arms.
 
-| Scenario | Initialization |
-|---|---|
-| `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic |
-| `scenarios/mappo_2v2_penalties_pretrained.yaml` | Current-setup PPO actor; random centralized critic |
+| Stage | Scenario | Initialization | Objective |
+|---|---|---|---|
+| 1 | `scenarios/mappo_2v2_base_scratch.yaml` | Random actor and critic | Shared completion |
+| 1 | `scenarios/mappo_2v2_base_pretrained.yaml` | PPO actor; random critic | Shared completion |
+| 2 | `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic | Completion, placement, incident penalties |
+| 2 | `scenarios/mappo_2v2_penalties_pretrained.yaml` | PPO actor; random critic | Completion, placement, incident penalties |
+| 3 | Planned LoRA combinations | To be specified when adapters are implemented | Matched base and penalty tasks |
+
+The base task is the existing `race_team_completion.yaml` reward with
+`team_completion` checkpoint selection. The penalty task also adds the combined
+finishing-position objective, so the base-to-penalty comparison does not isolate
+only the effect of incident penalties.
 
 Train the new source with the unchanged 400-environment pretraining scenario:
 
@@ -19,15 +29,23 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --output-dir outputs/ppo_current_pretrain_s42
 ```
 
-The pretrained arm defaults to `outputs/ppo_current_pretrain_s42/best_model.pt`.
-It fails if this file is missing. For a different run, pass
+Both pretrained arms default to `outputs/ppo_current_pretrain_s42/best_model.pt`.
+They fail if this file is missing. For a different run, pass
 `--pretrained-actor outputs/YOUR_RUN/best_model.pt`. Validate the source using
 the [pretraining workflow](PPO_TO_MAPPO_PRETRAINING.md#select-and-validate-a-model)
-before starting B. Freeze the selected source checkpoint for all pretrained
+before starting the pretrained arms. Freeze the selected source checkpoint for all pretrained
 arms; record its hash and pretraining cost. Do not compare arms initialized from
 different updates of a still-running source job.
 
 ```bash
+# Stage 1: base completion task.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_base_scratch.yaml
+
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_base_pretrained.yaml
+
+# Stage 2: placement and incident penalties.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_penalties_scratch.yaml
 
@@ -38,7 +56,9 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 These scenarios inherit the current shared vehicle profile and fixed track
 observation scaling. The first 50 inputs retain their source
 semantics, and 18 neighbor/team inputs are appended with zero initial weights
-when loading PPO. The fixed hybrid opponents use the matching 0.31 m width.
+when loading PPO. Both fixed racing MPC opponents use the same 3.5 m/s speed cap
+and the environment's 0.58 m by 0.31 m vehicle geometry. Their traffic sensing
+uses perfect current simulator states within 10 m; this is privileged sensing.
 The downloaded `outputs/L_map_best_model.pt` is a historical artifact and is not
 used by this matrix. Results from the previous older-physics A/B pair should be
 kept separate; rerun A under this configuration for the new comparison.
@@ -83,7 +103,7 @@ incident. Reward breakdowns expose `race_penalties/own` and
 
 ## Checkpoint selection and reports
 
-Both arms use `team_combined_penalties`, which ranks:
+The penalty pair uses `team_combined_penalties`, which ranks:
 
 1. Fraction of starts where both learners finish.
 2. Mean finish-rank score plus the penalty adjustment.
@@ -94,8 +114,8 @@ Thus time is currently a successful-race tie-breaker, plus a training time cost.
 A weighted lap-time/placement/penalty competition score has not yet been defined.
 Keep that distinction explicit when comparing results.
 
-Selection runs every 100 episodes using the same eight starting seeds on Budapest
-and circle. Final evaluation uses the existing twenty separate starts. Reports
+For all four arms, selection runs after an update every 1,024,000 aggregate
+environment decisions using the same eight starting seeds on Budapest and circle. Final evaluation uses the existing twenty separate starts. Reports
 include the versioned policy, per-vehicle penalty events (episode, agent, kind,
 step, points), mean own/opponent penalty points, mean penalty adjustment, and
 `team_rank_penalty_score`. Aggregate and per-map reports use the same calculations
@@ -105,10 +125,13 @@ Equal episode counts are not equal sample budgets. Record environment decisions,
 learner samples, and wall time; add a MAPPO transition-budget control before making
 strict sample-efficiency claims. Pretraining cost should be reported separately.
 The new source must use the corrected L-map finish line and report valid timed
-laps. Fixed-opponent completion still needs benchmarking under the current physics.
+laps. The fixed MPC opponents have completed three-lap solo, traffic, and paired
+checks on both training maps under the current physics at nominal grip.
 
-The [candidate racing MPC](RACING_MPC_OPPONENTS.md) and its separate benchmark
-harness are available for this work. They are not included by the A/B pair.
+Both A/B arms now include the same [racing MPC](RACING_MPC_OPPONENTS.md) opponents.
+Broader seeds, randomized grip, the exact matrix spawn policy, and learned traffic
+still need qualification. Keep previous hybrid-opponent results separate and
+rerun both arms when comparing this opponent setup.
 
 ## Subsequent comparisons
 
@@ -116,4 +139,5 @@ Role-conditioned offensive/defensive observations and reward/value targets, LoRA
 adapters, a common weighted race score, and richer incident attribution remain
 separate planned changes. Compare each new reward under scratch and full pretrained
 fine-tuning before comparing that same reward with LoRA. No role specialization or
-LoRA is enabled by these two initial scenarios.
+LoRA is enabled by the four current scenarios. Adapter placement, rank, frozen
+parameters, and any teammate-specific combinations must be specified for stage 3.

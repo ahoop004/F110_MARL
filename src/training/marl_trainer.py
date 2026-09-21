@@ -227,6 +227,15 @@ class MARLTrainer:
 
     def train(self, n_episodes: int) -> None:
         """Run *n_episodes* of MAPPO training."""
+        for _ in self.iter_train(n_episodes):
+            pass
+
+    def train_parallel(self, scenario, scenario_dir, num_envs, n_episodes):
+        from training.parallel_mappo import train_parallel
+        train_parallel(self, scenario, scenario_dir, num_envs, n_episodes)
+
+    def iter_train(self, n_episodes: int, *, parallel: bool = False):
+        """Shared race loop; parallel collectors supply inference at yield points."""
         for episode in range(n_episodes):
             obs_dict, info_dict = self.env.reset()
             for controller in self.other_agents.values():
@@ -277,24 +286,25 @@ class MARLTrainer:
                 active_trainable_ids = [
                     aid for aid in self.trainable_ids if aid in active_before
                 ]
-                if active_trainable_ids:
-                    stacked_observations = np.stack(
-                        [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
+                stacked_observations = np.stack(
+                    [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
+                ) if active_trainable_ids else np.empty((0, getattr(self.agent, "obs_dim", 0)), dtype=np.float32)
+                if parallel:
+                    actions_norm, log_probs, values, raw_actions = yield (
+                        "act", (active_trainable_ids, stacked_observations, global_state)
                     )
-                    actions_norm, log_probs = self.agent.act_batch(
-                        active_trainable_ids,
-                        stacked_observations,
-                    )
+                    self.agent.last_raw_actions = raw_actions
                 else:
-                    actions_norm, log_probs = {}, {}
+                    if active_trainable_ids:
+                        actions_norm, log_probs = self.agent.act_batch(
+                            active_trainable_ids, stacked_observations,
+                        )
+                    else:
+                        actions_norm, log_probs = {}, {}
+                    values = self.agent.evaluate_states(global_state, active_trainable_ids)
                 actions_phys: Dict[str, np.ndarray] = {}
                 for aid, action in actions_norm.items():
                     actions_phys[aid] = self.action_composers[aid].process(action)
-
-                # Centralized value estimate from current global state
-                values = self.agent.evaluate_states(
-                    global_state, active_trainable_ids
-                )
 
                 all_actions = self._build_actions(actions_phys, obs_dict)
 
@@ -506,11 +516,18 @@ class MARLTrainer:
                 step_idx += 1
                 self._environment_steps += 1
 
+                if parallel:
+                    yield "step", next_global_state
+
                 # --- Trigger update when any buffer is full or episode ends ---
                 if self.agent.any_buffer_full() or episode_done:
-                    update_metrics = self.agent.update(
-                        next_global_state=next_global_state,
-                    )
+                    if parallel:
+                        next_values = yield "value", next_global_state
+                        update_metrics = self.agent.finish_fragment(next_values)
+                    else:
+                        update_metrics = self.agent.update(
+                            next_global_state=next_global_state,
+                        )
                     self.agent.clear_buffers()
                     update_metrics["train/environment_steps"] = self._environment_steps
                     for hook in self.hooks:

@@ -1,8 +1,10 @@
-# Candidate racing MPC opponents
+# Racing MPC opponents
 
-`racing_mpc` is an opt-in, non-neural controller registered with `AgentFactory`.
-Its parameters live in `configs/controllers/racing_mpc.yaml`. The A/B scenarios
-still use their original hybrid opponents; no experiment controller was replaced.
+`racing_mpc` is a non-neural controller registered with `AgentFactory`.
+All eight active MAPPO 2v2 scenarios inherit two identical fixed MPC opponents
+from `configs/scenarios/mappo_2v2_base.yaml`. Their settings match
+`configs/controllers/racing_mpc.yaml`, including the 3.5 m/s speed cap, in both
+scratch and pretrained arms.
 
 For interactive inspection, use the [render scenarios](../scenarios/render/README.md):
 solo MPC, two MPC cars against two hybrids, and a slower-car passing demo.
@@ -74,17 +76,19 @@ from decision latency. Pair tests continue until both candidate cars terminate.
 Other tests stop when the focal car terminates. A bounded passing test can end
 at its time limit despite successfully passing; it is not a lap-completion test.
 
-The candidate defaults to 3.5 m/s and the historical hybrid to 2.5 m/s. Results
+The benchmark loads its historical hybrid baseline explicitly from
+`configs/controllers/hybrid_pp_ftg.yaml`, independently of the experiment matrix.
+The MPC defaults to 3.5 m/s and the historical hybrid to 2.5 m/s. Results
 compare those complete configurations, including differing information access;
 they do not isolate the algorithm at equal speed and sensing limits. The
 benchmark evaluates nominal grip. Robustness to randomized training grip and
 aggressive learned opponents needs separate testing.
 
-Before promotion into the experiment matrix, require repeatable clean completion
-on both training maps, successful collision-free traffic handling, acceptable
-two-controller decision cost, and no regression in pair completion. Keep held-out
-maps out of this tuning process. Freeze the accepted opponent configuration for
-every scratch/pretrained arm.
+Before interpreting a large study, check repeatable clean completion across more
+starts and randomized grip on both training maps, traffic handling against learned
+policies, two-controller decision cost, and pair completion. Keep held-out maps
+out of this tuning process. Freeze the same opponent configuration for every
+scratch/pretrained arm, and keep earlier hybrid-opponent results separate.
 
 ## Initial local validation
 
@@ -116,4 +120,6 @@ grip and with distinct named spawns (`allow_reuse: false`). The matrix currently
 uses `allow_reuse: true`, which changes the seeded spawn-sampling stream even
 though overlapping choices are rejected. Broader seeds, randomized grip, and
 the exact matrix spawn policy remain qualification work before a large study.
-No experiment scenarios have been switched by this implementation.
+MPC is now enabled in the active experiment scenarios. Bounded integration checks
+with the actual training spawn and friction settings do not replace this broader
+qualification. Render comparisons intentionally retain hybrid traffic.

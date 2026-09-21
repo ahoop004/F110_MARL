@@ -1,0 +1,10 @@
+# Stage 1 control: the base team-completion task, with random actor and critic.
+includes:
+  - ../configs/scenarios/mappo_2v2_base.yaml
+  - ../configs/training/mappo_parallel.yaml
+experiment:
+  name: mappo_2v2_base_scratch
+training_defaults:
+  pretrained_actor_checkpoint: null
+wandb:
+  group: mappo-2v2-base-current-physics

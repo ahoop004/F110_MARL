@@ -1,4 +1,4 @@
-# Render the candidate MPC controllers
+# Render the MPC controllers
 
 Run these commands from the repository root in a graphical desktop session
 (local desktop or the HPC remote desktop). They open a window; an ordinary
@@ -44,4 +44,5 @@ when both MPC cars finished. Per-agent outcomes are in the run's CSV outputs.
 The render base's MPC settings and the second MPC car's settings in the 2v2 file
 mirror `configs/controllers/racing_mpc.yaml`; keep these together when tuning.
 See [controller details and benchmark results](../../docs/RACING_MPC_OPPONENTS.md).
-The training experiment matrix is unchanged.
+These visual comparisons retain hybrid traffic; active MAPPO training scenarios
+use two MPC opponents.
