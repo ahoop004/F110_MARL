@@ -48,6 +48,7 @@ HEURISTIC_ALGOS: frozenset[str] = frozenset({
     "kinematic_mpc",
     "mpcc",
     "obstacle_aware_mpc",
+    "racing_mpc",
 })
 
 
@@ -143,6 +144,8 @@ def build_fixed_policy_agents(agent_configs: Mapping[str, Mapping[str, Any]], *,
         algorithm = str(agent_config.get("algorithm", "")).strip().lower()
         if algorithm in HEURISTIC_ALGOS:
             heuristic_kwargs = dict(agent_config.get("params", {}))
+            if algorithm == "racing_mpc":
+                heuristic_kwargs["agent_id"] = agent_id
             agents[agent_id] = AgentFactory.create(algorithm, heuristic_kwargs)
             adapter = agent_config.get("action_adapter")
             nonlinear = (vehicle_params or {}).get("model") == "combined_slip_st"

@@ -1,5 +1,8 @@
 # Scenario index
 
+Interactive fixed-controller previews are in [`render/`](render/README.md):
+MPC solo, MPC versus hybrid 2v2, and a passing demo on circle and Budapest.
+
 The active entry points below use the shared MF6.1 vehicle profile. PPO keeps
 400 environments; MAPPO currently runs one environment with two learners and two
 fixed opponents. See [the training workflow](../docs/PPO_TO_MAPPO_PRETRAINING.md)

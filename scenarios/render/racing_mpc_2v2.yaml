@@ -1,0 +1,99 @@
+# Blue/cyan: two identical MPC cars. Orange/red: two hybrid PP+FTG cars.
+# All four controllers are fixed; this does not start MAPPO training.
+includes:
+- ../../configs/scenarios/racing_mpc_render_base.yaml
+experiment:
+  name: render_racing_mpc_2v2
+environment:
+  agent_teams:
+    car_0: mpc_team
+    car_1: mpc_team
+    car_2: hybrid_team
+    car_3: hybrid_team
+  rendering:
+    vehicle_colors:
+      car_1: '#32c5ff'
+      car_2: '#ff9d32'
+      car_3: '#ef5350'
+agents:
+  car_1:
+    algorithm: racing_mpc
+    trainable: false
+    action_adapter: rolling_speed_to_wheel_v1
+    params:
+      max_speed: 3.5
+      max_acceleration: 5.0
+      horizon: 30
+      knots: 6
+      iterations: 18
+      max_evaluations: 260
+      margin: 0.1
+      sensing_range: 10.0
+  car_2:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    role: opponent
+    params:
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 2.5
+      max_steer: 0.35
+      wheelbase: 0.3302
+      curvature_slowdown_threshold: 0.2
+      speed_horizon: 3.0
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
+      ftg:
+        max_distance: 10.0
+        window_size: 6
+        bubble_radius: 2.5
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 2.5
+        steering_gain: 0.2
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.7
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.01
+        use_disparity_extender: true
+        disparity_threshold: 0.35
+        vehicle_width: 0.31
+        safety_margin: 0.1
+    action_adapter: rolling_speed_to_wheel_v1
+  car_3:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    role: opponent
+    params:
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 2.5
+      max_steer: 0.35
+      wheelbase: 0.3302
+      curvature_slowdown_threshold: 0.2
+      speed_horizon: 3.0
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
+      ftg:
+        max_distance: 10.0
+        window_size: 6
+        bubble_radius: 2.5
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 2.5
+        steering_gain: 0.2
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.7
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.01
+        use_disparity_extender: true
+        disparity_threshold: 0.35
+        vehicle_width: 0.31
+        safety_margin: 0.1
+    action_adapter: rolling_speed_to_wheel_v1

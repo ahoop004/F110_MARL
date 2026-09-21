@@ -1,0 +1,5 @@
+# Blue car: MPC. Three laps per map; two episodes cycle circle then Budapest.
+includes:
+- ../../configs/scenarios/racing_mpc_render_base.yaml
+experiment:
+  name: render_racing_mpc_solo

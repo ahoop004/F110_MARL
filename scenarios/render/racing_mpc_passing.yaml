@@ -1,0 +1,66 @@
+# Blue MPC starts about 3 m behind an orange hybrid limited to 1.2 m/s.
+# Each map gets a 60-s simulation window; a TIMEOUT is normal for this demo.
+includes:
+- ../../configs/scenarios/racing_mpc_render_base.yaml
+experiment:
+  name: render_racing_mpc_passing
+environment:
+  max_steps: 1200
+  random_spawn:
+    enabled: false
+  agent_teams:
+    car_0: mpc_team
+    car_1: slower_car
+  spawn:
+    policy: centerline_relative
+    centerline:
+      mode: round_robin
+      min_progress: 0.1
+      max_progress: 0.11
+      avoid_finish: false
+    offsets:
+      s_offset: -3.0
+      d_offset: 0.0
+    target:
+      enabled: true
+      speed: 0.0
+    ego:
+      speed: 0.0
+  rendering:
+    vehicle_colors:
+      car_1: '#ff9d32'
+agents:
+  car_1:
+    algorithm: hybrid_pp_ftg
+    trainable: false
+    role: opponent
+    params:
+      lookahead: 2.0
+      min_speed: 0.8
+      max_speed: 1.2
+      max_steer: 0.35
+      wheelbase: 0.3302
+      curvature_slowdown_threshold: 0.2
+      speed_horizon: 3.0
+      blend_distance: 2.0
+      full_ftg_distance: 0.75
+      ftg:
+        max_distance: 10.0
+        window_size: 6
+        bubble_radius: 2.5
+        max_steer: 0.3
+        min_speed: 0.8
+        max_speed: 1.2
+        steering_gain: 0.2
+        fov: 4.71238898
+        normalized: false
+        steer_smooth: 0.7
+        mode: lidar
+        gap_min_range: 0.5
+        target_mode: center
+        wall_avoid_kick: 0.01
+        use_disparity_extender: true
+        disparity_threshold: 0.35
+        vehicle_width: 0.31
+        safety_margin: 0.1
+    action_adapter: rolling_speed_to_wheel_v1

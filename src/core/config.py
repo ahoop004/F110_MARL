@@ -79,6 +79,8 @@ def register_builtin_agents() -> None:
         AgentFactory.register("kinematic_mpc", KinematicMPCAgent)
         AgentFactory.register("mpcc", MPCCAgent)
         AgentFactory.register("obstacle_aware_mpc", ObstacleAwareMPCAgent)
+        from agents.mpc.racing import RacingMPCAgent
+        AgentFactory.register("racing_mpc", RacingMPCAgent)
     except ImportError:
         pass
 

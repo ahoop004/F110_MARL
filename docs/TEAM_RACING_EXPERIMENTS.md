@@ -107,6 +107,9 @@ strict sample-efficiency claims. Pretraining cost should be reported separately.
 The new source must use the corrected L-map finish line and report valid timed
 laps. Fixed-opponent completion still needs benchmarking under the current physics.
 
+The [candidate racing MPC](RACING_MPC_OPPONENTS.md) and its separate benchmark
+harness are available for this work. They are not included by the A/B pair.
+
 ## Subsequent comparisons
 
 Role-conditioned offensive/defensive observations and reward/value targets, LoRA

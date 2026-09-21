@@ -1,0 +1,827 @@
+{
+  "recorded_at_utc": "2026-09-21T17:43:25.387980+00:00",
+  "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+  "python": "3.12.3",
+  "versions": {
+    "numpy": "2.3.3",
+    "scipy": "1.16.2",
+    "numba": "0.62.1"
+  },
+  "checks": {
+    "full_suite_passed": 668,
+    "final_focused_passed": 48
+  },
+  "limitations": [
+    "One seed per full-race configuration: 10042 solo/traffic, 10043 paired and passing.",
+    "Nominal grip; not a randomized-grip robustness study.",
+    "Candidate speed cap 3.5m/s, hybrid 2.5m/s; sensing also differs.",
+    "Distinct named spawns (allow_reuse=false) for race checks; passing has explicit centerline starts.",
+    "Traffic-smoke records have 1200-step limits and are not lap-completion tests.",
+    "Latency excludes compilation/map initialization; other bounded checks ran concurrently.",
+    "Some hybrid traffic cars crashed; no fault attribution is inferred from these reports."
+  ],
+  "runs": [
+    {
+      "controller": "hybrid_pp_ftg",
+      "map": "circle_map",
+      "mode": "solo",
+      "seed": 10042,
+      "steps": 13054,
+      "simulation_s": 652.7,
+      "wall_s": 27.013952431967482,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        216.70000000000002,
+        215.95000000000002,
+        216.45000000000002
+      ],
+      "decision_ms_mean": 0.5801548429716864,
+      "decision_ms_p95": 0.6617812090553343,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "57e6bc0eced527c93c55d606fc04f252ddf184ee2b9fa8470f24129eb8d8c05b",
+      "controller_config": {
+        "algorithm": "hybrid_pp_ftg",
+        "trainable": false,
+        "role": "opponent",
+        "params": {
+          "lookahead": 2.0,
+          "min_speed": 0.8,
+          "max_speed": 2.5,
+          "max_steer": 0.35,
+          "wheelbase": 0.3302,
+          "curvature_slowdown_threshold": 0.2,
+          "speed_horizon": 3.0,
+          "blend_distance": 2.0,
+          "full_ftg_distance": 0.75,
+          "ftg": {
+            "max_distance": 10.0,
+            "window_size": 6,
+            "bubble_radius": 2.5,
+            "max_steer": 0.3,
+            "min_speed": 0.8,
+            "max_speed": 2.5,
+            "steering_gain": 0.2,
+            "fov": 4.71238898,
+            "normalized": false,
+            "steer_smooth": 0.7,
+            "mode": "lidar",
+            "gap_min_range": 0.5,
+            "target_mode": "center",
+            "wall_avoid_kick": 0.01,
+            "use_disparity_extender": true,
+            "disparity_threshold": 0.35,
+            "vehicle_width": 0.31,
+            "safety_margin": 0.1
+          }
+        },
+        "action_adapter": "rolling_speed_to_wheel_v1"
+      },
+      "controller_source_sha256": "7ab3d9253d2e169bf6ffc9c0012b4a1d5d47d0235ee13ba91920563fda39956b",
+      "benchmark_set": "three_lap_baseline",
+      "other_agents_at_stop": {}
+    },
+    {
+      "controller": "hybrid_pp_ftg",
+      "map": "circle_map",
+      "mode": "traffic",
+      "seed": 10042,
+      "steps": 81,
+      "simulation_s": 4.05,
+      "wall_s": 0.643467042944394,
+      "laps": 0,
+      "outcome": "collision",
+      "completed": false,
+      "collision": true,
+      "lap_times_s": [],
+      "decision_ms_mean": 0.5750113373829259,
+      "decision_ms_p95": 0.6548539968207479,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "6e9f961dfec34847b30f65c66bce5d88169b8e782687817790d75ed66b538933",
+      "controller_config": {
+        "algorithm": "hybrid_pp_ftg",
+        "trainable": false,
+        "role": "opponent",
+        "params": {
+          "lookahead": 2.0,
+          "min_speed": 0.8,
+          "max_speed": 2.5,
+          "max_steer": 0.35,
+          "wheelbase": 0.3302,
+          "curvature_slowdown_threshold": 0.2,
+          "speed_horizon": 3.0,
+          "blend_distance": 2.0,
+          "full_ftg_distance": 0.75,
+          "ftg": {
+            "max_distance": 10.0,
+            "window_size": 6,
+            "bubble_radius": 2.5,
+            "max_steer": 0.3,
+            "min_speed": 0.8,
+            "max_speed": 2.5,
+            "steering_gain": 0.2,
+            "fov": 4.71238898,
+            "normalized": false,
+            "steer_smooth": 0.7,
+            "mode": "lidar",
+            "gap_min_range": 0.5,
+            "target_mode": "center",
+            "wall_avoid_kick": 0.01,
+            "use_disparity_extender": true,
+            "disparity_threshold": 0.35,
+            "vehicle_width": 0.31,
+            "safety_margin": 0.1
+          }
+        },
+        "action_adapter": "rolling_speed_to_wheel_v1"
+      },
+      "controller_source_sha256": "7ab3d9253d2e169bf6ffc9c0012b4a1d5d47d0235ee13ba91920563fda39956b",
+      "benchmark_set": "three_lap_baseline",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "hybrid_pp_ftg",
+      "map": "Budapest_map",
+      "mode": "solo",
+      "seed": 10042,
+      "steps": 412,
+      "simulation_s": 20.6,
+      "wall_s": 0.814016674994491,
+      "laps": 0,
+      "outcome": "collision",
+      "completed": false,
+      "collision": true,
+      "lap_times_s": [],
+      "decision_ms_mean": 0.4806494073562541,
+      "decision_ms_p95": 0.5522617953829467,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "7bf97be9c56a7344eaeb39ad9067cc82a5721ce844b22407e75376d08eb375c6",
+      "controller_config": {
+        "algorithm": "hybrid_pp_ftg",
+        "trainable": false,
+        "role": "opponent",
+        "params": {
+          "lookahead": 2.0,
+          "min_speed": 0.8,
+          "max_speed": 2.5,
+          "max_steer": 0.35,
+          "wheelbase": 0.3302,
+          "curvature_slowdown_threshold": 0.2,
+          "speed_horizon": 3.0,
+          "blend_distance": 2.0,
+          "full_ftg_distance": 0.75,
+          "ftg": {
+            "max_distance": 10.0,
+            "window_size": 6,
+            "bubble_radius": 2.5,
+            "max_steer": 0.3,
+            "min_speed": 0.8,
+            "max_speed": 2.5,
+            "steering_gain": 0.2,
+            "fov": 4.71238898,
+            "normalized": false,
+            "steer_smooth": 0.7,
+            "mode": "lidar",
+            "gap_min_range": 0.5,
+            "target_mode": "center",
+            "wall_avoid_kick": 0.01,
+            "use_disparity_extender": true,
+            "disparity_threshold": 0.35,
+            "vehicle_width": 0.31,
+            "safety_margin": 0.1
+          }
+        },
+        "action_adapter": "rolling_speed_to_wheel_v1"
+      },
+      "controller_source_sha256": "7ab3d9253d2e169bf6ffc9c0012b4a1d5d47d0235ee13ba91920563fda39956b",
+      "benchmark_set": "three_lap_baseline",
+      "other_agents_at_stop": {}
+    },
+    {
+      "controller": "hybrid_pp_ftg",
+      "map": "Budapest_map",
+      "mode": "traffic",
+      "seed": 10042,
+      "steps": 449,
+      "simulation_s": 22.450000000000003,
+      "wall_s": 2.9397465019719675,
+      "laps": 0,
+      "outcome": "collision",
+      "completed": false,
+      "collision": true,
+      "lap_times_s": [],
+      "decision_ms_mean": 0.490213032627275,
+      "decision_ms_p95": 0.5647108424454927,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "359d74f93dd43b70afc33aee9e68f5ff332a92fa7aa9a955fd34822cd5f16a4e",
+      "controller_config": {
+        "algorithm": "hybrid_pp_ftg",
+        "trainable": false,
+        "role": "opponent",
+        "params": {
+          "lookahead": 2.0,
+          "min_speed": 0.8,
+          "max_speed": 2.5,
+          "max_steer": 0.35,
+          "wheelbase": 0.3302,
+          "curvature_slowdown_threshold": 0.2,
+          "speed_horizon": 3.0,
+          "blend_distance": 2.0,
+          "full_ftg_distance": 0.75,
+          "ftg": {
+            "max_distance": 10.0,
+            "window_size": 6,
+            "bubble_radius": 2.5,
+            "max_steer": 0.3,
+            "min_speed": 0.8,
+            "max_speed": 2.5,
+            "steering_gain": 0.2,
+            "fov": 4.71238898,
+            "normalized": false,
+            "steer_smooth": 0.7,
+            "mode": "lidar",
+            "gap_min_range": 0.5,
+            "target_mode": "center",
+            "wall_avoid_kick": 0.01,
+            "use_disparity_extender": true,
+            "disparity_threshold": 0.35,
+            "vehicle_width": 0.31,
+            "safety_margin": 0.1
+          }
+        },
+        "action_adapter": "rolling_speed_to_wheel_v1"
+      },
+      "controller_source_sha256": "7ab3d9253d2e169bf6ffc9c0012b4a1d5d47d0235ee13ba91920563fda39956b",
+      "benchmark_set": "three_lap_baseline",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "solo",
+      "seed": 10042,
+      "steps": 6047,
+      "simulation_s": 302.35,
+      "wall_s": 58.0300630859565,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        100.10000000000001,
+        100.05000000000001,
+        100.10000000000001
+      ],
+      "decision_ms_mean": 8.049026731726189,
+      "decision_ms_p95": 10.399234062060712,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "1cfefa5167e86a11a14cefa0558ea498cf887b9ae423013fd5e36d199c1c5801",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_candidate",
+      "other_agents_at_stop": {}
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "traffic",
+      "seed": 10042,
+      "steps": 6262,
+      "simulation_s": 313.1,
+      "wall_s": 102.33638861903455,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        100.10000000000001,
+        110.95,
+        99.95
+      ],
+      "decision_ms_mean": 9.525867818502418,
+      "decision_ms_p95": 13.676608109381045,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_3"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "6b22b677b7b0df20ca5436bdb2d34348a694d9508bcd2ea529c36e3678796a2c",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_candidate",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 1,
+          "collision": false,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 1,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "solo",
+      "seed": 10042,
+      "steps": 6876,
+      "simulation_s": 343.8,
+      "wall_s": 74.70570946496446,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        114.25,
+        114.05000000000001,
+        113.4
+      ],
+      "decision_ms_mean": 9.292877962222374,
+      "decision_ms_p95": 20.219335245201364,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "865187f0112467d71e06d73d62418932a047dfeca44f869dcb871aa071473f38",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_candidate",
+      "other_agents_at_stop": {}
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "traffic",
+      "seed": 10042,
+      "steps": 6878,
+      "simulation_s": 343.90000000000003,
+      "wall_s": 87.89553332899231,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        113.7,
+        114.25,
+        113.60000000000001
+      ],
+      "decision_ms_mean": 9.488833695270964,
+      "decision_ms_p95": 21.88540246570483,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_2"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "14fc5d0cdd0b3d8093f725d3af7357ff02197a475b4c5b71996548c29857e9dc",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_candidate",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "pair",
+      "seed": 10043,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 30.1484122260008,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 9.107253836409654,
+      "decision_ms_p95": 12.084289779886602,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": false,
+      "scenario_sha256": "4d9b45361775b6fde1b09eba680c65615b135544d346746b280c25ae372ba302",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "traffic_smoke",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "passing",
+      "seed": 10043,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 17.816274798009545,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 11.302279800972126,
+      "decision_ms_p95": 26.62893786327913,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_1"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "e9fdbeafcfcc78ce81dedb36024b489427e73d8719b4f0cc51c6aac14ab23c7d",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "traffic_smoke",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "pair",
+      "seed": 10043,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 32.87248944398016,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 12.133158708456904,
+      "decision_ms_p95": 29.336684296140433,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_2",
+        "car_3"
+      ],
+      "pair_both_finished": false,
+      "scenario_sha256": "a0c93473b39785e21cc3864f070a7b6d87509ffa097b6a77e08e7f0ed3ee4e94",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "traffic_smoke",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "passing",
+      "seed": 10043,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 14.549416517955251,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 9.94346380136752,
+      "decision_ms_p95": 23.054638598114252,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_1"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "7072f6d6e0b9416fe8e8f4463ee1304cbc00f05688a7e5a6c8fe626caa1596ed",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "traffic_smoke",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "pair",
+      "seed": 10043,
+      "steps": 6309,
+      "simulation_s": 315.45000000000005,
+      "wall_s": 151.92983858601656,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        100.35000000000001,
+        101.85000000000001,
+        99.9
+      ],
+      "decision_ms_mean": 8.252714689245867,
+      "decision_ms_p95": 10.612876084633172,
+      "brake_fallbacks": 1,
+      "active_cars_passed": [],
+      "pair_both_finished": true,
+      "scenario_sha256": "be5896e74842435ca8516b32b99a7e0e0fd86adc6f99b39fbfcc45851fa3404e",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_pair",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 3,
+          "collision": false,
+          "finished": true
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 1,
+          "collision": false,
+          "finished": false
+        }
+      }
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "pair",
+      "seed": 10043,
+      "steps": 6934,
+      "simulation_s": 346.70000000000005,
+      "wall_s": 162.4574737380026,
+      "laps": 3,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        116.0,
+        113.55000000000001,
+        113.7
+      ],
+      "decision_ms_mean": 9.874149577131128,
+      "decision_ms_p95": 22.391404747031622,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_2",
+        "car_3"
+      ],
+      "pair_both_finished": true,
+      "scenario_sha256": "3ea76720456f6946f659de95d4711d5c4b50137f7a472c1ca0874b50749a93ba",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "controller_source_sha256": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "benchmark_set": "three_lap_pair",
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 3,
+          "collision": false,
+          "finished": true
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      }
+    }
+  ]
+}

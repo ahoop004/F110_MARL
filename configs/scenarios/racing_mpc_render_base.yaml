@@ -1,0 +1,75 @@
+# Render-only fixed-controller runs: circle, then Budapest. No learned models.
+# MPC parameters mirror configs/controllers/racing_mpc.yaml (validated candidate).
+includes:
+- ../env/default.yaml
+- ../vehicle/combined_slip.yaml
+experiment:
+  name: racing_mpc_render
+  episodes: 2
+  seed: 10043
+  num_envs: 1
+  torch_threads: 1
+environment:
+  map_bundles:
+  - circle_map
+  - Budapest_map
+  map_bundles_train:
+  - circle_map
+  - Budapest_map
+  map_bundles_eval:
+  - circle_map
+  - Budapest_map
+  map_cycle: per_episode
+  map_pick: round_robin
+  timestep: 0.05
+  action_repeat: 1
+  render: true
+  centerline_autoload: true
+  centerline_features: true
+  centerline_render: true
+  walls_autoload: true
+  target_laps: 3
+  max_steps: 16000
+  lap_counting:
+    require_finish_line: true
+    count_initial_crossing_as_lap: false
+  episode_termination:
+    mode: all_agents
+    lap_completion: true
+  terminal_agents:
+    remain_collidable: true
+    crashed_behavior: stationary
+    finished_behavior: coast_then_stop
+    finish_clearance_steps: 40
+  random_spawn:
+    enabled: true
+    allow_reuse: false
+  terminate_on_collision: true
+  friction:
+    version: 1
+    scope: shared
+    train:
+      mode: fixed
+      mu: 1.0489
+    eval:
+      mode: fixed
+      mu: 1.0489
+  rendering:
+    vehicle_colors:
+      car_0: '#3288ff'
+agents:
+  car_0:
+    algorithm: racing_mpc
+    trainable: false
+    action_adapter: rolling_speed_to_wheel_v1
+    params:
+      max_speed: 3.5
+      max_acceleration: 5.0
+      horizon: 30
+      knots: 6
+      iterations: 18
+      max_evaluations: 260
+      margin: 0.1
+      sensing_range: 10.0
+wandb:
+  enabled: false

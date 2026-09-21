@@ -1,0 +1,15 @@
+# Candidate only; not included by the experiment matrix.
+# Perfect range-limited traffic state; no occlusion model. Reduced prediction
+# physics, validated against the actual MF6.1 simulator by the benchmark script.
+algorithm: racing_mpc
+trainable: false
+action_adapter: rolling_speed_to_wheel_v1
+params:
+  max_speed: 3.5
+  max_acceleration: 5.0
+  horizon: 30
+  knots: 6
+  iterations: 18
+  max_evaluations: 260  # SciPy can finish the current finite-difference gradient past this budget
+  margin: 0.10
+  sensing_range: 10.0
