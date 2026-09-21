@@ -185,6 +185,15 @@ truncations use their final observation value, and both stop cross-episode GAE.
 The learning-rate schedule uses collected transitions. The stated endpoints are
 from the paper; linear interpolation is an explicit implementation choice.
 
+Parallel startup initializes at most 16 new workers concurrently, waiting for
+each batch's readiness before launching the next. All 400 workers then receive
+a start signal; collection size and update boundaries are unchanged. Configure
+`experiment.worker_startup_batch_size` and `worker_startup_timeout_s` (600 s)
+separately from `worker_response_timeout_s` (120 s during collection). A startup
+timeout does not identify its underlying cause: inspect scheduler logs for
+resource limits, and check CPU, RAM, and filesystem contention. Staggering startup
+reduces initialization contention but does not reduce steady-state worker memory.
+
 The existing progress component computes signed, seam-corrected progress in
 metres. If `info.track_limits.exceeded` is true, it returns only -1 instead.
 There are no finish bonuses, time costs, collision penalties, or progress clamps.

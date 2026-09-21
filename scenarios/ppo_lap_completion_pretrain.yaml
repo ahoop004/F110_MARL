@@ -13,6 +13,10 @@ experiment:
   seed: 42
   num_envs: 400
   torch_threads: 1
+  # Limit concurrent initialization; all 400 environments still collect together.
+  worker_startup_batch_size: 16
+  worker_startup_timeout_s: 600
+  worker_response_timeout_s: 120
 
 environment:
   map_bundles:

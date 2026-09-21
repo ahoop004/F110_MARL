@@ -326,7 +326,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     if limits.get("enabled") and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)
-    for name in ("num_envs", "torch_threads"):
+    for name in ("num_envs", "torch_threads", "worker_startup_batch_size",
+                 "worker_startup_timeout_s", "worker_response_timeout_s"):
         value = experiment.get(name, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ScenarioError(f"'experiment.{name}' must be a positive integer.")

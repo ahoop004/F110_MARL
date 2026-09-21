@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -78,6 +79,9 @@ class OnPolicyTrainer:
 
         context = mp.get_context("spawn")
         connections, processes = {}, []
+        process_by_worker = {}
+        startup = _worker_startup_settings(scenario)
+        completed_normally = False
         waiting = {}
         completed = 0
         collected = 0
@@ -89,43 +93,64 @@ class OnPolicyTrainer:
         record_hooks = [h for h in self._transition_hooks if type(h) is not WandbHook]
         aggregate_wandb = any(type(h) is WandbHook for h in self._transition_hooks)
 
-        def receive(worker_id):
+        def receive(worker_id, *, starting=False):
             connection = connections[worker_id]
-            if not connection.poll(_WORKER_TIMEOUT_SECONDS):
-                raise RuntimeError(f"PPO worker {worker_id} timed out waiting for a response.")
+            timeout = startup["worker_startup_timeout_s"] if starting else startup["worker_response_timeout_s"]
+            phase = "startup" if starting else "collection"
+            if not connection.poll(timeout):
+                process = process_by_worker[worker_id]
+                raise RuntimeError(
+                    f"PPO worker {worker_id} timed out during {phase} after {timeout}s "
+                    f"(pid={getattr(process, 'pid', None)}, exitcode={getattr(process, 'exitcode', None)}). "
+                    "Check system/container or scheduler logs for resource-limit kills and available CPU/RAM. "
+                    + ("Startup batch size and timeout are configured in experiment.worker_startup_*."
+                       if starting else "Response timeout: experiment.worker_response_timeout_s.")
+                )
             try:
                 kind, payload = connection.recv()
-            except EOFError as exc:
-                raise RuntimeError(f"PPO worker {worker_id} exited unexpectedly.") from exc
+            except (EOFError, ConnectionResetError) as exc:
+                process = process_by_worker[worker_id]
+                raise RuntimeError(
+                    f"PPO worker {worker_id} disconnected during {phase} "
+                    f"(exitcode={getattr(process, 'exitcode', None)}). Check system/container or scheduler logs."
+                ) from exc
             if kind == "error":
                 raise RuntimeError(f"PPO worker {worker_id} failed:\n{payload}")
             return kind, payload
 
         try:
-            for worker_id in range(num_envs):
-                parent, child = context.Pipe()
-                process = context.Process(
-                    target=_collect_ppo_worker,
-                    args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
-                          n_episodes // num_envs + (worker_id < n_episodes % num_envs),
-                          self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
-                          self.agent.gae_lambda, bool(record_hooks), aggregate_wandb,
-                          None if total_steps is None else
-                          total_steps // num_envs + (worker_id < total_steps % num_envs)),
-                    name=f"ppo-collector-{worker_id}",
-                )
-                connections[worker_id] = parent
-                try:
-                    process.start()
-                finally:
-                    child.close()
-                processes.append(process)
-            for worker_id in connections:
-                kind, contract = receive(worker_id)
-                if (kind != "ready" or contract[0] != self.agent.obs_dim
-                        or not np.array_equal(contract[1], self.agent.action_low)
-                        or not np.array_equal(contract[2], self.agent.action_high)):
-                    raise ValueError(f"PPO worker {worker_id} observation/action contract mismatch.")
+            batch_size = startup["worker_startup_batch_size"]
+            for start in range(0, num_envs, batch_size):
+                batch = range(start, min(start + batch_size, num_envs))
+                for worker_id in batch:
+                    parent, child = context.Pipe()
+                    process = context.Process(
+                        target=_collect_ppo_worker,
+                        args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
+                              n_episodes // num_envs + (worker_id < n_episodes % num_envs),
+                              self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
+                              self.agent.gae_lambda, bool(record_hooks), aggregate_wandb,
+                              None if total_steps is None else
+                              total_steps // num_envs + (worker_id < total_steps % num_envs)),
+                        name=f"ppo-collector-{worker_id}",
+                    )
+                    connections[worker_id] = parent
+                    try:
+                        process.start()
+                    finally:
+                        child.close()
+                    processes.append(process)
+                    process_by_worker[worker_id] = process
+                for worker_id in batch:
+                    kind, contract = receive(worker_id, starting=True)
+                    if (kind != "ready" or contract[0] != self.agent.obs_dim
+                            or not np.array_equal(contract[1], self.agent.action_low)
+                            or not np.array_equal(contract[2], self.agent.action_high)):
+                        raise ValueError(f"PPO worker {worker_id} observation/action contract mismatch.")
+                print(f"[PPO] Initialized {min(start + batch_size, num_envs)}/{num_envs} workers", flush=True)
+            # Workers remain idle after readiness until every startup batch is ready.
+            for connection in connections.values():
+                connection.send(("start", None))
 
             while connections:
                 requests = {}
@@ -189,17 +214,9 @@ class OnPolicyTrainer:
             self._flush_pending_update()
             for hook in self.hooks:
                 hook.on_training_end()
+            completed_normally = True
         finally:
-            for connection in connections.values():
-                connection.close()
-            for process in processes:
-                process.join(timeout=1)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-                if process.is_alive():
-                    process.kill()
-                    process.join()
+            _close_collectors(connections.values(), processes, failed=not completed_normally)
 
     def _build_actions(
         self,
@@ -471,6 +488,47 @@ _WORKER_TIMEOUT_SECONDS = 120
 _WORKER_THREADS = 1
 
 
+def _worker_startup_settings(scenario):
+    defaults = {"worker_startup_batch_size": 16, "worker_startup_timeout_s": 600,
+                "worker_response_timeout_s": _WORKER_TIMEOUT_SECONDS}
+    settings = {key: scenario.get("experiment", {}).get(key, default)
+                for key, default in defaults.items()}
+    for key, value in settings.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"experiment.{key} must be a positive integer")
+    return settings
+
+
+def _close_collectors(connections, processes, *, failed):
+    # Signal the entire group before joining: per-process waits multiplied by
+    # hundreds of workers otherwise turn error handling into a long shutdown.
+    if failed:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+    for connection in connections:
+        connection.close()
+    deadline = time.monotonic() + 5.0
+    for process in processes:
+        process.join(timeout=max(0.0, deadline - time.monotonic()))
+    remaining = [process for process in processes if process.is_alive()]
+    for process in remaining:
+        process.kill()
+    for process in remaining:
+        process.join()
+
+
+def _report_worker_error(connection):
+    import sys
+    import traceback
+    error = traceback.format_exc()
+    try:
+        connection.send(("error", error))
+    except (BrokenPipeError, EOFError, ConnectionResetError):
+        # Retain the original exception if its parent can no longer receive it.
+        print(error, file=sys.stderr, flush=True)
+
+
 class _RemotePolicy:
     def __init__(self, connection, n_steps, obs_dim, action_dim, gamma, gae_lambda):
         import torch
@@ -534,18 +592,17 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
                         n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions,
                         aggregate_wandb, total_steps=None):
     import copy
-    import traceback
     from pathlib import Path
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["PYGLET_HEADLESS"] = "true"
-    import torch
-    torch.set_num_threads(_WORKER_THREADS)
-    from core.setup import create_training_setup
-    from run import build_obs_composer, build_reward_composer
-
     env = None
     try:
+        import torch
+        torch.set_num_threads(_WORKER_THREADS)
+        from core.setup import create_training_setup
+        from run import build_obs_composer, build_reward_composer
+
         scenario = copy.deepcopy(scenario)
         base_seed = int(scenario["experiment"]["seed"])
         seed = (base_seed + worker_id) % (2 ** 32)
@@ -562,7 +619,6 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
         space = env.action_spaces[agent_id]
         observations = build_obs_composer(cfg, env_cfg, Path(scenario_dir), space.n)
         rewards = build_reward_composer(cfg, Path(scenario_dir))
-        connection.send(("ready", (observations.obs_dim, space.low, space.high)))
         policy = _RemotePolicy(connection, n_steps, observations.obs_dim, space.n, gamma, gae_lambda)
         trainer = OnPolicyTrainer(
             env, agent_id, policy, opponents, observations, rewards,
@@ -574,10 +630,16 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
             hooks=[_WorkerHook(connection, worker_id, seed, record_transitions, aggregate_wandb)],
             run_id=f"{run_id}_worker{worker_id:03d}",
         )
+        connection.send(("ready", (observations.obs_dim, space.low, space.high)))
+        if connection.recv() != ("start", None):
+            raise RuntimeError("PPO collector expected a start message after readiness")
         trainer.train(n_episodes, total_steps=total_steps)
         connection.send(("done", None))
+    except (BrokenPipeError, EOFError, ConnectionResetError):
+        # The parent already stopped or failed; do not report through a dead pipe.
+        pass
     except BaseException:
-        connection.send(("error", traceback.format_exc()))
+        _report_worker_error(connection)
     finally:
         if env is not None:
             env.close()

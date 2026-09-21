@@ -1101,7 +1101,8 @@ def test_paper_parallel_budget_and_value_requests_with_mock_collectors(monkeypat
     assert sizes == [[4, 4], [2, 1]]
     assert capture.steps == [8, 11]
     assert agent.optimizer.param_groups[0]['lr'] == pytest.approx(.0001)
-    assert all(isinstance(p.sent[0], float) for p in pipes)
+    assert all(p.sent[0] == ("start", None) for p in pipes)
+    assert all(isinstance(p.sent[1], float) for p in pipes)
 
 
 def test_paper_evaluation_metrics_exclude_partial_start_and_count_excursions():
@@ -1148,3 +1149,132 @@ def test_paper_checkpoint_and_evaluation_cadence_uses_transitions(tmp_path):
     selection.on_episode_end(0, 0, {}, {})
     for steps in (4, 8, 10): selection.on_update({'train/environment_steps': steps})
     assert len(evaluations) == 1
+
+
+@pytest.mark.parametrize('failure', [None, 'timeout', 'error'])
+def test_collector_startup_batches_and_preserves_first_failure(monkeypatch, failure):
+    """No processes/simulator: verify launch order, barrier and failure cleanup."""
+    import multiprocessing
+    from collections import deque
+    from types import SimpleNamespace
+
+    events, pipes = [], []
+    class Connection:
+        def __init__(self):
+            self.messages = deque()
+            self.worker = len(pipes)
+            self.sent = []
+            pipes.append(self)
+        def poll(self, timeout):
+            events.append(('poll', self.worker, timeout))
+            return bool(self.messages)
+        def recv(self):
+            result = self.messages.popleft()
+            events.append(('receive', self.worker, result[0]))
+            return result
+        def send(self, message):
+            self.sent.append(message)
+            if message == ('start', None):
+                events.append(('start', self.worker))
+        def close(self): pass
+    class Process:
+        pid, exitcode = 123, None
+        def __init__(self, **kwargs):
+            args = kwargs['args']
+            self.pipe, self.worker = args[0], args[4]
+            self.alive = False
+        def start(self):
+            self.alive = True
+            events.append(('launch', self.worker))
+            if self.worker == 0 and failure == 'timeout': return
+            if self.worker == 0 and failure == 'error':
+                self.pipe.messages.append(('error', 'original setup failure'))
+                return
+            self.pipe.messages.append(('ready', (1, -np.ones(2), np.ones(2))))
+            self.pipe.messages.append(('rollout', (np.zeros((1, 1)),)))
+            self.pipe.messages.append(('done', None))
+        def is_alive(self): return self.alive
+        def terminate(self):
+            events.append(('terminate', self.worker))
+            self.alive = False
+        def join(self, **kwargs):
+            events.append(('join', self.worker))
+            self.alive = False
+        def kill(self): self.alive = False
+    def pipe():
+        connection = Connection()
+        return connection, connection
+    monkeypatch.setattr(multiprocessing, 'get_context', lambda *_: SimpleNamespace(Pipe=pipe, Process=Process))
+    agent = SimpleNamespace(n_steps=10, obs_dim=1, action_low=-np.ones(2), action_high=np.ones(2),
+                            gamma=.99, gae_lambda=.95, update_rollouts=lambda _: {'updated': 1})
+    trainer = OnPolicyTrainer(None, 'car_0', agent, {}, None, _RewardComposer(), None)
+    scenario = {'experiment': {'worker_startup_batch_size': 2, 'worker_startup_timeout_s': 17,
+                               'worker_response_timeout_s': 3}}
+    if failure:
+        expected = 'startup after 17s' if failure == 'timeout' else 'original setup failure'
+        with pytest.raises(RuntimeError, match=expected):
+            trainer.train_parallel(scenario, '.', 5, 0, total_steps=5)
+        assert [e[1] for e in events if e[0] == 'launch'] == [0, 1]
+        assert not any(e[0] == 'start' for e in events)
+        assert max(i for i, e in enumerate(events) if e[0] == 'terminate') < min(
+            i for i, e in enumerate(events) if e[0] == 'join')
+    else:
+        trainer.train_parallel(scenario, '.', 5, 0, total_steps=5)
+        assert events.index(('receive', 1, 'ready')) < events.index(('launch', 2))
+        assert events.index(('receive', 3, 'ready')) < events.index(('launch', 4))
+        assert events.index(('receive', 4, 'ready')) < events.index(('start', 0))
+        assert ('poll', 0, 17) in events and ('poll', 0, 3) in events
+        assert trainer.collected_steps == 5
+
+
+@pytest.mark.parametrize('disconnect_at', ['ready', 'start'])
+def test_collector_parent_disconnect_does_not_send_secondary_error(monkeypatch, disconnect_at):
+    from types import SimpleNamespace
+    import training.on_policy_trainer as module
+    import core.setup as setup
+    import run
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
+    monkeypatch.setenv('PYGLET_HEADLESS', 'true')
+    monkeypatch.setattr(torch, 'set_num_threads', lambda *_: None)
+    closed, sent = [], []
+    space = SimpleNamespace(low=-np.ones(2), high=np.ones(2), n=2)
+    env = SimpleNamespace(action_spaces={'car_0': space}, close=lambda: closed.append('env'))
+    monkeypatch.setattr(setup, 'create_training_setup', lambda *a, **kw: (env, {}, {}))
+    monkeypatch.setattr(run, 'build_obs_composer', lambda *a: SimpleNamespace(obs_dim=1))
+    monkeypatch.setattr(run, 'build_reward_composer', lambda *a: _RewardComposer())
+    monkeypatch.setattr(module, '_RemotePolicy', lambda *a: None)
+    monkeypatch.setattr(module, 'OnPolicyTrainer', lambda *a, **kw: None)
+    class Connection:
+        def send(self, message):
+            sent.append(message[0])
+            if disconnect_at == 'ready': raise BrokenPipeError('parent exited')
+        def recv(self): raise EOFError('parent exited')
+        def close(self): closed.append('pipe')
+    module._collect_ppo_worker(Connection(), {'experiment': {'seed': 42}, 'environment': {},
+        'agents': {'car_0': {}}}, '.', 'car_0', 0, 1, 2, 'test', .99, .95, False, False)
+    assert sent == ['ready']
+    assert closed == ['env', 'pipe']
+
+
+def test_collector_error_reporting_preserves_original_when_parent_disappears(capsys):
+    from training.on_policy_trainer import _report_worker_error
+    class ClosedConnection:
+        def send(self, _): raise BrokenPipeError('secondary pipe failure')
+    try:
+        raise ValueError('original calibration failure')
+    except ValueError:
+        _report_worker_error(ClosedConnection())
+    stderr = capsys.readouterr().err
+    assert 'ValueError: original calibration failure' in stderr
+    assert 'secondary pipe failure' not in stderr
+
+
+@pytest.mark.parametrize('field', ['worker_startup_batch_size', 'worker_startup_timeout_s', 'worker_response_timeout_s'])
+@pytest.mark.parametrize('value', [0, -1, True, 1.5])
+def test_invalid_collector_startup_settings_fail_before_launch(field, value):
+    from training.on_policy_trainer import _worker_startup_settings
+    from core.scenario import load_and_expand_scenario, validate_scenario, ScenarioError
+    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
+    scenario['experiment'][field] = value
+    with pytest.raises(ValueError, match=field): _worker_startup_settings(scenario)
+    with pytest.raises(ScenarioError, match=field): validate_scenario(scenario)
