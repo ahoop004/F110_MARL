@@ -200,3 +200,39 @@ def test_worker_startup_error_is_reported_and_processes_are_reaped():
         trainer.env.close()
     assert {p.pid for p in mp.active_children()} == before
     assert os.environ.get("OMP_NUM_THREADS") == threads_before
+
+
+@pytest.mark.parametrize("workers,horizon", [(1, 2), (2, 5)])
+def test_step_budget_collects_exact_remainder_across_resets(workers, horizon):
+    trainer, scenario, directory = setup(workers, horizon)
+    capture = Capture()
+    trainer.hooks = trainer._transition_hooks = [capture]
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=3, total_steps=17)
+    finally:
+        trainer.env.close()
+    assert trainer._environment_steps == 17
+    assert len(capture.records) == 34
+    # Quotas 6, 6, 5: five real three-step episodes; one partial episode is not logged.
+    assert len(capture.episodes) == 5
+    assert sum(m["train/rollout_agent_samples"] for m in capture.updates) == 34
+    assert capture.updates[-1]["train/agent_steps"] == 34
+    assert capture.ends == 1
+    # The budget cut is not falsely recorded as a terminal or truncation.
+    partial = [r for r in capture.records if r.info["worker_id"] == 2][-2:]
+    assert all(not r.terminated and not r.truncated for r in partial)
+
+
+def test_serial_step_budget_stops_mid_episode_without_fabricating_outcome():
+    trainer, _, _ = setup(1, 2)
+    capture = Capture()
+    trainer.hooks = trainer._transition_hooks = [capture]
+    try:
+        trainer.train(total_steps=5)
+    finally:
+        trainer.env.close()
+    assert trainer._environment_steps == 5
+    assert len(capture.records) == 10
+    assert len(capture.episodes) == 1
+    assert capture.ends == 1
+    assert all(not r.terminated and not r.truncated for r in capture.records[-2:])

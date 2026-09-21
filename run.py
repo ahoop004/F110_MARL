@@ -47,7 +47,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--render", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--episodes", type=int, default=None)
+    budget_args = p.add_mutually_exclusive_group()
+    budget_args.add_argument("--episodes", type=int, default=None)
+    budget_args.add_argument("--total-steps", type=int, default=None,
+                             help="Aggregate environment-decision budget for PPO/MAPPO")
     p.add_argument("--max-steps", type=int, default=None,
                    help="Positive per-episode physics-step limit for bounded testing; also caps evaluation")
     p.add_argument("--num-envs", type=int, default=None,
@@ -91,6 +94,8 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
     if args.episodes is not None:
         scenario.setdefault("experiment", {})["episodes"] = args.episodes
         scenario["experiment"].pop("total_steps", None)
+    if getattr(args, "total_steps", None) is not None:
+        scenario.setdefault("experiment", {})["total_steps"] = args.total_steps
     max_steps = getattr(args, "max_steps", None)
     if max_steps is not None:
         if max_steps <= 0:
@@ -1525,8 +1530,10 @@ def _run_mappo(
         team_reward_reduction=str(params.get("team_reward_reduction", "mean")),
     )
 
+    total_steps = exp_cfg.get("total_steps")
+    budget = f"{total_steps} joint environment decisions" if total_steps is not None else f"{n_episodes} episodes"
     console.print_info(
-        f"Starting MAPPO training for {n_episodes} episodes "
+        f"Starting MAPPO training for {budget} "
         f"| num_envs={exp_cfg.get('num_envs', 1)} | agents={trainable_ids} "
         f"| obs_dim={obs_dim} | global_state_dim={global_state_dim}"
     )
@@ -1592,9 +1599,11 @@ def _run_mappo(
     try:
         num_envs = int(exp_cfg.get("num_envs", 1))
         if num_envs > 1:
-            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes)
+            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes,
+                                   **({"total_steps": total_steps} if total_steps is not None else {}))
         else:
-            trainer.train(n_episodes=n_episodes)
+            trainer.train(n_episodes=n_episodes,
+                          **({"total_steps": total_steps} if total_steps is not None else {}))
     finally:
         if evaluator is not None:
             evaluator.close()

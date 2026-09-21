@@ -17,8 +17,8 @@ physics calibration work.
 | `ppo_lap_completion_pretrain.yaml` | Train the reusable 50-input driving actor on L_map |
 | `ppo_lap_completion_transfer.yaml` | Circle fine-tuning or matched scratch training |
 | `ppo_lap_completion_validate.yaml` | Evaluate driving on L_map, circle, and Budapest |
-| `mappo_2v2_base_scratch.yaml` | Stage 1: base completion reward, random initialization |
-| `mappo_2v2_base_pretrained.yaml` | Stage 1: base completion reward, PPO actor initialization |
+| `mappo_2v2_base_scratch.yaml` | Stage 1: continuous metre progress, random initialization |
+| `mappo_2v2_base_pretrained.yaml` | Stage 1: continuous metre progress, PPO actor initialization |
 | `mappo_2v2_penalties_scratch.yaml` | Stage 2: placement and incident penalties, random initialization |
 | `mappo_2v2_penalties_pretrained.yaml` | Stage 2: placement and incident penalties, PPO actor initialization |
 | `mappo_2v2_completion.yaml` | Shared completion reward for traffic adaptation |
@@ -66,16 +66,19 @@ The generic `ppo_lap_completion_transfer.yaml` remains a scratch baseline unless
 ## Experiment order
 
 1. Run `mappo_2v2_base_scratch.yaml` and `mappo_2v2_base_pretrained.yaml`.
-   Both use the existing shared completion reward and `team_completion` selection.
+   Both use shared signed metre progress with an exclusive -1 collision cost,
+   a 120M joint-step training budget, and 20-lap `team_completion` evaluation.
 2. Run the penalty scratch/pretrained pair below using the same frozen PPO source,
-   training seeds, race settings, and parallel collection settings.
+   training seeds and parallel collection settings. This pair retains its
+   three-lap races and 5,000-episode budget.
 3. Compare LoRA combinations under the same base and penalty tasks after adapter
    training is implemented. These are planned experiments, not runnable scenarios.
 
 All four current arms share `configs/training/mappo_parallel.yaml`. Both pretrained
 arms initialize the full actor from PPO and train it normally; their critics and
-optimizers start fresh. The base-to-penalty comparison changes the task's reward
-and selection objective, so it is not an isolated penalty-only ablation.
+optimizers start fresh. The base-to-penalty comparison changes rewards, training
+budgets, race horizons, and selection objectives; it is not a penalty-only ablation.
+The continuous base overrides live in `configs/scenarios/mappo_2v2_continuous_base.yaml`.
 
 ## Matched team penalty experiments
 
@@ -97,11 +100,7 @@ for pretraining, penalty definitions, scoring, and remaining comparison limits.
 |---|---|
 | `ppo_lap_completion_pretrain_frenet.yaml` | `ppo_lap_completion_pretrain.yaml` |
 | `ppo_lap_completion_pretrain_combined_slip.yaml` | `ppo_lap_completion_pretrain.yaml` |
-| `mappo_2v2_frenet_ppo_pretrained.yaml` | `mappo_2v2_base_scratch.yaml` | Stage 1: base completion reward, random initialization |
-| `mappo_2v2_base_pretrained.yaml` | Stage 1: base completion reward, PPO actor initialization |
-| `mappo_2v2_penalties_scratch.yaml` | Stage 2: placement and incident penalties, random initialization |
-| `mappo_2v2_penalties_pretrained.yaml` | Stage 2: placement and incident penalties, PPO actor initialization |
-| `mappo_2v2_completion.yaml` |
+| `mappo_2v2_frenet_ppo_pretrained.yaml` | `mappo_2v2_completion.yaml` |
 | `mappo_2v2_frenet_ppo_pretrained_{combined,first_place,sweep}.yaml` | `mappo_2v2_{combined,first_place,sweep}.yaml` |
 | Old `mappo_2v2_individual.yaml` | `legacy/mappo_2v2_individual.yaml` |
 | `ppo_combined_slip_circle_stable.yaml` | `experiments/ppo_combined_slip_circle_stable.yaml` |

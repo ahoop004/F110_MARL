@@ -1,0 +1,12 @@
+# The PPO driving reward's distance scale, adapted to collidable team traffic.
+includes:
+  - lap_completion_pretraining.yaml
+task:
+  name: race_team_continuous_progress
+  description: Signed metre progress or an exclusive collision-ending penalty.
+reward:
+  progress_delta_bonus:
+    # Multi-car races retain wall/car collision physics. Geometric track-limit
+    # time trials are currently single-car only, so collision is the failure signal.
+    boundary_penalty: null
+    collision_penalty: -1.0

@@ -212,8 +212,11 @@ then LoRA combinations once implemented; see the
 below remains available as a separate comparison using the same PPO source. `--pretrained-actor` accepts PPO actors, not a MAPPO checkpoint;
 completion-to-combined MAPPO continuation is not implemented. Compare scratch and
 pretrained arms within each objective with the same seeds and destination budget.
-MAPPO currently has an episode budget; record actual transitions because episode
-lengths vary. Do not claim equal sample budgets from equal episode counts.
+The base pair uses 120M aggregate joint environment decisions, continuous training
+without lap finishes, a metre-progress/collision reward, and 20-lap evaluation.
+The penalty pair retains three-lap races and an episode budget. Record actual
+learner samples and wall time as well as joint decisions when comparing runs;
+equal episode counts are not equal sample budgets.
 
 ```bash
 # Actor transfer into the main team objective.

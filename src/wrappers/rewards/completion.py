@@ -85,7 +85,7 @@ def _aggregate_progress_delta(
 
 
 class ProgressDeltaBonusComponent(RewardComponent):
-    """Signed or forward-only progress, with optional exclusive boundary cost."""
+    """Signed progress with optional exclusive boundary/collision costs."""
 
     def __init__(self, config: dict) -> None:
         self.weight = float(config.get("weight", 100.0))
@@ -94,10 +94,14 @@ class ProgressDeltaBonusComponent(RewardComponent):
         if self.units not in {"lap_fraction", "metres"}:
             raise ValueError("Progress units must be lap_fraction or metres")
         self.boundary_penalty = config.get("boundary_penalty")
+        self.collision_penalty = config.get("collision_penalty")
         max_delta = config.get("max_delta")
         self.max_delta = _float_or_none(max_delta) if max_delta is not None else None
 
     def compute(self, step_info: dict) -> Dict[str, float]:
+        if (self.collision_penalty is not None and
+                (step_info.get("info") or {}).get("terminal_reason") == "collision"):
+            return {"progress_delta/collision": float(self.collision_penalty)}
         if self.boundary_penalty is not None:
             boundary = (step_info.get("info") or {}).get("track_limits")
             if boundary is None:

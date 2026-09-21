@@ -24,7 +24,8 @@ python run.py --scenario scenarios/mappo_2v2_base_pretrained.yaml \
 ```
 
 Run the base pair first, then substitute the penalty scenario names for the
-second phase. Both pairs share the collection settings below.
+second phase. Both pairs share the collection settings below, but retain different
+reward and race-horizon protocols.
 
 Add `--wandb` to enable W&B. Startup progress and collection/update timing are
 printed even without W&B. Logs and checkpoints use the existing output layout.
@@ -32,23 +33,44 @@ printed even without W&B. Logs and checkpoints use the existing output layout.
 ## Bounded checks
 
 First exercise a small process pool, or run the second command to test all 400
-environments with a bounded race length. The short race limits change the task;
-these commands are infrastructure smoke tests, not learning comparisons.
+environments with a short aggregate step budget. These commands test collection
+and shutdown without changing the continuous race termination rules.
 
 ```bash
 python run.py --scenario scenarios/mappo_2v2_base_scratch.yaml \
-  --num-envs 4 --num-workers 2 --episodes 8 --max-steps 32 \
+  --num-envs 4 --num-workers 2 --total-steps 256 \
   --no-wandb --no-render --run-id mappo_parallel_smoke
 
 python run.py --scenario scenarios/mappo_2v2_base_scratch.yaml \
-  --episodes 400 --max-steps 512 --no-wandb --no-render \
+  --total-steps 204800 --no-wandb --no-render \
   --run-id mappo_400_smoke
 ```
 
-The full defaults use 5,000 aggregate episodes, divided across environments;
-this is not 5,000 episodes per environment. MAPPO still uses an episode budget;
-`experiment.total_steps` remains PPO-only. Environments stop after their assigned
-episode quota, so the number collecting can decline near the end of training.
+The base pair uses **120,000,000 aggregate joint environment decisions**, counting
+one step of a race once regardless of whether one or two learners remain active.
+Actor samples are recorded separately (up to 240M for that budget). The budget is
+split across environment indices, including exact remainders, and continues
+across resets. A budget ending mid-race bootstraps the critic and does not invent
+a collision, truncation, or completed episode.
+
+Base training has no lap finish or artificial time limit. It resets when both
+learners have crashed; a surviving teammate continues, with crashed cars retaining
+the existing stationary collision behavior. Rewards use signed metre progress
+or an exclusive -1 on collision termination, shared as a fixed two-learner mean.
+There are no finish bonuses, time costs, timeout penalties, or progress clipping.
+Unlike PPO time trials, the multi-car setup uses physical collisions as its failure
+signal; geometric track-limit time trials remain single-car only.
+
+Base evaluation restores lap termination at **20 laps**, with a 120,000-step cap
+(6,000 simulated seconds) to accommodate the longer races on Budapest and circle.
+Checkpoint selection remains `team_completion`, and the separate 20 final-test
+starts remain unchanged. Episode count and target lap count are different settings.
+
+Penalty scenarios retain their original 5,000 aggregate episodes, three-lap races,
+16,000-step race limit, and reward/selection objectives. MAPPO supports either
+`experiment.total_steps` or an episode budget; `--total-steps N` overrides the step
+budget, while `--episodes N` selects episode mode and removes a configured step
+budget. These two CLI options are mutually exclusive.
 
 ## Collection and optimization
 

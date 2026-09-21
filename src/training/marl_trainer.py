@@ -225,18 +225,23 @@ class MARLTrainer:
     # Training loop
     # ------------------------------------------------------------------
 
-    def train(self, n_episodes: int) -> None:
-        """Run *n_episodes* of MAPPO training."""
-        for _ in self.iter_train(n_episodes):
+    def train(self, n_episodes: int = 0, *, total_steps: Optional[int] = None) -> None:
+        """Train to an episode count or exact joint environment-decision budget."""
+        for _ in self.iter_train(n_episodes, total_steps=total_steps):
             pass
 
-    def train_parallel(self, scenario, scenario_dir, num_envs, n_episodes):
+    def train_parallel(self, scenario, scenario_dir, num_envs, n_episodes=0, *, total_steps=None):
         from training.parallel_mappo import train_parallel
-        train_parallel(self, scenario, scenario_dir, num_envs, n_episodes)
+        train_parallel(self, scenario, scenario_dir, num_envs, n_episodes, total_steps=total_steps)
 
-    def iter_train(self, n_episodes: int, *, parallel: bool = False):
-        """Shared race loop; parallel collectors supply inference at yield points."""
-        for episode in range(n_episodes):
+    def iter_train(self, n_episodes: int, *, parallel: bool = False,
+                   total_steps: Optional[int] = None):
+        """Shared race loop; a budget cut bootstraps without ending the race."""
+        if total_steps is not None and (isinstance(total_steps, bool)
+                or not isinstance(total_steps, int) or total_steps <= 0):
+            raise ValueError("total_steps must be a positive integer")
+        collected, episode = 0, 0
+        while (collected < total_steps if total_steps is not None else episode < n_episodes):
             obs_dict, info_dict = self.env.reset()
             for controller in self.other_agents.values():
                 if hasattr(controller, "reset"):
@@ -515,12 +520,14 @@ class MARLTrainer:
                 global_state = next_global_state
                 step_idx += 1
                 self._environment_steps += 1
+                collected += 1
+                budget_done = total_steps is not None and collected >= total_steps
 
                 if parallel:
                     yield "step", next_global_state
 
                 # --- Trigger update when any buffer is full or episode ends ---
-                if self.agent.any_buffer_full() or episode_done:
+                if self.agent.any_buffer_full() or episode_done or budget_done:
                     if parallel:
                         next_values = yield "value", next_global_state
                         update_metrics = self.agent.finish_fragment(next_values)
@@ -533,6 +540,13 @@ class MARLTrainer:
                     for hook in self.hooks:
                         hook.on_update(update_metrics)
 
+                if budget_done:
+                    break
+
+            # A budget cut is neither a crash nor a completed episode. The last
+            # fragment was bootstrapped above; do not fabricate episode metrics.
+            if not episode_done:
+                break
             last_info = agent_last_info.get(self.focal_id, {})
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
@@ -578,6 +592,7 @@ class MARLTrainer:
 
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, episode_metrics)
+            episode += 1
 
         for hook in self.hooks:
             hook.on_training_end()

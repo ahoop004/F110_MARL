@@ -2,24 +2,42 @@
 
 Run the base scratch/pretrained comparison first, then the penalty pair, then
 LoRA combinations once adapter training is implemented. All four current arms use
-the same 68-input observation, vehicle physics, three-lap races, MPC opponents,
-seed, 5,000-episode budget, and 400 environments across 100 workers. Collection,
-minibatch size, and evaluation cadence come from `configs/training/mappo_parallel.yaml`.
-Within each pair only actor initialization and experiment name differ. The critic
-and optimizer start fresh, and all actor parameters are trained in both arms.
+the same 68-input observation, vehicle physics, MPC opponents, seed, and 400
+environments across 100 workers. Collection, minibatch size, and evaluation
+cadence come from `configs/training/mappo_parallel.yaml`. Within each pair only
+actor initialization and experiment name differ. The critic and optimizer start
+fresh, and all actor parameters are trained in both arms.
+
+The base pair now trains continuously for 120M aggregate joint environment
+steps and evaluates at 20 laps. The penalty pair retains the finite three-lap,
+5,000-episode protocol until the next experiment phase.
 
 | Stage | Scenario | Initialization | Objective |
 |---|---|---|---|
-| 1 | `scenarios/mappo_2v2_base_scratch.yaml` | Random actor and critic | Shared completion |
-| 1 | `scenarios/mappo_2v2_base_pretrained.yaml` | PPO actor; random critic | Shared completion |
+| 1 | `scenarios/mappo_2v2_base_scratch.yaml` | Random actor and critic | Signed metre progress; exclusive collision cost |
+| 1 | `scenarios/mappo_2v2_base_pretrained.yaml` | PPO actor; random critic | Signed metre progress; exclusive collision cost |
 | 2 | `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic | Completion, placement, incident penalties |
 | 2 | `scenarios/mappo_2v2_penalties_pretrained.yaml` | PPO actor; random critic | Completion, placement, incident penalties |
 | 3 | Planned LoRA combinations | To be specified when adapters are implemented | Matched base and penalty tasks |
 
-The base task is the existing `race_team_completion.yaml` reward with
-`team_completion` checkpoint selection. The penalty task also adds the combined
-finishing-position objective, so the base-to-penalty comparison does not isolate
-only the effect of incident penalties.
+The base task uses `race_team_continuous_progress.yaml`: signed metre progress
+or an exclusive -1 collision-ending reward, averaged over the fixed two-learner
+team. This preserves the PPO driving reward scale while using wall/car collisions
+as the failure signal instead of single-car geometric boundaries. It has no
+progress clipping, completion bonus, time cost, or timeout penalty. Training
+resets when both learners crash; a surviving learner keeps driving. Lap count
+does not end training, and there is no artificial training time limit.
+
+The base pair inherits `configs/scenarios/mappo_2v2_continuous_base.yaml`. Its
+20-lap evaluation restores lap-based finishing with a 120,000-step safety cap
+(6,000 simulated seconds) and `team_completion` selection. The larger cap allows
+more time than the former three-lap races. Selection still uses eight starts;
+final testing still uses twenty separate starts.
+
+The penalty task keeps normalized progress, completion/placement terms, incident
+penalties, and its original finite-race horizons. These are now different task
+protocols as well as different rewards; compare scratch/pretrained within each
+pair, and do not attribute cross-stage differences solely to penalty shaping.
 
 Train the new source with the unchanged 400-environment pretraining scenario:
 
@@ -38,7 +56,7 @@ arms; record its hash and pretraining cost. Do not compare arms initialized from
 different updates of a still-running source job.
 
 ```bash
-# Stage 1: base completion task.
+# Stage 1: continuous metre-progress driving.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_base_scratch.yaml
 
@@ -121,9 +139,10 @@ step, points), mean own/opponent penalty points, mean penalty adjustment, and
 `team_rank_penalty_score`. Aggregate and per-map reports use the same calculations
 as the training penalty component.
 
-Equal episode counts are not equal sample budgets. Record environment decisions,
-learner samples, and wall time; add a MAPPO transition-budget control before making
-strict sample-efficiency claims. Pretraining cost should be reported separately.
+Equal episode counts are not equal sample budgets. MAPPO now supports an exact
+aggregate environment-step budget, used by the base pair. Record joint environment
+decisions, actual learner samples, and wall time separately; the penalty pair
+still uses its original episode budget. Pretraining cost should be reported separately.
 The new source must use the corrected L-map finish line and report valid timed
 laps. The fixed MPC opponents have completed three-lap solo, traffic, and paired
 checks on both training maps under the current physics at nominal grip.

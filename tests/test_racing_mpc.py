@@ -84,7 +84,9 @@ def test_active_team_scenarios_use_one_fixed_mpc_opponent_profile():
     from core.scenario import load_and_expand_scenario, load_yaml_config
     profile = load_yaml_config(Path('configs/controllers/racing_mpc.yaml'))
     paths = sorted(Path('scenarios').glob('mappo_2v2_*.yaml'))
-    assert len(paths) == 8
+    assert {f'mappo_2v2_{task}_{initialization}'
+            for task in ('base', 'penalties')
+            for initialization in ('scratch', 'pretrained')} <= {path.stem for path in paths}
     for path in paths:
         scenario = load_and_expand_scenario(str(path))
         for aid, target in [('car_2', 'car_0'), ('car_3', 'car_1')]:

@@ -141,7 +141,7 @@ class _EventSink:
 
 
 def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
-                    run_id, sink, record_transitions, aggregate_wandb):
+                    run_id, sink, record_transitions, aggregate_wandb, total_steps=None):
     from core.setup import create_training_setup
     from run import build_obs_composers, build_reward_composers
     from training.marl_trainer import MARLTrainer
@@ -188,24 +188,25 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
             run_id=f"{run_id}_env{env_id:04d}", reward_mode=agent.reward_mode,
             team_reward_reduction=agent.team_reward_reduction,
         )
-        return env, agent, trainer.iter_train(episodes, parallel=True)
+        return env, agent, trainer.iter_train(episodes, parallel=True, total_steps=total_steps)
     except BaseException:
         env.close()
         raise
 
 
 def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
-                    contract, run_id, record_transitions, aggregate_wandb):
+                    contract, run_id, record_transitions, aggregate_wandb, step_budget=False):
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["PYGLET_HEADLESS"] = "true"
     torch.set_num_threads(1)
     envs, agents, generators, pending = {}, {}, {}, {}
     sink = _EventSink()
     try:
-        for env_id, episodes in assignments:
+        for env_id, quota in assignments:
             envs[env_id], agents[env_id], generators[env_id] = _make_collector(
-                scenario, scenario_dir, env_id, episodes, horizon, contract, run_id,
+                scenario, scenario_dir, env_id, 0 if step_budget else quota, horizon, contract, run_id,
                 sink, record_transitions, aggregate_wandb,
+                total_steps=quota if step_budget else None,
             )
         connection.send(("ready", len(envs)))
         if connection.recv() != ("start", None):
@@ -266,14 +267,20 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
         connection.close()
 
 
-def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes):
+def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, total_steps=None):
     import multiprocessing as mp
 
     experiment = scenario["experiment"]
     workers = min(num_envs, int(experiment.get("num_workers", num_envs)))
     horizon = int(scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256))
-    if min(workers, horizon) < 1 or n_episodes < num_envs:
-        raise ValueError("Parallel MAPPO needs positive workers/horizon and at least num_envs episodes")
+    if min(workers, horizon) < 1:
+        raise ValueError("Parallel MAPPO needs positive workers and horizon")
+    if total_steps is not None and (isinstance(total_steps, bool)
+            or not isinstance(total_steps, int) or total_steps < num_envs):
+        raise ValueError("Parallel MAPPO total_steps must be an integer >= num_envs")
+    if total_steps is None and n_episodes < num_envs:
+        raise ValueError("Parallel MAPPO needs at least num_envs episodes")
+    budget = total_steps if total_steps is not None else n_episodes
     startup = _worker_startup_settings(scenario)
     agent = trainer.agent
     contract = {name: getattr(agent, name) for name in (
@@ -326,13 +333,13 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes):
         for start in range(0, workers, batch_size):
             batch = range(start, min(start + batch_size, workers))
             for worker_id in batch:
-                assignments = [(i, n_episodes // num_envs + (i < n_episodes % num_envs))
+                assignments = [(i, budget // num_envs + (i < budget % num_envs))
                                for i in range(worker_id, num_envs, workers)]
                 parent, child = context.Pipe()
                 process = context.Process(
                     target=_collect_worker,
                     args=(child, scenario, str(scenario_dir), assignments, horizon,
-                          contract, trainer.run_id, bool(record_hooks), aggregate_wandb),
+                          contract, trainer.run_id, bool(record_hooks), aggregate_wandb, total_steps is not None),
                     name=f"mappo-collector-{worker_id}",
                 )
                 connections[worker_id] = parent
@@ -403,7 +410,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes):
                     connections[worker_id].send(metrics)
                 waiting.clear()
                 round_start = time.perf_counter()
-        if completed != n_episodes:
+        if total_steps is not None and collected != total_steps:
+            raise RuntimeError(f"MAPPO collectors collected {collected} of {total_steps} environment decisions")
+        if total_steps is None and completed != n_episodes:
             raise RuntimeError(f"MAPPO collectors completed {completed} of {n_episodes} episodes")
         for hook in trainer.hooks:
             hook.on_training_end()

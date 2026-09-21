@@ -326,8 +326,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("Mixed trainable algorithms are unsupported; use one PPO agent or a MAPPO team.")
     if trainable_algos == {"ppo"} and len(trainable_ids) > 1:
         raise ScenarioError("PPO requires exactly one trainable agent; use MAPPO for a trainable team.")
-    if total_steps is not None and trainable_algos != {"ppo"}:
-        raise ScenarioError("A total_steps budget currently supports PPO only.")
+    if total_steps is not None and trainable_algos not in ({"ppo"}, {"mappo"}):
+        raise ScenarioError("A total_steps budget requires PPO or MAPPO.")
     lap_counting = environment.get("lap_counting", {}) or {}
     if not isinstance(lap_counting, dict):
         raise ScenarioError("environment.lap_counting must be a mapping")
@@ -359,7 +359,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                for v in (seed, env_seed)):
             raise ScenarioError("Parallel training requires explicit integer seeds in [0, 2**32).")
         if total_steps is not None and total_steps < num_envs:
-            raise ScenarioError("Parallel PPO total_steps must be at least num_envs")
+            raise ScenarioError("Parallel training total_steps must be at least num_envs")
         if total_steps is None and int(experiment.get("episodes", 1000)) < num_envs:
             raise ScenarioError("Parallel training requires at least num_envs total episodes.")
         params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}

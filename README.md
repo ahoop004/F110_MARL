@@ -16,9 +16,11 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_ga
 
 Use `--seed` for repeatability, `--output-dir` for a specific output location,
 `--dataset-dir` for transition recording, and `--render` for local visualization.
-PPO supports `experiment.total_steps` for a transition budget; PPO and MAPPO also
-support episode budgets with `--episodes`. An explicit `--episodes` overrides
-the transition budget. There is no `--total-steps` CLI option.
+PPO and MAPPO support `experiment.total_steps` or `--total-steps N` for an
+aggregate environment-decision budget, and `--episodes N` for an episode budget.
+An explicit `--episodes` removes the configured step budget; the two CLI budget
+options are mutually exclusive. For MAPPO, one joint race decision counts once,
+while individual learner samples are tracked separately.
 W&B is optional and `--no-wandb` overrides scenario logging settings.
 
 Evaluate a checkpoint with the same scenario and experiment overrides used for

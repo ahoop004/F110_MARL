@@ -94,6 +94,7 @@ class DeterministicMAPPOEvaluator:
         summary["evaluation_protocol"] = {
             "name": "selection", "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
             "max_steps": self.env.max_steps, "timestep_s": self.env.timestep,
+            "target_laps": getattr(self.env, "target_laps", None),
             "action_repeat": self.action_repeat,
         }
         if physics_episodes:

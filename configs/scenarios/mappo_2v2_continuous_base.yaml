@@ -1,0 +1,31 @@
+# Stage 1: continuous team driving on the PPO reward scale. Finite-race penalty
+# and placement tasks continue to inherit mappo_2v2_base.yaml directly.
+includes:
+  - mappo_2v2_base.yaml
+  - ../training/mappo_parallel.yaml
+experiment:
+  total_steps: 120000000  # aggregate joint decisions; up to twice as many actor samples
+training_defaults:
+  progress_unit: environment_steps
+  update_version: parallel-mappo-continuous-metres-v1
+environment:
+  target_laps: 20  # recorded during training; only evaluation finishes on lap count
+  max_steps: 0
+  episode_termination:
+    mode: all_trainable  # reset once both learners crash; surviving learners continue
+    lap_completion: false
+  terminate_on_collision: true
+evaluation:
+  target_laps: 20
+  # Twenty laps on the larger racing maps need more than the old three-lap cap.
+  max_steps: 120000  # 6000 simulated seconds at 0.05 s
+  selection_strategy: team_completion
+agents:
+  car_0:
+    reward: ../configs/reward/tasks/race_team_continuous_progress.yaml
+  car_1:
+    reward: ../configs/reward/tasks/race_team_continuous_progress.yaml
+wandb:
+  group: mappo-2v2-base-continuous-metres
+  tags: [mappo, 2v2, continuous-training, metre-progress, step-budget, racing-mpc-opponents]
+  notes: "Continuous signed metre progress with exclusive -1 collision-ending reward, shared as a fixed two-learner mean. Reset when both learners crash. Train for 120M joint decisions; evaluate over 20 laps."
