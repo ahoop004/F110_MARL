@@ -18,7 +18,7 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
     "mappo_2v2_frenet_ppo_pretrained",
     "mappo_2v2_frenet_ppo_pretrained_combined",
 ])
-def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(tmp_path, scenario_name):
+def test_mf61_2v2_scenario_extends_current_actor_and_keeps_roles(tmp_path, scenario_name):
     from pathlib import Path
     from core.agent_builder import get_trainable_agent_ids
     from core.scenario import load_and_expand_scenario, resolve_mappo_config
@@ -27,14 +27,9 @@ def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(t
     from wrappers.actions.composer import ActionComposer
 
     scenario = load_and_expand_scenario(f"scenarios/{scenario_name}.yaml")
-    # These MAPPO scenarios still use the historical 158-value legacy interface.
-    # Build a matching PPO fixture; current MF6.1 pretraining is a different contract.
-    from copy import deepcopy
     from core.provenance import physics_contract
-    current = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
-    assert physics_contract(current['environment']) != physics_contract(scenario['environment'])
-    pretraining = deepcopy(scenario)
-    pretraining['agents']['car_0']['algorithm'] = 'ppo'
+    pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    assert physics_contract(pretraining['environment']) == physics_contract(scenario['environment'])
     baseline = load_and_expand_scenario("scenarios/mappo_2v2_team_shared.yaml")
     ids = get_trainable_agent_ids(scenario["agents"])
     assert ids == ["car_0", "car_1"]
@@ -42,10 +37,10 @@ def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(t
     assert scenario["environment"]["vehicle_params"] == pretraining["environment"]["vehicle_params"]
     assert scenario["environment"]["lap_counting"]["count_initial_crossing_as_lap"] is False
     for aid in ["car_2", "car_3"]:
-        assert scenario["agents"][aid] == baseline["agents"][aid]
+        assert scenario["agents"][aid] == {**baseline["agents"][aid],
+                                            "action_adapter": "rolling_speed_to_wheel_v1"}
     for aid in ids:
         assert scenario["agents"][aid]["action_constraints"]["prevent_reverse"] is True
-        assert scenario["agents"][aid]["observation"] == pretraining["agents"]["car_0"]["observation"]
     assert scenario["agents"]["car_0"]["params"] == scenario["agents"]["car_1"]["params"]
 
     env, opponents, _ = create_training_setup(scenario, mode="eval", scenario_dir=Path("scenarios").resolve())
@@ -54,33 +49,44 @@ def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(t
         env.reset(seed=42)
         assert len(env.agents) == 4
         composers = build_obs_composers(scenario["agents"], ids, scenario["environment"], Path("scenarios").resolve())
-        assert [composers[aid].obs_dim for aid in ids] == [158, 158]
+        assert [composers[aid].obs_dim for aid in ids] == [65, 65]
+        source_composer = build_obs_composers(pretraining['agents'], ['car_0'],
+            pretraining['environment'], Path('scenarios').resolve())['car_0']
+        assert source_composer.obs_dim == 50
         space = env.action_spaces["car_0"]
         source_params = resolve_training_params(pretraining["agents"]["car_0"], pretraining)
         params = resolve_training_params(scenario["agents"]["car_0"], scenario)
+        source_params['_observation_contract'] = source_composer.contract
+        params['_observation_contract'] = composers['car_0'].contract
         assert params["_action_contract"] == source_params["_action_contract"]
         assert params["learning_rate"] == 1e-4
         assert params["gamma"] == source_params["gamma"]
-        source = PPOAgent(158, space.low, space.high, {**source_params, "device": "cpu"})
+        source = PPOAgent(50, space.low, space.high, {**source_params, 'n_steps': 4, "device": "cpu"})
         checkpoint = tmp_path / "forward_frenet.pt"
         source.save(str(checkpoint))
         recipient = MAPPOAgent(
-            158, len(env.get_global_state().vector), space.low, space.high, ids,
+            65, len(env.get_global_state().vector), space.low, space.high, ids,
             {**params, **resolve_mappo_config(scenario), "device": "cpu"},
         )
         critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
         recipient.load_pretrained_actor(str(checkpoint))
         for key, value in recipient.actor.state_dict().items():
-            torch.testing.assert_close(value, source.actor.state_dict()[key])
+            if key == 'net.0.weight':
+                torch.testing.assert_close(value[:, :50], source.actor.state_dict()[key])
+                assert not value[:, 50:].count_nonzero()
+            else:
+                torch.testing.assert_close(value, source.actor.state_dict()[key])
         for key, value in recipient.critic.state_dict().items():
             torch.testing.assert_close(value, critic_before[key])
         assert not recipient.optimizer.state
-        observations = np.zeros((2, 158), dtype=np.float32)
+        observations = np.random.default_rng(42).normal(size=(2, 65)).astype(np.float32)
         actions, _ = recipient.act_batch(ids, observations, deterministic=True)
-        for aid in ids:
-            np.testing.assert_allclose(actions[aid], source.predict(observations[0]), atol=1e-7)
+        for i, aid in enumerate(ids):
+            np.testing.assert_allclose(actions[aid], source.predict(observations[i, :50]), atol=1e-7)
+        recipient.actor.net(torch.from_numpy(observations)).sum().backward()
+        assert recipient.actor.net[0].weight.grad[:, 50:].count_nonzero() > 0
         controls = [ActionComposer.from_config(
-            space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.01,
+            space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.05,
         ) for aid in ids]
         assert controls[0].process([0, -1])[1] == pytest.approx(0.0)
         assert controls[1].process([0, 0])[1] == 0
@@ -96,6 +102,40 @@ def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(t
         assert f"MAPPO={recipient.action_contract!r}" in str(error.value)
     finally:
         env.close()
+
+
+@pytest.mark.parametrize('mismatch', ['opt_in', 'scales', 'order', 'dimension', 'layer'])
+def test_neighbor_extension_rejects_incompatible_input_without_mutating_actor(tmp_path, mismatch):
+    from copy import deepcopy
+    base_contract = {'version': 1, 'observation': {'frenet_vehicle_track': {
+        'enabled': True, 'points': 20, 'track_maxima': {'curvature': 1., 'width': 1.}}}}
+    target_contract = deepcopy(base_contract)
+    target_contract['observation']['frenet_neighbors'] = {'enabled': True, 'max_neighbors': 3}
+    common = {'hidden_dims': [4], 'n_steps': 2, 'device': 'cpu'}
+    source = PPOAgent(50, ACTION_LOW, ACTION_HIGH,
+                      {**common, '_observation_contract': base_contract})
+    checkpoint = tmp_path / 'source.pt'
+    source.save(str(checkpoint))
+    extension = 'frenet_neighbors'
+    if mismatch == 'opt_in':
+        extension = None
+    elif mismatch == 'scales':
+        target_contract['observation']['frenet_vehicle_track']['track_maxima']['width'] = 2.
+    elif mismatch == 'order':
+        target_contract['observation']['lidar'] = {'enabled': True}
+    elif mismatch == 'layer':
+        payload = torch.load(checkpoint, weights_only=False)
+        payload['actor']['net.2.weight'] = torch.zeros(3, 4)
+        torch.save(payload, checkpoint)
+    recipient = MAPPOAgent(66 if mismatch == 'dimension' else 65, 12,
+        ACTION_LOW, ACTION_HIGH, ['car_0', 'car_1'], {**common,
+        '_observation_contract': target_contract,
+        'pretrained_actor_observation_extension': extension})
+    before = {k: v.clone() for k, v in recipient.actor.state_dict().items()}
+    with pytest.raises(ValueError):
+        recipient.load_pretrained_actor(str(checkpoint))
+    for key, value in recipient.actor.state_dict().items():
+        torch.testing.assert_close(value, before[key])
 
 
 def _ppo(obs_dim=6, hidden_dims=None):
@@ -455,7 +495,7 @@ def test_net_progress_ignores_spawn_position_counts_laps_and_cancels_reverse():
     assert aggregate_eval_episodes([missing])["mean_net_progress"] is None
 
 
-def test_pretraining_reward_preserves_time_cost_and_favors_forward_motion():
+def test_pretraining_reward_favors_forward_motion_and_penalizes_boundaries():
     import math
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
@@ -468,21 +508,18 @@ def test_pretraining_reward_preserves_time_cost_and_favors_forward_motion():
     gamma = params["gamma"]
     reward = build_reward_composer(cfg, Path("scenarios").resolve())
     def step(delta, **info):
-        return reward.compute({"info": {"centerline": {"progress_delta": delta}, **info}})[0]
+        return reward.compute({'track_length': 350., "info": {
+            "centerline": {"progress_delta": delta},
+            'track_limits': {'exceeded': False}, **info}})[0]
     idle = step(0.0)
     forward = step(3.0 * dt / 350.0)  # Example physical trajectory, not a map dependency.
     backward = step(-3.0 * dt / 350.0)
-    assert backward < idle < 0 < forward
+    assert backward < idle == 0 < forward
     assert (forward + backward) / 2 == pytest.approx(idle)
-    stationary_return = idle * (1 - gamma ** 16000) / (1 - gamma) - gamma ** 15999
-    assert stationary_return == pytest.approx(-0.00625, abs=1e-8)
-    assert stationary_return > step(0.0, terminal_reason="collision")
-    # Waiting then crashing must not beat waiting to timeout on time cost alone.
-    delayed_crash = idle * (1 - gamma ** 500) / (1 - gamma) - gamma ** 499
-    assert stationary_return > delayed_crash
+    assert step(0.1, track_limits={'exceeded': True}) == -1.0
+    assert forward == pytest.approx(3.0 * dt)
     trace_seconds = -dt / math.log(gamma * params["gae_lambda"])
     assert .8 < trace_seconds < .9
-    assert idle / dt == pytest.approx(-.00125)
     # Model a ramp from rest to 3 m/s over two seconds, then sustained progress.
     moving_return = sum(gamma ** i * step(min(3.0, 1.5 * (i + 1) * dt) * dt / 350.0)
                         for i in range(2000))

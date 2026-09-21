@@ -272,31 +272,30 @@ def test_ppo_pretraining_uses_paper_distance_and_boundary_reward() -> None:
         assert reward == pytest.approx(expected)
 
 
-def test_circle_mappo_scenario_uses_ppo_actor_contract() -> None:
+def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
     scenario = load_and_expand_scenario(
-        "scenarios/mappo_4car_1lap_circle_ppo_pretrained.yaml"
+        "scenarios/mappo_2v2_frenet_ppo_pretrained.yaml"
     )
     environment = scenario["environment"]
 
-    assert environment["map_bundles"] == ["circle_map"]
-    assert environment["map_bundles_train"] == ["circle_map"]
+    assert environment["map_bundles"] == ["Budapest_map", "circle_map"]
+    assert environment["map_bundles_train"] == ["Budapest_map", "circle_map"]
     assert environment["map_bundles_eval"] == ["circle_map"]
-    assert environment["target_laps"] == 1
+    assert environment["target_laps"] == 3
     assert environment["action_repeat"] == 1
     assert scenario["mappo"] == {
-        "reward_mode": "individual",
-        "critic_mode": "agent_conditioned",
+        "reward_mode": "team_shared",
+        "critic_mode": "shared_team",
         "team_reward_reduction": "mean",
     }
     assert len(scenario["agents"]) == 4
-    assert all(agent["algorithm"] == "mappo" for agent in scenario["agents"].values())
+    assert all(scenario['agents'][aid]['algorithm'] == 'mappo' for aid in ['car_0', 'car_1'])
     assert all(
         agent["action_constraints"]["prevent_reverse"] is True
-        for agent in scenario["agents"].values()
+        for agent in scenario["agents"].values() if agent.get('trainable')
     )
-    assert scenario["training_defaults"]["pretrained_actor_checkpoint"].endswith(
-        "/best_model.pt"
-    )
+    assert scenario["training_defaults"]["pretrained_actor_checkpoint"] is None
+    assert scenario["training_defaults"]["pretrained_actor_observation_extension"] == 'frenet_neighbors'
 
 
 @pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])

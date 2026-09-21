@@ -1,0 +1,16 @@
+program: run.py
+method: grid
+project: marl-f110-complete
+entity: ahoop004-old-dominion-university
+name: ppo-pretrain-seeds
+parameters:
+  seed:
+    values: [42, 43, 44]
+command:
+  - ${env}
+  - python3
+  - ${program}
+  - --scenario
+  - scenarios/ppo_lap_completion_pretrain.yaml
+  - --wandb
+  - ${args}

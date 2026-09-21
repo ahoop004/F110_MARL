@@ -1,0 +1,23 @@
+# Explicit downstream safety evaluation. Use --eval with a current checkpoint.
+# These maps are excluded from L-map pretraining; do not select checkpoints here.
+includes:
+  - ppo_lap_completion_pretrain.yaml
+experiment:
+  name: ppo_lap_completion_validate
+  checkpoint: null
+environment:
+  map_bundles: [L_map, circle_map, Budapest_map]
+  map_bundles_train: [L_map]
+  map_bundles_eval: [L_map, circle_map, Budapest_map]
+evaluation:
+  enabled: false
+  terminate_on_track_limit: true
+  terminate_on_collision: true
+  target_laps: 3
+  episodes: 12  # four starts on each map
+  seed: 30042
+  final_test:
+    episodes: 30  # ten starts on each map, once checkpoint/config are frozen
+    seed: 40042
+wandb:
+  job_type: transfer-validation

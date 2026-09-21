@@ -191,6 +191,9 @@ class MAPPOAgent:
         self.action_contract = dict(params.get("_action_contract", {"speed_control": "direct"}))
         self.physics_contract = params.get("_physics_contract")
         self.observation_contract = params.get("_observation_contract")
+        self.pretrained_actor_observation_extension = params.get("pretrained_actor_observation_extension")
+        if self.pretrained_actor_observation_extension not in (None, "frenet_neighbors"):
+            raise ValueError("pretrained_actor_observation_extension must be null or frenet_neighbors")
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
 
@@ -714,20 +717,50 @@ class MAPPOAgent:
     # Checkpoint I/O
     # ------------------------------------------------------------------
 
+    def _pretrained_observation_dim(self, checkpoint: Dict) -> int:
+        """Allow only an explicit, appended neighbor block after the driving state."""
+        source = checkpoint.get("observation_contract")
+        if source == self.observation_contract:
+            return self.obs_dim
+        if self.pretrained_actor_observation_extension != "frenet_neighbors":
+            raise ValueError("Incompatible checkpoint observation_contract; observation semantics differ")
+        from copy import deepcopy
+        target = deepcopy(self.observation_contract)
+        if not isinstance(source, dict) or not isinstance(target, dict):
+            raise ValueError("Neighbor extension requires explicit observation contracts")
+        obs = target.get("observation", {})
+        neighbors = obs.pop("frenet_neighbors", {})
+        source_obs = source.get("observation", {})
+        # The composer appends neighbors immediately after Frenet state. Restrict
+        # this migration to that layout; never pad arbitrary or reordered inputs.
+        enabled = {key for key, value in source_obs.items()
+                   if isinstance(value, dict) and value.get("enabled", False)}
+        if (target != source or enabled != {"frenet_vehicle_track"}
+                or not neighbors.get("enabled", False)):
+            raise ValueError("Neighbor extension requires an unchanged Frenet-only observation prefix")
+        points = int(source_obs["frenet_vehicle_track"].get("points", 20))
+        source_dim = 10 + 2 * points
+        added_dim = 5 * int(neighbors.get("max_neighbors", 1))
+        if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
+                or self.obs_dim != source_dim + added_dim):
+            raise ValueError("Neighbor extension observation dimensions do not match the contracts")
+        return source_dim
+
     def load_pretrained_actor(self, path: str) -> None:
         """Initialize only the shared actor from a PPO checkpoint.
 
         MAPPO's centralized critic and fresh optimizer state are intentionally
-        retained.  Local observation and physical action contracts must match.
+        retained. Physical contracts must match. An explicitly configured
+        neighbor extension preserves the existing actor with zero new weights.
         """
         from utils.torch_io import safe_load
 
         ckpt = safe_load(path, map_location=self.device)
         if not isinstance(ckpt, dict) or "actor" not in ckpt:
             raise ValueError(f"Pretrained PPO checkpoint has no actor state: {path}")
-        for key in ("physics_contract", "observation_contract"):
-            if ckpt.get(key) != getattr(self, key):
-                raise ValueError(f"Incompatible checkpoint {key}; physics/observation semantics differ")
+        if ckpt.get("physics_contract") != self.physics_contract:
+            raise ValueError("Incompatible checkpoint physics_contract; physics semantics differ")
+        source_obs_dim = self._pretrained_observation_dim(ckpt)
         checkpoint_contract = ckpt.get("action_contract", {"speed_control": "direct"})
         if checkpoint_contract != self.action_contract:
             raise ValueError(
@@ -743,7 +776,7 @@ class MAPPOAgent:
             )
 
         checks = {
-            "obs_dim": self.obs_dim,
+            "obs_dim": source_obs_dim,
             "action_dim": self.action_dim,
             "actor_hidden_dims": self.actor_hidden_dims,
             "activation": self.activation,
@@ -764,8 +797,23 @@ class MAPPOAgent:
                 raise ValueError(
                     f"Incompatible pretrained PPO actor {key}: physical action bounds differ."
                 )
+        actor_state = dict(ckpt["actor"])
+        if source_obs_dim != self.obs_dim:
+            old_weight = actor_state.get("net.0.weight")
+            expected = self.actor.state_dict()["net.0.weight"]
+            if old_weight is None or old_weight.shape != (expected.shape[0], source_obs_dim):
+                raise ValueError("Incompatible pretrained actor first layer for neighbor extension")
+            expanded = torch.zeros_like(expected)
+            expanded[:, :source_obs_dim] = old_weight
+            actor_state["net.0.weight"] = expanded
+        # Validate all tensors before modifying the recipient, including failures
+        # after the first layer (load_state_dict itself can partially mutate).
+        expected_state = self.actor.state_dict()
+        if (actor_state.keys() != expected_state.keys()
+                or any(actor_state[key].shape != value.shape for key, value in expected_state.items())):
+            raise ValueError("Incompatible pretrained PPO actor network architecture")
         try:
-            self.actor.load_state_dict(ckpt["actor"], strict=True)
+            self.actor.load_state_dict(actor_state, strict=True)
         except RuntimeError as exc:
             raise ValueError(
                 "Incompatible pretrained PPO actor network architecture: " + str(exc)

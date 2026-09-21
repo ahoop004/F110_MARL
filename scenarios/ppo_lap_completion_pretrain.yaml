@@ -1,4 +1,4 @@
-# Paper time-trial PPO protocol with planar MF6.1 and wheel actuators.
+# Paper-inspired time-trial PPO with fixed track scales for actor transfer.
 # Synthetic coefficients: this is not a calibrated reproduction of the paper.
 # Train fresh: previous legacy/reduced-physics checkpoints are incompatible.
 includes:
@@ -92,13 +92,13 @@ environment:
 evaluation:
   enabled: true
   every_steps: 4096000  # ten complete 400 x 1024 collection rounds
-  episodes: 1
+  episodes: 8
   target_laps: 20
   max_steps: 16000  # finite evaluation limit, 800 seconds
   seed: 10042
   selection_strategy: lap_time
   final_test:
-    episodes: 1
+    episodes: 20
     seed: 20042
 
 agents:
@@ -121,6 +121,15 @@ agents:
       # Paper decision interval and discount; rollout size is pooled across workers.
       n_steps: 409600  # pooled: 400 environments x 1024 decisions, across resets
       gamma: 0.99
+      # Explicit implementation choices; not reported paper hyperparameters.
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      ent_coef: 0.01
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+      log_std_init: 0.0
+      target_kl: null
       checkpoint_every_steps: 4096000
       device: cuda
     action_constraints:

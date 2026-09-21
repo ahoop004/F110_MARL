@@ -145,6 +145,7 @@ class ObservationComposer:
                     maxima=frenet_cfg.get("maxima", {}),
                     clip=bool(frenet_cfg.get("clip", False)),
                     wheel_speed_source=source,
+                    track_maxima=frenet_cfg.get("track_maxima"),
                 )
             )
 

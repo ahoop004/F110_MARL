@@ -342,7 +342,8 @@ class F110ParallelEnv:
             integrator=self.integrator,
             lidar_dist=self.lidar_dist,
             num_beams=self._lidar_beam_count,
-            wall_collision_response=not self.track_limits_enabled,
+            wall_collision_response=(not self.track_limits_enabled
+                                     or any(self.terminate_on_collision.values())),
         )
 
         self.sim.set_map(str(self.yaml_path), self.map_ext)

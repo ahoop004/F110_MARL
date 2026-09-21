@@ -162,6 +162,27 @@ def test_frenet_vehicle_track_observation_order_and_normalization() -> None:
     )
 
 
+def test_fixed_track_scales_preserve_geometry_across_maps():
+    component = FrenetVehicleTrackComponent(points=2, wheel_radius=.05,
+        track_maxima={'curvature': 1., 'width': 1.})
+    preview = {'curvature': [.2, -.4], 'width': [1., 2.],
+               'curvature_max': .4, 'width_max': 2.}
+    first = component.compute({}, {'track_preview': preview})
+    other_map = {**preview, 'curvature_max': 2., 'width_max': 10.}
+    np.testing.assert_array_equal(first, component.compute({}, {'track_preview': other_map}))
+    np.testing.assert_allclose(first[10:], [.2, -.4, 1., 2.])
+    wider = {**preview, 'width': [2., 4.]}
+    np.testing.assert_allclose(component.compute({}, {'track_preview': wider})[-2:], [2., 4.])
+
+
+@pytest.mark.parametrize('scales', [{}, {'width': 1.}, {'curvature': 0., 'width': 1.},
+    {'curvature': float('nan'), 'width': 1.}, {'curvature': 1., 'width': -1.},
+    {'curvature': True, 'width': 1.}, {'curvature': 1., 'width': '1'}])
+def test_fixed_track_scales_reject_invalid_configuration(scales):
+    with pytest.raises(ValueError, match='track_maxima'):
+        FrenetVehicleTrackComponent(points=2, wheel_radius=.05, track_maxima=scales)
+
+
 def test_frenet_velocity_uses_body_frame_and_is_rotation_invariant() -> None:
     tracker = CenterlineProgressTracker(["car_0"])
     agent_index = {"car_0": 0}
@@ -389,12 +410,8 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
             assert np.all(np.asarray(preview["width"]) > 0.0)
             # Check the actor receives geometry, rather than zero-filled slots
             # due to a missing feature request or an incomplete info payload.
-            np.testing.assert_allclose(observation[10:30], np.clip(
-                np.asarray(preview["curvature"]) / preview["curvature_max"], -1, 1,
-            ), atol=1e-6)
-            np.testing.assert_allclose(observation[30:50], np.clip(
-                np.asarray(preview["width"]) / preview["width_max"], -1, 1,
-            ), atol=1e-6)
+            np.testing.assert_allclose(observation[10:30], preview['curvature'], atol=1e-6)
+            np.testing.assert_allclose(observation[30:50], preview['width'], atol=1e-6)
             if step:
                 assert raw["wheel_speed_reference"] == pytest.approx(2.0)
                 assert observation[8] == pytest.approx(2.0 / 400.0)
@@ -588,6 +605,7 @@ def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
     assert geometry is not None
 
     env = F110ParallelEnv.__new__(F110ParallelEnv)
+    env.track_limits_enabled = False
     env._track_preview_geometry = geometry
     env._track_preview_agents = frozenset({"car_0"})
     env._frenet_neighbor_agents = frozenset({"car_0"})

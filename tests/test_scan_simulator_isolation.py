@@ -76,7 +76,11 @@ def test_training_and_evaluation_environments_keep_independent_scan_maps() -> No
             assert not np.array_equal(train_scanner.origin, eval_scanner.origin)
 
             scan = train_scanner.scan(pose, np.random.default_rng(123))
-            assert scan.min() < 1.0
+            # Centerline-relative spawns need not lie within 1 m of a wall.
+            # Require a finite obstacle return, then verify the entire scan is
+            # unchanged by constructing a different map's environment.
+            assert np.isfinite(scan).all()
+            assert scan.min() < train_scanner.max_range
             assert np.array_equal(scan, baseline_scan)
         finally:
             eval_env.close()

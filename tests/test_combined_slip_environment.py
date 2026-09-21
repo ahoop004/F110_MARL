@@ -24,6 +24,8 @@ def scenario():
     config['environment']['terminate_on_collision'] = True
     config['environment']['episode_termination']['lap_completion'] = True
     config['environment'].pop('spawn')
+    for key in ('map_bundles', 'map_bundles_train', 'map_bundles_eval'):
+        config['environment'][key] = ['circle_map']
     config['environment'].pop('friction')
     config['environment'].update(timestep=.01, action_repeat=2, max_steps=32)
     config['agents']['car_0']['algorithm'] = 'mappo'

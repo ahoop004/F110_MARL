@@ -606,6 +606,7 @@ def _parallel_test_setup(device="cpu", accelerated=False):
     scenario["environment"]["terminate_on_collision"] = True
     scenario["agents"]["car_0"]["reward"] = "../configs/reward/tasks/lap_completion_circle_stable.yaml"
     scenario["evaluation"].pop("every_steps", None)
+    scenario["evaluation"]["max_steps"] = 4
     scenario["evaluation"]["selection_strategy"] = "completion_safety"
     # Exercise the retained legacy direct/chassis-acceleration trainer contracts.
     from env.f110ParallelEnv import _default_vehicle_params
@@ -790,6 +791,8 @@ def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path,
     assert [row["seed"] for row in report["episode_results"]] == expected_seeds
     assert report["summary"]["episodes"] == len(expected_seeds)
     assert report["summary"]["mean_episode_length"] == 4
+    assert [row['map_bundle'] for row in report['episode_results']] == ['circle_map'] * len(expected_seeds)
+    assert report['per_map']['circle_map']['episodes'] == len(expected_seeds)
     assert report["horizon_s"] == pytest.approx(0.04)
     assert report["provenance_mismatches"] == []
     assert report["checkpoint_sha256"] == checkpoint_hash
@@ -902,10 +905,18 @@ def test_checkpoint_directory_requires_best_model(tmp_path):
 def test_transfer_scenario_preserves_pretraining_contract():
     from core.scenario import load_and_expand_scenario
 
-    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_combined_slip.yaml")
+    source = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     transfer = load_and_expand_scenario("scenarios/ppo_lap_completion_transfer.yaml")
-    assert source["agents"] == transfer["agents"]
-    assert source["evaluation"] == transfer["evaluation"]
+    from core.provenance import physics_contract
+    from run import build_obs_composer
+    from pathlib import Path
+    assert physics_contract(source['environment']) == physics_contract(transfer['environment'])
+    contracts = [build_obs_composer(s['agents']['car_0'], s['environment'], Path('scenarios')).contract
+                 for s in (source, transfer)]
+    assert contracts[0] == contracts[1]
+    assert source['agents']['car_0']['action_constraints'] == transfer['agents']['car_0']['action_constraints']
+    assert transfer['experiment']['checkpoint'] is None
+    assert transfer['agents']['car_0']['params']['n_steps'] == transfer['experiment']['num_envs'] * 1024
     assert source["experiment"]["name"] != transfer["experiment"]["name"]
     # The transfer track is user-selectable; all three lists must agree.
     maps = transfer["environment"]["map_bundles"]
@@ -1040,6 +1051,45 @@ def test_paper_configuration_declares_transition_budget_and_continuous_task():
     assert scenario['environment']['max_steps'] == 0
     assert scenario['environment']['episode_termination']['lap_completion'] is False
     assert scenario['evaluation']['target_laps'] == 20
+
+
+@pytest.mark.parametrize('safety', [False, True])
+def test_evaluation_can_enforce_downstream_track_limits(safety, monkeypatch):
+    from pathlib import Path
+    from core.scenario import load_and_expand_scenario
+    from core.setup import create_training_setup
+    filename = 'ppo_lap_completion_validate.yaml' if safety else 'ppo_lap_completion_pretrain.yaml'
+    scenario = load_and_expand_scenario(str(Path('scenarios') / filename))
+    env, _, _ = create_training_setup(scenario, mode='eval', scenario_dir=Path('scenarios'))
+    try:
+        env.reset(seed=42)
+        assert env.track_limits_enabled
+        assert env.terminate_on_track_boundary is safety
+        assert env.terminate_on_collision['car_0'] is safety
+        assert env.sim.wall_collision_response is safety
+        # Step must honor the mode, not only retain a configuration flag.
+        original = env._inject_track_previews
+        def outside(infos):
+            original(infos)
+            infos['car_0']['track_limits'].update(exceeded=True, offtrack_distance=.1)
+        monkeypatch.setattr(env, '_inject_track_previews', outside)
+        _, _, terminated, _, _ = env.step({'car_0': np.zeros(2, dtype=np.float32)})
+        assert terminated['car_0'] is safety
+        monkeypatch.setattr(env, '_inject_track_previews', original)
+        env.reset(seed=42)
+        car = env.sim.agents[0]
+        scan = car.compute_scan
+        def collision_scan():
+            result = scan()
+            car.in_collision = True
+            return result
+        monkeypatch.setattr(car, 'compute_scan', collision_scan)
+        _, _, terminated, _, infos = env.step({'car_0': np.zeros(2, dtype=np.float32)})
+        assert terminated['car_0'] is safety
+        if safety:
+            assert infos['car_0']['terminal_reason'] == 'collision'
+    finally:
+        env.close()
 
 
 def test_paper_parallel_budget_and_value_requests_with_mock_collectors(monkeypatch):

@@ -129,6 +129,9 @@ def test_delayed_sweep_reward_reaches_early_finisher_without_dummy_decisions(tmp
 
     scenario_path = Path("scenarios/mappo_2v2_frenet_ppo_pretrained_sweep.yaml").resolve()
     scenario = load_and_expand_scenario(str(scenario_path))
+    # This one-value mock environment exercises reward timing, not MF6.1.
+    scenario['environment']['vehicle_params'] = {}
+    scenario['environment'].pop('friction', None)
     scenario["training_defaults"]["device"] = "cpu"
     for aid in ids:
         scenario["agents"][aid]["params"].update(

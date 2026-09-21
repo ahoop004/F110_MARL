@@ -204,12 +204,19 @@ def test_gae_matches_scalar_recurrence_exactly(algorithm, n, device) -> None:
     for column, name in enumerate(("rewards", "values", "terminated", "truncated")):
         getattr(buffer, name)[:n].copy_(torch.as_tensor(data[:, column], device=device))
     buffer.ptr = n  # Exercise partially filled buffers as well as empty ones.
+    finals = rng.normal(size=n).astype(np.float32)
+    if algorithm == 'ppo':
+        # Reset observations are not terminal observations. The continuous PPO
+        # buffer requires explicit values at internal time-limit boundaries.
+        buffer.final_values[:max(n - 1, 0)].copy_(torch.as_tensor(finals[:-1], device=device))
 
     expected = np.zeros(n, dtype=np.float32)
     carry = 0.0
     for t in reversed(range(n)):
         reward, value, terminal, truncation = map(float, data[t])
         successor = 1.25 if t == n - 1 else float(data[t + 1, 1])
+        if algorithm == 'ppo' and truncation and not terminal and t != n - 1:
+            successor = float(finals[t])
         delta = reward + 0.99 * successor * (1.0 - terminal) - value
         carry = delta + 0.99 * 0.95 * (not (terminal or truncation)) * carry
         expected[t] = carry

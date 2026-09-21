@@ -10,6 +10,9 @@ observation:
     clip: false
     wheel_speed_source: simulated_v1
     wheel_radius: 0.05
+    # Fixed SI scales shared by every map. Values may exceed one; do not clip.
+    # This transfer-oriented choice differs from per-track normalization.
+    track_maxima: {curvature: 1.0, width: 1.0}
     maxima:
       delta: 0.5
       delta_ref: 0.5

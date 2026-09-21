@@ -22,6 +22,10 @@ from wrappers.observations.composer import ObservationComposer
 def scenario():
     config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_combined_slip.yaml')
     config['environment'].pop('spawn')
+    # This fixture exercises annotated multi-car spawns, unlike the L-map's
+    # centerline-relative pretraining spawn. Declare its own map explicitly.
+    for key in ('map_bundles', 'map_bundles_train', 'map_bundles_eval'):
+        config['environment'][key] = ['circle_map']
     config['environment'].pop('track_limits', None)
     config['environment']['terminate_on_collision'] = True
     config['environment']['episode_termination']['lap_completion'] = True

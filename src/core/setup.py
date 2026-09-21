@@ -44,9 +44,15 @@ def create_training_setup(
     env_config = apply_map_split(env_config, experiment_config, mode)
     env_config["physics_phase"] = "eval" if mode in {"eval", "evaluation", "test"} else "train"
     evaluation = scenario.get("evaluation", {}) or {}
+    if env_config["physics_phase"] == "eval" and "terminate_on_collision" in evaluation:
+        env_config["terminate_on_collision"] = evaluation["terminate_on_collision"]
     if env_config["physics_phase"] == "eval" and env_config.get("track_limits", {}).get("enabled"):
-        # Training resets on excursions. Evaluation measures them over full laps.
-        env_config["track_limits"] = {"enabled": True, "terminate": False}
+        # Default paper evaluation records excursions; safety evaluation can
+        # explicitly retain boundary termination as well as collision checks.
+        env_config["track_limits"] = {
+            "enabled": True,
+            "terminate": bool(evaluation.get("terminate_on_track_limit", False)),
+        }
         env_config["episode_termination"] = {**env_config.get("episode_termination", {}),
                                              "lap_completion": True}
         env_config["target_laps"] = int(evaluation.get("target_laps", 20))

@@ -6,6 +6,7 @@ hyperparameter CLI flags. Put model/reward changes in scenario configuration.
 
 | Sweep | Experiments |
 |---|---|
+| `ppo_pretrain_seed_sweep.yaml` | Current 400-environment MF6.1 pretraining, seeds 42/43/44 |
 | `ppo_seed_sweep.yaml` | Existing seed list for PPO gaplock against FTG |
 | `ppo_sweep.yaml` | PPO against pure pursuit, Stanley, and hybrid PP/FTG, across seeds |
 | `mappo_sweep.yaml` | Four-car MAPPO individual/team reward and critic configurations, across seeds |

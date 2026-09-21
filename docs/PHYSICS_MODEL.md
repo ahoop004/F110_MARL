@@ -26,10 +26,10 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 
 `--max-steps` overrides the environment horizon and evaluation horizon. At the
 configured action repeat of one, 64 steps are 3.2 simulated seconds per episode.
-This tests collection, PPO updates, and checkpoint writing. Evaluation runs at
-the configured checkpoint-selection interval (500 episodes by default), or via
-`--eval` with an explicit saved checkpoint. A short untrained run is not a
-lap-completion benchmark.
+This tests collection, PPO updates, and checkpoint writing. The full transition
+run evaluates every 4,096,000 decisions; use `--eval` with an explicit saved
+checkpoint to evaluate this bounded episode run. A short untrained run is not
+a lap-completion benchmark.
 
 For a full run, omit the three testing overrides. Supply the new track bundle in
 all three `environment.map_bundles*` lists when it is ready. No tire parameters
@@ -157,9 +157,10 @@ instantaneous chassis-acceleration constraint.
 
 The pretraining observation is the paper's Eq. (2) layout with real simulated
 wheel state and no LiDAR: 10 vehicle values plus 20 curvature and 20 width values.
-Track samples are 0.3 m apart. N=20 and normalization maxima are provisional;
-the paper does not give all corresponding numerical values. Normalization divides
-by maxima without clipping. The derivative slot reflects the applied reference
+Track samples are 0.3 m apart. N=20 and vehicle-state normalization maxima
+remain provisional. For transfer, curvature and full width now use fixed scales
+of 1 m^-1 and 1 m on every map, without clipping. This is an explicit deviation
+from per-track normalization and changes the checkpoint observation contract. The derivative slot reflects the applied reference
 change after saturation, which needs checking against the authors' convention.
 
 ## Friction protocol
@@ -208,7 +209,9 @@ widths or the vehicle footprint. Wall-contact stopping is disabled for this
 single-vehicle task; otherwise the footprint could hit a wall before the vehicle
 center reaches the geometric boundary. Ordinary race scenarios retain collisions.
 
-Evaluation uses nominal grip, 20 completed laps, and an 800 s safety horizon.
+Evaluation uses nominal grip, 20 completed laps, and an 800 s safety horizon,
+with eight selection starts and 20 final-test starts. The separate downstream
+validation scenario enforces collisions and boundary termination over three laps.
 It records excursions without resetting on them. The first accepted forward
 crossing starts timing, excluding the random-spawn approach. Reports include
 fastest valid lap, mean/std lap time, fraction of laps with violations, and
@@ -234,8 +237,10 @@ and normalization maxima, and unspecified PPO settings are still required for an
 exact reproduction. The L-map has the reported 17 m length and 1 m width but its
 corner geometry is an approximation, not the authors' original track.
 
-Legacy MAPPO scenarios require a compatible physics/observation/action contract
-before receiving a new 50-value PPO actor. Experimental scenario aliases may use
+The migrated `mappo_2v2_frenet_ppo_pretrained.yaml` receives a compatible
+50-value PPO actor and appends 15 neighbor inputs with zero initial weights.
+Other legacy MAPPO scenarios still require migration before receiving this actor.
+Experimental scenario aliases may use
 smaller worker counts or different PPO settings; only the canonical scenario
 selects the paper's stated parallelism and main training settings.
 
@@ -256,9 +261,8 @@ They establish software behavior, not hardware calibration.
 
 Checkpoints record the full vehicle parameters, model version, timestep, friction
 protocol, and observation/action contracts. Old reduced/legacy checkpoints fail
-compatibility checks, even if dimensions happen to match. Train fresh. In
-particular, a path previously saved in the transfer scenario still points to an
-old checkpoint and must be replaced with a compatible new run before transfer.
+compatibility checks, even if dimensions happen to match. Train fresh. The transfer YAML now defaults to a null checkpoint for scratch comparisons;
+provide a compatible new run explicitly for fine-tuning.
 
 Frozen legacy regression trajectories in `tests/fixtures/physics_baseline` remain
 historical artifacts and are not regenerated as part of the MF6.1 migration.

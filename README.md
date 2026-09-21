@@ -54,15 +54,16 @@ directories also work. `--checkpoint` overrides this field and remains relative
 to the working directory. Leave `checkpoint: null` to disable YAML loading.
 
 `scenarios/ppo_lap_completion_transfer.yaml` inherits the pretraining observation,
-reward, action, and network settings and selects Budapest. To use another track,
+reward, action, and network settings and selects circle_map. It uses a constant
+1e-4 learning rate and a matched 4,096,000-transition destination budget. To use another track,
 copy it, change its experiment name, and update all three map bundle lists.
 First evaluate the original policy, then fine-tune, then evaluate the new policy:
 
 ```bash
 # Replace outputs/PRETRAIN_RUN with the directory containing your best_model.pt.
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/PRETRAIN_RUN --allow-provenance-mismatch --eval-protocol final --output-dir outputs/budapest_before --no-wandb
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --checkpoint outputs/PRETRAIN_RUN --output-dir outputs/budapest_finetune --no-wandb
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/budapest_finetune --eval-protocol final --output-dir outputs/budapest_after --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/PRETRAIN_RUN --allow-provenance-mismatch --eval-protocol final --output-dir outputs/circle_before --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --checkpoint outputs/PRETRAIN_RUN --output-dir outputs/circle_finetune --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_transfer.yaml --eval --checkpoint outputs/circle_finetune --eval-protocol final --output-dir outputs/circle_after --no-wandb
 ```
 
 Compare `evaluation_report.json` in the before/after directories for completion,
@@ -70,8 +71,7 @@ collisions, progress, and finish times under the same final-test seeds and horiz
 The initial evaluation measures transfer without further learning; after fine-tuning,
 the destination track is part of training. Keep final-test results out of checkpoint
 selection. Omit `--checkpoint` and leave `experiment.checkpoint: null` for a matched
-from-scratch baseline. The inherited
-learning rate is unchanged; choose any fine-tuning rate explicitly in the new YAML.
+from-scratch baseline. Both fine-tuning and scratch arms use the same destination learning rate and budget.
 Network dimensions, activation, and physical action contracts must match the source;
 keep observation component meanings/order compatible as well as their dimensions.
 
@@ -92,8 +92,7 @@ YAML for its maps, seeds, rewards, vehicle limits, and episode budget before a r
 | PPO defender against hybrid controller | `marl_defender.yaml` |
 | MAPPO gaplock | `mappo_gaplock.yaml` |
 | MAPPO four-car reward/critic comparison | `complete_4_individual.yaml`, `complete_4_team_shared.yaml` |
-| MAPPO initialized from a PPO checkpoint | `mappo_4car_1lap_circle_ppo_pretrained.yaml` (requires the configured local checkpoint) |
-| Forward-only Frenet PPO transfer to a MAPPO 2v2 team | `mappo_2v2_frenet_ppo_pretrained.yaml` (requires a forward-only Frenet `best_model.pt`) |
+| Forward-only Frenet PPO transfer to a MAPPO 2v2 team | `mappo_2v2_frenet_ppo_pretrained.yaml` (configure a current MF6.1 `best_model.pt`; null runs scratch) |
 | Frenet 2v2 team objectives using the PPO reward | `mappo_2v2_frenet_ppo_pretrained_combined.yaml`, `mappo_2v2_frenet_ppo_pretrained_first_place.yaml`, `mappo_2v2_frenet_ppo_pretrained_sweep.yaml` |
 | MAPPO observation variants | `complete_4.yaml`, `complete_4_frenet.yaml`, `complete_4_frenet_neighbors.yaml` |
 | MAPPO against two hybrid opponents | `mappo_2v2.yaml`, `mappo_2v2_vs_hybrid_pp_ftg.yaml`, `mappo_2v2_individual.yaml`, `mappo_2v2_team_shared.yaml` |
@@ -181,7 +180,7 @@ uncalibrated; see [physics details and limitations](docs/PHYSICS_MODEL.md).
 
 The canonical `scenarios/ppo_lap_completion_pretrain.yaml` configures the paper's
 120-million-transition budget, 400 environments, and 1,024 transitions per worker
-per rollout. It uses 50 normalized vehicle/Frenet/track values, wheel-reference
+per rollout. It uses 50 vehicle/Frenet/track values with fixed track scales across maps, wheel-reference
 acceleration, 0.05 s decisions, and episode friction randomization (relative
 standard deviation 0.02). Reward is signed distance progress in metres, replaced
 by -1 on a geometric boundary violation. Training resets only at that boundary;
@@ -189,7 +188,8 @@ lap crossings do not end an episode. Rollouts continue across resets.
 
 Learning-rate decay, periodic checkpoints, and evaluation use transition counts.
 Evaluation measures 20 laps with nominal grip and permits excursions to measure
-off-track error. `final_model.pt` contains the final update; `best_model.pt` uses
+off-track error. Selection uses eight starts and the final protocol uses 20 independent starts
+on the same map. `final_model.pt` contains the final update; `best_model.pt` uses
 the documented lap-time selection rule. The existing `_frenet` and
 `_combined_slip` entries retain their smaller worker counts and other overrides.
 For a smaller parallel experiment, set pooled `params.n_steps = num_envs * 1024`.
@@ -200,6 +200,11 @@ and N=20 remain provisional. `L_map` matches the reported dimensions but is an
 approximation. See [physics and protocol details](docs/PHYSICS_MODEL.md) for the
 remaining reproduction limits. No result on this map establishes sim-to-real
 performance. Configure all three map bundle lists when changing tracks.
+The separate `ppo_lap_completion_validate.yaml` tests collision and boundary
+termination on L_map, circle_map, and Budapest_map; evaluation reports contain
+per-map summaries. Fixed track scaling changes observation semantics and requires
+fresh pretraining. See [the current workflow](docs/PPO_TO_MAPPO_PRETRAINING.md)
+for matched scratch comparisons, independent seeds, and acceptance criteria.
 
 Use the independent final evaluation seeds after selecting a checkpoint:
 
@@ -209,8 +214,9 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_complet
 
 Replace the run directory with one produced by the same scenario and physics
 contract. Final seeds use the configured evaluation track and do not establish
-sim-to-real performance. For legacy MAPPO actor transfer, migrate its
-physics/observation/action configuration before using a new pretraining actor.
+sim-to-real performance. The migrated `mappo_2v2_frenet_ppo_pretrained.yaml` supports the new actor
+with 15 appended neighbor inputs initialized to zero weight. Other legacy MAPPO
+scenarios still need compatible physics/observation/action configurations.
 
 For the circle convergence experiment, use
 `scenarios/ppo_combined_slip_circle_stable.yaml` with the same `run.py` command.
@@ -235,7 +241,7 @@ Metrics include rollout size, optimizer steps, KL early stopping, Gaussian
 standard deviation, and action saturation. For circle fine-tuning, pass a
 compatible combined-slip checkpoint with `--checkpoint` to this circle scenario;
 the optimizer/schedule restart, while the checkpoint's learned standard deviation
-overrides `log_std_init`. The original transfer YAML still targets Spielberg.
+overrides `log_std_init`. The transfer YAML targets circle_map.
 
 PPO and MAPPO now retain pre-tanh action samples internally to score saturated
 actions correctly and use the entropy of the squashed Gaussian (32-point
@@ -259,15 +265,16 @@ comparing completion rates or selected-model lap times across this change;
 when loading an older checkpoint for evaluation.
 
 For parallel PPO in this repository, `n_steps` is the **pooled collection-round** limit:
-`steps_per_worker = n_steps / num_envs`. Episode ends flush shorter fragments,
-so without `min_rollout_steps` the actual update size can be smaller. At a 0.01 s decision interval,
+`steps_per_worker = n_steps / num_envs`. With episode budgets, episode ends flush
+shorter fragments, so without `min_rollout_steps` the actual update size can be
+smaller. Transition budgets keep collecting across resets. At a 0.01 s decision interval,
 `n_steps=2048` gives at most 20.48 s per worker with one environment, 5.12 s with
 four, and 2.56 s with eight. More workers at fixed `n_steps` therefore shorten
 the sampled GAE trajectories and increase dependence on critic bootstrapping.
 To preserve the fragment horizon, scale `n_steps` proportionally to `num_envs`;
 this also increases the pooled batch and changes update frequency. Compare runs
-at matched environment-decision budgets as well as wall time: the current
-episode-based budget and learning-rate decay do not guarantee equal samples.
+at matched environment-decision budgets as well as wall time: episode budgets
+and episode-based learning-rate decay do not guarantee equal samples.
 
 Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
 `events.py`, and `interaction.py`; observations use `ego.py`, `track.py`, and

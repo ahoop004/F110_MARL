@@ -563,6 +563,7 @@ def main() -> None:
             "path": str(pretrained_actor_path),
             "sha256": hashlib.sha256(pretrained_actor_path.read_bytes()).hexdigest(),
             "load_scope": "actor_only",
+            "observation_extension": params.get("pretrained_actor_observation_extension"),
         }
     csv_logger = CSVLogger(
         output_dir=output_dir,
@@ -981,6 +982,7 @@ def _run_eval(
     opponent_agent_id = target_id if target_id in opponent_ids else (opponent_ids[0] if opponent_ids else None)
     eval_episodes_facts = []
     eval_physics = {}
+    eval_maps = {}
     team_results = []
 
     try:
@@ -989,6 +991,8 @@ def _run_eval(
                 seed=base_seed + episode,
                 options={"map_episode_index": episode},
             )
+            eval_maps[episode] = info_dict.get(focal_agent_id, {}).get("map_bundle") or getattr(
+                env, "_map_bundle_active", None)
             for composer in obs_composers.values():
                 composer.reset()
             for composer in reward_composers.values():
@@ -1236,8 +1240,16 @@ def _run_eval(
         "horizon_s": env.max_steps * float(env.timestep) if env.max_steps > 0 else None,
         "action_repeat": action_repeat,
         "summary": summary,
+        "per_map": {
+            map_name: aggregate_eval_episodes(
+                [facts for facts in eval_episodes_facts if eval_maps[facts.episode] == map_name],
+                focal_agent_id=focal_agent_id, opponent_agent_id=opponent_agent_id,
+                timestep=float(env.timestep),
+            ) for map_name in sorted({name for name in eval_maps.values() if name is not None})
+        },
         "episode_results": [
             {"seed": base_seed + facts.episode,
+             "map_bundle": eval_maps[facts.episode],
              **({"physics": eval_physics[facts.episode]} if facts.episode in eval_physics else {}),
              **aggregate_eval_episodes(
                 [facts], focal_agent_id=focal_agent_id,

@@ -96,9 +96,8 @@ _DEFAULT_MAXIMA = {
 class FrenetVehicleTrackComponent(ObservationComponent):
     """Observation ``[vx,vy,u,n,r,δ,δref,ωref_dot,ωref,ω,c[N],w[N]]``.
 
-    Vehicle-state maxima are supplied by configuration. Curvature and width
-    maxima are taken from the complete active track geometry and accompany the
-    per-step preview in ``info["track_preview"]``.
+    Optional fixed track maxima preserve physical scale across maps. Without
+    them, historical configurations use the active track's geometry maxima.
     """
 
     def __init__(
@@ -109,12 +108,21 @@ class FrenetVehicleTrackComponent(ObservationComponent):
         maxima: Mapping[str, float] | None = None,
         clip: bool = False,
         wheel_speed_source: str = "rolling_estimate",
+        track_maxima: Mapping[str, float] | None = None,
     ) -> None:
         self.points = max(int(points), 1)
         self.wheel_radius = max(float(wheel_radius), 1e-6)
         if wheel_speed_source not in {"rolling_estimate", "simulated_v1"}:
             raise ValueError("wheel_speed_source must be rolling_estimate or simulated_v1")
         self.wheel_speed_source = wheel_speed_source
+        self.track_maxima = None
+        if track_maxima is not None:
+            if not isinstance(track_maxima, Mapping) or set(track_maxima) != {"curvature", "width"}:
+                raise ValueError("track_maxima requires curvature (1/m) and width (m)")
+            if any(isinstance(value, (bool, str)) or not np.isscalar(value)
+                   or not np.isfinite(value) or value <= 0 for value in track_maxima.values()):
+                raise ValueError("track_maxima values must be finite and positive")
+            self.track_maxima = {key: float(value) for key, value in track_maxima.items()}
         configured = dict(_DEFAULT_MAXIMA)
         configured.update(dict(maxima or {}))
         self._maxima = np.asarray(
@@ -161,6 +169,9 @@ class FrenetVehicleTrackComponent(ObservationComponent):
         width = _vector(preview.get("width"), self.points)
         curvature_max = max(abs(_number(preview.get("curvature_max"), 1.0)), 1e-6)
         width_max = max(abs(_number(preview.get("width_max"), 1.0)), 1e-6)
+        if self.track_maxima is not None:
+            curvature_max = self.track_maxima["curvature"]
+            width_max = self.track_maxima["width"]
         out[10 : 10 + self.points] = curvature / curvature_max
         out[10 + self.points :] = width / width_max
         np.nan_to_num(out, copy=False)
