@@ -1,0 +1,8 @@
+# Actor-only adaptation; load the same LiDAR-enabled PPO source as full tuning.
+# All hidden linear layers receive residuals. Base weights, biases and head freeze.
+training_defaults:
+  lora:
+    mode: shared
+    rank: 4
+    alpha: 4.0  # residual multiplier alpha/rank = 1
+    train_log_std: true  # one shared exploration vector in either routing mode

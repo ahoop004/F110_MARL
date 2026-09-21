@@ -522,6 +522,12 @@ def main() -> None:
             )
         params["_resolved_pretrained_actor_checkpoint"] = str(pretrained_actor_path)
 
+    if params.get("lora") is not None:
+        if algorithm != "mappo":
+            raise ValueError("LoRA is supported for MAPPO actor transfer only")
+        if pretrained_actor_path is None:
+            raise ValueError("LoRA training requires --pretrained-actor or pretrained_actor_checkpoint")
+
     # --- Startup banner ---
     maps_raw = env_cfg.get(
         "maps", env_cfg.get("map_bundles", env_cfg.get("map", "?"))
@@ -591,6 +597,7 @@ def main() -> None:
             "sha256": hashlib.sha256(pretrained_actor_path.read_bytes()).hexdigest(),
             "load_scope": "actor_only",
             "observation_extension": params.get("pretrained_actor_observation_extension"),
+            "lora": params.get("lora"),
         }
     csv_logger = CSVLogger(
         output_dir=output_dir,
@@ -1505,7 +1512,14 @@ def _run_mappo(
     if pretrained_actor:
         agent.load_pretrained_actor(str(pretrained_actor))
         console.print_info(
-            f"Initialized MAPPO shared actor from PPO checkpoint: {pretrained_actor}"
+            f"Initialized MAPPO actor from PPO checkpoint: {pretrained_actor}"
+        )
+    if agent.lora_config is not None:
+        trainable = sum(p.numel() for p in agent.actor.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in agent.actor.parameters())
+        console.print_info(
+            f"LoRA mode={agent.lora_config['mode']} rank={agent.lora_config['rank']} "
+            f"actor_trainable={trainable}/{total}; centralized critic fully trainable"
         )
 
     # Wire checkpoint hook (same pattern as single-agent trainers)

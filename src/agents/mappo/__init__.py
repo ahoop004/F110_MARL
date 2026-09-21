@@ -34,6 +34,7 @@ import torch
 import torch.optim as optim
 
 from agents.common import Actor, Critic, compute_gae, ppo_minibatch_step, mean_update_metrics
+from agents.common.lora import LoRAActor, resolve_lora_config
 from utils.torch_io import resolve_device
 
 
@@ -150,7 +151,9 @@ class MAPPORolloutBuffer:
 # ---------------------------------------------------------------------------
 
 class MAPPOAgent:
-    """Multi-Agent PPO with shared actor and centralized critic.
+    """Multi-Agent PPO with a shared driving network and centralized critic.
+
+    Optional LoRA residuals are shared or selected by trainable agent identity.
 
     Parameters
     ----------
@@ -196,6 +199,10 @@ class MAPPOAgent:
             raise ValueError("pretrained_actor_observation_extension must be null or frenet_neighbors")
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
+        self.lora_config = resolve_lora_config(params.get("lora"))
+        self.pretrained_actor_source = None
+        self._lora_ready = self.lora_config is None
+        self.last_raw_actions: Dict[str, np.ndarray] = {}
 
         self.critic_mode = str(params.get("critic_mode", "agent_conditioned")).strip().lower()
         if self.critic_mode not in {"shared_team", "agent_conditioned"}:
@@ -271,9 +278,19 @@ class MAPPOAgent:
             len(self.agent_ids), dtype=torch.float32, device=self.device
         )
 
-        self._optim_parameters = tuple(self.actor.parameters()) + tuple(
-            self.critic.parameters()
-        )
+        # Build adapters after the critic so its initialization matches the
+        # full-fine-tuning control under the same seed.
+        self.lora_contract = None
+        if self.lora_config is not None:
+            self.actor = LoRAActor(self.actor, self.lora_config, len(self.agent_ids)).to(self.device)
+            self.lora_contract = {
+                "version": 1, **self.lora_config,
+                "target_layers": self.actor.target_layers,
+                "agent_to_adapter": {aid: (i if self.lora_config["mode"] == "per_agent" else 0)
+                                     for i, aid in enumerate(self.agent_ids)},
+            }
+        self._optim_parameters = tuple(p for p in self.actor.parameters() if p.requires_grad) + tuple(
+            self.critic.parameters())
         self.optimizer = optim.Adam(self._optim_parameters, lr=self.lr)
 
         # Per-agent rollout buffers
@@ -302,11 +319,31 @@ class MAPPOAgent:
     # Action selection (decentralized execution — uses local obs only)
     # ------------------------------------------------------------------
 
+    @property
+    def per_agent_adapters(self) -> bool:
+        return self.lora_config is not None and self.lora_config["mode"] == "per_agent"
+
+    def _require_lora_source(self):
+        if not self._lora_ready:
+            raise ValueError("LoRA requires a pretrained PPO actor or a matching MAPPO checkpoint before use")
+
+    def actor_actions(self, observations, agent_ids, *, deterministic=False, return_raw=False):
+        """Route rows, including repeated IDs from independent environments."""
+        self._require_lora_source()
+        if len(agent_ids) != len(observations) or any(aid not in self._agent_index for aid in agent_ids):
+            raise ValueError("Actor rows require matching, known agent IDs")
+        kwargs = {}
+        if self.per_agent_adapters:
+            kwargs["adapter_indices"] = torch.tensor(
+                [self._agent_index[aid] for aid in agent_ids], device=self.device, dtype=torch.long)
+        return self.actor.get_action(observations, deterministic=deterministic,
+                                     return_raw=return_raw, **kwargs)
+
     @torch.no_grad()
     def act(
-        self, obs: np.ndarray, deterministic: bool = False
+        self, obs: np.ndarray, deterministic: bool = False, *, agent_id: Optional[str] = None
     ) -> Tuple[np.ndarray, float]:
-        """Sample action from the shared actor using a local observation.
+        """Sample a local action; per-agent LoRA also requires the agent ID.
 
         Returns
         -------
@@ -316,7 +353,10 @@ class MAPPOAgent:
             Log probability of the sampled action.
         """
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        action_t, log_prob_t = self.actor.get_action(obs_t, deterministic=deterministic)
+        if self.per_agent_adapters and agent_id is None:
+            raise ValueError("Per-agent LoRA act requires agent_id")
+        action_t, log_prob_t = self.actor_actions(
+            obs_t, [agent_id if agent_id is not None else self.agent_ids[0]], deterministic=deterministic)
         return (
             action_t.squeeze(0).cpu().numpy(),
             float(log_prob_t.squeeze()),
@@ -340,8 +380,8 @@ class MAPPOAgent:
                 f"({len(ordered_ids)}, {self.obs_dim}), got {obs.shape}."
             )
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        action_t, log_prob_t, raw_t = self.actor.get_action(
-            obs_t, deterministic=deterministic, return_raw=True
+        action_t, log_prob_t, raw_t = self.actor_actions(
+            obs_t, ordered_ids, deterministic=deterministic, return_raw=True
         )
         # One device-to-host transfer for the complete joint decision.
         result = torch.cat((action_t, log_prob_t.unsqueeze(-1), raw_t), dim=-1).cpu().numpy()
@@ -685,7 +725,12 @@ class MAPPOAgent:
             rows[:, ret_index] = ret
             row_start += n
 
-        return self._update_pool(update_pool, raw_pool)
+        agent_indices = None
+        if self.per_agent_adapters:
+            agent_indices = torch.cat([torch.full(
+                (self.buffers[aid].size(),), self._agent_index[aid], dtype=torch.long, device=self.device)
+                for aid in rollout_agent_ids])
+        return self._update_pool(update_pool, raw_pool, agent_indices)
 
     def update_rollouts(self, rollouts) -> Dict[str, float]:
         """Pool independently bootstrapped collector fragments for one PPO update."""
@@ -696,9 +741,21 @@ class MAPPOAgent:
                                dtype=torch.float32, device=self.device)
         raw = torch.as_tensor(np.concatenate([r[1] for r in rollouts]),
                               dtype=torch.float32, device=self.device)
-        return self._update_pool(pool, raw)
+        agent_indices = None
+        if self.per_agent_adapters:
+            if any(len(r) != 3 for r in rollouts):
+                raise ValueError("Per-agent LoRA rollouts require actor identity")
+            indices = np.concatenate([r[2] for r in rollouts])
+            if (indices.shape != (len(pool),) or not np.issubdtype(indices.dtype, np.integer)
+                    or np.any(indices < 0) or np.any(indices >= len(self.agent_ids))):
+                raise ValueError("Invalid LoRA rollout actor identity")
+            agent_indices = torch.as_tensor(indices, dtype=torch.long, device=self.device)
+        return self._update_pool(pool, raw, agent_indices)
 
-    def _update_pool(self, update_pool, raw_pool) -> Dict[str, float]:
+    def _update_pool(self, update_pool, raw_pool, agent_indices=None) -> Dict[str, float]:
+        self._require_lora_source()
+        if self.per_agent_adapters and (agent_indices is None or agent_indices.shape != (len(update_pool),)):
+            raise ValueError("Per-agent LoRA update requires actor identity")
         n_pool = len(update_pool)
         obs_end = self.obs_dim
         gs_end = obs_end + self.critic_input_dim
@@ -728,6 +785,7 @@ class MAPPOAgent:
                 metric_rows.append(ppo_minibatch_step(
                     self, obs_b, gs_b, acts_b, old_lp_b, adv_b, ret_b,
                     raw_actions=raw_pool[idx],
+                    adapter_indices=agent_indices[idx] if self.per_agent_adapters else None,
                 ))
 
         return mean_update_metrics(metric_rows)
@@ -827,18 +885,31 @@ class MAPPOAgent:
             actor_state["net.0.weight"] = expanded
         # Validate all tensors before modifying the recipient, including failures
         # after the first layer (load_state_dict itself can partially mutate).
-        expected_state = self.actor.state_dict()
+        expected_state = (self.actor.base_state_dict() if self.lora_config is not None
+                          else self.actor.state_dict())
         if (actor_state.keys() != expected_state.keys()
                 or any(actor_state[key].shape != value.shape for key, value in expected_state.items())):
             raise ValueError("Incompatible pretrained PPO actor network architecture")
         try:
+            if self.lora_config is not None:
+                if self.optimizer.state:
+                    raise ValueError("Initialize a pretrained LoRA base on a fresh agent")
+                self.actor.reset_adapters()
+                actor_state = {**self.actor.state_dict(), **actor_state}
             self.actor.load_state_dict(actor_state, strict=True)
         except RuntimeError as exc:
             raise ValueError(
                 "Incompatible pretrained PPO actor network architecture: " + str(exc)
             ) from exc
+        import hashlib
+        self.pretrained_actor_source = {
+            "path": str(Path(path).resolve()),
+            "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        }
+        self._lora_ready = True
 
     def save(self, path: str) -> None:
+        self._require_lora_source()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
@@ -864,6 +935,8 @@ class MAPPOAgent:
                 "actor_hidden_dims": self.actor_hidden_dims,
                 "critic_hidden_dims": self.critic_hidden_dims,
                 "activation": self.activation,
+                "lora_contract": self.lora_contract,
+                "pretrained_actor_source": self.pretrained_actor_source,
             },
             path,
         )
@@ -871,6 +944,10 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if ckpt.get("lora_contract") != self.lora_contract:
+            raise ValueError("Incompatible MAPPO LoRA contract; mode, rank, alpha, layers and routing must match")
+        if self.lora_config is not None and not isinstance(ckpt.get("pretrained_actor_source"), dict):
+            raise ValueError("LoRA checkpoint is missing its pretrained actor source")
         for key in ("physics_contract", "observation_contract"):
             if ckpt.get(key) != getattr(self, key):
                 raise ValueError(f"Incompatible checkpoint {key}; physics/observation semantics differ")
@@ -941,7 +1018,15 @@ class MAPPOAgent:
                     raise ValueError(
                         f"Incompatible MAPPO checkpoint {key}: action bounds differ."
                     )
+        for key, module in (("actor", self.actor), ("critic", self.critic)):
+            expected = module.state_dict()
+            actual = ckpt[key]
+            if (actual.keys() != expected.keys()
+                    or any(actual[name].shape != value.shape for name, value in expected.items())):
+                raise ValueError(f"Incompatible MAPPO {key} network architecture")
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         if "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
+        self.pretrained_actor_source = ckpt.get("pretrained_actor_source")
+        self._lora_ready = True

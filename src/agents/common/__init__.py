@@ -44,7 +44,8 @@ def compute_gae(
 
 
 def ppo_minibatch_step(agent, observations, critic_inputs, actions,
-                       old_log_probs, advantages, returns, raw_actions=None) -> torch.Tensor:
+                       old_log_probs, advantages, returns, raw_actions=None,
+                       adapter_indices=None) -> torch.Tensor:
     """Update the shared PPO objective; only the critic receives critic_inputs.
 
     Each caller retains its rollout packing, advantage normalization, and
@@ -52,7 +53,10 @@ def ppo_minibatch_step(agent, observations, critic_inputs, actions,
     critic inputs while its actor continues to consume local observations.
     """
     # Score the actions actually collected, preserving PPO's importance ratio.
-    if raw_actions is None:
+    if adapter_indices is not None:
+        log_probs, entropies = agent.actor.evaluate_actions(
+            observations, actions, raw_actions, adapter_indices=adapter_indices)
+    elif raw_actions is None:
         log_probs, entropies = agent.actor.evaluate_actions(observations, actions)
     else:
         log_probs, entropies = agent.actor.evaluate_actions(observations, actions, raw_actions)

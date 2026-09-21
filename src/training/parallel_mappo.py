@@ -80,7 +80,8 @@ class CollectorAgent:
                 critic = torch.cat((critic, identity), dim=1)
             packed = torch.cat((buf.obs[:n], critic, buf.actions[:n],
                                 buf.log_probs[:n, None], adv[:, None], ret[:, None]), dim=1)
-            self.fragments.append((packed.numpy(), buf.raw_actions[:n].numpy().copy()))
+            self.fragments.append((packed.numpy(), buf.raw_actions[:n].numpy().copy(),
+                                   np.full(n, self.agent_ids.index(aid), dtype=np.int64)))
         self.clear_buffers()
         return {}
 
@@ -113,7 +114,8 @@ def infer_requests(agent, requests):
                 critic_keys.append((key, [aid]))
     if observations:
         obs_t = torch.as_tensor(np.asarray(observations), dtype=torch.float32, device=agent.device)
-        actions, log_probs, raw = agent.actor.get_action(obs_t, return_raw=True)
+        actions, log_probs, raw = agent.actor_actions(
+            obs_t, [aid for _, aid in actor_keys], return_raw=True)
         rows = torch.cat((actions, log_probs[:, None], raw), dim=1).cpu().numpy()
         for (key, aid), row in zip(actor_keys, rows):
             result[key][0][aid] = row[:agent.action_dim].copy()
@@ -250,7 +252,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
                         advance(env_id, response)
             fragments = [fragment for agent in agents.values() for fragment in agent.take_fragments()]
             pooled = None if not fragments else tuple(
-                np.concatenate([fragment[i] for fragment in fragments]) for i in range(2)
+                np.concatenate([fragment[i] for fragment in fragments]) for i in range(3)
             )
             connection.send(("rollout", (pooled, sum(counts.values()), sink.take())))
             connection.recv()  # Policy update barrier, including an empty final rollout.

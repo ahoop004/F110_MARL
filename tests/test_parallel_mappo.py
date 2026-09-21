@@ -39,7 +39,8 @@ def test_multi_environment_inference_matches_scalar_values_and_preserves_raw_act
     for key, (kind, payload) in requests.items():
         ids, state = (payload[0], payload[2]) if kind == "act" else (agent.agent_ids, payload)
         values = result[key][2] if kind == "act" else result[key]
-        assert values == pytest.approx(agent.evaluate_states(state, ids))
+        # Different GEMM batch sizes can differ by float32 roundoff near zero.
+        assert values == pytest.approx(agent.evaluate_states(state, ids), abs=1e-7)
         if kind == "act":
             assert set(result[key][0]) == set(ids)
             for aid in ids:

@@ -1,0 +1,8 @@
+includes:
+  - mappo_2v2_penalties_pretrained.yaml
+  - ../configs/training/mappo_lora.yaml
+experiment:
+  name: mappo_2v2_penalties_lora_shared
+wandb:
+  job_type: mappo-lora
+  notes: "Finite penalty races with a frozen PPO actor and shared rank-4 LoRA; fresh trainable critic and shared trainable exploration."

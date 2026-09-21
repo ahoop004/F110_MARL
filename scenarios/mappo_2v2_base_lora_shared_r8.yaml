@@ -1,0 +1,10 @@
+includes:
+  - mappo_2v2_base_lora_shared.yaml
+experiment:
+  name: mappo_2v2_base_lora_shared_r8
+training_defaults:
+  lora:
+    rank: 8
+    alpha: 8.0
+wandb:
+  notes: "Shared rank-8 LoRA capacity control for two rank-4 teammate adapters under the continuous driving task."

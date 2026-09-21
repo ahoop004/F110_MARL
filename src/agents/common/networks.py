@@ -75,9 +75,10 @@ class Actor(nn.Module):
         return mean, std
 
     def get_action(
-        self, obs: torch.Tensor, deterministic: bool = False, *, return_raw: bool = False
+        self, obs: torch.Tensor, deterministic: bool = False, *, return_raw: bool = False,
+        adapter_indices: Optional[torch.Tensor] = None,
     ):
-        mean, std = self(obs)
+        mean, std = self(obs) if adapter_indices is None else self(obs, adapter_indices=adapter_indices)
         if deterministic:
             raw = mean
             action = torch.tanh(mean)
@@ -102,6 +103,7 @@ class Actor(nn.Module):
         obs: torch.Tensor,
         actions: torch.Tensor,
         raw_actions: Optional[torch.Tensor] = None,
+        *, adapter_indices: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate log probabilities for already-sampled squashed actions.
 
@@ -111,7 +113,7 @@ class Actor(nn.Module):
         identity near the bounds. The inverse fallback supports callers that
         only have nonsaturated actions; it cannot recover saturated samples.
         """
-        mean, std = self(obs)
+        mean, std = self(obs) if adapter_indices is None else self(obs, adapter_indices=adapter_indices)
         dist = torch.distributions.Normal(mean, std)
         bounded_actions = actions.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
         recovered = torch.atanh(bounded_actions)

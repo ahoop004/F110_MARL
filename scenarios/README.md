@@ -72,8 +72,9 @@ The generic `ppo_lap_completion_transfer.yaml` remains a scratch baseline unless
 2. Run the penalty scratch/pretrained pair below using the same frozen PPO source,
    training seeds and parallel collection settings. This pair retains its
    three-lap races and 5,000-episode budget.
-3. Compare LoRA combinations under the same base and penalty tasks after adapter
-   training is implemented. These are planned experiments, not runnable scenarios.
+3. Compare `mappo_2v2_{base,penalties}_lora_shared.yaml` against
+   `mappo_2v2_{base,penalties}_lora_per_agent.yaml`, with `lora_shared_r8` as the
+   total-capacity control. See [LoRA implementation and commands](../docs/MAPPO_LORA.md).
 
 All four current arms share `configs/training/mappo_parallel.yaml`. Both pretrained
 arms initialize the full actor from PPO and train it normally; their critics and

@@ -207,7 +207,7 @@ LiDAR-enabled PPO source before running the pretrained arms.
 | `mappo_2v2_validate.yaml` | Evaluation only on held-out Silverstone and Spa |
 
 Run the explicit base scratch/pretrained pair first, the penalty pair second,
-then LoRA combinations once implemented; see the
+then [shared/per-teammate LoRA](MAPPO_LORA.md); see the
 [experiment matrix](TEAM_RACING_EXPERIMENTS.md). The standalone combined objective
 below remains available as a separate comparison using the same PPO source. `--pretrained-actor` accepts PPO actors, not a MAPPO checkpoint;
 completion-to-combined MAPPO continuation is not implemented. Compare scratch and

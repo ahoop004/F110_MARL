@@ -1,0 +1,9 @@
+includes:
+  - mappo_2v2_base_lora_shared.yaml
+experiment:
+  name: mappo_2v2_base_lora_per_agent
+training_defaults:
+  lora:
+    mode: per_agent
+wandb:
+  notes: "Continuous driving with a shared frozen PPO actor and one rank-4 adapter per teammate; unchanged team reward and critic, shared trainable exploration."

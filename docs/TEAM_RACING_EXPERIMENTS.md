@@ -1,7 +1,7 @@
 # 2v2 experiment sequence: base, penalties, then LoRA
 
 Run the base scratch/pretrained comparison first, then the penalty pair, then
-LoRA combinations once adapter training is implemented. All four current arms use
+shared and per-teammate LoRA comparisons. All four current arms use
 the same 158-input LiDAR/driving observation, vehicle physics, MPC opponents, seed, and 400
 environments across 100 workers. Collection, minibatch size, and evaluation
 cadence come from `configs/training/mappo_parallel.yaml`. Within each pair only
@@ -18,7 +18,7 @@ steps and evaluates at 20 laps. The penalty pair retains the finite three-lap,
 | 1 | `scenarios/mappo_2v2_base_pretrained.yaml` | PPO actor; random critic | Signed metre progress; exclusive collision cost |
 | 2 | `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic | Completion, placement, incident penalties |
 | 2 | `scenarios/mappo_2v2_penalties_pretrained.yaml` | PPO actor; random critic | Completion, placement, incident penalties |
-| 3 | Planned LoRA combinations | To be specified when adapters are implemented | Matched base and penalty tasks |
+| 3 | Shared/per-agent LoRA, plus shared rank-8 control | Frozen PPO actor; trainable adapters and fresh critic | Matched base and penalty tasks |
 
 The base task uses `race_team_continuous_progress.yaml`: signed metre progress
 or an exclusive -1 collision-ending reward, averaged over the fixed two-learner
@@ -156,9 +156,10 @@ rerun both arms when comparing this opponent setup.
 
 ## Subsequent comparisons
 
-Role-conditioned offensive/defensive observations and reward/value targets, LoRA
-adapters, a common weighted race score, and richer incident attribution remain
+Shared and per-teammate LoRA adapters are available as separate scenario variants;
+see [MAPPO LoRA](MAPPO_LORA.md) for the matrix, frozen parameters, routing, and
+checkpoint contract. The original four scenarios remain scratch/full-fine-tuning
+controls. Role-conditioned offensive/defensive observations and reward/value
+targets, a common weighted race score, and richer incident attribution remain
 separate planned changes. Compare each new reward under scratch and full pretrained
-fine-tuning before comparing that same reward with LoRA. No role specialization or
-LoRA is enabled by the four current scenarios. Adapter placement, rank, frozen
-parameters, and any teammate-specific combinations must be specified for stage 3.
+fine-tuning before comparing that same reward with LoRA.
