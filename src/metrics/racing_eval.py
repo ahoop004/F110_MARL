@@ -12,6 +12,8 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
+from metrics.race_penalties import POLICY, RacePenaltyEvent, penalty_totals, terminal_penalty_event
+
 
 DEFERRED_COLLISION_PAIR_METRICS = (
     "teammate_collision_rate",
@@ -69,6 +71,7 @@ class AgentEpisodeFacts:
     outcome: str = "unknown"
     terminal_reason: Optional[str] = None
     finish_position: Optional[int] = None
+    penalty_events: list[RacePenaltyEvent] = field(default_factory=list)
     final_lap_count: int = 0
     net_progress: float = 0.0
     progress_delta_samples: int = 0
@@ -177,6 +180,9 @@ def update_agent_step_facts(
             if info.get("lap_start_step") is not None:
                 facts._lap_started = True
         facts.final_lap_count = int(info.get("lap_count", facts.final_lap_count))
+        penalty = terminal_penalty_event(agent_id, info)
+        if penalty is not None and penalty not in facts.penalty_events:
+            facts.penalty_events.append(penalty)
         terminal_reason = info.get("terminal_reason")
         if terminal_reason:
             facts.terminal_reason = str(terminal_reason)
@@ -376,6 +382,18 @@ def aggregate_eval_episodes(
         ) for ep in episodes]
         for key in ("rank_score", "first_place", "sweep"):
             summary[f"team_{key}"] = _mean(result[key] for result in results)
+        episode_events = [[event for facts in ep.agents.values() for event in facts.penalty_events]
+                          for ep in episodes]
+        totals = [penalty_totals(events, trainable_ids, opponent_ids) for events in episode_events]
+        summary["race_penalty_policy"] = POLICY
+        summary["mean_own_penalty_points"] = _mean(row["own_points"] for row in totals)
+        summary["mean_opponent_penalty_points"] = _mean(row["opponent_points"] for row in totals)
+        summary["mean_team_penalty_score"] = _mean(row["own_score"] + row["opponent_score"] for row in totals)
+        summary["team_rank_penalty_score"] = summary["team_rank_score"] + summary["mean_team_penalty_score"]
+        summary["race_penalty_events"] = [
+            {"episode": ep.episode, **event.to_dict()}
+            for ep, events in zip(episodes, episode_events) for event in events
+        ]
 
     return summary
 

@@ -128,7 +128,7 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
     for key in ("terminate_on_track_limit", "terminate_on_collision"):
         if key in evaluation and not isinstance(evaluation[key], bool):

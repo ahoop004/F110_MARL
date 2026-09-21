@@ -1,0 +1,7 @@
+# PPO actor initialization only; centralized critic and optimizer start fresh.
+includes:
+  - ../configs/scenarios/mappo_2v2_penalties_base.yaml
+experiment:
+  name: mappo_2v2_penalties_pretrained
+training_defaults:
+  pretrained_actor_checkpoint: ../outputs/L_map_best_model.pt

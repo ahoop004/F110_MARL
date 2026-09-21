@@ -53,6 +53,15 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --output-dir outputs/circle_3lap_before
 ```
 
+## Matched team penalty experiments
+
+`mappo_2v2_penalties_scratch.yaml` and `mappo_2v2_penalties_pretrained.yaml`
+compare random initialization with the downloaded L-map actor under identical
+checkpoint-compatible physics, observations, opponents, and event-based penalties.
+They are exceptions to the current vehicle profile, like the three-lap downloaded
+checkpoint transfer above. See [the experiment protocol](../docs/TEAM_RACING_EXPERIMENTS.md)
+for penalty definitions, scoring, commands, and remaining comparison limits.
+
 ## Migration
 
 | Previous entry point | Replacement |

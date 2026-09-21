@@ -1,0 +1,13 @@
+includes:
+  - race_team_2v2_combined.yaml
+task:
+  name: race_team_2v2_penalties
+  description: Shared completion/placement reward with recorded terminal race penalties.
+reward:
+  # Replaced by shared event accounting; do not charge the same crash twice.
+  collision: {enabled: false}
+  team_race_penalties:
+    enabled: true
+    # Each incident is 1 point. Team score = -mean(own) + 0.25*mean(opponents).
+    # Collision involvement is scored without assigning fault. Timeouts excluded.
+    policy: terminal_incidents_v1

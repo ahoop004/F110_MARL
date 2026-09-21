@@ -1,0 +1,32 @@
+# Downloaded L-map driving inputs unchanged; append 18 neighbor/team values.
+observation:
+  lidar:
+    enabled: false
+    normalize: true
+  frenet_vehicle_track:
+    enabled: true
+    points: 20
+    wheel_radius: 0.05
+    clip: false
+    maxima:
+      vx: 20.0
+      vy: 20.0
+      u: 3.141592653589793
+      n: 5.0
+      r: 10.0
+      delta: 0.5
+      delta_ref: 0.5
+      omega_ref_dot: 100.0
+      omega_ref: 400.0
+      omega: 400.0
+    wheel_speed_source: simulated_v1
+  frenet_neighbors:
+    enabled: true
+    max_neighbors: 3
+    include_team: true
+    maxima:
+      delta_s: 30.0
+      delta_d: 5.0
+      delta_vs: 20.0
+      delta_vd: 20.0
+    clip: false
