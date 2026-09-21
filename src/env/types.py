@@ -27,6 +27,7 @@ class TerminalReason(str, Enum):
 
     RACE_COMPLETE = "race_complete"
     COLLISION = "collision"
+    TRACK_BOUNDARY = "track_boundary"
     TIME_LIMIT = "time_limit"
 
 

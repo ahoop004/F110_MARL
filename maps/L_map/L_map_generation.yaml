@@ -1,0 +1,57 @@
+stem: L_map
+control_points:
+- - 0.0
+  - 0.0
+- - 6.0
+  - 0.0
+- - 6.0
+  - 2.8
+- - 2.8
+  - 2.8
+- - 2.8
+  - 5.0
+- - 0.0
+  - 5.0
+track_width: 1.0
+centerline_spacing: 0.05
+resolution: 0.02
+padding: 1.0
+wall_thickness_px: 1
+wall_smoothing_passes: 0
+min_curvature_radius: 0.65
+min_wall_separation: 1.0
+occupied_thresh: 0.45
+free_thresh: 0.196
+negate: 0
+target_length: 17.0
+provenance:
+  family: L_map
+  role: reference_approximation
+  paper: https://arxiv.org/abs/2504.02420v2
+  description: Rounded L-shaped approximation; not the authors' original geometry.
+  assumptions:
+  - The reported 17 m length is treated as centerline lap length.
+  - Nominal width is 1 m; corner shapes and proportions are approximated.
+  - Minimum radius of 0.65 m is a generation constraint, not a paper measurement.
+  shape_parameters:
+    horizontal_extent: 6.0
+    vertical_extent: 5.0
+    arm_extent: 2.8
+schema_version: 1
+generator: map_editor.closed_bspline.v1
+coordinate_frame: map
+closed: true
+achieved:
+  length_m: 17.0
+  minimum_radius_m: 0.9640947102746189
+  minimum_width_m: 0.9999999999999991
+  maximum_width_m: 1.0000000000000009
+  mean_width_m: 1.0
+  sample_count: 340
+files:
+  map: L_map.yaml
+  image: L_map.png
+  pgm: L_map.pgm
+  centerline: L_map_centerline.csv
+  walls: L_map_walls.csv
+  track_profile: L_map_profile.csv

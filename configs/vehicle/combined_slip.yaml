@@ -1,43 +1,139 @@
-# Opt-in runtime profile. Synthetic development parameters, not a hardware calibration.
+# Planar MF6.1 test profile. Replace synthetic values with identified data.
+# Tire coefficients are per effective axle; pressure is nominal and camber is zero.
+# mu scales peak tire friction; it is independent of map occupancy.
 environment:
   vehicle_params:
     model: combined_slip_st
-    model_version: 1
-    tire_model: smooth_friction_circle  # Reduced model, NOT MF6.1/Pacejka
-    tire_id: synthetic-tire-v1
+    model_version: 2
+    tire_model: mf61_planar
+    tire_id: synthetic-mf61-planar-v2
     drivetrain: shared_speed_awd
     calibration:
-      id: synthetic-combined-slip-v1
+      id: synthetic-mf61-planar-v2
       status: uncalibrated
-      source: "Geometry/grip mirror legacy assumptions; tire stiffness and low-speed regularization are synthetic."
-    m: 3.74                            # kg
-    I: 0.04712                         # kg m², yaw inertia
-    lf: 0.15875                        # m, center of mass to front axle
-    lr: 0.17145                        # m, center of mass to rear axle
-    h: 0.074                           # m, center-of-mass height
-    mu: 1.0489                         # dimensionless, same nominal tire/surface grip at both axles
-    front_longitudinal_stiffness: 10.0  # normalized by Fz, per unit slip ratio
-    front_cornering_stiffness: 5.0      # normalized by Fz, per radian near zero slip angle
-    rear_longitudinal_stiffness: 10.0
-    rear_cornering_stiffness: 5.0
-    slip_speed_floor: 0.5              # m/s; explicit creep/near-rest regularization
-    max_integration_step: 0.001        # s; RK4 chassis substep, not the policy decision interval
-    length: 0.32  # m, collision hull
-    width: 0.225  # m
+      source: Synthetic effective-axle MF6.1 coefficients for software testing; not
+        fitted to the paper or a physical tire.
+    m: 3.74
+    I: 0.04712
+    lf: 0.15875
+    lr: 0.17145
+    h: 0.074
+    mu: 1.0489
+    slip_speed_floor: 0.5
+    max_integration_step: 0.001
+    length: 0.32
+    width: 0.225
     wheel_actuators:
       version: 1
       calibration:
-        id: synthetic-wheel-actuators-v1
+        id: synthetic-wheel-actuators-v2
         status: uncalibrated
-        source: "Radius/steering bounds mirror legacy settings; time constants and wheel limits are development assumptions."
-      wheel_radius: 0.05                 # m; legacy observation assumption, not measured
-      steering_time_constant: 0.5         # s; mirrors legacy steering gain of 2/s
-      wheel_speed_time_constant: 0.15     # s; synthetic, NOT fitted from the paper
-      steering_min: -0.4189               # rad
-      steering_max: 0.4189
-      steering_rate_min: -3.2             # rad/s
-      steering_rate_max: 3.2
-      wheel_speed_min: -400.0             # rad/s; circumferential speed -20 m/s
+        source: Paper steering bound; provisional radius, time constants and speed
+          bounds. Rate limits nonbinding over configured state/reference bounds.
+      wheel_radius: 0.05
+      steering_time_constant: 0.5
+      wheel_speed_time_constant: 0.15
+      steering_min: -0.5
+      steering_max: 0.5
+      steering_rate_min: -10.0
+      steering_rate_max: 10.0
+      wheel_speed_min: -400.0
       wheel_speed_max: 400.0
-      wheel_rate_min: -100.0              # rad/s²; circumferential acceleration -5 m/s²
-      wheel_rate_max: 100.0
+      wheel_rate_min: -10000.0
+      wheel_rate_max: 10000.0
+    front_tire:
+      FNOMIN: 19.050265385
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0
+    rear_tire:
+      FNOMIN: 17.639134615
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0

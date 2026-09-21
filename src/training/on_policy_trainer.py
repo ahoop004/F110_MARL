@@ -66,12 +66,12 @@ class OnPolicyTrainer:
         if setter is not None:
             setter(completed / max(total, 1))
 
-    def train_parallel(self, scenario: Dict, scenario_dir, num_envs: int, n_episodes: int) -> None:
+    def train_parallel(self, scenario: Dict, scenario_dir, num_envs: int, n_episodes: int, *, total_steps: Optional[int] = None) -> None:
         """Batch CPU collector requests; update only when all live workers pause.
 
-        n_steps is the maximum pooled collection-round size, divided evenly across
-        workers. Episode ends flush shorter fragments, preserving each final
-        observation's bootstrap and keeping GAE within one environment.
+        n_steps is the pooled collection-round size, divided evenly across workers.
+        With a transition budget, resets do not flush buffers; only a full rollout
+        or the final budget remainder triggers an update.
         """
         import multiprocessing as mp
 
@@ -79,7 +79,10 @@ class OnPolicyTrainer:
         connections, processes = {}, []
         waiting = {}
         completed = 0
-        self._set_training_progress(completed, n_episodes)
+        collected = 0
+        if total_steps is not None and total_steps < num_envs:
+            raise ValueError("total_steps must be at least num_envs")
+        self._set_training_progress(0, total_steps or n_episodes)
         # Standard W&B needs only episode totals. Dataset/custom hooks retain
         # the full transition stream, including custom WandbHook subclasses.
         record_hooks = [h for h in self._transition_hooks if type(h) is not WandbHook]
@@ -105,7 +108,9 @@ class OnPolicyTrainer:
                     args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
                           n_episodes // num_envs + (worker_id < n_episodes % num_envs),
                           self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
-                          self.agent.gae_lambda, bool(record_hooks), aggregate_wandb),
+                          self.agent.gae_lambda, bool(record_hooks), aggregate_wandb,
+                          None if total_steps is None else
+                          total_steps // num_envs + (worker_id < total_steps % num_envs)),
                     name=f"ppo-collector-{worker_id}",
                 )
                 connections[worker_id] = parent
@@ -123,6 +128,7 @@ class OnPolicyTrainer:
 
             while connections:
                 requests = {}
+                value_requests = {}
                 # Fixed worker order makes sampling and episode event order
                 # independent of OS scheduling and response arrival order.
                 for worker_id in list(connections):
@@ -134,35 +140,49 @@ class OnPolicyTrainer:
                             for hook in record_hooks:
                                 hook.on_step(payload)
                         elif kind == "episode":
-                            self._set_training_progress(completed + 1, n_episodes)
+                            if total_steps is None:
+                                self._set_training_progress(completed + 1, n_episodes)
                             for hook in self.hooks:
                                 hook.on_episode_end(completed, *payload)
                             completed += 1
+                        elif kind == "value":
+                            value_requests[worker_id] = payload
+                            break
                         elif kind == "act":
                             requests[worker_id] = payload
                             break
                         elif kind == "rollout":
                             waiting[worker_id] = payload
+                            collected += len(payload[0])
                             break
                         elif kind == "done":
                             connections.pop(worker_id).close()
                             break
                         else:
                             raise RuntimeError(f"Unexpected PPO worker message: {kind}")
+                if value_requests:
+                    values = self.agent.value_batch(np.stack(list(value_requests.values())))
+                    for row, worker_id in enumerate(value_requests):
+                        connections[worker_id].send(float(values[row]))
                 if requests:
                     actions, log_probs, values = self.agent.act_batch(np.stack(list(requests.values())))
                     for row, worker_id in enumerate(requests):
                         connections[worker_id].send((actions[row], float(log_probs[row]), float(values[row]),
                                                      self.agent.last_raw_actions[row]))
                 if waiting and len(waiting) == len(connections):
+                    if total_steps is not None:
+                        self._set_training_progress(collected, total_steps)
                     metrics = self.agent.update_rollouts([waiting[i] for i in sorted(waiting)])
                     if metrics:
+                        metrics["train/environment_steps"] = collected
                         for hook in self.hooks:
                             hook.on_update(metrics)
                     for worker_id in waiting:
                         connections[worker_id].send(metrics)
                     waiting.clear()
-            if completed != n_episodes:
+            if total_steps is not None and collected != total_steps:
+                raise RuntimeError(f"PPO collected {collected} of {total_steps} transitions")
+            if total_steps is None and completed != n_episodes:
                 raise RuntimeError(f"PPO workers completed {completed} of {n_episodes} episodes.")
             self._flush_pending_update()
             for hook in self.hooks:
@@ -237,9 +257,14 @@ class OnPolicyTrainer:
             global_state=global_state,
         )
 
-    def train(self, n_episodes: int) -> None:
-        self._set_training_progress(0, n_episodes)
-        for episode in range(n_episodes):
+    def train(self, n_episodes: int = 0, *, total_steps: Optional[int] = None) -> None:
+        if total_steps is not None and total_steps <= 0:
+            raise ValueError("total_steps must be positive")
+        self._set_training_progress(0, total_steps or n_episodes)
+        collected = 0
+        episode = 0
+        self.agent.buffer.clear()
+        while (collected < total_steps if total_steps is not None else episode < n_episodes):
             obs_dict, info_dict = self._reset_env()
             for controller in self.other_agents.values():
                 if hasattr(controller, "reset"):
@@ -249,7 +274,8 @@ class OnPolicyTrainer:
                 reset_actions()
             self.obs_composer.reset()
             self.reward_composer.reset()
-            self.agent.buffer.clear()
+            if total_steps is None:
+                self.agent.buffer.clear()
 
             obs = self.obs_composer.wrap(obs_dict.get(self.rl_agent_id, {}), info_dict.get(self.rl_agent_id, {}))
             done = False
@@ -307,7 +333,7 @@ class OnPolicyTrainer:
                         "terminated": rl_term,
                         "truncated": rl_trunc,
                         "action": action_norm,
-                        "timestep": 0.01,
+                        "timestep": float(getattr(self.env, "timestep", 0.01)),
                     }
                     sub_step_info.update(
                         self._reward_context(
@@ -370,6 +396,10 @@ class OnPolicyTrainer:
                         hook.on_step(record)
                 step_idx += 1
 
+                collected += 1
+                budget_done = total_steps is not None and collected >= total_steps
+                final_value = (self.agent.value(next_obs)
+                               if total_steps is not None and rl_trunc and not rl_term else None)
                 self.agent.buffer.add(
                     obs,
                     action_norm,
@@ -379,31 +409,45 @@ class OnPolicyTrainer:
                     terminated=rl_term,
                     truncated=rl_trunc,
                     **({"raw_action": raw_action} if raw_action is not None else {}),
+                    **({"final_value": final_value} if final_value is not None else {}),
                 )
 
-                if self.agent.buffer.is_full() or done:
+                if self.agent.buffer.is_full() or budget_done or (done and total_steps is None):
                     # Time-limit truncations have a valid final observation and
                     # should bootstrap. Only true terminal states force V=0.
                     if not rl_term:
-                        _, _, next_value = self.agent.act(next_obs)
+                        if total_steps is not None:
+                            next_value = final_value if final_value is not None else self.agent.value(next_obs)
+                        else:
+                            _, _, next_value = self.agent.act(next_obs)
                     else:
                         next_value = 0.0
+                    if total_steps is not None:
+                        self._set_training_progress(collected, total_steps)
                     update_metrics = self.agent.update(next_value)
                     self.agent.buffer.clear()
                     if update_metrics:
+                        update_metrics["train/environment_steps"] = collected
                         for hook in self.hooks:
                             hook.on_update(update_metrics)
 
                 obs = next_obs
+                if budget_done:
+                    break
 
+            # Exhausting the training budget is not an environment terminal.
+            if not done:
+                break
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
             update_metrics = dict(update_metrics)
             update_metrics["episode_steps"] = step_idx
 
-            self._set_training_progress(episode + 1, n_episodes)
+            if total_steps is None:
+                self._set_training_progress(episode + 1, n_episodes)
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
+            episode += 1
 
         self._flush_pending_update()
         for hook in self.hooks:
@@ -437,6 +481,10 @@ class _RemotePolicy:
         action, log_prob, value, raw_action = self.connection.recv()
         self.last_raw_actions = np.asarray(raw_action)[None]
         return action, log_prob, value
+
+    def value(self, obs):
+        self.connection.send(("value", obs))
+        return float(self.connection.recv())
 
     def update(self, next_value):
         buffer = self.buffer
@@ -480,7 +528,7 @@ class _WorkerHook(TrainingHook):
 
 def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
                         n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions,
-                        aggregate_wandb):
+                        aggregate_wandb, total_steps=None):
     import copy
     import traceback
     from pathlib import Path
@@ -522,7 +570,7 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
             hooks=[_WorkerHook(connection, worker_id, seed, record_transitions, aggregate_wandb)],
             run_id=f"{run_id}_worker{worker_id:03d}",
         )
-        trainer.train(n_episodes)
+        trainer.train(n_episodes, total_steps=total_steps)
         connection.send(("done", None))
     except BaseException:
         connection.send(("error", traceback.format_exc()))

@@ -37,9 +37,10 @@ def validate_target_laps(value: object) -> int:
 class RaceLifecycle:
     """Framework-independent owner of monotonic per-agent race results."""
 
-    def __init__(self, agent_ids: Sequence[str], target_laps: int) -> None:
+    def __init__(self, agent_ids: Sequence[str], target_laps: int, *, finish_on_laps: bool = True) -> None:
         self.agent_ids = tuple(str(agent_id) for agent_id in agent_ids)
         self.target_laps = validate_target_laps(target_laps)
+        self.finish_on_laps = finish_on_laps
         self.records: Dict[str, AgentLifecycleRecord] = {}
         self._next_finish_position = 1
         self.reset()
@@ -77,7 +78,7 @@ class RaceLifecycle:
             return False
         record.lap_crossed = True
         record.lap_count += 1
-        if record.race_completed:
+        if self.finish_on_laps and record.race_completed:
             return self._transition(
                 agent_id,
                 AgentRaceStatus.FINISHED,
@@ -94,6 +95,10 @@ class RaceLifecycle:
             TerminalReason.COLLISION,
             step=step,
         )
+
+    def record_track_boundary(self, agent_id: str, *, step: int) -> bool:
+        return self._transition(agent_id, AgentRaceStatus.CRASHED,
+                                TerminalReason.TRACK_BOUNDARY, step=step)
 
     def truncate_active(self, *, step: int) -> Tuple[str, ...]:
         transitioned = []

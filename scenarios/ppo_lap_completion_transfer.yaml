@@ -12,9 +12,9 @@ experiment:
   checkpoint: ../outputs/ppo_lap_completion_pretrain_combined_slip/ppo_lap_completion_pretrain_combined_slip_ppo_s42_1789409134_8b69/best_model.pt
 environment:
   # Change all three lists together when comparing another track.
-  map_bundles: [Spielberg_map]
-  map_bundles_train: [Spielberg_map]
-  map_bundles_eval: [Spielberg_map]
+  map_bundles: [circle_map]
+  map_bundles_train: [circle_map]
+  map_bundles_eval: [circle_map]
 
 wandb:
   group: ppo-lap-completion-transfer

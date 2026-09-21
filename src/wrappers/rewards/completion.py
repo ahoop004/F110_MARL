@@ -90,14 +90,30 @@ class ProgressDeltaBonusComponent(RewardComponent):
     def __init__(self, config: dict) -> None:
         self.weight = float(config.get("weight", 100.0))
         self.positive_only = bool(config.get("positive_only", True))
+        self.units = str(config.get("units", "lap_fraction"))
+        if self.units not in {"lap_fraction", "metres"}:
+            raise ValueError("Progress units must be lap_fraction or metres")
+        self.boundary_penalty = config.get("boundary_penalty")
         max_delta = config.get("max_delta")
         self.max_delta = _float_or_none(max_delta) if max_delta is not None else None
 
     def compute(self, step_info: dict) -> Dict[str, float]:
+        if self.boundary_penalty is not None:
+            boundary = (step_info.get("info") or {}).get("track_limits")
+            if boundary is None:
+                raise ValueError("Boundary progress reward requires track_limits facts")
+            if boundary["exceeded"]:
+                return {"progress_delta/boundary": float(self.boundary_penalty)}
         centerline = _centerline_info(step_info)
         progress_delta = _float_or_none(centerline.get("progress_delta"))
         if progress_delta is None:
             return {}
+
+        if self.units == "metres":
+            length = _float_or_none(step_info.get("track_length"))
+            if length is None or length <= 0:
+                raise ValueError("Metre progress reward requires a positive track_length")
+            progress_delta *= length
 
         if self.positive_only:
             progress_delta = max(progress_delta, 0.0)

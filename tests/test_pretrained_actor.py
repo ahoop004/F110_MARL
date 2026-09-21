@@ -18,7 +18,7 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
     "mappo_2v2_frenet_ppo_pretrained",
     "mappo_2v2_frenet_ppo_pretrained_combined",
 ])
-def test_forward_only_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_path, scenario_name):
+def test_legacy_frenet_2v2_scenario_transfers_compatible_actor_and_keeps_roles(tmp_path, scenario_name):
     from pathlib import Path
     from core.agent_builder import get_trainable_agent_ids
     from core.scenario import load_and_expand_scenario, resolve_mappo_config
@@ -27,7 +27,14 @@ def test_forward_only_frenet_2v2_scenario_transfers_actor_and_keeps_roles(tmp_pa
     from wrappers.actions.composer import ActionComposer
 
     scenario = load_and_expand_scenario(f"scenarios/{scenario_name}.yaml")
-    pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    # These MAPPO scenarios still use the historical 158-value legacy interface.
+    # Build a matching PPO fixture; current MF6.1 pretraining is a different contract.
+    from copy import deepcopy
+    from core.provenance import physics_contract
+    current = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
+    assert physics_contract(current['environment']) != physics_contract(scenario['environment'])
+    pretraining = deepcopy(scenario)
+    pretraining['agents']['car_0']['algorithm'] = 'ppo'
     baseline = load_and_expand_scenario("scenarios/mappo_2v2_team_shared.yaml")
     ids = get_trainable_agent_ids(scenario["agents"])
     assert ids == ["car_0", "car_1"]
@@ -346,8 +353,8 @@ def test_fixed_evaluation_protocols_are_disjoint_and_inherit_training_horizon():
         original = copy.deepcopy(scenario)
         selection = resolve_evaluation_protocol(scenario, "selection")
         final = resolve_evaluation_protocol(scenario, "final")
-        assert selection == dict(name="selection", seed=10042, episodes=8, max_steps=80000)
-        assert final == dict(name="final", seed=20042, episodes=20, max_steps=80000)
+        assert selection == dict(name="selection", seed=10042, episodes=8, max_steps=16000)
+        assert final == dict(name="final", seed=20042, episodes=20, max_steps=16000)
         assert scenario == original
         scenario["evaluation"]["final_test"]["seed"] = 10049
         with pytest.raises(ScenarioError, match="disjoint"):
@@ -448,7 +455,7 @@ def test_net_progress_ignores_spawn_position_counts_laps_and_cancels_reverse():
     assert aggregate_eval_episodes([missing])["mean_net_progress"] is None
 
 
-def test_frenet_dense_reward_and_trace_make_progress_useful_without_suicide_incentive():
+def test_pretraining_reward_preserves_time_cost_and_favors_forward_motion():
     import math
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
@@ -467,14 +474,15 @@ def test_frenet_dense_reward_and_trace_make_progress_useful_without_suicide_ince
     backward = step(-3.0 * dt / 350.0)
     assert backward < idle < 0 < forward
     assert (forward + backward) / 2 == pytest.approx(idle)
-    stationary_return = idle * (1 - gamma ** 80000) / (1 - gamma) - gamma ** 79999
-    assert stationary_return == pytest.approx(-0.498, abs=0.001)
+    stationary_return = idle * (1 - gamma ** 16000) / (1 - gamma) - gamma ** 15999
+    assert stationary_return == pytest.approx(-0.00625, abs=1e-8)
     assert stationary_return > step(0.0, terminal_reason="collision")
     # Waiting then crashing must not beat waiting to timeout on time cost alone.
     delayed_crash = idle * (1 - gamma ** 500) / (1 - gamma) - gamma ** 499
     assert stationary_return > delayed_crash
     trace_seconds = -dt / math.log(gamma * params["gae_lambda"])
-    assert 1.9 < trace_seconds < 2.1
+    assert .8 < trace_seconds < .9
+    assert idle / dt == pytest.approx(-.00125)
     # Model a ramp from rest to 3 m/s over two seconds, then sustained progress.
     moving_return = sum(gamma ** i * step(min(3.0, 1.5 * (i + 1) * dt) * dt / 350.0)
                         for i in range(2000))

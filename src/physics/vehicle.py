@@ -10,6 +10,7 @@ from physics.dynamic_models import (
     combined_slip_dynamics, integrate_combined_slip,
 )
 from physics.integration import Integrator
+from physics.tire_models import MF61_KEYS, validate_mf61_coefficients
 from physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from physics.collision_models import get_vertices
 
@@ -135,23 +136,22 @@ class CombinedSlipVehicle:
 
     _NUMERIC_FIELDS = (
         "m", "I", "lf", "lr", "h", "mu",
-        "front_longitudinal_stiffness", "front_cornering_stiffness",
-        "rear_longitudinal_stiffness", "rear_cornering_stiffness",
         "slip_speed_floor", "max_integration_step",
     )
 
     def __init__(self, config: Mapping, actuator_config: Mapping):
         expected = set(self._NUMERIC_FIELDS) | {
-            "model", "model_version", "tire_model", "tire_id", "drivetrain", "calibration"}
+            "model", "model_version", "tire_model", "tire_id", "drivetrain", "calibration",
+            "front_tire", "rear_tire"}
         if not isinstance(config, Mapping) or set(config) != expected:
             raise ValueError(f"combined_slip_vehicle fields must be exactly {sorted(expected)}")
         for name, expected_value in (("model", "combined_slip_st"),
-                                      ("tire_model", "smooth_friction_circle"),
+                                      ("tire_model", "mf61_planar"),
                                       ("drivetrain", "shared_speed_awd")):
             if config[name] != expected_value:
                 raise ValueError(f"combined_slip_vehicle.{name} must be {expected_value!r}")
-        if type(config["model_version"]) is not int or config["model_version"] != 1:
-            raise ValueError("combined_slip_vehicle.model_version must be integer 1")
+        if type(config["model_version"]) is not int or config["model_version"] != 2:
+            raise ValueError("combined_slip_vehicle.model_version must be integer 2 (MF6.1 planar)")
         if not isinstance(config["tire_id"], str) or not config["tire_id"].strip():
             raise ValueError("combined_slip_vehicle.tire_id must be a nonempty string")
         params = dict(config)
@@ -167,11 +167,15 @@ class CombinedSlipVehicle:
             if not np.isfinite(value) or value < 0 or (value == 0 and name not in {"h", "mu"}):
                 raise ValueError(f"combined_slip_vehicle.{name} must be finite and positive (h/mu may be zero)")
             params[name] = value
+        for axle in ("front_tire", "rear_tire"):
+            params[axle] = MappingProxyType(validate_mf61_coefficients(config[axle]))
         self.params = MappingProxyType(params)
         self._actuators = WheelActuators(actuator_config)
         self._chassis = np.zeros(6, dtype=np.float64)
         self._dynamics_params = tuple(params[name] for name in self._NUMERIC_FIELDS[:-1]) + (
-            self._actuators.params["wheel_radius"],)
+            self._actuators.params["wheel_radius"],
+            tuple(params["front_tire"][key] for key in MF61_KEYS),
+            tuple(params["rear_tire"][key] for key in MF61_KEYS))
 
     @property
     def state(self) -> np.ndarray:

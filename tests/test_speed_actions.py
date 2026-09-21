@@ -82,27 +82,24 @@ def test_frenet_environment_observes_applied_reference_rate(mode, repeat):
     scenario = load_and_expand_scenario(str(path))
     scenario["environment"]["action_repeat"] = repeat
     cfg = scenario["agents"]["car_0"]
-    dt = .01 * repeat
+    dt = scenario['environment']['timestep'] * repeat
     observations = ObservationComposer.from_file(str(path.parent / cfg["observation"]), scenario["environment"])
-    actions = ActionComposer.from_config(LOW, HIGH, cfg["action_constraints"], decision_dt=dt)
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
+    space = env.action_spaces['car_0']
+    actions = ActionComposer.from_config(space.low, space.high, cfg["action_constraints"], decision_dt=dt)
     try:
         env.reset(seed=42)
-        for command, expected_speed, expected_rate in [(1, 5*dt, 5), (1, 10*dt, 5),
-                (0, 10*dt, 0), (-1, 5*dt, -5), (-1, 0, -5),
-                (-1, 0, 0), (0, 0, 0), (1, 5*dt, 5)]:
+        for command, expected_speed, expected_rate in [(1, 100*dt, 100), (1, 200*dt, 100),
+                (0, 200*dt, 0), (-1, 100*dt, -100), (-1, 0, -100),
+                (-1, 0, 0), (0, 0, 0), (1, 100*dt, 100)]:
             physical = actions.process([0, command])
-            assert physical[1] == pytest.approx(expected_speed, abs=1e-7)
+            assert physical[1] == pytest.approx(expected_speed, abs=1e-6)
             for _ in range(repeat):
                 raw, _, _, _, infos = env.step({"car_0": physical})
-                assert raw["car_0"]["speed_reference_rate"] == pytest.approx(expected_rate, abs=2e-6)
+                assert raw["car_0"]["wheel_speed_reference_rate"] == pytest.approx(expected_rate, abs=2e-5)
             wrapped = observations.wrap(raw["car_0"], infos["car_0"])
-            assert wrapped[115] == pytest.approx(expected_rate / 5, abs=1e-6)
-            assert wrapped[116] == pytest.approx(expected_speed / 20, abs=1e-6)
-        p = env.params
-        for velocity in (0, .8, 5, 10, 19):
-            assert accl_constraints(velocity, 100, p['v_switch'], p['a_max'], p['v_min'], p['v_max']) == 5
-        assert accl_constraints(20, 100, p['v_switch'], p['a_max'], p['v_min'], p['v_max']) == 0
+            assert wrapped[7] == pytest.approx(expected_rate / 100, abs=1e-6)
+            assert wrapped[8] == pytest.approx(expected_speed / 400, abs=1e-6)
     finally:
         env.close()
 

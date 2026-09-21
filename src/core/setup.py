@@ -43,6 +43,14 @@ def create_training_setup(
     env_config = dict(scenario['environment'])
     env_config = apply_map_split(env_config, experiment_config, mode)
     env_config["physics_phase"] = "eval" if mode in {"eval", "evaluation", "test"} else "train"
+    evaluation = scenario.get("evaluation", {}) or {}
+    if env_config["physics_phase"] == "eval" and env_config.get("track_limits", {}).get("enabled"):
+        # Training resets on excursions. Evaluation measures them over full laps.
+        env_config["track_limits"] = {"enabled": True, "terminate": False}
+        env_config["episode_termination"] = {**env_config.get("episode_termination", {}),
+                                             "lap_completion": True}
+        env_config["target_laps"] = int(evaluation.get("target_laps", 20))
+        env_config["max_steps"] = int(evaluation.get("max_steps", 16000))
     agent_configs = scenario['agents']
     env_config.setdefault("trainable_agents", get_trainable_agent_ids(agent_configs))
     env_config.setdefault("fixed_policy_agents", get_fixed_agent_ids(agent_configs))

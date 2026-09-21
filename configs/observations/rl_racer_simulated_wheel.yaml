@@ -1,12 +1,15 @@
-# Same layout as the legacy Frenet observation, explicitly different wheel semantics.
+# Paper Eq. (2) layout, with actual simulated wheel state: 10 + 2*N values.
+# N=20 and normalization maxima are provisional until identified data is available.
 includes:
   - rl_racer_vehicle_track_frenet_acceleration.yaml
 
 observation:
+  lidar:
+    enabled: false
   frenet_vehicle_track:
+    clip: false
     wheel_speed_source: simulated_v1
     wheel_radius: 0.05
     maxima:
-      delta: 0.4189
-      delta_ref: 0.4189
-
+      delta: 0.5
+      delta_ref: 0.5

@@ -348,7 +348,7 @@ class MARLTrainer:
                             "terminated": agent_term,
                             "truncated": agent_trunc,
                             "action": actions_norm[aid],
-                            "timestep": 0.01,
+                            "timestep": float(getattr(self.env, "timestep", 0.01)),
                         }
                         sub_step_info.update(
                             self._reward_context(

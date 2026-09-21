@@ -18,7 +18,14 @@ from wrappers.observations.track import FrenetVehicleTrackComponent
 
 @pytest.fixture
 def scenario():
-    return load_and_expand_scenario('scenarios/mappo_combined_slip_development.yaml')
+    config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
+    config['experiment']['num_envs'] = 1
+    config['environment'].pop('spawn')
+    config['environment'].pop('friction')
+    config['environment'].update(timestep=.01, action_repeat=2, max_steps=32)
+    config['agents']['car_0']['algorithm'] = 'mappo'
+    config['agents']['car_1'] = deepcopy(config['agents']['car_0'])
+    return config
 
 
 @pytest.fixture
@@ -47,8 +54,8 @@ def test_rolling_reset_actual_wheel_observation_and_public_velocity(env, scenari
     assert env.get_agent_state('car_0').metadata['wheel_speed'] == pytest.approx(40)
     composer = ObservationComposer.from_file('configs/observations/rl_racer_simulated_wheel.yaml', scenario['environment'])
     wrapped = composer.wrap(observations['car_0'], infos['car_0'])
-    assert wrapped.shape == (158,)
-    assert wrapped[108 + 9] == pytest.approx(40 / 400)
+    assert wrapped.shape == (50,)
+    assert wrapped[9] == pytest.approx(40 / 400)
     global_size = env.get_global_state().vector.size
     for _ in range(8):
         obs, *_ = env.step({'car_0': np.array([.15, 100.0]), 'car_1': np.array([0, -20.0])})
@@ -72,8 +79,8 @@ def test_command_clipping_and_reference_derivative_use_wheel_units(env):
     assert raw['wheel_speed_reference'] == 400
     assert raw['wheel_speed_reference_rate'] == pytest.approx(400 / .02)
     assert 'speed_reference' not in raw
-    assert raw['steering_reference'] == pytest.approx(.4189)
-    assert raw['wheel_speed'] <= 1.0 + 1e-6  # rate-limited actual omega
+    assert raw['steering_reference'] == pytest.approx(.5)
+    assert raw['wheel_speed'] == pytest.approx(400 * (1 - np.exp(-.01/.15)))
     with pytest.raises(ValueError, match='finite'):
         env.step({'car_0': np.array([0, np.nan])})
 
@@ -247,9 +254,19 @@ def test_ppo_to_mappo_actor_transfer_checks_physics_before_loading(tmp_path, sce
 
 
 def test_provenance_records_resolved_parameters_and_units(scenario):
-    result = build_run_provenance(scenario, scenario_path='scenarios/mappo_combined_slip_development.yaml',
+    result = build_run_provenance(scenario, scenario_path='scenarios/ppo_lap_completion_pretrain.yaml',
                                  run_id='physics-test', algorithm='mappo', trainable_agents=['car_0', 'car_1'])
     contract = result['physics_contract']
     assert contract['vehicle_params']['calibration']['status'] == 'uncalibrated'
     assert contract['action_units'] == ['rad', 'rad/s']
     assert contract['state_layout'][-1] == 'omega'
+
+
+def test_retired_reduced_model_version_cannot_load_as_mf61(scenario):
+    config = deepcopy(scenario)
+    config['environment']['vehicle_params']['model_version'] = 1
+    with pytest.raises(ScenarioError, match='model_version'):
+        validate_scenario(config)
+    current = physics_contract(scenario['environment'])
+    assert current['vehicle_params']['tire_model'] == 'mf61_planar'
+    assert current['vehicle_params']['model_version'] == 2

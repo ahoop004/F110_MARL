@@ -170,41 +170,43 @@ Preserve environment contracts, action bounds, observation dimensions, reward
 semantics, and MAPPO's decentralized actors. No additional controller framework,
 plugin system, or placeholder algorithm infrastructure is needed.
 
-Physics defaults to `legacy_st` version 1. Its optional selector, parameter
-validation, frozen PPO/MAPPO regression captures, and proposed wheel/tire state
-contract are documented in [physics model development](docs/PHYSICS_MODEL.md).
-Opt-in `combined_slip_st` physics now connects nonlinear tire forces and independent
-wheel/steering actuators to PPO/MAPPO, with explicit wheel-reference actions,
-simulated-wheel observations, and checkpoint compatibility checks. Start with
-`scenarios/ppo_combined_slip_development.yaml` or
-`scenarios/mappo_combined_slip_development.yaml`. These use uncalibrated reduced
-physics. Fixed controllers can opt into `rolling_speed_to_wheel_v1`; explicit
-train/eval friction protocols and `physics_episodes.jsonl` support reproducible
-grip experiments. Hardware validation remains outstanding. Optional bundle
-surface metadata supports calibration records. See
-[the physics roadmap](todo.md) for remaining work.
+The existing nonlinear physics now uses `combined_slip_st` version 2 with a
+planar MF6.1 force kernel, load-dependent combined slip, simultaneous load
+transfer, and independent first-order wheel/steering actuators. The former
+reduced friction-circle implementation has been replaced. Legacy physics remains
+available for existing legacy scenarios. Parameters are synthetic and explicitly
+uncalibrated; see [physics details and limitations](docs/PHYSICS_MODEL.md).
 
-For full single-agent pretraining with the implemented nonlinear physics, use:
+Start a bounded software test with:
 
 ```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --episodes 2 --num-envs 1 --max-steps 64 --no-wandb
 ```
 
-This scenario trains a fresh PPO actor on `circle_map` for three-lap completion,
-using simulated wheel observations, wheel-reference
-acceleration actions, and fixed nominal grip. It retains the Frenet reward and
-0.01 s decision interval, with a 256×256 actor and 512×512 critic. Its 10,000-episode
-budget is not the paper's environment-step budget, and its reduced tire/actuator
-parameters remain uncalibrated. Legacy checkpoints are incompatible. Selection
-uses eight fixed seeds; evaluate the selected checkpoint on the separate final set:
+`--max-steps` bounds training and evaluation episodes. The pretraining path uses
+50 normalized vehicle/Frenet/track values, wheel-reference acceleration, a 0.05 s
+decision interval, and per-episode Gaussian friction variation with relative
+standard deviation 0.02. Evaluation uses fixed nominal grip. The existing
+`_frenet` and `_combined_slip` scenario names share this physics path; their
+worker counts and PPO settings may differ. Train fresh: old physics checkpoints
+are incompatible.
+
+The current three-lap completion reward and episode-based training schedule are
+still a test task, not a reproduction of the paper's boundary-reset reward and
+120-million-step protocol. The new map and identified tire/actuator coefficients
+are also outstanding. To train beyond a smoke test, omit the episode/worker/
+horizon overrides. Configure all three map bundle lists when changing tracks.
+
+Use the independent final evaluation seeds after selecting a checkpoint:
 
 ```bash
-PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain_combined_slip.yaml --eval --checkpoint outputs/YOUR_PRETRAIN_RUN --eval-protocol final --output-dir outputs/combined_slip_final --no-wandb
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --eval --checkpoint outputs/YOUR_PRETRAIN_RUN --eval-protocol final --output-dir outputs/mf61_final --no-wandb
 ```
 
-Replace the checkpoint directory with the run containing `best_model.pt`. Both
-protocols use the training track; final seeds do not establish held-out-map or
-sim-to-real generalization. Keep friction randomization as a separate ablation.
+Replace the run directory with one produced by the same scenario and physics
+contract. Final seeds use the configured evaluation track and do not establish
+sim-to-real performance. For legacy MAPPO actor transfer, migrate its
+physics/observation/action configuration before using a new pretraining actor.
 
 For the circle convergence experiment, use
 `scenarios/ppo_combined_slip_circle_stable.yaml` with the same `run.py` command.

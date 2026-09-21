@@ -239,6 +239,12 @@ class TrackPreviewGeometry:
                 distances, 0.0, self.projection_geometry.total_length
             )
         return {
+            # Width is full track width. This center-point criterion assumes
+            # the centerline bisects the lane, as in the paper's constant-width map.
+            "current_width": float(np.interp(projection.arc_length,
+                                             self._interpolation_arc,
+                                             self._interpolation_width)),
+            "current_lateral_error": float(projection.lateral_error),
             "curvature": np.interp(
                 distances,
                 self._interpolation_arc,

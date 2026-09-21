@@ -46,13 +46,15 @@ def validate_friction_protocol(config, *, nonlinear: bool) -> dict | None:
             raise ValueError('friction phase must be a mapping')
         mode = spec.get('mode')
         fields = {'fixed': {'mode', 'mu'}, 'uniform': {'mode', 'low', 'high'},
-                  'grid': {'mode', 'values'}}
+                  'grid': {'mode', 'values'}, 'gaussian': {'mode', 'relative_std'}}
         if not isinstance(mode, str) or mode not in fields or set(spec) != fields[mode]:
-            raise ValueError('friction mode/fields must describe fixed, uniform, or grid')
-        if phase == 'eval' and mode == 'uniform':
+            raise ValueError('friction mode/fields must describe fixed, uniform, grid, or gaussian')
+        if phase == 'eval' and mode in {'uniform', 'gaussian'}:
             raise ValueError('Evaluation friction must be fixed or a deterministic grid')
         if mode == 'fixed':
             result[phase] = {'mode': mode, 'mu': number(spec['mu'])}
+        elif mode == 'gaussian':
+            result[phase] = {'mode': mode, 'relative_std': number(spec['relative_std'])}
         elif mode == 'uniform':
             lo, hi = number(spec['low']), number(spec['high'])
             if lo >= hi:
@@ -85,6 +87,10 @@ class EpisodeFriction:
         grid_index = None
         if mode == 'uniform':
             mu = float(self.rng.uniform(spec['low'], spec['high']))
+        elif mode == 'gaussian':
+            mu = float(self.nominal_mu * self.rng.normal(1.0, spec['relative_std']))
+            if not np.isfinite(mu) or mu < 0:
+                raise ValueError('Gaussian friction draw is negative/nonfinite; check relative_std')
         elif mode == 'grid':
             # Consecutive evaluation seeds cover the grid; reset(None) advances it.
             grid_index = (self.seed + self.draw) % len(spec['values'])

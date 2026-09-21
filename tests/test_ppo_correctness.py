@@ -197,8 +197,8 @@ def test_circle_stability_scenario_preserves_physics_and_rewards_slow_progress()
         assert stable["agents"]["car_0"][key] == baseline["agents"]["car_0"][key]
     rewards = [build_reward_composer(s["agents"]["car_0"], Path("scenarios"))
                for s in (baseline, stable)]
-    # A 0.5 m/s forward decision on a ~350 m circle becomes worth exploring.
-    step = {"info": {"centerline": {"progress_delta": .5 * .01 / 350}}}
+    # A 0.25 m/s forward decision on a ~350 m circle becomes worth exploring.
+    step = {"info": {"centerline": {"progress_delta": .25 * stable["environment"]["timestep"] / 350}}}
     assert rewards[0].compute(step)[0] < 0 < rewards[1].compute(step)[0]
     params = resolve_training_params(stable["agents"]["car_0"], stable)
     agent = PPOAgent(158, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
@@ -213,7 +213,7 @@ def test_pretraining_networks_and_physical_discount_contract(tmp_path):
 
     scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     params = resolve_training_params(scenario["agents"]["car_0"], scenario)
-    agent = PPOAgent(115, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
+    agent = PPOAgent(50, -np.ones(2), np.ones(2), {**params, "device": "cpu"})
     for net, expected in ((agent.actor.net, [256, 256, 2]),
                           (agent.critic.net, [512, 512, 1])):
         assert [layer.out_features for layer in net if isinstance(layer, torch.nn.Linear)] == expected
@@ -229,14 +229,16 @@ def test_pretraining_networks_and_physical_discount_contract(tmp_path):
     agent.save(str(checkpoint))
     mappo_params = {
         "pi_hidden_dims": [256, 256], "vf_hidden_dims": [8], "device": "cpu",
+        "_physics_contract": params["_physics_contract"],
+        "_action_contract": params["_action_contract"],
         "activation": "leaky_relu", "critic_mode": "shared_team", "reward_mode": "team_shared",
     }
-    recipient = MAPPOAgent(115, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"], mappo_params)
+    recipient = MAPPOAgent(50, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"], mappo_params)
     recipient.load_pretrained_actor(str(checkpoint))
-    observations = torch.ones(2, 115)
+    observations = torch.ones(2, 50)
     torch.testing.assert_close(agent.actor.net(observations), recipient.actor.net(observations))
     incompatible = MAPPOAgent(
-        115, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"],
+        50, 12, -np.ones(2), np.ones(2), ["car_0", "car_1"],
         {**mappo_params, "activation": "tanh"},
     )
     with pytest.raises(ValueError, match="activation"):
@@ -596,7 +598,13 @@ def _parallel_test_setup(device="cpu", accelerated=False):
     path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
     scenario["experiment"].update(num_envs=2, episodes=3, seed=42)
-    scenario["environment"].update(max_steps=4)
+    # Exercise the retained legacy direct/chassis-acceleration trainer contracts.
+    from env.f110ParallelEnv import _default_vehicle_params
+    scenario["environment"].update(max_steps=4, timestep=.01, vehicle_params=_default_vehicle_params())
+    scenario["environment"].pop("friction", None)
+    scenario["environment"].pop("spawn", None)
+    scenario["agents"]["car_0"]["observation"] = "../configs/observations/rl_racer.yaml"
+    scenario["agents"]["car_0"]["action_constraints"] = {"prevent_reverse": True, "speed_index": 1}
     for key in ("map_bundles", "map_bundles_train", "map_bundles_eval"):
         scenario["environment"][key] = ["circle_map"]
     cfg = scenario["agents"]["car_0"]
@@ -899,7 +907,7 @@ def test_transfer_scenario_preserves_pretraining_contract():
         assert transfer["environment"][key] == source["environment"][key]
 
 
-@pytest.mark.parametrize("scenario_name", ["mappo_gaplock", "nrl_1car"])
+@pytest.mark.parametrize("scenario_name", ["mappo_gaplock", "calibration/hybrid_pp_ftg_1lap"])
 def test_training_checkpoint_rejects_unsupported_roles(monkeypatch, scenario_name):
     import sys
     import run
@@ -935,3 +943,16 @@ def test_scenario_rejects_invalid_checkpoint_path(value):
     scenario["experiment"]["checkpoint"] = value
     with pytest.raises(ScenarioError, match="experiment.checkpoint"):
         validate_scenario(scenario)
+
+
+def test_bounded_smoke_cli_caps_training_and_evaluation():
+    from argparse import Namespace
+    from run import apply_cli_overrides
+    args = Namespace(seed=None, episodes=None, wandb=False, no_wandb=True,
+                     render=False, no_render=True, max_steps=64)
+    config = apply_cli_overrides({'environment': {'max_steps': 16000},
+                                 'evaluation': {'enabled': True, 'max_steps': 32000}}, args)
+    assert config['environment']['max_steps'] == config['evaluation']['max_steps'] == 64
+    args.max_steps = 0
+    with pytest.raises(ValueError, match='positive'):
+        apply_cli_overrides(config, args)

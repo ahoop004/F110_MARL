@@ -234,6 +234,11 @@ class F110ParallelEnv:
                                          phase=merged.get("physics_phase", "train"))
                           if self.params.get("model") == "combined_slip_st" else None)
 
+        limits_cfg = merged.get("track_limits", {}) or {}
+        self.track_limits_enabled = bool(limits_cfg.get("enabled", False))
+        self.terminate_on_track_boundary = bool(limits_cfg.get("terminate", True))
+        if self.track_limits_enabled and self.n_agents != 1:
+            raise ValueError("Track-limit time trials require one vehicle")
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
         self._track_preview_spacing = max(float(preview_cfg.get("spacing", 0.3)), 1e-3)
@@ -250,6 +255,8 @@ class F110ParallelEnv:
             # contract. Preserve its legacy payload behavior.
             self._track_preview_agents = frozenset(self.possible_agents)
             self._frenet_neighbor_agents = frozenset(self.possible_agents)
+        if self.track_limits_enabled:
+            self._track_preview_agents = frozenset(self.possible_agents)
         self._track_preview_geometry_cache = TrackPreviewGeometryCache(
             self._map_scheduler.configured_bundle_count
         )
@@ -296,7 +303,8 @@ class F110ParallelEnv:
 
         raw_target_laps = merged.get("target_laps", merged.get("laps", 1))
         self.target_laps = validate_target_laps(raw_target_laps)
-        self.lifecycle = RaceLifecycle(self.possible_agents, self.target_laps)
+        self.lifecycle = RaceLifecycle(self.possible_agents, self.target_laps,
+                                       finish_on_laps=bool(episode_termination.get("lap_completion", True)))
         self.terminal_agent_config = TerminalAgentConfig.from_mapping(
             merged.get("terminal_agents")
         )
@@ -334,6 +342,7 @@ class F110ParallelEnv:
             integrator=self.integrator,
             lidar_dist=self.lidar_dist,
             num_beams=self._lidar_beam_count,
+            wall_collision_response=not self.track_limits_enabled,
         )
 
         self.sim.set_map(str(self.yaml_path), self.map_ext)
@@ -949,6 +958,15 @@ class F110ParallelEnv:
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
+        # Compute progress and geometric boundary facts once, before lifecycle
+        # decisions, so reward and termination consume exactly the same test.
+        infos = {aid: {} for aid in self.possible_agents}
+        self._update_centerline_observation_facts(infos)
+        if self.track_limits_enabled and self.terminate_on_track_boundary:
+            for aid in active_before_step:
+                if infos[aid]["track_limits"]["exceeded"]:
+                    self.lifecycle.record_track_boundary(aid, step=self._elapsed_steps)
+
         # terminations/truncations
         collisions = obs_joint["collisions"]
 
@@ -1005,7 +1023,6 @@ class F110ParallelEnv:
                     action=joint[agent_index[aid]],
                     vehicle_state=self.sim.agents[agent_index[aid]].physics_state,
                 )
-        infos = {aid: {} for aid in self.possible_agents}
         add_time_limit_info(infos, truncations=truncations)
         self._inject_finish_line_info(infos)
         add_episode_metadata(
@@ -1027,26 +1044,6 @@ class F110ParallelEnv:
             lock_speed_steps=self._lock_speed_steps,
             episode_step_count=self._episode_step_count,
         )
-
-        # Centerline projection facts — injected before filtering so that both
-        # CenterlineRewardComponent and ProgressComponent can read info["centerline"].
-        if self.centerline_features_enabled and self.centerline_points is not None:
-            self._last_centerline_facts = self._centerline_progress_tracker.update(
-                self.centerline_points,
-                self.poses_x,
-                self.poses_y,
-                self.poses_theta,
-                self.linear_vels_x_curr,
-                self.linear_vels_y_curr,
-                self._agent_id_to_index,
-            )
-            for agent_id, facts in self._last_centerline_facts.items():
-                if agent_id in infos:
-                    infos[agent_id]["centerline"] = facts
-            self._inject_frenet_neighbors(infos)
-            self._inject_track_previews(infos)
-        else:
-            self._last_centerline_facts = {}
 
         self._refresh_render_observations(obs)
 
@@ -1551,11 +1548,21 @@ class F110ParallelEnv:
                 last_index=self._track_preview_last_indices.get(agent_id, -1),
             )
             self._track_preview_last_indices[agent_id] = preview_index
-            infos.setdefault(agent_id, {})["track_preview"] = geometry.preview(
+            preview = geometry.preview(
                 position,
                 self._track_preview_points,
                 start_index=preview_index,
             )
+            infos.setdefault(agent_id, {})["track_preview"] = preview
+            if self.track_limits_enabled:
+                half_width = 0.5 * preview["current_width"]
+                distance = max(abs(preview["current_lateral_error"]) - half_width, 0.0)
+                infos[agent_id]["track_limits"] = {
+                    "half_width": half_width,
+                    "lateral_error": preview["current_lateral_error"],
+                    "offtrack_distance": distance,
+                    "exceeded": distance > 0.0,
+                }
 
     def _inject_frenet_neighbors(
         self,
@@ -1578,6 +1585,9 @@ class F110ParallelEnv:
         infos: Dict[str, Dict[str, Any]],
     ) -> None:
         """Populate Frenet facts for the initial observation after reset."""
+        if self.track_limits_enabled and (not self.centerline_features_enabled
+                                          or self._track_preview_geometry is None):
+            raise ValueError("Track limits require centerline features and wall geometry")
         if not self.centerline_features_enabled or self.centerline_points is None:
             self._last_centerline_facts = {}
             return

@@ -26,6 +26,7 @@ class RolloutBuffer:
         self.values = torch.zeros(n_steps, device=device)
         self.terminated = torch.zeros(n_steps, device=device)
         self.truncated = torch.zeros(n_steps, device=device)
+        self.final_values = torch.full((n_steps,), float("nan"), device=device)
         self.ptr = 0
 
     def add(
@@ -38,6 +39,7 @@ class RolloutBuffer:
         terminated: bool,
         truncated: bool,
         raw_action: Optional[np.ndarray] = None,
+        final_value: Optional[float] = None,
     ) -> None:
         i = self.ptr % self.n_steps
         self.obs[i] = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -49,6 +51,7 @@ class RolloutBuffer:
         self.values[i] = float(value)
         self.terminated[i] = float(terminated)
         self.truncated[i] = float(truncated)
+        self.final_values[i] = float("nan") if final_value is None else float(final_value)
         self.ptr += 1
 
     def is_full(self) -> bool:
@@ -69,7 +72,7 @@ class RolloutBuffer:
         n = self.size()
         return compute_gae(
             self.rewards[:n], self.values[:n], self.terminated[:n], self.truncated[:n],
-            next_value, gamma, gae_lambda,
+            next_value, gamma, gae_lambda, self.final_values[:n],
         )
 
 
@@ -154,7 +157,7 @@ class PPOAgent:
     # ------------------------------------------------------------------
 
     def set_training_progress(self, progress: float) -> None:
-        """Set LR from the trainer's globally completed episode fraction.
+        """Set LR from the trainer's globally completed budget fraction.
 
         Evaluation never advances this schedule. In parallel training only
         the parent optimizer receives progress, not individual collectors.
@@ -164,6 +167,14 @@ class PPOAgent:
             rate = self.lr + fraction * (self.lr_end - self.lr)
             for group in self.optimizer.param_groups:
                 group["lr"] = rate
+
+    @torch.no_grad()
+    def value_batch(self, observations: np.ndarray) -> np.ndarray:
+        obs = torch.as_tensor(observations, dtype=torch.float32, device=self.device)
+        return self.critic(obs).cpu().numpy()
+
+    def value(self, observation: np.ndarray) -> float:
+        return float(self.value_batch(np.asarray(observation)[None])[0])
 
     @torch.no_grad()
     def predict(self, obs: np.ndarray) -> np.ndarray:

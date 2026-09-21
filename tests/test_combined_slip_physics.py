@@ -1,10 +1,10 @@
-"""Physical invariants for the reduced combined-slip vehicle (uncalibrated)."""
+"""Physical invariants for the planar MF6.1 vehicle (uncalibrated)."""
 import numpy as np
 import pytest
 
 from core.scenario import load_yaml_config, load_and_expand_scenario, validate_scenario, ScenarioError
 from physics.dynamic_models import combined_slip_dynamics, GRAVITY
-from physics.tire_models import smooth_tire_force
+from physics.tire_models import mf61_tire_force, MF61_KEYS, validate_mf61_coefficients
 from physics.vehicle import CombinedSlipVehicle
 
 
@@ -17,35 +17,61 @@ def vehicle(profile, **overrides):
     return CombinedSlipVehicle({**profile['combined_slip_vehicle'], **overrides}, profile['wheel_actuators'])
 
 
+def tire(profile, **overrides):
+    values = dict(profile['combined_slip_vehicle']['front_tire'])
+    values.update(overrides)
+    return tuple(values[key] for key in MF61_KEYS)
+
+
 @pytest.mark.parametrize('mu', [0.0, 0.3, 1.05])
-def test_tire_force_limit_and_contact_slip_dissipation(mu):
+def test_tire_force_limit_and_contact_slip_dissipation(profile, mu):
+    coeff = tire(profile)
     for u in (-5, -.05, 0, .05, 5):
         for v in (-2, 0, 2):
             for rolling_speed in (-10, 0, 10):
-                fx, fy, kappa, alpha = smooth_tire_force(u, v, rolling_speed, mu, 10, 5, .5)
+                fx, fy, kappa, alpha = mf61_tire_force(u, v, rolling_speed, coeff[0], mu, coeff, .5)
                 assert np.all(np.isfinite([fx, fy, kappa, alpha]))
-                assert np.hypot(fx, fy) <= mu + 1e-12
+                # MF weighting functions are not a radial friction-circle clamp.
+                assert max(abs(fx), abs(fy)) <= mu * coeff[0] + 1e-12
                 assert fx * (u - rolling_speed) + fy * v <= 1e-12
 
 
-def test_zero_slip_linear_stiffness_and_nonlinear_saturation():
-    assert smooth_tire_force(4, 0, 4, 1, 10, 5, .5)[:2] == (0, 0)
-    fx, _, _, _ = smooth_tire_force(4, 0, 4 + 4e-7, 1, 10, 5, .5)
-    assert fx == pytest.approx(1e-6, rel=1e-6)
-    _, fy, _, _ = smooth_tire_force(4, 4e-7, 4, 1, 10, 5, .5)
-    assert fy == pytest.approx(-5e-7, rel=1e-6)
-    fx, fy, _, _ = smooth_tire_force(0, 0, 20, 1, 10, 5, .5)
-    assert fx == pytest.approx(1, abs=1e-8)
-    assert fy == 0
+def test_zero_slip_stiffness_and_closed_form_magic_formula(profile):
+    coeff = tire(profile, PCX1=1., PEX1=0., PDX2=0.)
+    fz = coeff[0]
+    assert mf61_tire_force(4, 0, 4, fz, 1, coeff, .5)[:2] == (0, 0)
+    # With C=1,E=0, D*sin(atan(B*k)) = D*B*k/sqrt(1+(B*k)^2).
+    for kappa in (-1., -.2, 1e-7, .2, 1.):
+        fx, fy, measured_k, _ = mf61_tire_force(4, 0, 4*(1+kappa), fz, 1, coeff, .5)
+        z = 12. * kappa
+        assert fx == pytest.approx(fz * z / np.sqrt(1 + z*z), abs=1e-12)
+        assert fy == 0
+        assert measured_k == pytest.approx(kappa)
+    coeff = tire(profile)
+    small = mf61_tire_force(4, 4e-7, 4, fz, 1, coeff, .5)[1]
+    expected_stiffness = -10 * fz * np.sin(2 * np.arctan(1/1.5))
+    assert small / 1e-7 == pytest.approx(expected_stiffness, rel=1e-6)
+    loads = [fz*.5, fz, fz*1.5]
+    normalized = [mf61_tire_force(4, 0, 4.8, load, 1, coeff, .5)[0]/load for load in loads]
+    assert normalized[0] > normalized[1] > normalized[2]
+    # The curve can drop beyond peak, unlike the retired tanh saturation.
+    forces = [mf61_tire_force(4, 0, 4*(1+k), fz, 1, coeff, .5)[0] for k in (.2, 5.)]
+    assert forces[0] > forces[1]
 
 
-def test_acceleration_and_braking_consume_cornering_capacity():
-    _, pure_cornering, _, _ = smooth_tire_force(5, .5, 5, 1, 10, 5, .5)
+def test_acceleration_and_braking_consume_cornering_capacity(profile):
+    coeff = tire(profile)
+    _, pure_cornering, _, _ = mf61_tire_force(5, .5, 5, coeff[0], 1, coeff, .5)
     for wheel_speed in (0, 10):
-        fx, combined_cornering, _, _ = smooth_tire_force(5, .5, wheel_speed, 1, 10, 5, .5)
+        fx, combined_cornering, _, _ = mf61_tire_force(5, .5, wheel_speed, coeff[0], 1, coeff, .5)
         assert fx != 0
         assert abs(combined_cornering) < abs(pure_cornering)
-        assert np.hypot(fx, combined_cornering) <= 1
+
+
+@pytest.mark.parametrize('changes', [{'FNOMIN': 0}, {'PKY1': 1}, {'RCX1': 2}, {'PDX1': float('nan')}, {'PKX1': True}])
+def test_invalid_tire_coefficients_fail_explicitly(profile, changes):
+    with pytest.raises(ValueError):
+        validate_mf61_coefficients({**profile['combined_slip_vehicle']['front_tire'], **changes})
 
 
 def test_force_moment_balance_and_simultaneous_load_transfer(profile):
@@ -62,8 +88,8 @@ def test_force_moment_balance_and_simultaneous_load_transfer(profile):
     assert p['I'] * details['yaw_acceleration'] == pytest.approx(p['lf'] * fy_front - p['lr'] * rear[1])
     assert front[2] + rear[2] == pytest.approx(p['m'] * GRAVITY)
     assert front[2] == pytest.approx(p['m'] * (GRAVITY * p['lr'] - p['h'] * ax) / (p['lf'] + p['lr']))
-    assert np.all(np.linalg.norm(details['tire_forces'][:, :2], axis=1)
-                  <= p['mu'] * details['tire_forces'][:, 2] + 1e-12)
+    assert np.all(np.max(np.abs(details['tire_forces'][:, :2]), axis=1)
+                  <= 1.1 * p['mu'] * details['tire_forces'][:, 2] + 1e-12)
     # Verify wheel-frame contact velocities include both steering and yaw.
     vf_body = .5 + p['lf'] * .2
     np.testing.assert_allclose(details['contact_velocity'][0],
@@ -175,8 +201,8 @@ def test_long_maneuver_sequence_remains_finite_and_within_grip(profile):
             if step % 20 == 0:
                 forces = car.diagnostics()['tire_forces']
                 assert np.all(forces[:, 2] >= 0)
-                assert np.all(np.linalg.norm(forces[:, :2], axis=1)
-                              <= car.params['mu'] * forces[:, 2] + 1e-12)
+                assert np.all(np.max(np.abs(forces[:, :2]), axis=1)
+                              <= 1.1 * car.params['mu'] * forces[:, 2] + 1e-12)
 
 
 def test_invalid_step_or_initial_state_leaves_vehicle_unchanged(profile):

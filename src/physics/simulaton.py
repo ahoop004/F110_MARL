@@ -67,6 +67,7 @@ class Simulator(object):
         integrator="RK4",
         lidar_dist=0.0,
         num_beams=1080,
+        wall_collision_response=True,
     ):
         """
         Init function
@@ -83,6 +84,7 @@ class Simulator(object):
             None
         """
         self.num_agents = num_agents
+        self.wall_collision_response = bool(wall_collision_response)
         self.seed = seed
         self.time_step = time_step
         self.num_beams = int(num_beams)
@@ -220,7 +222,7 @@ class Simulator(object):
             np.copyto(state_buffer[i], agent.physics_state)
             agent.update_pose(float(control_inputs[i, 0]), float(control_inputs[i, 1]))
 
-            if getattr(agent, "in_collision", False):
+            if self.wall_collision_response and getattr(agent, "in_collision", False):
                 if agent.nonlinear:
                     # Stop at contact. Lifecycle handling latches a terminal
                     # freeze; nonterminating collision experiments may resume.

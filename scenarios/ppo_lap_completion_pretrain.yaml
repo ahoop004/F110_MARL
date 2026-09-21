@@ -1,9 +1,9 @@
-# Train a single local-observation PPO actor for later MAPPO initialization.
-# Paper-inspired networks/optimization; a receiving MAPPO actor must use
-# [256, 256] hidden layers and leaky_relu (slope 0.2) for these checkpoints.
-# Best-model selection uses deterministic evaluation rather than training return.
+# Single-agent PPO testing/pretraining with planar MF6.1 and wheel actuators.
+# Synthetic coefficients: this is not a calibrated reproduction of the paper.
+# Train fresh: previous legacy/reduced-physics checkpoints are incompatible.
 includes:
   - ../configs/env/default.yaml
+  - ../configs/vehicle/combined_slip.yaml
   - ../configs/training/on_policy.yaml
   - ../configs/wandb.yaml
 
@@ -17,7 +17,8 @@ experiment:
 environment:
   map_bundles:
     #  - Budapest_map
-     - circle_map
+    #  - circle_map
+     - L_map
     # - Melbourne_map
     # - Montreal_map
     # - Shanghai_map
@@ -26,7 +27,8 @@ environment:
     # - Spielberg_map
   map_bundles_train:
     #  - Budapest_map
-     - circle_map
+    #  - circle_map
+     - L_map
     # - Melbourne_map
     # - Montreal_map
     # - Shanghai_map
@@ -35,7 +37,8 @@ environment:
     # - Spielberg_map
   map_bundles_eval:
     # - Budapest_map
-    - circle_map
+    # - circle_map
+    - L_map
     # - Melbourne_map
     # - Montreal_map
     # - Shanghai_map
@@ -44,10 +47,12 @@ environment:
     # - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
+  # Keep the existing lap-completion test task while the new map is prepared.
+  timestep: 0.05
   target_laps: 3
   lap_counting:
     count_initial_crossing_as_lap: false
-  max_steps: 80000
+  max_steps: 16000
   action_repeat: 1
   centerline_autoload: true
   centerline_features: true
@@ -60,27 +65,20 @@ environment:
   random_spawn:
     enabled: true
     allow_reuse: true
-  vehicle_params:
-    # Explicit snapshot of the existing runtime parameters. The former vehicle
-    # include declared a top-level block that create_training_setup did not use.
-    mu: 1.0489
-    C_Sf: 4.718
-    C_Sr: 5.4562
-    lf: 0.15875
-    lr: 0.17145
-    h: 0.074
-    m: 3.74
-    I: 0.04712
-    length: 0.32
-    width: 0.225
-    s_min: -0.4189
-    s_max: 0.4189
-    sv_min: -3.2
-    sv_max: 3.2
-    v_switch: 0.8
-    a_max: 2.0
-    v_min: -20.0
-    v_max: 20.0
+  spawn:
+    policy: centerline_relative
+    centerline:
+      mode: random
+      min_progress: 0.0
+      max_progress: 1.0
+      avoid_finish: false
+    offsets: {s_offset: 0.0, d_offset: 0.0}
+    ego: {speed: 0.0}
+  friction:
+    version: 1
+    scope: shared
+    train: {mode: gaussian, relative_std: 0.02}
+    eval: {mode: fixed, mu: 1.0489}
 
 # Selection replays fixed seeds on the same track as training. Checkpoints are
 # ranked by completion rate, lower collision rate, progress, then finish steps.
@@ -89,7 +87,7 @@ evaluation:
   every_episodes: 500
   episodes: 8
   seed: 10042
-  # Inherit environment.max_steps: 80000 physics steps = 800 s at dt=0.01.
+  # Inherit environment.max_steps: 16000 decisions = 800 s at dt=0.05.
   # Run the independent final set explicitly after checkpoint selection.
   final_test:
     episodes: 20
@@ -100,8 +98,8 @@ agents:
     algorithm: ppo
     trainable: true
     role: racer
-    observation: ../configs/observations/rl_racer.yaml
-    reward: ../configs/reward/tasks/lap_completion_normalized_progress.yaml
+    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
+    reward: ../configs/reward/tasks/lap_completion_pretraining.yaml
     params:
       # arXiv:2504.02420v2, Sec. III-E. Decay is linear over completed
       # episodes here; the paper uses a fixed environment-step budget.
@@ -112,12 +110,15 @@ agents:
       pi_hidden_dims: [256, 256]
       vf_hidden_dims: [512, 512]
       activation: leaky_relu  # fixed negative slope 0.2
-      # Match gamma=0.99 at 0.05 s with our 0.01 s decision interval:
-      # gamma = 0.99 ** (0.01 / 0.05). Recompute if action_repeat/dt changes.
-      gamma: 0.9979919516614258
+      # Paper decision interval and discount; rollout size is pooled across workers.
+      n_steps: 4096  # 1024 decisions per worker with four workers
+      gamma: 0.99
       checkpoint_every: 500
       device: cuda
     action_constraints:
+      speed_control: wheel_acceleration
+      max_wheel_acceleration: 100.0  # rad/s² = 5 m/s² at provisional R=0.05 m
+      max_wheel_deceleration: 100.0
       prevent_reverse: true
       speed_index: 1
 
@@ -128,6 +129,6 @@ wandb:
   name: null
   group: ppo-lap-completion-pretrain
   job_type: actor-pretraining
-  tags: [ppo, single-agent, lap-completion, actor-pretraining]
-  notes: "Single-agent PPO actor pretraining with same-track completion-based checkpoint selection and separate final-test seeds"
+  tags: [ppo, single-agent, lap-completion, actor-pretraining, mf61-planar, uncalibrated]
+  notes: "Planar MF6.1 physics test with synthetic coefficients, 50-value Frenet observation, wheel acceleration, Gaussian grip, and the existing lap-completion task"
   mode: online

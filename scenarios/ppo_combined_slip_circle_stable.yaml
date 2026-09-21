@@ -1,4 +1,4 @@
-# Circle-only convergence experiment; preserve the original pretraining baseline.
+# Circle-only convergence experiment on the shared MF6.1 pretraining physics.
 includes:
   - ppo_lap_completion_pretrain_combined_slip.yaml
 
@@ -18,9 +18,9 @@ agents:
       # Pool independently bootstrapped episodes under one frozen policy.
       min_rollout_steps: 2048
       target_kl: 0.01
-      # Approx. 20 s discount horizon and 5 s GAE trace at dt=0.01 s.
-      gamma: 0.9995
-      gae_lambda: 0.9985
+      # Approx. 20 s discount horizon and 5 s GAE trace at dt=0.05 s.
+      gamma: 0.9975024987503127
+      gae_lambda: 0.9925224662753052
       log_std_init: -0.5
       ent_coef: 0.001
 

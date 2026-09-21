@@ -23,7 +23,7 @@ Author: Hongrui Zheng
 import numpy as np
 from numba import njit
 from collections.abc import Mapping
-from physics.tire_models import smooth_tire_force
+from physics.tire_models import mf61_tire_force
 
 
 LEGACY_MODEL = "legacy_st"
@@ -56,6 +56,8 @@ def validate_vehicle_params(params: Mapping) -> dict:
         dimensions = validate_vehicle_params({k: params[k] for k in ("length", "width")})
         return {**dict(component.params), **dimensions,
                 "calibration": dict(component.params["calibration"]),
+                "front_tire": dict(component.params["front_tire"]),
+                "rear_tire": dict(component.params["rear_tire"]),
                 "wheel_actuators": {**dict(component._actuators.params),
                     "calibration": dict(component._actuators.params["calibration"])}}
     if params.get("model", LEGACY_MODEL) != LEGACY_MODEL:
@@ -114,58 +116,69 @@ def first_order_actuator_step(value, reference, dt, time_constant, rate_min, rat
 
 
 @njit(cache=True)
-def combined_slip_dynamics(state, actuators, params):
-    """Six chassis derivatives and axle diagnostics for smooth-circle ST v1.
+def _axle_forces(ax, uf, vf, ur, vr, omega, cos_delta, sin_delta, params):
+    m, inertia, lf, lr, h, mu, floor, radius, front, rear = params
+    fzf = m * (GRAVITY * lr - h * ax) / (lf + lr)
+    fzr = m * GRAVITY - fzf
+    # Roundoff at the no-lift bracket endpoints only.
+    if min(fzf, fzr) < -1e-9:
+        raise ValueError("Negative axle normal load; wheel lift is outside model validity")
+    fzf, fzr = max(0.0, fzf), max(0.0, fzr)
+    fxf, fyf, kf, af = mf61_tire_force(uf, vf, radius * omega, fzf, mu, front, floor)
+    fxr, fyr, kr, ar = mf61_tire_force(ur, vr, radius * omega, fzr, mu, rear, floor)
+    residual = ax - (fxf * cos_delta - fyf * sin_delta + fxr) / m
+    return residual, np.array([[uf, vf, kf, af, fxf, fyf, fzf],
+                               [ur, vr, kr, ar, fxr, fyr, fzr]])
 
-    state = [x, y, psi, vx, vy, r]; actuators = [delta, omega]. Each diagnostic
-    row is [u_tire, v_tire, kappa, alpha, Fx_tire, Fy_tire, Fz] (front, rear).
-    Coefficients are normalized by axle load, allowing simultaneous force/load
-    transfer to be solved algebraically rather than using stale acceleration.
+
+@njit(cache=True)
+def combined_slip_dynamics(state, actuators, params):
+    """Planar MF6.1 chassis dynamics with simultaneous longitudinal load transfer.
+
+    Solve ax=sum(Fx_body(Fz(ax)))/m inside the nonnegative-load interval.
+    A safeguarded secant solve replaces the reduced tire law's linear shortcut.
     """
-    m, inertia, lf, lr, h, mu, cxf, cyf, cxr, cyr, floor, radius = params
+    m, inertia, lf, lr, h, mu, floor, radius, front, rear = params
     psi, vx, vy, yaw_rate = state[2], state[3], state[4], state[5]
     delta, omega = actuators[0], actuators[1]
     cos_delta, sin_delta = np.cos(delta), np.sin(delta)
-    # Contact velocities include yaw-induced motion about the center of mass.
-    vf = vy + lf * yaw_rate
-    uf = vx * cos_delta + vf * sin_delta
-    vf = -vx * sin_delta + vf * cos_delta
+    vf_body = vy + lf * yaw_rate
+    uf = vx * cos_delta + vf_body * sin_delta
+    vf = -vx * sin_delta + vf_body * cos_delta
     ur, vr = vx, vy - lr * yaw_rate
-    fx_unit_f, fy_unit_f, kappa_f, alpha_f = smooth_tire_force(
-        uf, vf, radius * omega, mu, cxf, cyf, floor)
-    fx_unit_r, fy_unit_r, kappa_r, alpha_r = smooth_tire_force(
-        ur, vr, radius * omega, mu, cxr, cyr, floor)
-    ax_unit_f = fx_unit_f * cos_delta - fy_unit_f * sin_delta
-    ax_unit_r = fx_unit_r
-    wheelbase = lf + lr
-    # Fzf=m*(g*lr-h*ax)/L, Fzr=m*(g*lf+h*ax)/L, ax=sum(Fx_body)/m.
-    # ax is inertial acceleration resolved in body x, not dvx/dt=ax+r*vy.
-    denominator = wheelbase + h * (ax_unit_f - ax_unit_r)
-    if denominator <= 0.0:
-        raise ValueError("Nonpositive load-transfer denominator; outside model validity")
-    ax = GRAVITY * (lr * ax_unit_f + lf * ax_unit_r) / denominator
-    fzf = m * (GRAVITY * lr - h * ax) / wheelbase
-    fzr = m * (GRAVITY * lf + h * ax) / wheelbase
-    if fzf < 0.0 or fzr < 0.0:
-        raise ValueError("Negative axle normal load; wheel lift is outside model validity")
-    fxf, fyf = fx_unit_f * fzf, fy_unit_f * fzf
-    fxr, fyr = fx_unit_r * fzr, fy_unit_r * fzr
+    if h == 0.0:
+        residual, axles = _axle_forces(0.0, uf, vf, ur, vr, omega, cos_delta, sin_delta, params)
+        ax = -residual
+    else:
+        lo, hi = -GRAVITY * lf / h, GRAVITY * lr / h
+        flo, _ = _axle_forces(lo, uf, vf, ur, vr, omega, cos_delta, sin_delta, params)
+        fhi, _ = _axle_forces(hi, uf, vf, ur, vr, omega, cos_delta, sin_delta, params)
+        if flo > 0.0 or fhi < 0.0:
+            raise ValueError("No nonnegative normal load equilibrium; wheel lift is outside model validity")
+        ax = 0.0
+        for iteration in range(60):
+            residual, axles = _axle_forces(ax, uf, vf, ur, vr, omega, cos_delta, sin_delta, params)
+            if abs(residual) < 1e-10:
+                break
+            if residual < 0.0:
+                lo, flo = ax, residual
+            else:
+                hi, fhi = ax, residual
+            candidate = (lo * fhi - hi * flo) / (fhi - flo)
+            # Periodic bisection guarantees contraction even for a poor fit.
+            ax = candidate if iteration % 4 != 3 and lo < candidate < hi else 0.5 * (lo + hi)
+        else:
+            raise ValueError("MF6.1 normal load equilibrium did not converge")
+    fxf, fyf = axles[0, 4], axles[0, 5]
+    fyr = axles[1, 5]
     fy_front_body = fxf * sin_delta + fyf * cos_delta
     ay = (fy_front_body + fyr) / m
-    rhs = np.array([
-        vx * np.cos(psi) - vy * np.sin(psi),
-        vx * np.sin(psi) + vy * np.cos(psi),
-        yaw_rate,
-        ax + yaw_rate * vy,
-        ay - yaw_rate * vx,
-        (lf * fy_front_body - lr * fyr) / inertia,
-    ])
-    axles = np.array([
-        [uf, vf, kappa_f, alpha_f, fxf, fyf, fzf],
-        [ur, vr, kappa_r, alpha_r, fxr, fyr, fzr],
-    ])
+    rhs = np.array([vx * np.cos(psi) - vy * np.sin(psi),
+                    vx * np.sin(psi) + vy * np.cos(psi), yaw_rate,
+                    ax + yaw_rate * vy, ay - yaw_rate * vx,
+                    (lf * fy_front_body - lr * fyr) / inertia])
     if not np.all(np.isfinite(rhs)) or not np.all(np.isfinite(axles)):
-        raise ValueError("Nonfinite combined-slip dynamics; outside model validity")
+        raise ValueError("Nonfinite MF6.1 dynamics; outside model validity")
     return rhs, axles
 
 

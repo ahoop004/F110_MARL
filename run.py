@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--episodes", type=int, default=None)
+    p.add_argument("--max-steps", type=int, default=None,
+                   help="Positive per-episode physics-step limit for bounded testing; also caps evaluation")
     p.add_argument("--num-envs", type=int, default=None,
                    help="Parallel CPU environments for PPO training (default: 1)")
     p.add_argument("--torch-threads", type=int, default=None,
@@ -84,6 +86,14 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
         scenario.setdefault("experiment", {})["seed"] = args.seed
     if args.episodes is not None:
         scenario.setdefault("experiment", {})["episodes"] = args.episodes
+        scenario["experiment"].pop("total_steps", None)
+    max_steps = getattr(args, "max_steps", None)
+    if max_steps is not None:
+        if max_steps <= 0:
+            raise ValueError("--max-steps must be positive")
+        scenario.setdefault("environment", {})["max_steps"] = max_steps
+        if scenario.get("evaluation"):
+            scenario["evaluation"]["max_steps"] = max_steps
     if args.wandb:
         scenario.setdefault("wandb", {})["enabled"] = True
     elif args.no_wandb:
@@ -1385,12 +1395,16 @@ def _run_on_policy(
     )
 
     num_envs = int(exp_cfg.get("num_envs", 1))
-    console.print_info(f"Starting PPO training for {n_episodes} total episodes | num_envs={num_envs}")
+    total_steps = exp_cfg.get("total_steps")
+    budget = f"{total_steps} environment transitions" if total_steps is not None else f"{n_episodes} episodes"
+    console.print_info(f"Starting PPO training for {budget} | num_envs={num_envs}")
     try:
         if num_envs > 1:
-            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes)
+            trainer.train_parallel(scenario, scenario_dir, num_envs, n_episodes,
+                                   **({"total_steps": total_steps} if total_steps is not None else {}))
         else:
-            trainer.train(n_episodes=n_episodes)
+            trainer.train(n_episodes=n_episodes,
+                          **({"total_steps": total_steps} if total_steps is not None else {}))
     finally:
         env.close()
         if evaluator is not None:

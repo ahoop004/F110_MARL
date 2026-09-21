@@ -20,7 +20,16 @@ from wrappers.observations.composer import ObservationComposer
 
 @pytest.fixture
 def scenario():
-    return load_and_expand_scenario('scenarios/ppo_combined_slip_vs_ftg_development.yaml')
+    config = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_combined_slip.yaml')
+    config['environment'].pop('spawn')
+    config['environment']['friction'] = {
+        'version': 1, 'scope': 'shared',
+        'train': {'mode': 'uniform', 'low': .8, 'high': 1.1},
+        'eval': {'mode': 'grid', 'values': [.8, .95, 1.1]},
+    }
+    config['agents']['car_1'] = {'algorithm': 'ftg', 'trainable': False,
+        'params': {}, 'action_adapter': 'rolling_speed_to_wheel_v1'}
+    return config
 
 
 @pytest.mark.parametrize('protocol', [
@@ -75,7 +84,7 @@ def test_adapter_conversion_negative_speed_clipping_and_no_input_mutation(scenar
     np.testing.assert_allclose(adapter.act({}), [.2, -40])
     np.testing.assert_array_equal(values, [.2, -2])
     values[:] = [2, 30]
-    np.testing.assert_allclose(adapter.act({}), [.4189, 400])
+    np.testing.assert_allclose(adapter.act({}), [.5, 400])
     adapter.set_action_space(SimpleNamespace(low=np.array([-.4, -400]), high=np.array([.4, 400])))
     np.testing.assert_allclose(controller.space.high, [.4, 20])
     values[1] = np.nan
@@ -230,3 +239,37 @@ def test_legacy_adapter_and_missing_opt_in_rejected(scenario):
     legacy['agents']['car_1']['action_adapter'] = 'rolling_speed_to_wheel_v1'
     with pytest.raises(ScenarioError, match='adapter'):
         validate_scenario(legacy)
+
+
+def test_gaussian_friction_is_multiplicative_seeded_and_not_clipped():
+    from env.friction import FRICTION_STREAM
+    config = {'version': 1, 'scope': 'shared',
+              'train': {'mode': 'gaussian', 'relative_std': .02},
+              'eval': {'mode': 'fixed', 'mu': 1.2}}
+    sampler = EpisodeFriction(config, nominal_mu=1.2, seed=42, phase='train')
+    expected_rng = np.random.default_rng(np.random.SeedSequence([42, FRICTION_STREAM]))
+    expected = 1.2 * expected_rng.normal(1, .02, 1000)
+    actual = np.array([sampler.sample()['mu'] for _ in range(1000)])
+    np.testing.assert_array_equal(actual, expected)
+    assert actual.std() == pytest.approx(.024, rel=.1)
+    sampler.reseed(42)
+    assert sampler.sample()['mu'] == expected[0]
+    assert EpisodeFriction(config, nominal_mu=1.2, seed=42, phase='eval').sample()['mu'] == 1.2
+    config['eval'] = config['train']
+    with pytest.raises(ValueError, match='Evaluation'):
+        validate_friction_protocol(config, nonlinear=True)
+
+
+def test_gaussian_runtime_uses_sample_for_every_axle_and_preserves_nominal(scenario):
+    scenario['environment']['friction']['train'] = {'mode': 'gaussian', 'relative_std': .02}
+    env, _, _ = create_training_setup(scenario, scenario_dir=Path('scenarios'))
+    try:
+        _, info = env.reset(seed=42)
+        sampled = info['car_0']['physics']['mu']
+        assert sampled != env.params['mu']
+        assert all(car._physics.params['mu'] == sampled for car in env.sim.agents)
+        assert all(car._physics._dynamics_params[5] == sampled for car in env.sim.agents)
+        _, _, _, _, info2 = env.step({'car_0': [0, 40], 'car_1': [0, 40]})
+        assert info2['car_0']['physics']['mu'] == sampled
+    finally:
+        env.close()

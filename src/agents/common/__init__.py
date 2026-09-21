@@ -16,9 +16,11 @@ def compute_gae(
     next_value: float,
     gamma: float,
     gae_lambda: float,
+    final_values: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     # Keep the Python-double recurrence, but transfer CUDA scalars in bulk.
     rollout = torch.stack((rewards, values, terminated, truncated), dim=1).cpu().numpy()
+    finals = final_values.cpu().numpy() if final_values is not None else None
     advantages_host = np.zeros(len(rollout), dtype=np.float32)
     last_gae = 0.0
     next_val = float(next_value)
@@ -29,6 +31,11 @@ def compute_gae(
         bootstrap_mask = 1.0 - terminal
         continuation_mask = 1.0 - float(bool(terminal) or bool(truncation))
         nv = next_val if t == len(rollout) - 1 else float(rollout[t + 1, 1])
+        if truncation and not terminal and finals is not None:
+            if np.isfinite(finals[t]):
+                nv = float(finals[t])
+            elif t != len(rollout) - 1:
+                raise ValueError("Internal truncations require the final observation value")
         delta = float(rollout[t, 0]) + gamma * nv * bootstrap_mask - float(rollout[t, 1])
         last_gae = delta + gamma * gae_lambda * continuation_mask * last_gae
         advantages_host[t] = last_gae

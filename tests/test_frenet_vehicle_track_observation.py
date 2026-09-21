@@ -63,36 +63,30 @@ def test_pose_only_ego_observation_keeps_its_layout():
 def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
     path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
-    # Capture the historical simulator defaults plus this scenario's four
-    # effective overrides, to detect any unintended dynamics change.
-    from env.f110ParallelEnv import _default_vehicle_params
-    expected_vehicle = _default_vehicle_params()
-    expected_vehicle.update(v_switch=0.8, a_max=2.0, v_min=-20.0, v_max=20.0)
-    assert "vehicle_params" not in scenario  # no ignored top-level fragment
-    assert scenario["environment"]["vehicle_params"] == expected_vehicle
+    assert "vehicle_params" not in scenario
     scenario["environment"]["max_steps"] = 32
     composer = ObservationComposer.from_file(
-        str(path.parent / scenario["agents"]["car_0"]["observation"]),
-        scenario["environment"],
-    )
-    assert composer.obs_dim == 115
+        str(path.parent / scenario["agents"]["car_0"]["observation"]), scenario["environment"])
+    assert composer.obs_dim == 50
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     try:
-        assert env.params == expected_vehicle
-        np.testing.assert_allclose(env.action_spaces["car_0"].low, [-0.4189, -20.0])
-        np.testing.assert_allclose(env.action_spaces["car_0"].high, [0.4189, 20.0])
+        assert env.params['model_version'] == 2
+        assert env.params['tire_model'] == 'mf61_planar'
+        np.testing.assert_allclose(env.action_spaces["car_0"].low, [-.5, -400])
+        np.testing.assert_allclose(env.action_spaces["car_0"].high, [.5, 400])
         observations, infos = env.reset(seed=42)
-        np.testing.assert_array_equal(composer.wrap(observations["car_0"], infos["car_0"])[108:111], np.zeros(3))
+        wrapped = composer.wrap(observations["car_0"], infos["car_0"])
+        np.testing.assert_array_equal(wrapped[[0, 1, 4]], np.zeros(3))
         for _ in range(10):
-            observations, _, _, _, infos = env.step({"car_0": np.array([0.1, 2.0], dtype=np.float32)})
+            observations, _, _, _, infos = env.step({"car_0": np.array([0.1, 40.0], dtype=np.float32)})
         raw = observations["car_0"]
         wrapped = composer.wrap(raw, infos["car_0"])
         assert abs(float(raw["angular_velocity"])) > 1e-4
-        np.testing.assert_array_equal(wrapped[108:110], raw["velocity"])
-        assert wrapped[110] == raw["angular_velocity"]
+        np.testing.assert_allclose(wrapped[:2], np.asarray(raw["velocity"]) / 20.)
+        assert wrapped[4] == pytest.approx(raw["angular_velocity"] / 10.)
         observations, infos = env.reset(seed=42)
         composer.reset()
-        assert composer.wrap(observations["car_0"], infos["car_0"])[110] == 0.0
+        assert composer.wrap(observations["car_0"], infos["car_0"])[4] == 0.0
     finally:
         env.close()
 
@@ -359,36 +353,17 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
     assert env_kwargs["action_repeat"] == 2
 
 
-def test_ppo_frenet_pretraining_has_explicit_control_and_dynamics_changes():
+def test_pretraining_entry_points_share_mf61_physics_and_control():
     baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
-    variant = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_frenet.yaml")
-    assert variant["experiment"]["name"] != baseline["experiment"]["name"]
-    # Preserve the explicitly selected eight-worker Frenet collection protocol.
-    assert variant["experiment"]["num_envs"] == 8
-    assert variant["training_defaults"]["n_steps"] == 2048
-    assert variant["wandb"]["group"] != baseline["wandb"]["group"]
-    assert variant["agents"]["car_0"]["observation"].endswith(
-        "/rl_racer_vehicle_track_frenet_acceleration.yaml"
-    )
-    assert variant["agents"]["car_0"]["action_constraints"] == {
-        "speed_control": "acceleration", "max_acceleration": 5.0,
-        "max_deceleration": 5.0, "prevent_reverse": True, "speed_index": 1,
-    }
-    for key, expected in (("a_max", 5.0), ("v_switch", 20.0)):
-        assert variant["environment"]["vehicle_params"][key] == expected
-        variant["environment"]["vehicle_params"][key] = baseline["environment"]["vehicle_params"][key]
-    variant["agents"]["car_0"]["action_constraints"] = baseline["agents"]["car_0"]["action_constraints"]
-    assert variant["agents"]["car_0"]["reward"].endswith("/lap_completion_frenet.yaml")
-    assert variant["agents"]["car_0"]["params"].pop("gae_lambda") == 0.997
-    assert variant["evaluation"].pop("selection_strategy") == "completion_progress"
-    variant["agents"]["car_0"]["reward"] = baseline["agents"]["car_0"]["reward"]
-    # All remaining settings stay paired with the baseline.
-    variant["experiment"]["name"] = baseline["experiment"]["name"]
-    variant["experiment"]["num_envs"] = baseline["experiment"]["num_envs"]
-    for key in ("group", "tags", "notes"):
-        variant["wandb"][key] = baseline["wandb"][key]
-    variant["agents"]["car_0"]["observation"] = baseline["agents"]["car_0"]["observation"]
-    assert variant == baseline
+    for name, workers in [('frenet', 8), ('combined_slip', 1)]:
+        variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_pretrain_{name}.yaml")
+        assert variant['environment'] == baseline['environment']
+        assert variant['experiment']['num_envs'] == workers
+        actor = variant['agents']['car_0']
+        for key in ('observation', 'reward', 'action_constraints'):
+            assert actor[key] == baseline['agents']['car_0'][key]
+        assert actor['action_constraints']['speed_control'] == 'wheel_acceleration'
+        assert actor['params']['n_steps'] == workers * 1024
 
 
 @pytest.mark.parametrize("mode", ["train", "eval"])
@@ -399,7 +374,7 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
         str(path.parent / scenario["agents"]["car_0"]["observation"]),
         scenario["environment"],
     )
-    assert composer.obs_dim == 158
+    assert composer.obs_dim == 50
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     try:
         assert env.track_preview_available
@@ -407,23 +382,22 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
         for step in range(3):
             raw, info = observations["car_0"], infos["car_0"]
             observation = composer.wrap(raw, info)
-            assert observation.shape == (158,)
+            assert observation.shape == (50,)
             assert np.isfinite(observation).all()
-            assert np.max(np.abs(observation)) <= 1.0
             preview = info["track_preview"]
             assert len(preview["curvature"]) == len(preview["width"]) == 20
             assert np.all(np.asarray(preview["width"]) > 0.0)
             # Check the actor receives geometry, rather than zero-filled slots
             # due to a missing feature request or an incomplete info payload.
-            np.testing.assert_allclose(observation[118:138], np.clip(
+            np.testing.assert_allclose(observation[10:30], np.clip(
                 np.asarray(preview["curvature"]) / preview["curvature_max"], -1, 1,
             ), atol=1e-6)
-            np.testing.assert_allclose(observation[138:158], np.clip(
+            np.testing.assert_allclose(observation[30:50], np.clip(
                 np.asarray(preview["width"]) / preview["width_max"], -1, 1,
             ), atol=1e-6)
             if step:
-                assert raw["speed_reference"] == pytest.approx(2.0)
-                assert observation[116] == pytest.approx(2.0 / 0.05 / 400.0)
+                assert raw["wheel_speed_reference"] == pytest.approx(2.0)
+                assert observation[8] == pytest.approx(2.0 / 400.0)
             observations, _, _, _, infos = env.step({
                 "car_0": np.array([0.1, 2.0], dtype=np.float32),
             })

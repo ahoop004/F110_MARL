@@ -75,6 +75,7 @@ def build_env_kwargs(
         env_kwargs["vehicle_params"] = env_config["vehicle_params"]
 
     passthrough_keys = [
+        "track_limits",
         "friction",
         "physics_phase",
         "map_root",

@@ -202,8 +202,10 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     checkpoint = experiment.get("checkpoint")
     if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
         raise ScenarioError("'experiment.checkpoint' must be a nonempty path string or null.")
-    if "total_steps" in experiment:
-        raise ScenarioError("PPO/MAPPO use 'experiment.episodes'; 'total_steps' is unsupported.")
+    total_steps = experiment.get("total_steps")
+    if total_steps is not None and (isinstance(total_steps, bool)
+            or not isinstance(total_steps, int) or total_steps <= 0):
+        raise ScenarioError("'experiment.total_steps' must be a positive integer or null.")
 
     environment = scenario["environment"]
     if any(key in block for block in (scenario, environment)
@@ -310,6 +312,15 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("Mixed trainable algorithms are unsupported; use one PPO agent or a MAPPO team.")
     if trainable_algos == {"ppo"} and len(trainable_ids) > 1:
         raise ScenarioError("PPO requires exactly one trainable agent; use MAPPO for a trainable team.")
+    if total_steps is not None and trainable_algos != {"ppo"}:
+        raise ScenarioError("A total_steps budget currently supports PPO only.")
+    limits = environment.get("track_limits", {}) or {}
+    if not isinstance(limits, dict) or set(limits) - {"enabled", "terminate"}:
+        raise ScenarioError("track_limits accepts enabled and terminate booleans")
+    if any(not isinstance(v, bool) for v in limits.values()):
+        raise ScenarioError("track_limits values must be booleans")
+    if limits.get("enabled") and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
+        raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)
     for name in ("num_envs", "torch_threads"):
         value = experiment.get(name, 1)
@@ -327,7 +338,9 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         if any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < 2 ** 32
                for v in (seed, env_seed)):
             raise ScenarioError("Parallel PPO requires explicit integer seeds in [0, 2**32).")
-        if int(experiment.get("episodes", 1000)) < num_envs:
+        if total_steps is not None and total_steps < num_envs:
+            raise ScenarioError("Parallel PPO total_steps must be at least num_envs")
+        if total_steps is None and int(experiment.get("episodes", 1000)) < num_envs:
             raise ScenarioError("Parallel PPO requires at least num_envs total episodes.")
         params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
         n_steps = params.get("n_steps", 2048)

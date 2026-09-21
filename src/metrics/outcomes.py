@@ -34,6 +34,7 @@ class EpisodeOutcome(Enum):
     IDLE_STOP = "idle_stop"
     TARGET_FINISH = "target_finish"
     FINISHED = "finished"
+    TRACK_BOUNDARY = "track_boundary"
 
     def is_success(self) -> bool:
         """Check if outcome represents attacker success."""
@@ -76,6 +77,8 @@ def determine_outcome(info: Dict[str, Any], truncated: bool = False) -> EpisodeO
         <EpisodeOutcome.COLLISION: 'collision'>
     """
     terminal_reason = info.get("terminal_reason")
+    if terminal_reason == "track_boundary":
+        return EpisodeOutcome.TRACK_BOUNDARY
     if terminal_reason == "race_complete":
         return EpisodeOutcome.FINISHED
     if terminal_reason == "collision":
