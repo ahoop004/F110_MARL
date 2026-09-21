@@ -128,8 +128,13 @@ class ConsoleHook(TrainingHook):
                         f"  individual reward signals: {individual_str}"
                     )
             else:
+                lap_count = info.get("lap_count") if isinstance(info, dict) else None
+                lap_time = metrics.get("lap_time_s")
+                laps_str = str(lap_count) if lap_count is not None else "n/a"
+                lap_time_str = f"{lap_time:.2f}s" if lap_time is not None else "n/a"
                 self._log.print_info(
-                    f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  outcome={outcome}"
+                    f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  "
+                    f"laps={laps_str}  lap_time={lap_time_str}  outcome={outcome}"
                 )
 
         if episode % self._summary_every == 0 and self._outcomes:
@@ -192,6 +197,12 @@ class WandbHook(TrainingHook):
         episode_steps = metrics.get("episode_steps")
         if episode_steps is not None:
             log["episode/steps"] = episode_steps
+        lap_count = info.get("lap_count") if isinstance(info, dict) else None
+        if lap_count is not None:
+            log["episode/lap_count"] = lap_count
+        lap_time = metrics.get("lap_time_s")
+        if lap_time is not None:
+            log["episode/lap_time_s"] = lap_time
 
         # Per-agent breakdown (MAPPO with >1 trainable agent) — flatten into
         # individual scalar/string keys rather than nested dicts.

@@ -92,6 +92,7 @@ class CSVLogger:
             "spawn_id": info.get("spawn_id") or info.get("spawn_point"),
             "episode_steps": metrics.get("episode_steps"),
             "lap_count": info.get("lap_count"),
+            "lap_time_s": metrics.get("lap_time_s"),
             "finish_position": info.get("finish_position"),
             "terminal_reason": info.get("terminal_reason"),
         }

@@ -451,6 +451,60 @@ def test_ppo_dataset_state_precedes_repeated_action(tmp_path):
         assert chunk["truncated"].tolist() == [False, True]
 
 
+def test_ppo_worker_reports_last_lap_in_simulation_seconds():
+    from types import SimpleNamespace
+    from env.collision_state import RaceLifecycle
+    from training.on_policy_trainer import _WorkerHook
+
+    class Env(_OneStepTruncationEnv):
+        timestep = 0.05
+
+        def __init__(self):
+            super().__init__()
+            self.episode = -1
+            self.lifecycle = RaceLifecycle(["car_0"], 1, finish_on_laps=False)
+
+        def reset(self, options=None):
+            self.episode += 1
+            self.steps = 0
+            self.lifecycle.reset()
+            self.lifecycle.records["car_0"].lap_start_step = 0
+            return super().reset(options)
+
+        def step(self, actions):
+            self.steps += 1
+            self.lifecycle.begin_step()
+            if self.episode == 0 and self.steps in (1, 3):
+                self.lifecycle.record_lap_crossing("car_0", step=self.steps)
+            record = self.lifecycle.records["car_0"]
+            done = self.steps == 4
+            self.agents = [] if done else ["car_0"]
+            info = {"lap_count": record.lap_count,
+                    "lap_time_steps": record.lap_time_steps,
+                    "lap_crossed": record.lap_crossed}
+            return ({"car_0": {"value": float(self.steps)}}, {},
+                    {"car_0": False}, {"car_0": done}, {"car_0": info})
+
+    messages = []
+    worker_hook = _WorkerHook(SimpleNamespace(send=messages.append), 7, 49, False)
+    trainer = OnPolicyTrainer(
+        Env(), "car_0", _RecordingAgent(), {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(), action_repeat=2, hooks=[worker_hook],
+    )
+    trainer.train(2)
+    episodes = [payload for kind, payload in messages if kind == "episode"]
+    assert len(episodes) == 2
+    _, info, metrics = episodes[0]
+    assert info["worker_id"] == 7
+    assert info["lap_count"] == 2
+    assert not info["lap_crossed"]  # The last lap predates the terminal step.
+    assert metrics["episode_steps"] == 2
+    assert metrics["lap_time_s"] == pytest.approx(0.1)
+    _, info, metrics = episodes[1]
+    assert info["lap_count"] == 0
+    assert metrics["lap_time_s"] is None
+
+
 def test_ppo_resets_fixed_opponents_before_each_episode():
     class Opponent:
         calls = 9

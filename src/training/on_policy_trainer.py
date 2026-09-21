@@ -462,6 +462,14 @@ class OnPolicyTrainer:
             last_info["outcome"] = outcome.value
             update_metrics = dict(update_metrics)
             update_metrics["episode_steps"] = step_idx
+            # Lifecycle timing persists after the crossing and counts physics
+            # steps, not policy decisions (so do not multiply by action_repeat).
+            lap_time_steps = last_info.get("lap_time_steps")
+            timestep = getattr(self.env, "timestep", None)
+            update_metrics["lap_time_s"] = (
+                float(lap_time_steps) * float(timestep)
+                if lap_time_steps is not None and timestep is not None else None
+            )
 
             if total_steps is None:
                 self._set_training_progress(episode + 1, n_episodes)

@@ -41,6 +41,13 @@ Training resets on geometric boundary violations; there is no lap or time-limit
 termination. Reward is signed metre progress, replaced by -1 outside the track.
 The current implementation still uses uncalibrated tire and actuator parameters.
 
+Each PPO episode line includes `laps` (the environment's completed lap count)
+and `lap_time` (the most recent timed lap, in simulation seconds). Episodes with
+no timed lap show `lap_time=n/a`; this is not the episode duration. The same
+values are saved as `lap_count` and `lap_time_s` in `episode_metrics.csv` and as
+`episode/lap_count` and `episode/lap_time_s` in W&B. Missing lap times are blank
+in CSV and omitted from W&B rather than recorded as zero.
+
 ## Select and validate a model
 
 Every 4,096,000 transitions, deterministic selection evaluates eight starting
