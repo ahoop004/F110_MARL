@@ -24,6 +24,35 @@ MAPPO's observation has 68 inputs, including explicit teammate identity. Its
 shared settings live in `configs/scenarios/mappo_2v2_base.yaml`; edit that fragment
 when a setting should apply to every team objective.
 
+## Downloaded L-map checkpoint: three-lap circle transfer
+
+`ppo_lap_completion_transfer_3lap.yaml` loads `outputs/L_map_best_model.pt`,
+ends training and evaluation episodes at three laps, and limits episodes to
+16,000 physics steps (800 simulated seconds). Training retains geometric
+boundary resets; evaluation also terminates on collisions. Checkpoint selection
+uses completion and net progress. The transfer budget remains 4,096,000 decisions.
+It inherits the local worker count from pretraining (currently one).
+
+This is an exception to the current shared physics profile: the downloaded model
+uses the older 0.32 × 0.225 m footprint, ±0.5 rad steering, ±10 rad/s steering-rate
+limits, and per-map track normalization. Its exact contracts and source SHA256
+are recorded in `configs/scenarios/l_map_downloaded_checkpoint.yaml`. The current
+vehicle and observation presets are unchanged. Do not use this compatibility
+snapshot for a checkpoint trained with the newer reference physics.
+
+```bash
+# Fine-tune actor and critic with a fresh optimizer.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml
+
+# Evaluate the downloaded policy on one three-lap circle episode first.
+# The provenance override acknowledges the changed scenario/map, not changed physics.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml \
+  --eval --eval-episodes 1 --allow-provenance-mismatch --no-wandb \
+  --output-dir outputs/circle_3lap_before
+```
+
 ## Migration
 
 | Previous entry point | Replacement |

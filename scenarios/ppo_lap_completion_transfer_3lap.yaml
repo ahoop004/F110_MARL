@@ -1,0 +1,36 @@
+# Three-lap circle transfer from the downloaded L-map PPO checkpoint.
+# The source predates the current chassis and fixed track-scaling profiles.
+# The compatibility include preserves its exact physics/observation contracts.
+includes:
+  - ppo_lap_completion_transfer.yaml
+  - ../configs/scenarios/l_map_downloaded_checkpoint.yaml
+
+experiment:
+  name: ppo_lap_completion_transfer_circle_3lap
+  checkpoint: ../outputs/L_map_best_model.pt
+  # Inherit the local worker count and 4,096,000-transition transfer budget.
+
+environment:
+  map_bundles: [Budapest_map]
+  map_bundles_train: [Budapest_map]
+  map_bundles_eval: [Budapest_map]
+  # map_bundles: [circle_map]
+  # map_bundles_train: [circle_map]
+  # map_bundles_eval: [circle_map]
+  target_laps: 3
+  max_steps: 16000  # 800 simulation seconds; bounds stalled episodes
+  episode_termination: {mode: any_agent, lap_completion: true}
+  track_limits: {enabled: true, terminate: true}
+  terminate_on_collision: false  # geometric boundary resets, matching pretraining
+
+evaluation:
+  target_laps: 3
+  max_steps: 16000
+  terminate_on_track_limit: true
+  terminate_on_collision: true
+  selection_strategy: completion_progress
+
+wandb:
+  group: ppo-lap-completion-transfer-3lap
+  tags: [ppo, single-agent, three-lap, track-transfer, downloaded-checkpoint-physics]
+  notes: "Three-lap circle transfer from L_map_best_model.pt; source physics and per-map observation scaling retained. Actor and critic loaded with a fresh optimizer."
