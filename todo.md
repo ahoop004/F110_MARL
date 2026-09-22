@@ -159,31 +159,31 @@ actions, rewards, and terminal facts, including parallel environments.
 
 ## P3 - Local review and segment labeling
 
-Notebook delivery order: run comparison/plots (delivered), synchronized clip
-review, then editable individual/combined annotations. Reuse Python analysis
+Notebook delivery includes run comparison/plots, synchronized clip review,
+and editable individual/combined annotations. Reuse Python analysis
 helpers; store future annotations separately from notebook and raw trajectories.
 
-- [ ] Extend the existing replay path with an episode/clip index filterable by
+- [x] Extend the existing replay path with an episode/clip index filterable by
   run, checkpoint, map, outcome, event, and agent. Read only needed chunks for
   selected clips rather than loading an entire long training run into memory.
-- [ ] Add pause, time scrub/seek, playback speed, and clip looping. Use recorded
+- [x] Add pause, time scrub/seek, playback speed, and clip looping. Use recorded
   timing metadata rather than silently applying replay's legacy timing defaults.
-- [ ] Display the race alongside synchronized speed, steering, acceleration
+- [x] Display the race alongside synchronized speed, steering, acceleration
   command, relative-gap, reward-component, and event views. Identify cars/teams
   consistently and distinguish observed state from commands.
-- [ ] Let the reviewer set segment start/end, individual/combined scope,
+- [x] Let the reviewer set segment start/end, individual/combined scope,
   participating cars, participant roles, target cars, tactic label, outcome,
   confidence, and notes. Save editable annotations separately from raw
   trajectories with stable references and label/detector versions.
-- [ ] Start individual tactic labels with following/pressure, pass attempt,
+- [x] Start individual tactic labels with following/pressure, pass attempt,
   position defense, yielding, avoidance, and recovery; retain free driving as
   context. Keep success/failure/aborted separate from tactic identity; allow
   uncertain, overlapping, and user-created labels.
-- [ ] Make combined tactics a first-class annotation type. Candidate labels
+- [x] Make combined tactics a first-class annotation type. Candidate labels
   include sequential teammate passes, one teammate yielding for the other,
   one teammate contesting an opponent while the other passes, and joint position
   defense. Treat these as review hypotheses, not behaviors guaranteed to emerge.
-- [ ] Link each combined segment to its individual segments and record temporal
+- [x] Link each combined segment to its individual segments and record temporal
   order/overlap, role changes, and individual plus team outcomes. Permit combined
   intervals to span several individual maneuvers. Distinguish an observed pattern
   from inferred coordination or intent; team benefit requires separate evidence.
@@ -227,18 +227,18 @@ traceable source clips and constituent links for later hierarchical learning.
 - [x] Run relevant existing metric/lifecycle checks for touched logic and one
   small headless 2v2 smoke run with reduced environments/workers and budget.
   Use a temporary override; do not weaken the actual experiment configs.
-- [ ] Verify local metrics, sampled recording, and an annotation save/load cycle.
+- [x] Verify local metrics, sampled recording, and an annotation save/load cycle.
   Confirm recording disabled still works. Add targeted tests only for uncovered
   consequential failures such as ID mixing, terminal timing, or lost fields.
-- [ ] Manually inspect the terminal summary and one replay/label workflow. If
+- [x] Manually inspect the terminal summary and one replay/label workflow. If
   graphical review is unavailable, state which UI interaction remains unchecked.
-- [ ] Mark completed tasks here and report concise launch/review commands plus
+- [x] Mark completed tasks here and report concise launch/review commands plus
   real limitations. No additional documentation package or exhaustive test suite
   is required for this delivery.
 
-P0/P1 metrics and monitoring, P2 selective recording, and P3 run comparisons
-are implemented. Next: synchronized notebook clip review and annotation against
-the recorded race frames and clip index, then P4 grouping.
+P0/P1 metrics and monitoring, P2 selective recording, and P3 notebook review
+and annotation are implemented. Next: P4 candidate segment/features and grouping,
+using reviewed individual and combined annotations as traceable examples.
 
 Validation: focused metric, lifecycle, CSV, checkpoint, and parallel-collector
 checks passed. Two-environment headless runs covered continuous pretrained and
@@ -415,3 +415,49 @@ three existing smoke output folders and an empty output directory. Six figures
 were exported and representative plots visually inspected. The executed example
 is `outputs/analysis/run_review/executed_review.ipynb`; browser/IDE interaction
 was not manually exercised. No new training runs were required.
+
+### P3 synchronized review and annotation handoff
+
+- The notebook now includes a clip picker and explicit bounded interval loader
+  (default maximum 2,000 physics frames). Only overlapping chunks are read;
+  missing/discontinuous frames and mismatched source identities are rejected.
+- The reviewer supports play/pause, boundary seeking, speed, looping, and event
+  jumps using recorded interval durations. Long clips can be inspected in
+  successive windows. Kernel/render latency can slow wall-clock playback.
+- A shared map view and telemetry show four-car lifecycle state, observed speed
+  and steering, applied references, recorded acceleration-reference rates,
+  longitudinal/lateral gaps, per-interval reward components, and event facts.
+  Wheel-reference acceleration uses rad/s², not vehicle acceleration in m/s².
+- Individual labels support custom/uncertain/overlapping segments, actors,
+  targets, roles, outcomes, confidence, and notes. Combined segments link at
+  least two individual segments from the same recorded race, contain their
+  intervals, and derive temporal order/overlap. Role changes and individual/team
+  outcomes are retained. Inferred coordination or team-benefit claims require
+  separate evidence; labels are reviewer hypotheses.
+- Save/edit/reopen uses `RUN_FOLDER/review/annotations.json`, outside raw
+  trajectories. Stable IDs, clip/race sources, policy/detector/label versions,
+  half-open physics intervals, and simulation times are persisted. Saves are
+  atomic and reject stale concurrent edits and changes that break linked segments.
+- Exact checkpoint filters match only recorded checkpoint identities; they do
+  not assign a final model to earlier trajectories. Policy-version interval
+  filtering is available for training clips without a saved checkpoint identity.
+- `ipywidgets` and `ipympl` are included in the optional analysis dependencies
+  and installed in the current venv. Open `notebooks/run_review.ipynb`, select a
+  recorded run, and use the synchronized review section. Restart an already
+  running notebook kernel/server if newly installed widget extensions are absent.
+
+Validation: 20 focused recording/analysis/reviewer tests passed (the six reviewer
+checks were rerun after final layout/open-clip fixes). The full notebook executed
+with 170 widget models. A live local JupyterLab session was exercised in headless
+Chromium: play/pause, two individual segments, combined linking, save, reload,
+and reopening the combined label all passed, with no browser page errors.
+Screenshots were inspected; artifacts and validation-only labels are under
+`outputs/analysis/p3_browser_validation`. These labels are UI fixtures, not
+verified tactics. The installed widget stack emits a toolbar deprecation warning
+in tests; current playback and editing work. The user's particular IDE frontend
+was not exercised. Annotations are a local-file workflow on the current Linux
+setup; no multi-user review service is included.
+A final browser seek verified that clock, scene, and plot cursors agree at the
+last physics boundary. Explicit nested-canvas sizing and rendered-frame updates
+fix a stale/collapsed canvas found during visual checks; a pixel-change regression
+check now guards seeking as well as annotation persistence.

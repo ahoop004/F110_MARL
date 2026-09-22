@@ -2,10 +2,13 @@
 import asyncio
 from copy import deepcopy
 from html import escape
-import json
 
 import ipywidgets as W
+import matplotlib
+_plot_backend = matplotlib.get_backend()
 from ipympl.backend_nbagg import new_figure_manager_given_figure
+# Importing ipympl selects its backend globally; retain static analysis plots.
+matplotlib.use(_plot_backend)
 
 from .annotations import (
     AnnotationStore, segment, INDIVIDUAL_LABELS, COMBINED_LABELS, OUTCOMES,
@@ -21,11 +24,18 @@ class ClipReviewer:
         self._editing_id = None
         self._role_changes = []
         self.figure, self._draw = draw_review(window, maps_dir=maps_dir, reference=reference)
+        self.figure.set_size_inches(11, 8)
+        for ax in self.figure.axes[1:]:
+            ax.title.set_fontsize(9)
         self.manager = new_figure_manager_given_figure(id(self), self.figure)
         self.canvas = self.manager.canvas
         self.canvas.toolbar_visible = True
         self.canvas.header_visible = False
-        self.canvas.layout.width = '100%'
+        self.canvas.layout = W.Layout(width='100%', height='820px', min_height='820px',
+                                      flex='0 0 auto', overflow='auto')
+        # Nested widgets do not invoke Canvas._repr_mimebundle_, which normally
+        # initializes the frontend size before its first image is displayed.
+        self.manager.resize(*self.figure.bbox.size)
         self.cursor = W.IntSlider(value=0, min=0, max=len(window.frames), description='Boundary',
                                   continuous_update=False, layout=W.Layout(width='70%'))
         self.play = W.ToggleButton(description='Play', icon='play')
@@ -62,12 +72,17 @@ class ClipReviewer:
     def _seek(self, change):
         i = change['new']
         self._draw(i)
+        # Push the rendered frame directly; idle draw requests can be deferred
+        # by a notebook frontend while the controls have already advanced.
+        self.canvas.draw()
         self.clock.value = f'<b>{self.window.times[i]:.3f} s</b> · physics boundary {self.window.boundaries[i]}'
         state = self.window.state(i)
         cars = '; '.join(f"{aid}: {s.get('terminal_reason') or 'active'} (lap {s.get('lap_count')})" for aid, s in state.items())
         frame = self.window.frames[max(0, i-1)]
         events = frame.get('events', []) if i else []
-        self.facts.value = '<pre>'+escape(cars+'\n'+json.dumps(events, indent=2))+'</pre>'
+        descriptions = [f"{e['kind']} · {', '.join(e.get('participants', []))} · {e.get('source', 'unknown')}"
+                        for e in events]
+        self.facts.value = escape(cars)+'<ul>'+''.join('<li>'+escape(e)+'</li>' for e in descriptions)+'</ul>'
 
     def _play_changed(self, change):
         if not change['new']:

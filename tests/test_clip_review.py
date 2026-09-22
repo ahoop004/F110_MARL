@@ -54,6 +54,7 @@ def test_bounded_loading_timing_alignment_and_seam_gap(window):
     loaded = load_window(window.dataset, window.clip, start=1, end=2, max_frames=2)
     assert loaded.boundaries == [1, 2, 3]
     assert loaded.delay(0, 2) == pytest.approx(.05)
+    assert len(load_window(window.dataset, {**window.clip, 'end_physics_index': float('nan')}).frames) == 4
     with pytest.raises(ValueError, match='at most'):
         load_window(window.dataset, window.clip, max_frames=2)
     with pytest.raises(ValueError, match='identity'):
@@ -149,6 +150,7 @@ def test_widget_save_reload_controls_and_playback(window, tmp_path):
     assert reviewer.save_annotation()['annotation_id'] == c['annotation_id']
     reviewer.close()
     reopened = ClipReviewer(window, annotation_path=tmp_path/'annotations.json')
+    assert tuple(reopened.canvas._size) == (1100, 800)
     reopened.saved.value = c['annotation_id']
     assert reopened.notes.value == 'edited'
     assert reopened.constituents.value == (a['annotation_id'], b['annotation_id'])
@@ -160,8 +162,13 @@ def test_widget_save_reload_controls_and_playback(window, tmp_path):
         await asyncio.sleep(0)
         assert reopened.cursor.value > 0
         reopened.seek(0)
+        before = np.asarray(reopened.canvas.buffer_rgba()).copy()
+        reopened.seek(len(window.frames))
+        after = np.asarray(reopened.canvas.buffer_rgba()).copy()
+        assert not np.array_equal(before, after)  # Canvas pixels must advance with the clock.
+        reopened.seek(0)
         reopened.play.value = True
-        await asyncio.sleep(.3)
+        await asyncio.wait_for(reopened._task, timeout=10)
         assert reopened.cursor.value == len(window.frames)
         assert not reopened.play.value
     asyncio.run(exercise())

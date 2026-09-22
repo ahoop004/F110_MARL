@@ -43,6 +43,8 @@ def load_window(dataset, clip, *, start=None, end=None, max_frames=2000):
         raise ValueError('max_frames must be positive')
     start = clip['start_physics_index'] if start is None else int(start)
     clip_end = clip.get('end_physics_index')
+    if clip_end is not None and not np.isfinite(clip_end):
+        clip_end = None
     end = clip_end if end is None else int(end)
     if start < clip['start_physics_index'] or (end is not None and end < start):
         raise ValueError('Choose a nonempty interval inside this clip')
@@ -172,6 +174,9 @@ def draw_review(window, *, maps_dir=None, reference=None):
     titles = ['Observed speed (m/s)', 'Steering (rad): observed / dashed command',
               f'Applied drive reference ({units[1]})', f'Recorded reference rate ({rate_units})',
               f'Gaps to {reference} (m): longitudinal / dotted lateral', 'Reward components per physics interval']
+    for frame in window.frames:
+        if frame.get('events'):
+            axes[5].axvline(frame['simulation_time_end_s'], color='gray', alpha=.3, lw=.7)
     cursors = []
     for ax, title in zip(axes, titles):
         ax.set(title=title, xlabel='Recorded simulation time (s)', xlim=(times[0], times[-1]))
