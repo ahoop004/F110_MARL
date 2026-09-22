@@ -5,14 +5,16 @@ includes:
   - ../configs/wandb.yaml
 experiment:
   name: mappo_2v2_selfplay
-  episodes: 5000
+  total_steps: 120000000 # aggregate joint decisions; up to four actor samples per step
   seed: 42
-  num_envs: 1
+  num_envs: 400
   torch_threads: 1
 two_team:
   enabled: true
   events: {opponent_crash_bonus: 1.0, both_finished_bonus: 2.0}
 training_defaults:
+  progress_unit: environment_steps
+  update_version: two-team-step-budget-v1
   team_return_mode: joint
   pretrained_actor_checkpoint: null
   device: cuda
@@ -21,7 +23,7 @@ training_defaults:
   pi_hidden_dims: [256, 256]
   vf_hidden_dims: [512, 512]
   activation: leaky_relu
-  checkpoint_every: 100
+  checkpoint_every_steps: 1024000
 mappo:
   reward_mode: team_shared
   critic_mode: shared_team
@@ -62,7 +64,7 @@ environment:
     eval: {mode: fixed, mu: 1.0489}
 evaluation:
   enabled: true
-  every_episodes: 100
+  every_steps: 1024000
   episodes: 8
   seed: 10042
   target_laps: 3
@@ -90,9 +92,10 @@ wandb:
   project: marl-f110-selfplay
   group: mappo-2v2-completion-crashes
   job_type: two-team-training
-  tags: [mappo, 2v2, selfplay, scratch, completion, opponent-crashes, mf61]
+  tags: [mappo, 2v2, selfplay, scratch, completion, opponent-crashes, mf61, step-budget]
   notes: >-
     Two independent trainable teams with one actor and critic per team.
+    Train for 120M aggregate joint environment decisions, matching the continuous trainers.
     Three-lap finite race; +1 per lap of signed progress, +4 per finisher,
     +2 for both finishers, -3 per own collision, +1 per opponent collision.
     Crashes are outcomes, not causal attribution. Simulator-provided neighbor

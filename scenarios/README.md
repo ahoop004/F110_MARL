@@ -43,7 +43,7 @@ when a setting should apply to the fixed-opponent team objectives.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_selfplay.yaml
+  --scenario scenarios/mappo_2v2_selfplay.yaml --num-envs 1
 ```
 
 This is simultaneous self-play: `car_0/car_1` form `team_a`, and `car_2/car_3`
@@ -53,6 +53,15 @@ the same race; weights stay fixed during each rollout fragment. The initial
 implementation uses one environment, starts from scratch, and does not support
 PPO actor transfer, parallel workers, training resume, or transition/clip recording.
 Existing fixed-opponent scenarios retain their previous behavior.
+Use `--num-envs 1` while parallel self-play support is pending; this overrides a
+larger environment count in the scenario before validation.
+
+Training uses **120,000,000 aggregate joint environment decisions**, matching the
+continuous trainers' budget. One four-car race step counts once, with up to four
+actor samples; evaluation steps are excluded. `--total-steps N` overrides the
+budget. `--episodes N` explicitly switches back to an episode budget. A total
+budget cutoff mid-race bootstraps the critic and records `budget_cut=1` without
+inventing a race completion or timeout.
 
 Each car finishes after three laps or stops acting after its first collision.
 The race continues until all cars finish/crash or the 16,000-step (800-second)
@@ -101,20 +110,23 @@ of the two both-finished rates, then total finish rate, progress, and fewer cras
 
 Runs save `team_metrics.jsonl`, `updates.jsonl`, `evaluation_metrics.jsonl`,
 `evaluation_races.jsonl`, a resolved config snapshot, and `run_summary.json`.
-`best_pair/`, `final_pair/`, and periodic `pair_epNNNNNN/` directories each contain
+`best_pair/`, `final_pair/`, and periodic `pair_stepNNNNNNNNNNNN/` directories each contain
 both policies and `pair.json` with team membership, race/reward contracts, and
-provenance. Evaluation runs every 100 episodes and at training completion.
+provenance. Evaluation and periodic checkpoints run every **1,024,000 training
+steps**, at the next policy-update boundary, including during a race. Final
+evaluation also runs at training completion unless that step was already
+evaluated. Evaluation charts include the training step count as their x-axis.
 
 ```bash
 # Evaluate both saved policies using the disjoint final-test seeds.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_selfplay.yaml \
-  --eval --checkpoint outputs/RUN/best_pair --eval-protocol final
+  --num-envs 1 --eval --checkpoint outputs/RUN/best_pair --eval-protocol final
 
 # Bounded local integration check; this changes the race deadline for the check.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_selfplay.yaml \
-  --episodes 1 --max-steps 128 --no-wandb
+  --num-envs 1 --total-steps 128 --max-steps 128 --no-wandb
 ```
 
 ## Current-setup three-lap transfer

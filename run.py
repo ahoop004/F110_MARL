@@ -372,7 +372,9 @@ def main() -> None:
         raise ValueError("--eval-protocol requires --eval and uses fixed episodes; omit --eval-episodes.")
 
     try:
-        scenario = load_and_expand_scenario(args.scenario)
+        # Validate the effective configuration after CLI overrides, so a local
+        # --num-envs 1 check can override a scenario sized for a larger machine.
+        scenario = load_and_expand_scenario(args.scenario, validate=False)
     except (ScenarioError, FileNotFoundError) as exc:
         console.print_error(f"Failed to load scenario: {exc}")
         sys.exit(1)
@@ -1603,8 +1605,8 @@ def _run_two_team(scenario, args, console, scenario_dir):
             if logger.run is not None:
                 logger.run.define_metric("selfplay/environment_steps")
                 logger.run.define_metric("selfplay/*", step_metric="selfplay/environment_steps")
-                logger.run.define_metric("selfplay_eval/round")
-                logger.run.define_metric("selfplay_eval/*", step_metric="selfplay_eval/round")
+                logger.run.define_metric("selfplay_eval/environment_steps")
+                logger.run.define_metric("selfplay_eval/*", step_metric="selfplay_eval/environment_steps")
                 console.print_info(f"W&B: {logger.wandb_url or 'offline'}")
 
         def emit(filename, row):
@@ -1631,18 +1633,21 @@ def _run_two_team(scenario, args, console, scenario_dir):
         console.print_info(f"Outputs: {output}; reward aggregation=sum; gamma={params['gamma']}; actor inputs={agents[next(iter(teams))].obs_dim}")
         from collections import deque
         recent = deque(maxlen=100)
-        best, eval_round = None, 0
+        best, eval_round, last_evaluation_step = None, 0, None
 
         def evaluate(episode):
-            nonlocal best, eval_round
+            nonlocal best, eval_round, last_evaluation_step
             summary, rows = evaluate_pair(eval_trainer, protocol)
             eval_round += 1
+            last_evaluation_step = trainer.environment_steps
             emit("evaluation_metrics.jsonl", {"selfplay_eval/round": eval_round,
                 "selfplay_eval/training_episode": episode,
+                "selfplay_eval/environment_steps": trainer.environment_steps,
                 **{f"selfplay_eval/{key}": value for key, value in summary.items()}})
             with (output / "evaluation_races.jsonl").open("a") as stream:
                 for row in rows:
-                    stream.write(json.dumps({"round": eval_round, **row}) + "\n")
+                    stream.write(json.dumps({"round": eval_round,
+                        "environment_steps": trainer.environment_steps, **row}) + "\n")
             score = selection_score(summary, teams)
             if not args.eval and (best is None or score > best):
                 best = score
@@ -1658,11 +1663,39 @@ def _run_two_team(scenario, args, console, scenario_dir):
             total_steps = exp.get("total_steps")
             limit = int(exp.get("episodes", 5000)) if total_steps is None else None
             episode, summary = 0, {}
+            checkpoint_interval = params.get("checkpoint_every_steps")
+            evaluation_interval = scenario.get("evaluation", {}).get("every_steps")
+            for name, interval in (("checkpoint_every_steps", checkpoint_interval),
+                                   ("evaluation.every_steps", evaluation_interval)):
+                if interval is not None and (isinstance(interval, bool)
+                        or not isinstance(interval, int) or interval <= 0):
+                    raise ValueError(f"{name} must be a positive integer")
+            next_checkpoint, next_evaluation = checkpoint_interval, evaluation_interval
+
+            def on_update(row):
+                nonlocal next_checkpoint, next_evaluation
+                if total_steps is not None:
+                    row = {**row, "train/total_steps": total_steps,
+                           "train/budget_fraction": trainer.environment_steps / total_steps}
+                emit("updates.jsonl", row)
+                steps = trainer.environment_steps
+                # Run at the first policy-update boundary past each threshold,
+                # including updates in the middle of an unfinished race.
+                if next_checkpoint is not None and steps >= next_checkpoint:
+                    save_pair(f"pair_step{steps:012d}", episode)
+                    next_checkpoint = (steps // checkpoint_interval + 1) * checkpoint_interval
+                if eval_env is not None and next_evaluation is not None and steps >= next_evaluation:
+                    evaluate(episode)
+                    next_evaluation = (steps // evaluation_interval + 1) * evaluation_interval
+
+            trainer.on_update = on_update
+            budget = f"{total_steps:,} joint environment steps" if total_steps is not None else f"{limit} episodes"
+            console.print_info(f"Training budget: {budget}; evaluation steps are excluded.")
             while ((limit is None or episode < limit)
                    and (total_steps is None or trainer.environment_steps < total_steps)):
                 remaining = None if total_steps is None else total_steps - trainer.environment_steps
-                summary = trainer.episode(step_budget=remaining)
                 episode += 1
+                summary = trainer.episode(step_budget=remaining)
                 if summary["completed"]:
                     recent.append(summary)
                 rolling = {f"selfplay/rolling100/{team}/{key}": float(np.mean(
@@ -1676,15 +1709,17 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 console.print_info(f"ep {episode} steps={int(summary['steps'])}: " + " | ".join(
                     f"{team}: reward={summary[f'{team}/reward']:+.3f}, finishes={int(summary[f'{team}/finish_count'])}, crashes={int(summary[f'{team}/crash_count'])}"
                     for team in teams))
-                if episode % int(params.get("checkpoint_every", 100)) == 0:
+                if checkpoint_interval is None and episode % int(params.get("checkpoint_every", 100)) == 0:
                     save_pair(f"pair_ep{episode:06d}", episode)
-                if eval_env is not None and episode % int(scenario["evaluation"].get("every_episodes", 100)) == 0:
+                if (eval_env is not None and evaluation_interval is None
+                        and episode % int(scenario["evaluation"].get("every_episodes", 100)) == 0):
                     evaluate(episode)
             save_pair("final_pair", episode)
-            if eval_env is not None and episode % int(scenario["evaluation"].get("every_episodes", 100)) != 0:
+            if eval_env is not None and last_evaluation_step != trainer.environment_steps:
                 evaluate(episode)
         (output / "run_summary.json").write_text(json.dumps({"last_metrics": summary,
             "environment_steps": trainer.environment_steps, "updates": trainer.updates,
+            "agent_steps": trainer.agent_steps, "total_steps": exp.get("total_steps"),
             "wandb_url": logger.wandb_url if logger else None}, indent=2) + "\n")
     finally:
         env.close()

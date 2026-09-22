@@ -64,6 +64,26 @@ def selection_score(summary, teams):
             -sum(summary[f"{t}/crash_count"] for t in teams))
 
 
+def update_inactive_values(agent, states, returns):
+    """Train value targets after both teammates stop, without actor samples."""
+    import torch
+
+    if not len(states):
+        return {}
+    states = torch.as_tensor(np.asarray(states), dtype=torch.float32, device=agent.device)
+    returns = torch.as_tensor(returns, dtype=torch.float32, device=agent.device)
+    losses = []
+    for _ in range(agent.n_epochs):
+        for batch in torch.randperm(len(states), device=agent.device).split(agent.batch_size):
+            loss = torch.nn.functional.mse_loss(agent.critic(states[batch]), returns[batch])
+            agent.optimizer.zero_grad(set_to_none=True)
+            (agent.vf_coef * loss).backward()
+            torch.nn.utils.clip_grad_norm_(agent.critic.parameters(), agent.max_grad_norm)
+            agent.optimizer.step()
+            losses.append(loss.detach())
+    return {"inactive_value_loss": float(torch.stack(losses).mean().cpu())}
+
+
 def resolve_teams(scenario):
     from core.agent_builder import get_trainable_agent_ids
 
@@ -178,8 +198,6 @@ class TwoTeamTrainer:
         ])).astype(np.float32)
 
     def update(self, state):
-        import torch
-
         metrics = {}
         for team, agent in self.agents.items():
             # With both teammates inactive, no actor samples exist, but their
@@ -194,18 +212,8 @@ class TwoTeamTrainer:
             metrics.update({f"{team}/{key.removeprefix('train/')}": value
                             for key, value in agent.update(state).items()})
             if inactive_steps:
-                states = torch.as_tensor(np.stack([self._global_rollout[i] for i in inactive_steps]),
-                                         dtype=torch.float32, device=agent.device)
-                losses = []
-                for _ in range(agent.n_epochs):
-                    for batch in torch.randperm(len(states), device=agent.device).split(agent.batch_size):
-                        loss = torch.nn.functional.mse_loss(agent.critic(states[batch]), tail_returns[batch])
-                        agent.optimizer.zero_grad(set_to_none=True)
-                        (agent.vf_coef * loss).backward()
-                        torch.nn.utils.clip_grad_norm_(agent.critic.parameters(), agent.max_grad_norm)
-                        agent.optimizer.step()
-                        losses.append(loss.detach())
-                metrics[f"{team}/inactive_value_loss"] = float(torch.stack(losses).mean().cpu())
+                metrics.update({f"{team}/{key}": value for key, value in update_inactive_values(
+                    agent, [self._global_rollout[i] for i in inactive_steps], tail_returns).items()})
             agent.clear_buffers()
         self._global_rollout.clear()
         self.updates += 1
@@ -216,6 +224,23 @@ class TwoTeamTrainer:
                             **{f"train/{key}": value for key, value in metrics.items()}})
 
     def episode(self, *, training=True, seed=None, step_budget=None, map_episode_index=0):
+        generator = self.iter_episode(training=training, seed=seed, step_budget=step_budget,
+                                      map_episode_index=map_episode_index)
+        try:
+            next(generator)
+        except StopIteration as result:
+            return result.value
+        raise RuntimeError("Serial two-team episode unexpectedly requested remote inference")
+
+    def finish_fragment(self, next_values):
+        """Flush both CPU collectors against their own bootstrap values."""
+        if self._global_rollout:
+            for team, agent in self.agents.items():
+                agent.finish_team_fragment(next_values[team], self._global_rollout)
+            self._global_rollout.clear()
+
+    def iter_episode(self, *, training=True, seed=None, step_budget=None,
+                     map_episode_index=0, parallel=False):
         options = {"map_episode_index": map_episode_index} if seed is not None else None
         obs, infos = self.env.reset(seed=seed, options=options)
         for composer in (*self.observations.values(), *self.rewards.values(), *self.actions.values()):
@@ -231,16 +256,21 @@ class TwoTeamTrainer:
             active = set(self.env.agents)
             wrapped = {aid: self.wrap(aid, obs[aid], infos[aid], steps) for aid in active}
             normalized, log_probs, values, team_values = {}, {}, {}, {}
-            for team, agent in self.agents.items():
-                ids = [aid for aid in self.teams[team] if aid in active]
-                if ids:
-                    acts, logs = agent.act_batch(ids, np.stack([wrapped[aid] for aid in ids]),
-                                                 deterministic=not training)
-                    normalized.update(acts)
-                    log_probs.update(logs)
-                # Team values remain defined after both cars become inactive.
-                team_values[team] = agent.evaluate_state(state, self.teams[team][0])
-                values.update({aid: team_values[team] for aid in ids})
+            if parallel:
+                normalized, log_probs, values, raw_actions, team_values = yield ("act", (wrapped, state))
+                for agent in self.agents.values():
+                    agent.last_raw_actions = {aid: raw_actions[aid] for aid in agent.agent_ids if aid in raw_actions}
+            else:
+                for team, agent in self.agents.items():
+                    ids = [aid for aid in self.teams[team] if aid in active]
+                    if ids:
+                        acts, logs = agent.act_batch(ids, np.stack([wrapped[aid] for aid in ids]),
+                                                     deterministic=not training)
+                        normalized.update(acts)
+                        log_probs.update(logs)
+                    # Team values remain defined after both cars become inactive.
+                    team_values[team] = agent.evaluate_state(state, self.teams[team][0])
+                    values.update({aid: team_values[team] for aid in ids})
             physical = {aid: self.actions[aid].process(action) for aid, action in normalized.items()}
             next_obs, _, terminated, truncated, infos = self.env.step(physical)
             steps += 1
@@ -284,8 +314,14 @@ class TwoTeamTrainer:
                 self.env.render()
             budget_cut = step_budget is not None and steps >= step_budget and not done
             if training and (done or budget_cut or any(a.any_buffer_full() for a in self.agents.values())):
-                self.update(next_state)
+                if parallel:
+                    next_values = yield ("bootstrap", next_state)
+                    self.finish_fragment(next_values)
+                else:
+                    self.update(next_state)
             state, obs = next_state, next_obs
+            if parallel:
+                yield ("step", next_state)
             if done or budget_cut:
                 break
         result = race_metrics(self.teams, final_infos, progress)
