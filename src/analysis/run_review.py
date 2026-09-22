@@ -271,7 +271,8 @@ def aggregate_training_seeds(summary, comparison_groups):
     return pd.DataFrame(records)
 
 
-def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=None, outcome=None):
+def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=None,
+                 outcome=None, checkpoint=None, policy_version=None):
     rows = clips.copy()
     if rows.empty:
         return rows
@@ -282,6 +283,17 @@ def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=N
         rows = rows.loc[rows.retention_reasons.map(lambda reasons: event in reasons)]
     if agent is not None:
         rows = rows.loc[rows.agent_ids.map(lambda ids: agent in ids)]
+    if checkpoint is not None:
+        # Do not assign a run's final checkpoint to earlier training clips.
+        match = pd.Series(False, index=rows.index)
+        for column in ('checkpoint', 'checkpoint_sha256'):
+            if column in rows:
+                match |= rows[column].eq(str(checkpoint))
+        rows = rows.loc[match]
+    if policy_version is not None:
+        start = pd.to_numeric(rows.get('policy_version_start', pd.Series(index=rows.index, dtype=float)), errors='coerce')
+        end = pd.to_numeric(rows.get('policy_version_end', pd.Series(index=rows.index, dtype=float)), errors='coerce')
+        rows = rows.loc[start.le(policy_version) & end.ge(policy_version)]
     if outcome is not None:
         if outcome not in RATE_METRICS:
             raise ValueError(f'Choose an outcome from {RATE_METRICS}')

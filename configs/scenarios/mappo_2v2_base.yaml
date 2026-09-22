@@ -140,7 +140,7 @@ agents:
     params: *opponent_params
     action_adapter: rolling_speed_to_wheel_v1
 wandb:
-  enabled: false
+  enabled: true
   project: marl-f110-complete
   group: mappo-2v2-completion
   job_type: mappo-team

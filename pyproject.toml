@@ -30,6 +30,8 @@ analysis = [
     "jupyterlab",
     "ipykernel",
     "nbclient",
+    "ipywidgets",
+    "ipympl",
 ]
 dev = [
     "pytest",
