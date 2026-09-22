@@ -44,4 +44,4 @@ def render_state(state):
     return {aid: dict(poses_x=s['pose'][0], poses_y=s['pose'][1], poses_theta=s['pose'][2],
                       linear_vels_x=s['velocity_body'][0], linear_vels_y=s['velocity_body'][1],
                       ang_vels_z=s['angular_velocity'], collision=s['collision'])
-            for aid, s in state.items()}
+            for aid, s in state.items() if s.get('present', True)}

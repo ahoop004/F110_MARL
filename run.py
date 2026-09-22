@@ -1519,8 +1519,12 @@ def _run_two_team(scenario, args, console, scenario_dir):
     from training.two_team import (TwoTeamTrainer, evaluate_pair, preserve_rng,
                                    resolve_teams, selection_score)
 
-    if args.record_races or args.dataset_dir or scenario.get("recording", {}).get("enabled"):
-        raise ValueError("Two-team training currently writes scalar race metrics; transition/clip recording is not supported")
+    selective_recording = bool(args.record_races or args.dataset_dir or scenario.get('recording', {}).get('enabled'))
+    if selective_recording:
+        if args.eval:
+            raise ValueError('Two-team recording currently supports training only; evaluation recording is pending')
+        from src.replay.race_recorder import recording_config
+        scenario['recording'] = recording_config({**scenario.get('recording', {}), 'enabled': True})
     if args.pretrained_actor or scenario.get("training_defaults", {}).get("pretrained_actor_checkpoint"):
         raise ValueError("The two-team actor adds team/race observations; this scenario starts from scratch")
     if args.checkpoint and not args.eval:
@@ -1552,7 +1556,8 @@ def _run_two_team(scenario, args, console, scenario_dir):
     if args.eval and not args.eval_protocol:
         protocol["episodes"] = args.eval_episodes or args.episodes or protocol["episodes"]
     env, _, _ = create_training_setup(scenario, mode="eval" if args.eval else "train", scenario_dir=scenario_dir)
-    logger, eval_env = None, None
+    logger, eval_env, race_writer = None, None, None
+    recording_complete = False
     try:
         observations = build_obs_composers(scenario["agents"], trainable_ids, cfg, scenario_dir)
         rewards = build_reward_composers(scenario["agents"], trainable_ids, scenario_dir)
@@ -1590,6 +1595,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
             (directory / "pair.json").write_text(json.dumps({
                 "contract": checkpoint_contract, "files": files, "episode": episode,
                 "environment_steps": trainer.environment_steps, "evaluation": summary,
+                "team_policy_versions": {team: trainer.updates for team in teams},
                 "provenance": provenance,
             }, indent=2) + "\n")
 
@@ -1627,9 +1633,29 @@ def _run_two_team(scenario, args, console, scenario_dir):
             if logger:
                 logger.log_metrics(row)
 
+        if selective_recording:
+            from src.replay.dataset_writer import RaceDatasetWriter
+            from src.replay.race_recorder import RaceRecorder
+            recording_dir = args.dataset_dir or output/'behavior'
+            race_writer = RaceDatasetWriter(recording_dir, config=scenario['recording'],
+                metadata=dict(run_id=run_id, algorithm='mappo_two_team', scenario=exp['name'],
+                    provenance=provenance, physics_contract=provenance['physics_contract'],
+                    action_contract=ActionComposer.contract_from_config(
+                        scenario['agents'][trainable_ids[0]].get('action_constraints', {}), env.timestep),
+                    team_observation_contracts={team: agent.observation_contract for team, agent in agents.items()},
+                    observation_dims={aid: observations[aid].obs_dim+2 for aid in trainable_ids},
+                    agent_teams=cfg['agent_teams'], trainable_agents=trainable_ids,
+                    paired_policy_contract=checkpoint_contract,
+                    policy_version_rule='completed synchronous pair updates; zero is initialization',
+                    episode_termination=cfg['episode_termination'], terminal_agents=cfg.get('terminal_agents'),
+                    map_protocols=provenance.get('map_protocols')))
+            console.print_info(f'Self-play recording → {recording_dir} (sampled shared frames and event clips)')
         trainer = TwoTeamTrainer(env=env, teams=teams, agents=agents, observations=observations,
             rewards=rewards, actions=actions, event_config=scenario["two_team"].get("events"),
-            render=bool(cfg.get("render")), on_update=lambda row: emit("updates.jsonl", row))
+            render=bool(cfg.get("render")), on_update=lambda row: emit("updates.jsonl", row),
+            run_id=run_id, race_writer=race_writer)
+        if race_writer is not None and num_envs == 1:
+            trainer.race_recorder = RaceRecorder(race_writer.config, race_writer.add_event, run_id=run_id)
         eval_trainer = trainer
         if not args.eval and scenario.get("evaluation", {}).get("enabled", False):
             eval_scenario = copy.deepcopy(scenario)
@@ -1759,7 +1785,10 @@ def _run_two_team(scenario, args, console, scenario_dir):
             "environment_steps": trainer.environment_steps, "updates": trainer.updates,
             "agent_steps": trainer.agent_steps, "total_steps": exp.get("total_steps"),
             "wandb_url": logger.wandb_url if logger else None}, indent=2) + "\n")
+        recording_complete = True
     finally:
+        if race_writer is not None:
+            race_writer.close(complete=recording_complete)
         env.close()
         if eval_env is not None:
             eval_env.close()

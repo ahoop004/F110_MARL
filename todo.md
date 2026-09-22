@@ -194,6 +194,39 @@ helpers; store future annotations separately from notebook and raw trajectories.
 Done when a user can inspect and label individual tactics and a combined tactic
 with linked constituent segments, then reopen the same clips and annotations.
 
+## Scenario recording integration — before P4
+
+- [x] Extend selective shared-frame recording to serial and parallel two-team
+  self-play, with stable episode IDs and both policies' update versions.
+- [x] Retain both teams' rewards after either team becomes inactive; record
+  clearance/removal and hide removed cars during replay.
+- [x] Load self-play training metrics and update diagnostics in the notebook;
+  show explicit team identities/outcomes and preserve them in annotations.
+- [x] Verify enabled/disabled training consistency, shared worker storage caps,
+  terminal tails, notebook execution, and a short recording throughput comparison.
+- [ ] Add recording to evaluation races (selection and standalone), with paired
+  checkpoint identity and evaluation protocol/seed references; adapt self-play
+  evaluation outputs for notebook comparisons.
+- [ ] Add recording allocation across long runs (e.g. training-step windows),
+  so early event clips cannot consume all storage before later policies are seen.
+  Current caps stop recording; they do not reserve capacity across 120M steps.
+
+Training recording is opt-in; the production self-play scenario is unchanged:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_2v2_selfplay.yaml --record-races --no-wandb --output-dir outputs/selfplay_recorded
+venv/bin/python replay.py outputs/selfplay_recorded/behavior --list
+venv/bin/python -m jupyter lab notebooks/run_review.ipynb
+```
+
+Set notebook `RUN_NAMES = ["selfplay_recorded"]`. Self-play plots/table report
+both teams separately; its completion/progress win is not a first-place metric.
+Use `CLIP_FILTERS` with `team="team_a"` or `"team_b"` for team outcomes. The
+existing annotation workflow retains explicit teams and paired policy versions.
+Use top-level `recording` settings for sample probability and global frame/byte
+caps; `--dataset-dir` can redirect shared-frame output for self-play.
+Self-play evaluation recording/comparison tables remain pending, as above.
+
 ## P4 - Group segments for future hierarchical learning
 
 - [ ] Generate candidate segments from configurable event boundaries with
@@ -237,8 +270,9 @@ traceable source clips and constituent links for later hierarchical learning.
   is required for this delivery.
 
 P0/P1 metrics and monitoring, P2 selective recording, and P3 notebook review
-and annotation are implemented. Next: P4 candidate segment/features and grouping,
-using reviewed individual and combined annotations as traceable examples.
+and annotation are implemented for the original fixed-opponent MAPPO path.
+Before P4, finish scenario recording integration below, including the newer
+two-trainable-team self-play path.
 
 Validation: focused metric, lifecycle, CSV, checkpoint, and parallel-collector
 checks passed. Two-environment headless runs covered continuous pretrained and

@@ -174,7 +174,8 @@ def race_metrics(teams, infos, progress):
 
 class TwoTeamTrainer:
     def __init__(self, *, env, teams, agents, observations, rewards, actions,
-                 event_config=None, render=False, on_update=None):
+                 event_config=None, render=False, on_update=None, run_id='run', environment_id=0,
+                 race_recorder=None, race_writer=None):
         self.env, self.teams, self.agents = env, teams, agents
         self.observations, self.rewards, self.actions = observations, rewards, actions
         self.events = TeamEvents(teams, **(event_config or {}))
@@ -183,6 +184,10 @@ class TwoTeamTrainer:
         self.environment_steps = 0
         self.agent_steps = 0
         self.updates = 0
+        self.run_id, self.environment_id = run_id, environment_id
+        self.race_recorder, self.race_writer = race_recorder, race_writer
+        self.recording_stop = False
+        self.training_episode = 0
         self._global_rollout = []
         if any(composer.team_contract for composer in rewards.values()):
             raise ValueError("Two-team rewards use local composers plus explicit team events")
@@ -243,6 +248,26 @@ class TwoTeamTrainer:
                      map_episode_index=0, parallel=False):
         options = {"map_episode_index": map_episode_index} if seed is not None else None
         obs, infos = self.env.reset(seed=seed, options=options)
+        recorder = self.race_recorder if training else None
+        episode = self.training_episode
+        episode_id = f'{self.run_id}_env{self.environment_id:04d}_ep{episode:06d}'
+        agent_teams = {aid: team for team, ids in self.teams.items() for aid in ids}
+        start_policy = self.updates
+        policy_version = start_policy
+        if training:
+            self.training_episode += 1
+        if recorder is not None:
+            from src.replay.race_recorder import capture_state, plain
+            from metrics.racing_eval import capture_spawn_context
+            recorder.start(episode_id=episode_id, episode=episode,
+                map_id=getattr(self.env, '_map_bundle_active', None) or self.env.map_name,
+                seed=self.env.seed, timestep=self.env.timestep, action_repeat=1,
+                trainable_ids=list(agent_teams), agent_ids=list(self.env.possible_agents),
+                track_length=self.env.centerline_track_length, policy_version=start_policy,
+                spawn=capture_spawn_context(self.env, self.env.possible_agents),
+                physics=infos[next(iter(agent_teams))].get('physics'),
+                termination=dict(mode=self.env.episode_termination_mode, finish_on_laps=True),
+                agent_teams=agent_teams, team_policy_versions={t: start_policy for t in self.teams})
         for composer in (*self.observations.values(), *self.rewards.values(), *self.actions.values()):
             composer.reset()
         self.events.reset()
@@ -272,6 +297,14 @@ class TwoTeamTrainer:
                     team_values[team] = agent.evaluate_state(state, self.teams[team][0])
                     values.update({aid: team_values[team] for aid in ids})
             physical = {aid: self.actions[aid].process(action) for aid, action in normalized.items()}
+            policy_version = self.updates
+            if recorder is not None and (self.recording_stop or
+                    (self.race_writer is not None and self.race_writer.storage_full)) and not recorder.stopped:
+                recorder.stop()
+            recording_active = recorder is not None and recorder.capturing
+            self.env.record_applied_commands = recording_active
+            if recording_active:
+                recorded_pre = capture_state(self.env, infos, obs, self.env.possible_agents)
             next_obs, _, terminated, truncated, infos = self.env.step(physical)
             steps += 1
             if training:
@@ -280,6 +313,7 @@ class TwoTeamTrainer:
             final_infos.update(deepcopy(infos))
             breakdowns = self.events.step(infos)
             local_rewards = {}
+            local_components = {}
             for aid in active:
                 info = infos[aid]
                 progress[aid] += float(info.get("centerline", {}).get("progress_delta", 0.0))
@@ -291,6 +325,8 @@ class TwoTeamTrainer:
                     "track_length": self.env.centerline_track_length,
                 })
                 team = next(team for team, members in self.teams.items() if aid in members)
+                if recording_active:
+                    local_components[aid] = dict(components)
                 for key, value in components.items():
                     breakdowns[team][key] = breakdowns[team].get(key, 0.0) + value
                 self.observations[aid].update_prev_action(normalized[aid])
@@ -310,6 +346,26 @@ class TwoTeamTrainer:
                                       log_probs=log_probs, values=values, terminated=terminated,
                                       truncated=truncated, raw_actions=agent.last_raw_actions)
                     agent.store_team_step(ids, reward=reward, value=team_values[team], terminal=done)
+            if recording_active:
+                applied = getattr(self.env, '_recorded_applied_commands', None)
+                recorder.step(plain(dict(
+                    physics_index=steps-1, physics_index_end=steps, decision_index=steps-1, substep_index=0,
+                    policy_version=policy_version, team_policy_versions={t: policy_version for t in self.teams},
+                    timestep_s=self.env.timestep, action_repeat=1,
+                    simulation_time_s=(steps-1)*self.env.timestep, simulation_time_end_s=steps*self.env.timestep,
+                    pre_state=recorded_pre, post_state=capture_state(self.env, infos, next_obs, self.env.possible_agents),
+                    agent_teams=agent_teams,
+                    commands={aid: dict(requested=physical.get(aid),
+                        applied=applied[i] if applied is not None else None,
+                        source='learner' if aid in physical else 'terminal_controller', team=agent_teams[aid])
+                        for i, aid in enumerate(self.env.possible_agents)},
+                    learners={aid: dict(observation=wrapped[aid], action_normalized=normalized[aid],
+                        reward=sum(breakdowns[agent_teams[aid]].values()), individual_reward=local_rewards[aid],
+                        reward_components=local_components[aid], team=agent_teams[aid]) for aid in active},
+                    team_rewards={team: sum(parts.values()) for team, parts in breakdowns.items()},
+                    team_reward_components={f'{team}/{key}': value for team, parts in breakdowns.items()
+                                            for key, value in parts.items()},
+                    terminated=terminated, truncated=truncated)))
             if self.render:
                 self.env.render()
             budget_cut = step_budget is not None and steps >= step_budget and not done
@@ -325,6 +381,12 @@ class TwoTeamTrainer:
             if done or budget_cut:
                 break
         result = race_metrics(self.teams, final_infos, progress)
+        if recorder is not None:
+            recorder.end(bool(self.env.episode_done))
+        if training:
+            result.update(run_id=self.run_id, episode_id=episode_id, environment_id=self.environment_id,
+                environment_episode=episode, map_id=getattr(self.env, '_map_bundle_active', None),
+                policy_version_start=start_policy, policy_version_end=policy_version)
         result.update({"steps": steps, "duration_s": steps * self.env.timestep,
                        "completed": float(self.env.episode_done),
                        "budget_cut": float(not self.env.episode_done)})

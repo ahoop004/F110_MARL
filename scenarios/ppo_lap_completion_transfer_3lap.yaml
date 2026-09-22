@@ -9,12 +9,36 @@ experiment:
   # Inherit the local worker count and 4,096,000-transition transfer budget.
 
 environment:
-  map_bundles: [Budapest_map]
-  map_bundles_train: [Budapest_map]
-  map_bundles_eval: [Budapest_map]
-  # map_bundles: [circle_map]
-  # map_bundles_train: [circle_map]
-  # map_bundles_eval: [circle_map]
+  map_bundles:
+     - Budapest_map
+     - circle_map
+     - L_map
+     - Melbourne_map
+     - Montreal_map
+     - Shanghai_map
+     - Silverstone_map
+     - Spa_map
+     - Spielberg_map
+  map_bundles_train:
+     - Budapest_map
+     - circle_map
+     - L_map
+     - Melbourne_map
+     - Montreal_map
+     - Shanghai_map
+     - Silverstone_map
+     - Spa_map
+     - Spielberg_map
+  map_bundles_eval:
+    - Budapest_map
+    - circle_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   target_laps: 3
   max_steps: 16000  # 800 simulation seconds; bounds stalled episodes
   episode_termination: {mode: any_agent, lap_completion: true}

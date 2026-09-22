@@ -356,6 +356,8 @@ class RaceDatasetWriter(DatasetWriter):
             self._accepted_contexts[row['episode_id']] = dict(
                 all_cars_terminal=all(not s['active'] for s in row['post_state'].values()),
                 policy_version_end=row['policy_version'])
+            if 'team_policy_versions' in row:
+                self._accepted_contexts[row['episode_id']]['team_policy_versions_end'] = row['team_policy_versions']
             if len(self._buffer) >= self._chunk_size:
                 self._flush()
         elif kind == 'clip':
@@ -367,6 +369,8 @@ class RaceDatasetWriter(DatasetWriter):
                     row.update(end_physics_index=accepted, complete=False, end_reason='storage_limit',
                                post_context_complete=False, **self._accepted_contexts.get(row['episode_id'],
                                    dict(all_cars_terminal=False, policy_version_end=None)))
+                    if accepted < 0 and 'team_policy_versions_end' in row:
+                        row['team_policy_versions_end'] = None
                 self._flush()
             with (self._dir / 'clips.jsonl').open('a', encoding='utf-8') as stream:
                 stream.write(json.dumps(row, separators=(',', ':'), allow_nan=False) + '\n')

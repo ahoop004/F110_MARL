@@ -135,16 +135,23 @@ def _pool(fragments):
     return tuple(np.concatenate([fragment[i] for fragment in fragments]) for i in range(3))
 
 
-def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, contracts, teams, step_budget):
+def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, contracts, teams, step_budget,
+                    recording=None, run_id='run'):
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["PYGLET_HEADLESS"] = "true"
     torch.set_num_threads(1)
     trainers, generators, pending, episodes = {}, {}, {}, {}
     events = []
+    race_events = []
     quotas = dict(assignments)
     try:
         for env_id, _ in assignments:
             trainers[env_id] = _make_collector(scenario, scenario_dir, env_id, horizon, contracts, teams)
+            trainers[env_id].run_id, trainers[env_id].environment_id = run_id, env_id
+            if recording is not None:
+                from src.replay.race_recorder import RaceRecorder
+                trainers[env_id].race_recorder = RaceRecorder(recording, race_events.append,
+                    run_id=run_id, environment_id=env_id)
             episodes[env_id] = 0
         connection.send(("ready", len(trainers)))
         if connection.recv() != ("start", None):
@@ -165,7 +172,6 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
                 except StopIteration as finished:
                     episodes[env_id] += 1
                     events.append({**finished.value, "environment_id": env_id,
-                                   "environment_episode": episodes[env_id],
                                    "environment_steps": trainer.environment_steps,
                                    "seed": trainers[env_id].env.seed})
                     generators.pop(env_id)
@@ -194,6 +200,9 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
                     requests[env_id] = pending[env_id]
                 if not requests:
                     break
+                if race_events:
+                    connection.send(('race_records', race_events))
+                    race_events.clear()
                 connection.send(("requests", requests))
                 responses = connection.recv()
                 for env_id, response in responses.items():
@@ -210,12 +219,21 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
                          for fragment in trainer.agents[team].take_value_fragments()]
                 rollouts[team] = (_pool(actor), np.concatenate(value) if value else None)
             actor_steps = sum(t.agent_steps for t in trainers.values()) - actor_start
+            if race_events:
+                connection.send(('race_records', race_events))
+                race_events.clear()
             connection.send(("rollout", (rollouts, sum(counts.values()), actor_steps, events, _peak_rss_mib())))
             events = []
-            if connection.recv() != ("continue", None):
+            command, state = connection.recv()
+            if command != 'continue':
                 raise RuntimeError("Two-team collector expected policy update barrier")
+            for collector in trainers.values():
+                collector.updates = state['policy_version']
+                collector.recording_stop = state['recording_stop']
             for env_id in sorted(paused):
                 advance(env_id)
+        if race_events:
+            connection.send(('race_records', race_events))
         connection.send(("done", events))
     except (BrokenPipeError, EOFError, ConnectionResetError):
         pass
@@ -230,6 +248,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
 def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None):
     """Collect exact aggregate steps/episodes; update both policies at a barrier."""
     experiment = scenario["experiment"]
+    race_writer = getattr(trainer, 'race_writer', None)
     num_envs = int(experiment["num_envs"])
     workers = min(num_envs, int(experiment.get("num_workers", num_envs)))
     horizon = int(scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256))
@@ -257,6 +276,14 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                                f"(pid={process.pid}, exitcode={process.exitcode})")
         try:
             kind, payload = connections[worker_id].recv()
+            while kind == 'race_records':
+                if race_writer is None:
+                    raise RuntimeError('Worker sent recording data without a writer')
+                for event in payload:
+                    race_writer.add_event(event)
+                if not connections[worker_id].poll(timeout):
+                    raise RuntimeError(f'Two-team worker {worker_id} timed out after recording transfer')
+                kind, payload = connections[worker_id].recv()
         except (EOFError, ConnectionResetError) as exc:
             raise RuntimeError(f"Two-team worker {worker_id} disconnected (exitcode={process.exitcode})") from exc
         if kind == "error":
@@ -281,7 +308,9 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                 parent, child = context.Pipe()
                 process = context.Process(target=_collect_worker,
                     args=(child, scenario, str(scenario_dir), assignments, horizon, contracts,
-                          trainer.teams, total_steps is not None), name=f"two-team-collector-{worker_id}")
+                          trainer.teams, total_steps is not None,
+                          race_writer.config if race_writer is not None else None,
+                          getattr(trainer, 'run_id', 'run')), name=f"two-team-collector-{worker_id}")
                 connections[worker_id] = parent
                 try:
                     process.start()
@@ -352,6 +381,8 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                         "perf/parent_peak_rss_mib": _peak_rss_mib(),
                         "perf/collection_env_steps_per_second": steps / max(collection_s, 1e-9),
                         "perf/round_env_steps_per_second": steps / max(collection_s + update_s, 1e-9)})
+                    if race_writer is not None:
+                        metrics['recording/storage_full'] = int(race_writer.storage_full)
                     if trainer.on_update:
                         trainer.on_update(metrics)
                     every = int(experiment.get("terminal_every_updates", 10))
@@ -360,7 +391,8 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                             f"samples={samples:,} collect={collection_s:.2f}s update={update_s:.2f}s "
                             f"env_steps/s={metrics['perf/round_env_steps_per_second']:.1f}")
                 for worker_id in waiting:
-                    connections[worker_id].send(("continue", None))
+                    connections[worker_id].send(('continue', dict(policy_version=trainer.updates,
+                        recording_stop=race_writer.storage_full if race_writer is not None else False)))
                 waiting.clear()
                 round_start = time.perf_counter()
         actual = trainer.environment_steps if total_steps is not None else completed

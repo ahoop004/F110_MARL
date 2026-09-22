@@ -3,7 +3,7 @@
 Folder paths are identities: run_id is user supplied and may be reused. Unknown
 facts remain missing. Evaluation snapshots are never pooled across checkpoints.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ import pandas as pd
 
 
 ARTIFACTS = ('config_snapshot.json', 'race_metrics.jsonl', 'evaluation_report.json',
-             'evaluation_history.jsonl', 'update_metrics.csv')
+             'evaluation_history.jsonl', 'update_metrics.csv', 'team_metrics.jsonl', 'updates.jsonl')
 RATE_METRICS = ('both_finished', 'first_place', 'sweep', 'at_least_one_finished',
                 'any_learner_collision_dnf')
 VALUE_METRICS = ('rank_score', 'mean_net_progress_laps', 'mean_learner_laps',
@@ -92,6 +92,7 @@ class RunData:
     updates: pd.DataFrame
     evaluations: pd.DataFrame
     clips: pd.DataFrame
+    team_races: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def load_run(directory, *, label=None, dataset_dirs=()):
@@ -163,6 +164,20 @@ def load_run(directory, *, label=None, dataset_dirs=()):
         updates = pd.DataFrame()
     for key, value in identity.items():
         updates[key] = value
+    team_rows = []
+    teams = sorted(set(config.get('environment', {}).get('agent_teams', {}).values()))
+    if config.get('two_team', {}).get('enabled'):
+        updates = pd.DataFrame(read_jsonl(path/'updates.jsonl'))
+        for key, value in identity.items():
+            updates[key] = value
+        for record in read_jsonl(path/'team_metrics.jsonl'):
+            row = {k.removeprefix('selfplay/'): v for k, v in record.items()}
+            for team in teams:
+                team_rows.append({**identity, 'team': team, 'phase': 'training',
+                    **{k: row.get(k) for k in ('episode_id', 'map_id', 'environment_id', 'environment_episode',
+                        'environment_steps', 'completed', 'budget_cut', 'policy_version_start', 'policy_version_end')},
+                    **{k.removeprefix(team+'/'): v for k, v in row.items() if k.startswith(team+'/')}})
+    team_races = pd.DataFrame(team_rows)
     # Read small clip indices only; trajectories remain on disk until requested.
     clip_rows = []
     for dataset in sorted({(path/'behavior').resolve(), *(Path(d).resolve() for d in dataset_dirs)}):
@@ -179,10 +194,21 @@ def load_run(directory, *, label=None, dataset_dirs=()):
         if facts.episode_id.duplicated().any():
             raise ValueError(f'Duplicate training episode IDs in {path}')
         clips = clips.merge(facts, on='episode_id', how='left', validate='many_to_one')
+    if not clips.empty and not team_races.empty:
+        # Keep each team's outcome distinct; win here means completion/progress,
+        # not first place. Partial races have no completed-race outcome.
+        for team in teams:
+            facts = team_races.loc[(team_races.team == team) & team_races.completed.eq(1)].dropna(subset=['episode_id'])
+            columns = [c for c in ('win', 'both_finished', 'any_crash', 'finish_count') if c in facts]
+            facts = facts[['episode_id', *columns]].rename(columns={c: team+'/'+c for c in columns})
+            clips = clips.merge(facts, on='episode_id', how='left', validate='many_to_one')
     meta.update(training_races=sum(r.get('phase') == 'training' for r in race_rows),
                 evaluation_snapshots=len(evaluation_rows), recorded_clips=len(clip_rows))
+    if team_rows:
+        meta.update(training_races=int(team_races.loc[team_races.team == teams[0], 'completed'].eq(1).sum()),
+                    race_records_available=True, teams=teams)
     return RunData(path, meta, races, pd.DataFrame(agent_rows), updates,
-                   pd.DataFrame(evaluation_rows), clips)
+                   pd.DataFrame(evaluation_rows), clips, team_races)
 
 
 def combine(runs, table):
@@ -272,7 +298,7 @@ def aggregate_training_seeds(summary, comparison_groups):
 
 
 def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=None,
-                 outcome=None, checkpoint=None, policy_version=None):
+                 outcome=None, checkpoint=None, policy_version=None, team=None):
     rows = clips.copy()
     if rows.empty:
         return rows
@@ -283,6 +309,9 @@ def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=N
         rows = rows.loc[rows.retention_reasons.map(lambda reasons: event in reasons)]
     if agent is not None:
         rows = rows.loc[rows.agent_ids.map(lambda ids: agent in ids)]
+    if team is not None:
+        mapping = rows.get('agent_teams', pd.Series(index=rows.index, dtype=object))
+        rows = rows.loc[mapping.map(lambda m: isinstance(m, dict) and team in m.values())]
     if checkpoint is not None:
         # Do not assign a run's final checkpoint to earlier training clips.
         match = pd.Series(False, index=rows.index)
@@ -295,7 +324,12 @@ def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=N
         end = pd.to_numeric(rows.get('policy_version_end', pd.Series(index=rows.index, dtype=float)), errors='coerce')
         rows = rows.loc[start.le(policy_version) & end.ge(policy_version)]
     if outcome is not None:
-        if outcome not in RATE_METRICS:
+        if team is not None:
+            aliases = {'any_learner_collision_dnf': 'any_crash', 'both_finished': 'both_finished', 'win': 'win'}
+            if outcome not in aliases:
+                raise ValueError('Team outcomes: both_finished, any_learner_collision_dnf, or win (completion/progress)')
+            outcome = team+'/'+aliases[outcome]
+        elif outcome not in RATE_METRICS:
             raise ValueError(f'Choose an outcome from {RATE_METRICS}')
         rows = rows.loc[rows.get(outcome, pd.Series(False, index=rows.index)).eq(True)]
     return rows

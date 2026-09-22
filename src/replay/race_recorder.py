@@ -79,6 +79,8 @@ def capture_state(env, infos, observations, agent_ids):
         preview = preview or {}
         limits = info.get('track_limits')
         obs = observations.get(aid, {})
+        mask = getattr(getattr(env, 'sim', None), 'collidable_mask', None)
+        collidable = bool(mask[list(env.possible_agents).index(aid)]) if mask is not None else None
         result[aid] = plain({
             'pose': state.pose, 'velocity_body': state.velocity,
             'angular_velocity': state.angular_velocity,
@@ -86,6 +88,8 @@ def capture_state(env, infos, observations, agent_ids):
             # remain alive. Preserve lifecycle truth separately from scheduling.
             'active': record.is_active if record is not None else (status == 'active' if status else aid in env.agents),
             'decision_active': aid in env.agents, 'status': status,
+            'collidable': collidable,
+            'present': collidable if collidable is not None else True,
             'terminal_reason': reason, 'terminal_step': info.get('terminal_step', getattr(record, 'terminal_step', None)),
             'finish_position': info.get('finish_position', getattr(record, 'finish_position', None)),
             'lap_count': info.get('lap_count', getattr(record, 'lap_count', None)),
@@ -186,7 +190,8 @@ class RaceRecorder:
             (self.clip is not None or self.clip_count < self.cfg['max_clips_per_episode'])))
 
     def start(self, *, episode_id, episode, map_id, seed, timestep, action_repeat,
-              trainable_ids, agent_ids, track_length, policy_version, spawn, physics, termination):
+              trainable_ids, agent_ids, track_length, policy_version, spawn, physics, termination,
+              agent_teams=None, team_policy_versions=None):
         self.buffer.clear()
         self.last_sent = -1
         self.last_frame = None
@@ -202,6 +207,9 @@ class RaceRecorder:
                           probability=self.cfg['sample_probability']), detector_version=EventDetector.version))
         self.context['shared_frame_budget'] = self.quota
         self.context['coverage_scope'] = 'environment_episode'
+        if agent_teams is not None:
+            self.context.update(agent_teams=plain(agent_teams),
+                                episode_team_policy_versions_start=plain(team_policy_versions))
         draw = int.from_bytes(hashlib.sha256(f"{self.cfg['seed']}:{self.env_id}:{episode}".encode()).digest()[:8], 'big') / 2**64
         self.sample = self.clip = None
         if self.frames_sent >= self.quota:
@@ -217,6 +225,9 @@ class RaceRecorder:
                                          else self.context['episode_policy_version_start']),
                 'status': 'open', 'events': [], 'event_count': 0, 'retention_reasons': [],
                 'complete': False, 'episode_complete': False, 'all_cars_terminal': False}
+        if 'agent_teams' in self.context:
+            clip['team_policy_versions_start'] = (self.buffer[0].get('team_policy_versions')
+                if kind == 'event_clip' and self.buffer else self.context['episode_team_policy_versions_start'])
         self.emit(('clip', dict(clip)))
         return clip
 
@@ -234,6 +245,9 @@ class RaceRecorder:
                     post_context_complete=(reason == 'post_event_complete' or (reason == 'episode_end' and
                         (clip['kind'] == 'representative_race' or
                          (clip['end_physics_index'] is not None and end >= clip['end_physics_index'])))))
+        if 'agent_teams' in self.context:
+            clip['team_policy_versions_end'] = end_context.get('team_policy_versions',
+                frame.get('team_policy_versions') if frame else None)
         self.emit(('clip', clip))
 
     def _send(self, frame):
@@ -282,6 +296,7 @@ class RaceRecorder:
             self._send(frame)
         if self.clip and step <= self.clip['end_physics_index']:
             self.clip['_end_context'] = dict(policy_version=frame['policy_version'],
+                team_policy_versions=frame.get('team_policy_versions'),
                 all_cars_terminal=all(not s['active'] for s in frame['post_state'].values()))
         if self.clip and step >= self.clip['start_physics_index'] + self.cfg['max_clip_steps'] - 1:
             self._close(self.clip, self.clip['end_physics_index'], 'clip_length_limit')

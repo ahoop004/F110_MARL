@@ -52,11 +52,23 @@ joint return. Both teammates share their team's reward. Both teams update from
 the same race; weights stay fixed during each collection round. The default is
 400 environments across 100 CPU worker processes, with both policies and critics
 in the parent GPU process. Each worker advances four races and uses one compute
-thread. Training starts from scratch; PPO actor transfer, training resume, and
-transition/clip recording are not yet supported.
+thread. Training starts from scratch; PPO actor transfer and training resume
+are not yet supported.
 Existing fixed-opponent scenarios retain their previous behavior.
 Use `--num-envs N --num-workers W` to size the collector pool. `--num-envs 1`
 selects the serial trainer. CLI overrides apply before validation.
+
+Add `--record-races --output-dir outputs/selfplay_recorded` to save selective
+shared-frame recordings under `outputs/selfplay_recorded/behavior` in either
+serial or parallel training. The existing top-level `recording` settings control
+sampling, event clips, and dataset-wide storage limits. Both teams' commands,
+rewards, and policy versions are retained, including rewards after a team becomes
+inactive and terminal-car clearance/removal. Open `notebooks/run_review.ipynb`
+and select `selfplay_recorded` to plot team metrics, play clips, and save labels.
+Its self-play win metric compares completion/progress; it is not first place.
+Evaluation recording is still pending. Recording stops when its storage cap is
+reached; tune the caps/sampling before a long run (defaults do not guarantee
+coverage across the full 120M-step budget).
 
 Training uses **120,000,000 aggregate joint environment decisions**, matching the
 continuous trainers' budget. One four-car race step counts once, with up to four

@@ -186,3 +186,39 @@ def export_figures(figures, directory):
         safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in name)
         for suffix in ('png', 'pdf'):
             fig.savefig(directory/f'{safe}.{suffix}', dpi=180, bbox_inches='tight')
+
+
+def selfplay_curves(team_races, updates):
+    """Symmetric team views; completion/progress wins are not first-place wins."""
+    figures = {}
+    if not team_races.empty:
+        fig, axes = plt.subplots(2, 2, figsize=(13, 8), layout='constrained')
+        complete = team_races.loc[team_races.completed.eq(1)]
+        for ax, metric, label in zip(axes.flat,
+                ['both_finished', 'progress_laps', 'any_crash', 'reward'],
+                ['Both teammates finished', 'Team earned progress (laps)', 'Any team collision', 'Joint team episode return']):
+            for (_, team), rows in complete.groupby(['run_key', 'team']):
+                if metric not in rows:
+                    continue
+                points = rows.groupby('environment_steps')[metric].mean().dropna()
+                ax.plot(points.index, points.values, marker='.', label=f'{rows.run.iloc[0]} / {team}')
+            if metric in ('both_finished', 'any_crash'):
+                ax.set_ylim(-.03, 1.03)
+            _finish_axis(ax, label, 'Joint environment decisions at reporting barrier')
+        fig.suptitle('Self-play training · completed races only · both policies change during training')
+        figures['selfplay_training'] = fig
+    if not updates.empty:
+        metrics = [c for c in updates if c.startswith('train/') and c.endswith('/policy_loss')]
+        if metrics:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout='constrained')
+            for ax, suffix in zip(axes, ('policy_loss', 'value_loss')):
+                for _, rows in updates.groupby('run_key'):
+                    for key in [c for c in metrics if c.endswith('/policy_loss')]:
+                        key = key.rsplit('/', 1)[0]+'/'+suffix
+                        if key in rows:
+                            data = rows[['train/environment_steps', key]].dropna()
+                            if not data.empty:
+                                ax.plot(data.iloc[:, 0], data.iloc[:, 1], marker='.', label=f'{rows.run.iloc[0]} / {key.split("/")[1]}')
+                _finish_axis(ax, suffix.replace('_', ' '), 'Joint environment decisions')
+            figures['selfplay_optimizer'] = fig
+    return figures

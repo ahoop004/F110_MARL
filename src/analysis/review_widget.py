@@ -77,8 +77,12 @@ class ClipReviewer:
         self.canvas.draw()
         self.clock.value = f'<b>{self.window.times[i]:.3f} s</b> · physics boundary {self.window.boundaries[i]}'
         state = self.window.state(i)
-        cars = '; '.join(f"{aid}: {s.get('terminal_reason') or 'active'} (lap {s.get('lap_count')})" for aid, s in state.items())
+        cars = '; '.join(f"{aid} [{self.window.clip.get('agent_teams', {}).get(aid, 'car')}]: "
+            f"{s.get('terminal_reason') or 'active'} (lap {s.get('lap_count')}, "
+            f"{'present' if s.get('present', True) else 'removed'})" for aid, s in state.items())
         frame = self.window.frames[max(0, i-1)]
+        if frame.get('team_policy_versions'):
+            self.clock.value += ' · policies '+escape(str(frame['team_policy_versions']))
         events = frame.get('events', []) if i else []
         descriptions = [f"{e['kind']} · {', '.join(e.get('participants', []))} · {e.get('source', 'unknown')}"
                         for e in events]

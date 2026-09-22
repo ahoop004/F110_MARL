@@ -151,7 +151,8 @@ def draw_review(window, *, maps_dir=None, reference=None):
     half_l, half_w = params.get('length', .58)/2, params.get('width', .31)/2
     corners = np.array([[half_l, half_w], [half_l, -half_w], [-half_l, -half_w], [-half_l, half_w]])
     for aid in ids:
-        team = 'learner' if aid in window.clip['trainable_ids'] else 'opponent'
+        team = window.clip.get('agent_teams', {}).get(aid,
+            'learner' if aid in window.clip['trainable_ids'] else 'opponent')
         color = colors[aid]
         patches[aid] = Polygon(corners, closed=True, facecolor=color, label=f'{aid} ({team})')
         scene.add_patch(patches[aid])
@@ -168,9 +169,14 @@ def draw_review(window, *, maps_dir=None, reference=None):
         for key, values in series['rewards'].items():
             axes[5].plot(times[1:], values, color=color, label=f'{aid}: {key}',
                          ls=['-', '--', ':'][list(series['rewards']).index(key)%3])
-    for key in sorted({k for f in window.frames for k in f.get('team_reward_components', {})}):
+    team_colors = {}
+    for aid, team in window.clip.get('agent_teams', {}).items():
+        team_colors.setdefault(team, colors[aid])
+    team_keys = sorted({k for f in window.frames for k in f.get('team_reward_components', {})})
+    for index, key in enumerate(team_keys):
         axes[5].plot(times[1:], [f.get('team_reward_components', {}).get(key, np.nan) for f in window.frames],
-                     color='black', ls='--', label='team: '+key)
+                     color=team_colors.get(key.split('/')[0], 'black'),
+                     ls=['--', ':', '-.'][index % 3], label='team: '+key)
     titles = ['Observed speed (m/s)', 'Steering (rad): observed / dashed command',
               f'Applied drive reference ({units[1]})', f'Recorded reference rate ({rate_units})',
               f'Gaps to {reference} (m): longitudinal / dotted lateral', 'Reward components per physics interval']
@@ -194,6 +200,8 @@ def draw_review(window, *, maps_dir=None, reference=None):
             rotation = np.array([[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]])
             patches[aid].set_xy(corners@rotation.T+[x, y])
             patches[aid].set_alpha(1 if state[aid]['active'] else .35)
+            patches[aid].set_visible(state[aid].get('present', True))
+            texts[aid].set_visible(state[aid].get('present', True))
             texts[aid].set_position((x+.4, y+.4))
         for cursor in cursors:
             cursor.set_xdata([times[index], times[index]])
