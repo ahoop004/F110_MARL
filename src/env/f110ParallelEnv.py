@@ -1584,7 +1584,9 @@ class F110ParallelEnv:
         if not self._frenet_neighbor_agents:
             return
         relative = build_relative_frenet_facts(
-            self._last_centerline_facts,
+            {aid: facts for aid, facts in self._last_centerline_facts.items()
+             if self.sim.collidable_mask[self.possible_agents.index(aid)]}
+            if self._terminal_controller.config.remove_after_clearance else self._last_centerline_facts,
             track_length=self._centerline_progress_tracker.track_length,
             closed=self._centerline_progress_tracker.closed,
             agent_teams=self.agent_teams,

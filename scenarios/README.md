@@ -7,7 +7,9 @@ The active entry points below use the shared MF6.1 vehicle profile. PPO keeps
 400 environments; the explicit MAPPO base and penalty scratch/pretrained pairs
 also use 400 environments across 100 workers, with two learners and two fixed
 racing MPC opponents per race. Other MAPPO objectives retain their serial defaults.
-All active `mappo_2v2_*.yaml` scenarios inherit the same opponent profile. Historical scenarios and render comparisons retain
+The fixed-opponent `mappo_2v2_*.yaml` scenarios inherit the same opponent profile.
+`mappo_2v2_selfplay.yaml` instead trains two independent teams (see below).
+Historical scenarios and render comparisons retain
 their original controllers. See [the training workflow](../docs/PPO_TO_MAPPO_PRETRAINING.md)
 for commands, checkpoint compatibility, evaluation protocols, and remaining
 physics calibration work.
@@ -27,6 +29,7 @@ physics calibration work.
 | `mappo_2v2_sweep.yaml` | First-and-second-place objective comparison |
 | `mappo_2v2_individual.yaml` | Individual-reward completion comparison |
 | `mappo_2v2_validate.yaml` | Held-out Silverstone/Spa evaluation |
+| `mappo_2v2_selfplay.yaml` | Two trainable teams: three-lap completion and opponent crashes |
 
 Both validation scenarios require `--eval --checkpoint PATH`. Training MAPPO
 from a PPO source uses `--pretrained-actor PATH`; omitting it uses the scenario
@@ -34,7 +37,85 @@ default (scratch except for the explicitly pretrained base and penalty arms).
 PPO and MAPPO share 158 observation inputs: 108 normalized LiDAR ranges followed
 by 50 driving values, with no explicit neighbor states or teammate identity. MAPPO's
 shared settings live in `configs/scenarios/mappo_2v2_base.yaml`; edit that fragment
-when a setting should apply to every team objective.
+when a setting should apply to the fixed-opponent team objectives.
+
+## Two trainable teams
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_selfplay.yaml
+```
+
+This is simultaneous self-play: `car_0/car_1` form `team_a`, and `car_2/car_3`
+form `team_b`. Each team has its own actor, centralized critic, optimizer, and
+joint return. Both teammates share their team's reward. Both teams update from
+the same race; weights stay fixed during each rollout fragment. The initial
+implementation uses one environment, starts from scratch, and does not support
+PPO actor transfer, parallel workers, training resume, or transition/clip recording.
+Existing fixed-opponent scenarios retain their previous behavior.
+
+Each car finishes after three laps or stops acting after its first collision.
+The race continues until all cars finish/crash or the 16,000-step (800-second)
+deadline expires, including when both cars of one team have crashed. Crashed
+cars remain stationary during a 40-step clearance window. Finishers coast during
+the same window. After clearance, both are excluded from car collisions, LiDAR
+occlusions, and neighbor observations; their recorded terminal facts remain.
+The existing renderer may still draw their terminal poses.
+
+Team reward per step is the **sum** of signed progress (+1 per full lap per car),
++4 per new race finisher, -3 per own collision, +1 per opponent collision, and
++2 when both teammates have finished. Event rewards occur once, including
+simultaneous crashes. A one-for-one crash trade is therefore -2 before progress.
+There is no timeout penalty, per-step time cost, placement reward, or extra win
+bonus. Opponent crashes are measured outcomes, not proof of causal responsibility.
+Local weights live in `configs/reward/tasks/race_two_trainable_teams.yaml`;
+team bonuses are under `two_team.events` in the scenario.
+
+Actors use 178 inputs: the existing 158 driving/LiDAR inputs, three six-value
+Frenet neighbor slots including teammate identity, remaining time fraction, and
+own remaining lap fraction. Neighbor state is simulator-provided privileged
+sensing. Each critic also receives the remaining time fraction. `gamma=0.9995`
+gives an approximately 100-second discount horizon at 20 Hz. The race deadline
+ends team returns; a rollout or total-step-budget cut bootstraps the critic.
+Individual crashes/finishes do not end team credit or create dummy actor samples.
+
+W&B is enabled in project **`marl-f110-selfplay`**, group
+**`mappo-2v2-completion-crashes`**. Set `wandb.entity` to choose a team/workspace;
+otherwise the logged-in account's default is used. `--no-wandb` keeps local logs.
+Useful chart groups are:
+
+- `selfplay/team_a/*`, `selfplay/team_b/*`: finish rates, both-finished events,
+  collision counts, eliminated teams, timeouts, laps, signed progress, reward,
+  and reward-component totals, plotted against joint environment steps.
+- `selfplay/rolling100/*`: completion, crash, reward, win, and draw averages over
+  completed races only; a partial total-budget race is excluded.
+- `selfplay/car_0/*` through `selfplay/car_3/*`: individual finish/crash/lap facts.
+- `train/team_a/*`, `train/team_b/*`: independent PPO optimizer metrics.
+- `selfplay_eval/*`: deterministic current-pair evaluation on fixed seeds/maps.
+
+Win/draw logging compares finisher count first, then summed signed progress in
+laps (rounded to six decimals). It does not add learning reward. Evaluation
+compares two changing policies, so these win rates are not an absolute strength
+benchmark against a frozen opponent pool. Checkpoint selection favors the lower
+of the two both-finished rates, then total finish rate, progress, and fewer crashes.
+
+Runs save `team_metrics.jsonl`, `updates.jsonl`, `evaluation_metrics.jsonl`,
+`evaluation_races.jsonl`, a resolved config snapshot, and `run_summary.json`.
+`best_pair/`, `final_pair/`, and periodic `pair_epNNNNNN/` directories each contain
+both policies and `pair.json` with team membership, race/reward contracts, and
+provenance. Evaluation runs every 100 episodes and at training completion.
+
+```bash
+# Evaluate both saved policies using the disjoint final-test seeds.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_selfplay.yaml \
+  --eval --checkpoint outputs/RUN/best_pair --eval-protocol final
+
+# Bounded local integration check; this changes the race deadline for the check.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_selfplay.yaml \
+  --episodes 1 --max-steps 128 --no-wandb
+```
 
 ## Current-setup three-lap transfer
 

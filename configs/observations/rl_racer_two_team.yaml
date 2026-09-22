@@ -1,0 +1,10 @@
+includes:
+  - rl_racer_simulated_wheel.yaml
+observation:
+  frenet_neighbors:
+    enabled: true
+    max_neighbors: 3
+    include_team: true
+    clip: false
+# The two-team trainer appends time remaining and own remaining lap fractions.
+# Neighbor state is simulator-provided; this is privileged traffic sensing.

@@ -17,6 +17,8 @@ class TerminalAgentConfig:
     crashed_behavior: str = "stationary"
     finished_behavior: str = "coast_then_stop"
     finish_clearance_steps: int = 200
+    remove_after_clearance: bool = False
+    crash_clearance_steps: int = 40
 
     @classmethod
     def from_mapping(cls, raw: object) -> "TerminalAgentConfig":
@@ -26,6 +28,8 @@ class TerminalAgentConfig:
             crashed_behavior=str(cfg.get("crashed_behavior", "stationary")),
             finished_behavior=str(cfg.get("finished_behavior", "coast_then_stop")),
             finish_clearance_steps=int(cfg.get("finish_clearance_steps", 200)),
+            remove_after_clearance=bool(cfg.get("remove_after_clearance", False)),
+            crash_clearance_steps=int(cfg.get("crash_clearance_steps", 40)),
         )
         if not result.remain_collidable:
             raise ValueError("terminal_agents.remain_collidable must be true")
@@ -37,6 +41,8 @@ class TerminalAgentConfig:
             )
         if result.finish_clearance_steps < 0:
             raise ValueError("terminal_agents.finish_clearance_steps must be >= 0")
+        if result.crash_clearance_steps < 0:
+            raise ValueError("terminal_agents.crash_clearance_steps must be >= 0")
         return result
 
 
@@ -91,6 +97,15 @@ class TerminalVehicleController:
     ) -> None:
         for agent_id, state in self.states.items():
             idx = agent_index[agent_id]
+            elapsed = max(0, int(step) - state.terminal_step)
+            clearance = (self.config.finish_clearance_steps
+                         if state.status is AgentRaceStatus.FINISHED
+                         else self.config.crash_clearance_steps)
+            if self.config.remove_after_clearance and elapsed >= clearance:
+                simulator.collidable_mask[idx] = False
+                self._freeze(simulator, idx)
+                joint_actions[idx] = (0.0, 0.0)
+                continue
             if state.status in {AgentRaceStatus.CRASHED, AgentRaceStatus.TRUNCATED}:
                 self._freeze(simulator, idx)
                 joint_actions[idx] = (0.0, 0.0)

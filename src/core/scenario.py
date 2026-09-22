@@ -128,7 +128,7 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
     for key in ("terminate_on_track_limit", "terminate_on_collision"):
         if key in evaluation and not isinstance(evaluation[key], bool):
@@ -406,6 +406,19 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                 "MAPPO individual rewards require critic_mode='agent_conditioned'; "
                 "a shared team critic cannot represent distinct per-agent returns."
             )
+
+        if scenario.get("two_team", {}).get("enabled", False):
+            from training.two_team import resolve_teams
+            try:
+                resolve_teams(scenario)
+            except ValueError as exc:
+                raise ScenarioError(str(exc)) from exc
+            if (team_return_mode != "joint" or reduction != "sum"
+                    or environment.get("episode_termination", {}).get("mode") != "all_agents"
+                    or not environment.get("episode_termination", {}).get("lap_completion", True)
+                    or int(environment.get("max_steps", 0)) <= 0
+                    or int(experiment.get("num_envs", 1)) != 1):
+                raise ScenarioError("Two-team training requires joint/sum rewards, all_agents, finite laps/deadline, and num_envs=1")
 
         # One MAPPO object owns one shared actor and optimizer. Per-agent
         # reward configs may differ, but policy inputs, action processing, and

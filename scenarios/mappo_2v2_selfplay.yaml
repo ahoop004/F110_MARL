@@ -1,0 +1,100 @@
+includes:
+  - ../configs/env/default.yaml
+  - ../configs/vehicle/combined_slip.yaml
+  - ../configs/training/mappo.yaml
+  - ../configs/wandb.yaml
+experiment:
+  name: mappo_2v2_selfplay
+  episodes: 5000
+  seed: 42
+  num_envs: 1
+  torch_threads: 1
+two_team:
+  enabled: true
+  events: {opponent_crash_bonus: 1.0, both_finished_bonus: 2.0}
+training_defaults:
+  team_return_mode: joint
+  pretrained_actor_checkpoint: null
+  device: cuda
+  gamma: 0.9995 # approximately 100 seconds at 20 Hz
+  learning_rate: 0.0001
+  pi_hidden_dims: [256, 256]
+  vf_hidden_dims: [512, 512]
+  activation: leaky_relu
+  checkpoint_every: 100
+mappo:
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: sum
+environment:
+  agent_teams: {car_0: team_a, car_1: team_a, car_2: team_b, car_3: team_b}
+  timestep: 0.05
+  action_repeat: 1
+  lidar_beams: 108
+  lidar_range: 10.0
+  render: false
+  centerline_autoload: true
+  walls_autoload: true
+  centerline_features: true
+  track_preview: {points: 20, spacing: 0.3}
+  target_laps: 3
+  max_steps: 16000 # 800-second race deadline, observed by actor and critic
+  episode_termination: {mode: all_agents, lap_completion: true}
+  terminate_on_collision: true
+  terminal_agents:
+    remain_collidable: true # during the clearance window only
+    crashed_behavior: stationary
+    finished_behavior: coast_then_stop
+    remove_after_clearance: true
+    crash_clearance_steps: 40
+    finish_clearance_steps: 40
+  map_cycle: per_episode
+  map_pick: round_robin
+  map_bundles: [Budapest_map, circle_map]
+  map_bundles_train: [Budapest_map, circle_map]
+  map_bundles_eval: [circle_map, Budapest_map]
+  random_spawn: {enabled: true, allow_reuse: true}
+  lap_counting: {count_initial_crossing_as_lap: false}
+  friction:
+    version: 1
+    scope: shared
+    train: {mode: gaussian, relative_std: 0.02}
+    eval: {mode: fixed, mu: 1.0489}
+evaluation:
+  enabled: true
+  every_episodes: 100
+  episodes: 8
+  seed: 10042
+  target_laps: 3
+  max_steps: 16000
+  selection_strategy: two_team_completion
+  final_test: {episodes: 20, seed: 20042}
+agents:
+  car_0: &learner
+    algorithm: mappo
+    trainable: true
+    role: racer
+    observation: ../configs/observations/rl_racer_two_team.yaml
+    reward: ../configs/reward/tasks/race_two_trainable_teams.yaml
+    action_constraints:
+      speed_control: wheel_acceleration
+      max_wheel_acceleration: 100.0
+      max_wheel_deceleration: 100.0
+      prevent_reverse: true
+      speed_index: 1
+  car_1: *learner
+  car_2: *learner
+  car_3: *learner
+wandb:
+  enabled: true
+  project: marl-f110-selfplay
+  group: mappo-2v2-completion-crashes
+  job_type: two-team-training
+  tags: [mappo, 2v2, selfplay, scratch, completion, opponent-crashes, mf61]
+  notes: >-
+    Two independent trainable teams with one actor and critic per team.
+    Three-lap finite race; +1 per lap of signed progress, +4 per finisher,
+    +2 for both finishers, -3 per own collision, +1 per opponent collision.
+    Crashes are outcomes, not causal attribution. Simulator-provided neighbor
+    state and team flags are privileged sensing. Evaluation compares the
+    current pair on fixed seeds; it is not a fixed-opponent strength benchmark.

@@ -1,0 +1,13 @@
+task:
+  name: race_two_trainable_teams
+  description: Signed lap progress, race completion, and own collision cost.
+reward:
+  progress_delta_bonus:
+    enabled: true
+    weight: 1.0
+    positive_only: false
+    units: lap_fraction
+  collision: {enabled: true, penalty: -3.0}
+  lap_completion: {enabled: true, bonus: 4.0, require_clean: true}
+# These local rewards are summed within each fixed two-car team. Additional
+# once-only opponent-crash and both-finished bonuses live in two_team.events.

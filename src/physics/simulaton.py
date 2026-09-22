@@ -96,6 +96,7 @@ class Simulator(object):
         self.agent_poses = np.empty((self.num_agents, 3), dtype=np.float32)
         self.agents = []
         self.collisions = np.zeros((self.num_agents,), dtype=np.float32)
+        self.collidable_mask = np.ones(self.num_agents, dtype=np.bool_)
         self.collision_idx = -1 * np.ones((self.num_agents,), dtype=np.int32)
         
 
@@ -266,15 +267,27 @@ class Simulator(object):
             np.copyto(self._scan_buffer[i], scan_row)
 
         # --- 2) agent-agent collisions (GJK)
-        col_flags, hit_idx = collision_multiple(verts_buffer_f64)
+        visible = np.flatnonzero(self.collidable_mask)
+        if len(visible) == N:
+            col_flags, hit_idx = collision_multiple(verts_buffer_f64)
+        else:
+            flags, hits = collision_multiple(verts_buffer_f64[visible])
+            col_flags = np.zeros(N, dtype=np.float64)
+            hit_idx = np.full(N, -1, dtype=np.int64)
+            col_flags[visible] = flags
+            for local, hit in enumerate(hits):
+                if hit >= 0:
+                    hit_idx[visible[local]] = visible[int(hit)]
 
         # --- 3) opponent occlusions via LiDAR footprints, etc.
         if N > 1:
             for i, agent in enumerate(self.agents):
+                if not self.collidable_mask[i]:
+                    continue
                 if hasattr(agent, "update_opp_poses"):
                     count = 0
                     for j in range(N):
-                        if j == i:
+                        if j == i or not self.collidable_mask[j]:
                             continue
                         self._opp_pose_buffer[count, 0] = self.agent_poses[j, 0]
                         self._opp_pose_buffer[count, 1] = self.agent_poses[j, 1]
@@ -283,7 +296,10 @@ class Simulator(object):
                     agent.update_opp_poses(self._opp_pose_buffer[:count])
 
                 if hasattr(agent, "ray_cast_agents"):
-                    agent.ray_cast_agents(self._verts_buffer_f32, i)
+                    if len(visible) == N:
+                        agent.ray_cast_agents(self._verts_buffer_f32, i)
+                    else:
+                        agent.ray_cast_agents(self._verts_buffer_f32[visible], int(np.searchsorted(visible, i)))
                     scan_row = np.asarray(agent.scan, dtype=np.float32)
                     if scan_row.shape[0] != self._scan_buffer.shape[1]:
                         self._ensure_scan_capacity(scan_row.shape[0])
@@ -304,6 +320,8 @@ class Simulator(object):
             self.collision_idx,
             ENV_COLLISION_IDX,
         )
+        self.collisions[~self.collidable_mask] = 0.0
+        self.collision_idx[~self.collidable_mask] = -1
 
         obs_dict = {
             "scans": self._scan_buffer.copy(),
@@ -367,6 +385,7 @@ class Simulator(object):
             raise ValueError(f"poses must be an array with shape (N,3); got {getattr(poses, 'shape', None)}")
         if poses.shape[0] != self.num_agents:
             raise ValueError("Number of poses for reset does not match number of agents.")
+        self.collidable_mask.fill(True)
         if velocities is not None:
             if not isinstance(velocities, np.ndarray):
                 velocities = np.array(velocities, dtype=np.float32)
