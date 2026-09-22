@@ -8,13 +8,21 @@ experiment:
   total_steps: 120000000 # aggregate joint decisions; up to four actor samples per step
   seed: 42
   num_envs: 400
+  num_workers: 100
   torch_threads: 1
+  worker_startup_batch_size: 8
+  worker_startup_timeout_s: 600
+  worker_response_timeout_s: 120
+  terminal_every_updates: 10
+  terminal_episode_detail: false
 two_team:
   enabled: true
   events: {opponent_crash_bonus: 1.0, both_finished_bonus: 2.0}
 training_defaults:
   progress_unit: environment_steps
-  update_version: two-team-step-budget-v1
+  update_version: parallel-two-team-step-budget-v1
+  rollout_steps_per_env: 256
+  batch_size: 2048
   team_return_mode: joint
   pretrained_actor_checkpoint: null
   device: cuda
@@ -92,7 +100,7 @@ wandb:
   project: marl-f110-selfplay
   group: mappo-2v2-completion-crashes
   job_type: two-team-training
-  tags: [mappo, 2v2, selfplay, scratch, completion, opponent-crashes, mf61, step-budget]
+  tags: [mappo, 2v2, selfplay, scratch, completion, opponent-crashes, mf61, step-budget, parallel]
   notes: >-
     Two independent trainable teams with one actor and critic per team.
     Train for 120M aggregate joint environment decisions, matching the continuous trainers.

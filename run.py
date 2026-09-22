@@ -1536,6 +1536,17 @@ def _run_two_team(scenario, args, console, scenario_dir):
     output.mkdir(parents=True, exist_ok=True)
     provenance = build_run_provenance(scenario, scenario_path=args.scenario, run_id=run_id,
                                       algorithm="mappo", trainable_agents=trainable_ids)
+    num_envs = int(exp.get("num_envs", 1))
+    if num_envs > 1 and not args.eval:
+        env_seed = cfg.get("seed") if cfg.get("seed") is not None else exp["seed"]
+        provenance["two_team_collection"] = {
+            "mode": "synchronous_grouped_two_team_v1", "num_envs": num_envs,
+            "num_workers": min(num_envs, int(exp.get("num_workers", num_envs))),
+            "worker_threads": 1, "teams": teams,
+            "rollout_steps_per_env": scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256),
+            "environment_step_unit": "joint_environment_decisions",
+            "environment_seeds": [(env_seed + i) % (2 ** 32) for i in range(num_envs)],
+        }
     CSVLogger(str(output), scenario, provenance=provenance)
     protocol = resolve_evaluation_protocol(scenario, args.eval_protocol or "selection")
     if args.eval and not args.eval_protocol:
@@ -1607,6 +1618,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 logger.run.define_metric("selfplay/*", step_metric="selfplay/environment_steps")
                 logger.run.define_metric("selfplay_eval/environment_steps")
                 logger.run.define_metric("selfplay_eval/*", step_metric="selfplay_eval/environment_steps")
+                logger.run.define_metric("perf/*", step_metric="train/environment_steps")
                 console.print_info(f"W&B: {logger.wandb_url or 'offline'}")
 
         def emit(filename, row):
@@ -1671,9 +1683,13 @@ def _run_two_team(scenario, args, console, scenario_dir):
                         or not isinstance(interval, int) or interval <= 0):
                     raise ValueError(f"{name} must be a positive integer")
             next_checkpoint, next_evaluation = checkpoint_interval, evaluation_interval
+            checkpoint_episodes = int(params.get("checkpoint_every", 100))
+            evaluation_episodes = int(scenario.get("evaluation", {}).get("every_episodes", 100))
+            next_checkpoint_episode, next_evaluation_episode = checkpoint_episodes, evaluation_episodes
 
             def on_update(row):
                 nonlocal next_checkpoint, next_evaluation
+                nonlocal next_checkpoint_episode, next_evaluation_episode
                 if total_steps is not None:
                     row = {**row, "train/total_steps": total_steps,
                            "train/budget_fraction": trainer.environment_steps / total_steps}
@@ -1687,15 +1703,24 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 if eval_env is not None and next_evaluation is not None and steps >= next_evaluation:
                     evaluate(episode)
                     next_evaluation = (steps // evaluation_interval + 1) * evaluation_interval
+                if num_envs > 1:
+                    if checkpoint_interval is None and episode >= next_checkpoint_episode:
+                        save_pair(f"pair_ep{episode:06d}", episode)
+                        next_checkpoint_episode = (episode // checkpoint_episodes + 1) * checkpoint_episodes
+                    if (eval_env is not None and evaluation_interval is None
+                            and episode >= next_evaluation_episode):
+                        evaluate(episode)
+                        next_evaluation_episode = (episode // evaluation_episodes + 1) * evaluation_episodes
 
             trainer.on_update = on_update
             budget = f"{total_steps:,} joint environment steps" if total_steps is not None else f"{limit} episodes"
             console.print_info(f"Training budget: {budget}; evaluation steps are excluded.")
-            while ((limit is None or episode < limit)
-                   and (total_steps is None or trainer.environment_steps < total_steps)):
-                remaining = None if total_steps is None else total_steps - trainer.environment_steps
-                episode += 1
-                summary = trainer.episode(step_budget=remaining)
+
+            def report_episode(row, *, parallel=False):
+                nonlocal episode, summary
+                if parallel:
+                    episode += 1
+                summary = row
                 if summary["completed"]:
                     recent.append(summary)
                 rolling = {f"selfplay/rolling100/{team}/{key}": float(np.mean(
@@ -1703,17 +1728,30 @@ def _run_two_team(scenario, args, console, scenario_dir):
                     for team in teams if recent for key in ("win", "draw", "finish_rate", "both_finished",
                                                   "any_crash", "opponent_crash_count", "reward")}
                 emit("team_metrics.jsonl", {"selfplay/episode": episode,
-                    "selfplay/environment_steps": trainer.environment_steps,
                     **(rolling if recent else {}),
-                    **{f"selfplay/{key}": value for key, value in summary.items()}})
-                console.print_info(f"ep {episode} steps={int(summary['steps'])}: " + " | ".join(
-                    f"{team}: reward={summary[f'{team}/reward']:+.3f}, finishes={int(summary[f'{team}/finish_count'])}, crashes={int(summary[f'{team}/crash_count'])}"
-                    for team in teams))
-                if checkpoint_interval is None and episode % int(params.get("checkpoint_every", 100)) == 0:
-                    save_pair(f"pair_ep{episode:06d}", episode)
-                if (eval_env is not None and evaluation_interval is None
-                        and episode % int(scenario["evaluation"].get("every_episodes", 100)) == 0):
-                    evaluate(episode)
+                    **{f"selfplay/{key}": value for key, value in summary.items() if key != "environment_steps"},
+                    **({"selfplay/environment_local_steps": summary["environment_steps"]} if parallel else {}),
+                    "selfplay/environment_steps": trainer.environment_steps})
+                if not parallel or exp.get("terminal_episode_detail", False):
+                    console.print_info(f"ep {episode} steps={int(summary['steps'])}: " + " | ".join(
+                        f"{team}: reward={summary[f'{team}/reward']:+.3f}, finishes={int(summary[f'{team}/finish_count'])}, crashes={int(summary[f'{team}/crash_count'])}"
+                        for team in teams))
+
+            if num_envs > 1:
+                from training.parallel_two_team import train_parallel
+                train_parallel(trainer, scenario, scenario_dir, console=console,
+                               on_episode=lambda row: report_episode(row, parallel=True))
+            else:
+                while ((limit is None or episode < limit)
+                       and (total_steps is None or trainer.environment_steps < total_steps)):
+                    remaining = None if total_steps is None else total_steps - trainer.environment_steps
+                    episode += 1
+                    report_episode(trainer.episode(step_budget=remaining))
+                    if checkpoint_interval is None and episode % int(params.get("checkpoint_every", 100)) == 0:
+                        save_pair(f"pair_ep{episode:06d}", episode)
+                    if (eval_env is not None and evaluation_interval is None
+                            and episode % int(scenario["evaluation"].get("every_episodes", 100)) == 0):
+                        evaluate(episode)
             save_pair("final_pair", episode)
             if eval_env is not None and last_evaluation_step != trainer.environment_steps:
                 evaluate(episode)

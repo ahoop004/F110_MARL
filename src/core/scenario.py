@@ -416,9 +416,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             if (team_return_mode != "joint" or reduction != "sum"
                     or environment.get("episode_termination", {}).get("mode") != "all_agents"
                     or not environment.get("episode_termination", {}).get("lap_completion", True)
-                    or int(environment.get("max_steps", 0)) <= 0
-                    or int(experiment.get("num_envs", 1)) != 1):
-                raise ScenarioError("Two-team training requires joint/sum rewards, all_agents, finite laps/deadline, and num_envs=1")
+                    or int(environment.get("max_steps", 0)) <= 0):
+                raise ScenarioError("Two-team training requires joint/sum rewards, all_agents, and finite laps/deadline")
 
         # One MAPPO object owns one shared actor and optimizer. Per-agent
         # reward configs may differ, but policy inputs, action processing, and

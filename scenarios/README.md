@@ -43,18 +43,20 @@ when a setting should apply to the fixed-opponent team objectives.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_selfplay.yaml --num-envs 1
+  --scenario scenarios/mappo_2v2_selfplay.yaml
 ```
 
 This is simultaneous self-play: `car_0/car_1` form `team_a`, and `car_2/car_3`
 form `team_b`. Each team has its own actor, centralized critic, optimizer, and
 joint return. Both teammates share their team's reward. Both teams update from
-the same race; weights stay fixed during each rollout fragment. The initial
-implementation uses one environment, starts from scratch, and does not support
-PPO actor transfer, parallel workers, training resume, or transition/clip recording.
+the same race; weights stay fixed during each collection round. The default is
+400 environments across 100 CPU worker processes, with both policies and critics
+in the parent GPU process. Each worker advances four races and uses one compute
+thread. Training starts from scratch; PPO actor transfer, training resume, and
+transition/clip recording are not yet supported.
 Existing fixed-opponent scenarios retain their previous behavior.
-Use `--num-envs 1` while parallel self-play support is pending; this overrides a
-larger environment count in the scenario before validation.
+Use `--num-envs N --num-workers W` to size the collector pool. `--num-envs 1`
+selects the serial trainer. CLI overrides apply before validation.
 
 Training uses **120,000,000 aggregate joint environment decisions**, matching the
 continuous trainers' budget. One four-car race step counts once, with up to four
@@ -62,6 +64,20 @@ actor samples; evaluation steps are excluded. `--total-steps N` overrides the
 budget. `--episodes N` explicitly switches back to an episode budget. A total
 budget cutoff mid-race bootstraps the critic and records `budget_cut=1` without
 inventing a race completion or timeout.
+
+Each parallel round gathers up to 256 joint decisions per environment: 102,400
+joint steps, up to 204,800 actor samples **per team** (409,600 total). Minibatches
+contain 2,048 samples. Completed races reset independently during collection;
+unfinished races carry on across rounds. Returns are computed separately for
+each race, team, and fragment before pooling. The parent updates both teams
+before workers resume. Inactive teams still contribute critic targets for later
+opponent events, with no extra actor samples. Worker seeds are the base seed
+plus environment index; an uneven budget is divided with exact remainders.
+
+Startup is batched eight workers at a time. Failures/timeouts propagate to the
+parent and shut down the collector group. All W&B and file writes happen in the
+parent. These settings are a starting point for a 128-core allocation; benchmark
+throughput and RAM on the target node before assuming 400 races is optimal.
 
 Each car finishes after three laps or stops acting after its first collision.
 The race continues until all cars finish/crash or the 16,000-step (800-second)
@@ -101,6 +117,14 @@ Useful chart groups are:
 - `selfplay/car_0/*` through `selfplay/car_3/*`: individual finish/crash/lap facts.
 - `train/team_a/*`, `train/team_b/*`: independent PPO optimizer metrics.
 - `selfplay_eval/*`: deterministic current-pair evaluation on fixed seeds/maps.
+- `perf/*`: collection/update time, joint steps per second, parent peak RSS,
+  and the sum of worker peak RSS values in MiB (not instantaneous total memory).
+
+Parallel episode rows identify their `environment_id`, `environment_episode`,
+and seed. `selfplay/environment_steps` is the aggregate training counter at
+report time; `selfplay/environment_local_steps` is that environment's counter.
+The console prints collection/update throughput every ten updates. Set
+`experiment.terminal_episode_detail: true` for every race's console summary.
 
 Win/draw logging compares finisher count first, then summed signed progress in
 laps (rounded to six decimals). It does not add learning reward. Evaluation
@@ -123,7 +147,12 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_selfplay.yaml \
   --num-envs 1 --eval --checkpoint outputs/RUN/best_pair --eval-protocol final
 
-# Bounded local integration check; this changes the race deadline for the check.
+# Small parallel check, including a rollout boundary and an uneven remainder.
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/mappo_2v2_selfplay.yaml \
+  --num-envs 4 --num-workers 2 --total-steps 1043 --max-steps 16 --no-wandb
+
+# Serial check using the same episode and reward code.
 PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_selfplay.yaml \
   --num-envs 1 --total-steps 128 --max-steps 128 --no-wandb

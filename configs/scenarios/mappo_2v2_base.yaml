@@ -52,14 +52,14 @@ environment:
     enabled: true
     allow_reuse: true
   map_bundles:
-  - Budapest_map
+  # - Budapest_map
   - circle_map
   map_bundles_train:
-  - Budapest_map
+  # - Budapest_map
   - circle_map
   map_bundles_eval:
   - circle_map
-  - Budapest_map
+  # - Budapest_map
   lap_counting:
     count_initial_crossing_as_lap: false
   friction:

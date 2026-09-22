@@ -11,6 +11,8 @@ from copy import deepcopy
 import multiprocessing as mp
 import os
 from pathlib import Path
+import resource
+import sys
 import time
 
 import numpy as np
@@ -26,6 +28,11 @@ CONTRACT_FIELDS = (
     "action_dim", "action_low", "action_high", "observation_contract", "gamma",
     "gae_lambda", "critic_mode", "reward_mode", "team_return_mode", "team_reward_reduction",
 )
+
+
+def _peak_rss_mib():
+    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale
 
 
 class TeamCollector(CollectorAgent):
@@ -203,7 +210,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
                          for fragment in trainer.agents[team].take_value_fragments()]
                 rollouts[team] = (_pool(actor), np.concatenate(value) if value else None)
             actor_steps = sum(t.agent_steps for t in trainers.values()) - actor_start
-            connection.send(("rollout", (rollouts, sum(counts.values()), actor_steps, events)))
+            connection.send(("rollout", (rollouts, sum(counts.values()), actor_steps, events, _peak_rss_mib())))
             events = []
             if connection.recv() != ("continue", None):
                 raise RuntimeError("Two-team collector expected policy update barrier")
@@ -236,6 +243,7 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
     context = mp.get_context("spawn")
     connections, processes, process_by_worker, waiting = {}, [], {}, {}
     completed = 0
+    worker_memory = {}
     success = False
     thread_vars = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                    "NUMEXPR_NUM_THREADS", "NUMBA_NUM_THREADS")
@@ -299,6 +307,7 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                     requests.update({(worker_id, env_id): request for env_id, request in payload.items()})
                 elif kind == "rollout":
                     waiting[worker_id] = payload
+                    worker_memory[worker_id] = payload[4]
                 elif kind == "done":
                     report(payload)
                     connections.pop(worker_id).close()
@@ -339,6 +348,8 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                         "train/agent_steps": trainer.agent_steps, "train/update": trainer.updates,
                         "train/rollout_agent_samples": samples,
                         "perf/collection_seconds": collection_s, "perf/update_seconds": update_s,
+                        "perf/collector_peak_rss_mib": sum(worker_memory.values()),
+                        "perf/parent_peak_rss_mib": _peak_rss_mib(),
                         "perf/collection_env_steps_per_second": steps / max(collection_s, 1e-9),
                         "perf/round_env_steps_per_second": steps / max(collection_s + update_s, 1e-9)})
                     if trainer.on_update:

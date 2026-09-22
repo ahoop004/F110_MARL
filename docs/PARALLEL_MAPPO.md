@@ -4,7 +4,35 @@ The matched `mappo_2v2_base_{scratch,pretrained}.yaml` and
 `mappo_2v2_penalties_{scratch,pretrained}.yaml` pairs default to 400 independent races
 across 100 spawned CPU workers. Each race has two trainable teammates and two
 racing MPC opponents. One parent process owns the GPU actor, critic, and
-optimizer. Other MAPPO scenarios retain their serial defaults.
+optimizer. The two-trainable-team scenario also defaults to 400 races and 100
+workers, with a separate actor, critic, and optimizer per team; see below.
+Other MAPPO scenarios retain their serial defaults.
+
+## Two trainable teams
+
+```bash
+python run.py --scenario scenarios/mappo_2v2_selfplay.yaml --no-render
+
+# Bounded 4-environment / 2-worker check before using the full allocation.
+python run.py --scenario scenarios/mappo_2v2_selfplay.yaml \
+  --num-envs 4 --num-workers 2 --total-steps 1043 --max-steps 16 --no-wandb
+```
+
+Self-play uses the same 120M aggregate joint-step budget and 1,024,000-step
+evaluation/checkpoint cadence as continuous driving. Its races still finish
+after three laps or the finite deadline. Four cars are trainable, so each joint
+step produces up to four actor samples. At the default 256-step horizon, a full
+round produces up to 204,800 samples per team. Both teams are updated in the
+parent while workers wait; workers never own GPU policies or log to W&B.
+
+The self-play collector preserves joint team returns after crashes, including
+critic-only targets once both teammates become inactive. Rollout cuts continue
+the current race and bootstrap each team independently. Episode/budget counters,
+seeds, and remainder allocation are per environment; the parent reports aggregate
+steps, samples, throughput, and peak memory. Full details and metric names are in
+[the scenario guide](../scenarios/README.md#two-trainable-teams).
+
+The sections below describe the fixed-opponent scenarios.
 
 Activate the project's Python environment and run from the repository root,
 inside the existing Slurm GPU allocation. Do not launch one trainer per CPU.
