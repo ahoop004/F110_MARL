@@ -76,6 +76,9 @@ def parse_args() -> argparse.Namespace:
                    help="Use fixed scenario evaluation seeds, episodes, and horizon; requires --eval.")
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--run-id", type=str, default=None)
+    p.add_argument("--record-races", action="store_true",
+                   help="MAPPO: sample shared race frames and event clips (recording YAML settings); "
+                        "write to --dataset-dir or OUTPUT_DIR/behavior")
     p.add_argument("--output-dir", type=str, default=None)
     p.add_argument(
         "--dataset-dir", type=str, default=None,
@@ -404,6 +407,8 @@ def main() -> None:
     if exp_cfg.get("evaluation_only") and not args.eval:
         raise ValueError("This scenario is evaluation-only; pass --eval and --checkpoint.")
     if args.eval:
+        if args.record_races:
+            raise ValueError("--record-races currently records MAPPO training; omit it for evaluation")
         _run_eval(scenario, args, console, scenario_dir)
         return
 
@@ -421,6 +426,12 @@ def main() -> None:
 
     rl_agent_id = trainable_ids[0]
     algorithm = str(agent_configs[rl_agent_id]["algorithm"]).strip().lower()
+    selective_recording = args.record_races or scenario.get('recording', {}).get('enabled', False)
+    if selective_recording:
+        if algorithm != 'mappo':
+            raise ValueError("Selective race recording requires MAPPO training")
+        from src.replay.race_recorder import recording_config
+        scenario['recording'] = recording_config({**scenario.get('recording', {}), 'enabled': True})
 
     agent_cfg = agent_configs[rl_agent_id]
 
@@ -636,15 +647,17 @@ def main() -> None:
 
     if params.get("_physics_contract") is not None:
         from training.hooks import PhysicsEpisodeHook
-        hooks.append(PhysicsEpisodeHook(output_dir))
+        hooks.append(PhysicsEpisodeHook(output_dir, transition_records=algorithm != 'mappo'))
 
     # Optional dataset recording
     dataset_writer = None
-    if args.dataset_dir:
-        from src.replay.dataset_writer import DatasetWriter, DatasetHook
-        dataset_writer = DatasetWriter(
-            output_dir=args.dataset_dir,
-            chunk_size=args.dataset_chunk_size,
+    if args.dataset_dir or selective_recording:
+        from src.replay.dataset_writer import DatasetWriter, DatasetHook, RaceDatasetWriter, RaceDatasetHook
+        writer_class = RaceDatasetWriter if selective_recording else DatasetWriter
+        dataset_path = args.dataset_dir or str(Path(output_dir) / 'behavior')
+        dataset_writer = writer_class(
+            output_dir=dataset_path,
+            **({'config': scenario['recording']} if selective_recording else {'chunk_size': args.dataset_chunk_size}),
             metadata={
                 "run_id": run_id,
                 "algorithm": algorithm,
@@ -690,8 +703,9 @@ def main() -> None:
                 ),
             },
         )
-        hooks.append(DatasetHook(dataset_writer))
-        console.print_info(f"Dataset recording → {args.dataset_dir}  (chunk_size={args.dataset_chunk_size})")
+        hooks.append((RaceDatasetHook if selective_recording else DatasetHook)(dataset_writer))
+        console.print_info(f"Dataset recording → {dataset_path}  "
+                           f"mode={'sampled races + event clips' if selective_recording else 'all learner transitions'}")
 
     # Optional curriculum
     spawn_plan_fn = None
@@ -763,7 +777,12 @@ def main() -> None:
             sys.exit(1)
     finally:
         if dataset_writer is not None:
-            dataset_writer.close()
+            if selective_recording:
+                # A successful trainer already closed the writer. Exceptions
+                # preserve the retained prefix and mark this dataset incomplete.
+                dataset_writer.close(complete=False)
+            else:
+                dataset_writer.close()
         csv_logger.close()
         if wandb_logger:
             wandb_logger.finish()
@@ -832,6 +851,8 @@ def _run_eval(
         aggregate_eval_episodes,
         create_episode_facts,
         finalize_episode_facts,
+        episode_race_record,
+        capture_spawn_context,
         update_agent_step_facts,
     )
     from training.marl_trainer import map_mappo_learning_rewards
@@ -1022,6 +1043,7 @@ def _run_eval(
     eval_episodes_facts = []
     eval_physics = {}
     eval_maps = {}
+    eval_spawns = {}
     team_results = []
 
     try:
@@ -1032,6 +1054,7 @@ def _run_eval(
             )
             eval_maps[episode] = info_dict.get(focal_agent_id, {}).get("map_bundle") or getattr(
                 env, "_map_bundle_active", None)
+            eval_spawns[episode] = capture_spawn_context(env, all_agent_ids)
             for composer in obs_composers.values():
                 composer.reset()
             for composer in reward_composers.values():
@@ -1257,7 +1280,17 @@ def _run_eval(
             "both_finished" if objective == "combined" else objective
         ]
 
-    console.print_summary(summary)
+    if len(trainable_ids) == 2 and len(opponent_ids) == 2:
+        # Historical win/success aliases can mean beating just one opponent.
+        # Keep them in the report for compatibility, but use explicit headlines.
+        console.print_summary({key + "_rate" if key in {"team_first_place", "team_sweep"} else key: summary[key] for key in (
+            "race_count", "team_both_finished_rate", "both_finished_count",
+            "at_least_one_finished_count", "team_first_place", "first_place_count",
+            "team_sweep", "sweep_count", "team_rank_score", "any_learner_collision_dnf_count",
+            "mean_clean_finish_time_s", "finish_time_sample_count", "valid_laps",
+            "mean_valid_lap_time_s") if key in summary}, title="Evaluation Summary")
+    else:
+        console.print_summary(summary, title="Evaluation Summary")
     run_id = args.run_id or resolve_run_id(
         scenario_name=exp_cfg.get("name"), algorithm=f"{algorithm}-eval", seed=base_seed
     )
@@ -1289,6 +1322,15 @@ def _run_eval(
         "episode_results": [
             {"seed": base_seed + facts.episode,
              "map_bundle": eval_maps[facts.episode],
+             "race_record": {**episode_race_record(facts, timestep=float(env.timestep)),
+                             "phase": "evaluation", "run_id": run_id,
+                             "environment_id": "evaluation", "environment_episode": facts.episode,
+                             "environment_seed": base_seed + facts.episode,
+                             "map_id": eval_maps[facts.episode],
+                             "spawn_configuration": eval_spawns[facts.episode],
+                             "action_repeat": action_repeat,
+                             "episode_id": f"{run_id}_ep{facts.episode:06d}",
+                             "checkpoint_sha256": checkpoint_hash},
              **({"physics": eval_physics[facts.episode]} if facts.episode in eval_physics else {}),
              **aggregate_eval_episodes(
                 [facts], focal_agent_id=focal_agent_id,
@@ -1477,8 +1519,16 @@ def _run_mappo(
 ) -> None:
     from agents.mappo import MAPPOAgent
     from training.marl_trainer import MARLTrainer
+    from training.hooks import MAPPOConsoleHook
 
     n_episodes = int(exp_cfg.get("episodes", 1000))
+    if int(exp_cfg.get("num_envs", 1)) > 1:
+        if not exp_cfg.get("terminal_episode_detail", False):
+            hooks[:] = [hook for hook in hooks if not isinstance(hook, ConsoleHook)]
+        hooks.insert(0, MAPPOConsoleHook(console,
+            window=int(exp_cfg.get("terminal_recent_episodes", 100)),
+            every_updates=int(exp_cfg.get("terminal_every_updates", 10)),
+            diagnostic_every=int(exp_cfg.get("terminal_diagnostic_every_updates", 100))))
     focal_id = focal_agent_id or (trainable_ids[0] if trainable_ids else "")
 
     # obs_dim: all trainable agents share the same local observation spec
@@ -1546,6 +1596,18 @@ def _run_mappo(
 
     total_steps = exp_cfg.get("total_steps")
     budget = f"{total_steps} joint environment decisions" if total_steps is not None else f"{n_episodes} episodes"
+    trainer.console = console
+    race_hooks = [h for h in hooks if hasattr(h, 'on_race_record')]
+    if race_hooks and int(exp_cfg.get('num_envs', 1)) == 1:
+        from src.replay.race_recorder import RaceRecorder
+        trainer.race_recorder = RaceRecorder(race_hooks[0].recording_config,
+                                             race_hooks[0].on_race_record, run_id=run_id)
+    env_cfg = (scenario or {}).get("environment", {})
+    console.print_info(
+        f"Experiment={exp_cfg.get('name')} train_maps={env_cfg.get('map_bundles_train')} "
+        f"eval_maps={env_cfg.get('map_bundles_eval')} seed={exp_cfg.get('seed')} "
+        f"training_mode={'finite' if env.lifecycle.finish_on_laps else 'continuous'}; "
+        "env_steps count joint decisions; agent_steps count learner transitions; physics_steps count simulator steps.")
     console.print_info(
         f"Starting MAPPO training for {budget} "
         f"| num_envs={exp_cfg.get('num_envs', 1)} | agents={trainable_ids} "
@@ -1606,7 +1668,9 @@ def _run_mappo(
                 evaluate_every_steps=eval_cfg.get("every_steps"),
                 provenance=provenance, console=console, wandb_logger=wandb_logger,
             ))
-            console.print_info("Best MAPPO checkpoint selected by deterministic team evaluation.")
+            console.print_info(f"Selection evaluation: {protocol['episodes']} races, "
+                               f"seeds {protocol['seed']}..{protocol['seed'] + protocol['episodes'] - 1}, "
+                               f"target_laps={eval_env.target_laps}, max_physics_steps={eval_env.max_steps}.")
         except Exception:
             eval_env.close()
             raise

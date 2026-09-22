@@ -8,6 +8,7 @@ import torch
 from metrics.racing_eval import (
     aggregate_eval_episodes, create_episode_facts, finalize_episode_facts,
     update_agent_step_facts,
+    episode_race_record, capture_spawn_context,
 )
 
 
@@ -34,12 +35,13 @@ class DeterministicMAPPOEvaluator:
         was_training = self.agent.actor.training
         raw_actions = deepcopy(self.agent.last_raw_actions)
         self.agent.actor.eval()
-        results, by_map, physics_episodes = [], {}, []
+        results, by_map, physics_episodes, episode_records = [], {}, [], []
         try:
             with torch.no_grad():
                 for episode in range(self.episodes):
                     obs, infos = self.env.reset(seed=self.base_seed + episode,
                                                options={"map_episode_index": episode})
+                    spawn_context = capture_spawn_context(self.env, self.env.possible_agents)
                     for item in [*self.obs_composers.values(), *self.actions.values(),
                                  *self.other_agents.values()]:
                         if hasattr(item, "reset"):
@@ -76,6 +78,12 @@ class DeterministicMAPPOEvaluator:
                     results.append(result)
                     map_name = getattr(self.env, "_map_bundle_active", None) or self.env.map_name
                     by_map.setdefault(str(map_name), []).append(result)
+                    episode_records.append({
+                        **episode_race_record(result, timestep=self.env.timestep, include_rewards=False),
+                        "phase": "evaluation", "environment_episode": episode,
+                        "seed": self.base_seed + episode, "map_id": map_name,
+                        "spawn_configuration": spawn_context,
+                    })
                     physics = infos.get(self.trainable_ids[0], {}).get("physics")
                     if physics is not None:
                         physics_episodes.append({"seed": self.base_seed + episode,
@@ -91,6 +99,7 @@ class DeterministicMAPPOEvaluator:
         summary = aggregate_eval_episodes(results, timestep=self.env.timestep)
         summary["per_map"] = {name: aggregate_eval_episodes(rows, timestep=self.env.timestep)
                               for name, rows in by_map.items()}
+        summary["episode_results"] = episode_records
         summary["evaluation_protocol"] = {
             "name": "selection", "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
             "max_steps": self.env.max_steps, "timestep_s": self.env.timestep,

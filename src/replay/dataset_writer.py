@@ -42,7 +42,8 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 DATASET_SCHEMA_VERSION = "2.0"
-SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION})
+RACE_DATASET_SCHEMA_VERSION = "3.0"
+SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION, RACE_DATASET_SCHEMA_VERSION})
 
 
 def detect_dataset_schema(path: str | Path) -> str:
@@ -313,3 +314,126 @@ class DatasetHook:
 
     def on_training_end(self) -> None:
         self._writer.close()
+
+
+class RaceDatasetWriter(DatasetWriter):
+    """Versioned shared frames, incremental compressed chunks and clip index.
+
+    max_bytes bounds serialized frame payload before compression. The small
+    metadata/index files are additional; max_frames also bounds index growth.
+    """
+
+    def __init__(self, output_dir, *, config, metadata=None):
+        from src.replay.race_recorder import recording_config
+        self.config = recording_config(config)
+        self.payload_bytes = 0
+        self.storage_full = False
+        self._accepted_ends = {}
+        self._accepted_contexts = {}
+        super().__init__(output_dir, chunk_size=self.config['chunk_frames'], metadata=metadata)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close(complete=exc_type is None)
+
+    def add_event(self, event):
+        from src.replay.race_recorder import plain
+        if self._closed:
+            raise RuntimeError("RaceDatasetWriter is closed")
+        kind, row = event
+        if kind == 'frame':
+            if self.storage_full:
+                return
+            row = plain(row)
+            encoded = json.dumps(row, separators=(',', ':'), allow_nan=False) + '\n'
+            if (self._total + len(self._buffer) >= self.config['max_frames'] or
+                    self.payload_bytes + len(encoded.encode('utf-8')) > self.config['max_bytes']):
+                self.storage_full = True
+                self._write_metadata()
+                return
+            self.payload_bytes += len(encoded.encode('utf-8'))
+            self._buffer.append((row['episode_id'], row['physics_index'], encoded))
+            self._accepted_ends[row['episode_id']] = row['physics_index']
+            self._accepted_contexts[row['episode_id']] = dict(
+                all_cars_terminal=all(not s['active'] for s in row['post_state'].values()),
+                policy_version_end=row['policy_version'])
+            if len(self._buffer) >= self._chunk_size:
+                self._flush()
+        elif kind == 'clip':
+            row = plain(row)
+            if row['status'] == 'closed':
+                accepted = self._accepted_ends.get(row['episode_id'], -1)
+                end = row['end_physics_index']
+                if end is not None and end > accepted:
+                    row.update(end_physics_index=accepted, complete=False, end_reason='storage_limit',
+                               post_context_complete=False, **self._accepted_contexts.get(row['episode_id'],
+                                   dict(all_cars_terminal=False, policy_version_end=None)))
+                self._flush()
+            with (self._dir / 'clips.jsonl').open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(row, separators=(',', ':'), allow_nan=False) + '\n')
+        else:
+            raise ValueError(f"Unknown race recording event: {kind}")
+
+    def _flush(self):
+        if not self._buffer:
+            return
+        import gzip
+        name = f'frames_{self._chunk_idx:06d}.jsonl.gz'
+        spans = {}
+        with (self._dir / name).open('xb') as raw:
+            with gzip.GzipFile(fileobj=raw, mode='wb', mtime=0) as stream:
+                for episode_id, step, encoded in self._buffer:
+                    stream.write(encoded.encode('utf-8'))
+                    span = spans.setdefault(episode_id, [step, step])
+                    span[0], span[1] = min(span[0], step), max(span[1], step)
+        with (self._dir / 'frame_chunks.jsonl').open('a', encoding='utf-8') as manifest:
+            manifest.write(json.dumps(dict(path=name, episodes=spans, frames=len(self._buffer))) + '\n')
+        self._total += len(self._buffer)
+        self._chunk_idx += 1
+        self._buffer.clear()
+        self._write_metadata()
+
+    def _write_metadata(self, *, exclusive=False, complete=False):
+        meta = {**self._extra_meta, 'schema_version': RACE_DATASET_SCHEMA_VERSION,
+                'format': 'shared_race_frames', 'complete': complete,
+                'total_frames': self._total, 'num_chunks': self._chunk_idx,
+                'recording': self.config, 'serialized_frame_bytes': self.payload_bytes,
+                'storage_full': self.storage_full,
+                'frame_contract': {'version': '1.0', 'interval': 'one physics step',
+                    'state': 'explicit pre_state and post_state',
+                    'learner_observation': 'pre_decision; repeated on held-action substeps',
+                    'reward': 'this physics interval', 'commands': 'physical simulator input',
+                    'missing_commands': None, 'velocity': 'body frame',
+                    'collision_pairing': 'unavailable', 'privileged': ['pre_state', 'post_state']}}
+        path = self._dir / 'metadata.json'
+        if exclusive:
+            with path.open('x') as stream:
+                json.dump(meta, stream, indent=2)
+        else:
+            temporary = path.with_suffix('.json.tmp')
+            temporary.write_text(json.dumps(meta, indent=2))
+            temporary.replace(path)
+
+    def close(self, *, complete=True):
+        if self._closed:
+            return
+        self._flush()
+        self._write_metadata(complete=complete)
+        self._closed = True
+
+
+class RaceDatasetHook(DatasetHook):
+    requires_transition_record = False
+
+    @property
+    def recording_config(self):
+        return self._writer.config
+
+    def on_step(self, record):
+        pass
+
+    def on_race_record(self, event):
+        self._writer.add_event(event)
+
+    @property
+    def storage_full(self):
+        return self._writer.storage_full

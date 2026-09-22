@@ -190,7 +190,7 @@ Single-car transfer and validation inherit this observation from pretraining.
 
 Use `--pretrained-actor` with a compatible PPO checkpoint or run directory.
 Omitting it uses the scenario default: the explicitly pretrained base and penalty
-arms require `outputs/ppo_current_pretrain_s42/best_model.pt`; other training arms
+arms require `outputs/L_map_pretrain/L_map_best_model.pt`; other training arms
 start from scratch. `pretrained_actor_observation_extension` is null because
 both actors have identical observation contracts. All actor weights and exploration
 parameters are copied directly; the centralized critic and optimizer start fresh.

@@ -149,6 +149,7 @@ def update_agent_step_facts(
     terminations: Optional[Mapping[str, bool]] = None,
     truncations: Optional[Mapping[str, bool]] = None,
     agent_states: Optional[Mapping[str, Any]] = None,
+    collect_speed: bool = True,
 ) -> None:
     episode.steps = max(episode.steps, int(step_idx))
     terminations = terminations or {}
@@ -213,7 +214,7 @@ def update_agent_step_facts(
             if progress is not None:
                 facts.final_progress = float(np.clip(progress, 0.0, 1.0))
             speed = _float_or_none(centerline.get("vs"))
-            if speed is not None:
+            if speed is not None and collect_speed:
                 facts.speed_samples.append(abs(speed))
 
         state = agent_states.get(agent_id)
@@ -223,7 +224,7 @@ def update_agent_step_facts(
                 state_progress = _float_or_none(getattr(progress, "progress", None))
                 if state_progress is not None:
                     facts.final_progress = float(np.clip(state_progress, 0.0, 1.0))
-            if not facts.speed_samples:
+            if not facts.speed_samples and collect_speed:
                 velocity = getattr(state, "velocity", None)
                 if velocity is not None:
                     speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float32)))
@@ -242,6 +243,85 @@ def finalize_episode_facts(episode: EvalEpisodeFacts) -> EvalEpisodeFacts:
         else:
             facts.outcome = "incomplete"
     return episode
+
+
+def capture_spawn_context(env, agent_ids) -> Dict[str, Any]:
+    """Capture actual reset poses even when the spawn mode has no named metadata."""
+    manager = getattr(env, "_spawn_manager", None)
+    context = dict(getattr(manager, "last_spawn_metadata", {}) or {})
+    context["spawn_ids"] = dict(getattr(manager, "last_spawn_mapping", {}) or {})
+    context["initial_states"] = {}
+    if hasattr(env, "get_agent_state"):
+        for aid in agent_ids:
+            try:
+                state = env.get_agent_state(aid)
+            except KeyError:
+                context["initial_states"][aid] = None
+                continue
+            context["initial_states"][aid] = {
+                field: np.asarray(getattr(state, field)).tolist()
+                for field in ("pose", "velocity") if getattr(state, field, None) is not None}
+    return context
+
+
+def episode_race_record(episode: EvalEpisodeFacts, *, timestep: float,
+                        finite_race: bool = True, include_rewards: bool = True) -> Dict[str, Any]:
+    """Small shared training/evaluation record; no trajectory arrays or inferred blame.
+
+    Progress is signed earned lap fractions. Continuous training has no finish
+    objective; its finish-derived fields are unavailable, rather than failures.
+    """
+    agents = {}
+    for aid, f in episode.agents.items():
+        valid = [steps * timestep for steps in f.valid_lap_times_steps]
+        agents[aid] = {
+            "team": f.team, "finished": f.completed if finite_race else None,
+            "finish_position": f.finish_position if finite_race else None,
+            "terminal_reason": f.terminal_reason, "outcome": f.outcome,
+            "collision_dnf": f.terminal_reason == "collision",
+            "boundary_dnf": f.terminal_reason == "track_boundary",
+            "timeout": f.timed_out, "laps": f.final_lap_count,
+            "net_progress_laps": f.net_progress if f.progress_delta_samples else None,
+            "active_time_s": f.active_steps * timestep,
+            "clean_finish_time_s": (f.finish_elapsed_steps * timestep
+                if finite_race and f.clean_finish and f.finish_elapsed_steps is not None else None),
+            "valid_lap_count": len(valid), "measured_lap_count": len(f.lap_times_steps),
+            "mean_valid_lap_time_s": float(np.mean(valid)) if valid else None,
+        }
+        if include_rewards and aid in episode.trainable_team:
+            agents[aid].update(reward=f.reward_total, individual_reward=f.individual_reward_total,
+                               reward_components=dict(f.reward_components))
+    own = [agents[aid] for aid in episode.trainable_team]
+    others = [agents[aid] for aid in episode.opponent_team]
+    finishes = [a["clean_finish_time_s"] for a in own if a["clean_finish_time_s"] is not None]
+    progress = [a["net_progress_laps"] for a in own]
+    record = {
+        "metric_contract": "race_facts_v1", "phase": "training",
+        "race_mode": "finite" if finite_race else "continuous",
+        "physics_steps": episode.steps, "duration_s": episode.steps * timestep,
+        "timestep_s": timestep,
+        "at_least_one_finished": any(a["finished"] for a in own) if finite_race else None,
+        "both_finished": all(a["finished"] for a in own) if finite_race else None,
+        "first_place": None, "sweep": None, "rank_score": None,
+        "any_learner_collision_dnf": any(a["collision_dnf"] for a in own),
+        "mean_net_progress_laps": float(np.mean(progress)) if progress and all(p is not None for p in progress) else None,
+        "mean_learner_laps": float(np.mean([a["laps"] for a in own])) if own else None,
+        "clean_finish_count": len(finishes),
+        "mean_clean_finish_time_s": float(np.mean(finishes)) if finishes else None,
+        "agents": agents,
+    }
+    for prefix, rows in (("own", own), ("opponent", others)):
+        for kind in ("collision_dnf", "boundary_dnf", "timeout"):
+            record[f"{prefix}_{kind}_count"] = sum(a[kind] for a in rows)
+    if len(own) == len(others) == 2:
+        if finite_race:
+            record.update(team_finish_result(
+                {aid: {"terminal_reason": f.terminal_reason, "finish_position": f.finish_position}
+                 for aid, f in episode.agents.items()}, episode.trainable_team, episode.opponent_team))
+        totals = penalty_totals([e for f in episode.agents.values() for e in f.penalty_events],
+                                episode.trainable_team, episode.opponent_team)
+        record.update({f"penalty_{key}": value for key, value in totals.items()})
+    return record
 
 
 def aggregate_eval_episodes(
@@ -346,6 +426,8 @@ def aggregate_eval_episodes(
         summary.update({
             "measured_laps": len(laps),
             "valid_laps": len(valid),
+            "valid_lap_time_sample_count": len(valid),
+            "mean_valid_lap_time_s": float(np.mean(valid)) if valid else None,
             "fastest_valid_lap_s": min(valid) if valid else None,
             "mean_lap_time_s": float(np.mean(laps)) if laps else None,
             "std_lap_time_s": float(np.std(laps)) if laps else None,
@@ -394,6 +476,35 @@ def aggregate_eval_episodes(
             {"episode": ep.episode, **event.to_dict()}
             for ep, events in zip(episodes, episode_events) for event in events
         ]
+
+    # Explicit denominators supplement the legacy keys used by selection.
+    summary["race_count"] = total
+    summary["at_least_one_finished_count"] = sum(
+        any(ep.agents[aid].completed for aid in trainable_ids) for ep in episodes)
+    summary["both_finished_count"] = sum(
+        all(ep.agents[aid].completed for aid in trainable_ids) for ep in episodes)
+    summary["any_learner_collision_dnf_count"] = sum(
+        any(ep.agents[aid].terminal_reason == "collision" for aid in trainable_ids) for ep in episodes)
+    if len(trainable_ids) == 2 and len(opponent_ids) == 2:
+        for key in ("first_place", "sweep"):
+            summary[f"{key}_count"] = sum(int(row[key]) for row in results)
+    summary["per_car"] = {}
+    for aid in all_agent_ids:
+        facts = [ep.agents[aid] for ep in episodes if aid in ep.agents]
+        times = [f.finish_elapsed_steps * timestep for f in facts
+                 if timestep is not None and f.clean_finish and f.finish_elapsed_steps is not None]
+        summary["per_car"][aid] = {
+            "race_count": len(facts), "finished_count": sum(f.completed for f in facts),
+            "collision_dnf_count": sum(f.terminal_reason == "collision" for f in facts),
+            "boundary_dnf_count": sum(f.terminal_reason == "track_boundary" for f in facts),
+            "timeout_count": sum(f.timed_out for f in facts),
+            "clean_finish_count": sum(f.clean_finish for f in facts),
+            "finish_time_sample_count": len(times),
+            "mean_clean_finish_time_s": float(np.mean(times)) if times else None,
+        }
+    for prefix, ids in (("own", trainable_ids), ("opponent", opponent_ids)):
+        for kind in ("collision_dnf", "boundary_dnf", "timeout"):
+            summary[f"{prefix}_{kind}_count"] = sum(summary["per_car"][aid][f"{kind}_count"] for aid in ids)
 
     return summary
 

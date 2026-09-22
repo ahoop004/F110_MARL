@@ -48,6 +48,8 @@ class CSVLogger:
         self.enabled = enabled
         self.scenario_config = scenario_config
         self.provenance = dict(provenance or {})
+        self._tables = {}
+        self._race_started = False
 
         if not self.enabled:
             return
@@ -58,16 +60,6 @@ class CSVLogger:
         # Initialize CSV files
         self.episode_metrics_file = self.output_dir / "episode_metrics.csv"
         self.agent_metrics_file = self.output_dir / "agent_metrics.csv"
-
-        # CSV writers (initialized on first write)
-        self._episode_writer = None
-        self._agent_writer = None
-        self._episode_csv = None
-        self._agent_csv = None
-
-        # Episode metrics fieldnames (determined from first episode)
-        self._episode_fieldnames = None
-        self._agent_fieldnames = None
 
         # Save config snapshot
         if scenario_config:
@@ -99,7 +91,29 @@ class CSVLogger:
         for key, value in metrics.items():
             if isinstance(value, (str, int, float, bool)) or value is None:
                 row.setdefault(key.replace("/", "_"), value)
+        race = metrics.get("race_record")
+        if race is not None:
+            row.update({key: value for key, value in race.items()
+                        if not isinstance(value, (dict, list))})
+            row["team_reward_components"] = json.dumps(race.get("team_reward_components", {}), sort_keys=True)
+            with (self.output_dir / "race_metrics.jsonl").open("a" if self._race_started else "w") as stream:
+                stream.write(json.dumps(race, sort_keys=True) + "\n")
+            self._race_started = True
         self._write_episode_row(row)
+
+        if race is not None:
+            identity = {key: race.get(key) for key in (
+                "run_id", "environment_id", "episode_id", "environment_episode", "map_id",
+                "environment_seed", "policy_version_start", "policy_version_end",
+                "reported_at_environment_steps", "race_mode", "phase")}
+            for aid, facts in race["agents"].items():
+                agent_row = {"episode": episode, **identity, "agent_id": aid, **facts,
+                             "spawn_id": race["spawn_ids"].get(aid)}
+                # Opponent reward was never evaluated; leave it unavailable.
+                agent_row["reward_components"] = (json.dumps(facts["reward_components"], sort_keys=True)
+                                                   if "reward_components" in facts else None)
+                self._write_agent_row(agent_row)
+            return
 
         agent_fields = {
             "reward": metrics.get("agent_rewards"),
@@ -123,52 +137,43 @@ class CSVLogger:
             self._write_agent_row(agent_row)
 
     def _write_episode_row(self, row_data: Dict[str, Any]):
-        """Write row to episode metrics CSV.
-
-        Args:
-            row_data: Row data dict
-        """
-        # Initialize CSV writer on first write
-        if self._episode_writer is None:
-            # Determine fieldnames from first row
-            self._episode_fieldnames = list(row_data.keys())
-
-            # Open CSV file
-            self._episode_csv = open(self.episode_metrics_file, 'w', newline='')
-            self._episode_writer = csv.DictWriter(
-                self._episode_csv,
-                fieldnames=self._episode_fieldnames,
-                extrasaction='ignore'
-            )
-            self._episode_writer.writeheader()
-
-        # Write row
-        self._episode_writer.writerow(row_data)
-        self._episode_csv.flush()
+        self._write_row(self.episode_metrics_file, row_data)
 
     def _write_agent_row(self, row_data: Dict[str, Any]):
-        """Write row to agent metrics CSV.
+        self._write_row(self.agent_metrics_file, row_data)
 
-        Args:
-            row_data: Row data dict
-        """
-        # Initialize CSV writer on first write
-        if self._agent_writer is None:
-            # Determine fieldnames from first row
-            self._agent_fieldnames = list(row_data.keys())
+    def log_update(self, metrics: Dict[str, Any]):
+        if self.enabled:
+            self._write_row(self.output_dir / "update_metrics.csv", {
+                key: value for key, value in metrics.items()
+                if isinstance(value, (str, int, float, bool)) or value is None})
 
-            # Open CSV file
-            self._agent_csv = open(self.agent_metrics_file, 'w', newline='')
-            self._agent_writer = csv.DictWriter(
-                self._agent_csv,
-                fieldnames=self._agent_fieldnames,
-                extrasaction='ignore'
-            )
-            self._agent_writer.writeheader()
-
-        # Write row
-        self._agent_writer.writerow(row_data)
-        self._agent_csv.flush()
+    def _write_row(self, path: Path, row: Dict[str, Any]):
+        """Retain late fields; expand existing headers atomically with bounded memory."""
+        table = self._tables.get(path)
+        if table is None:
+            fields = list(row)
+            stream = path.open("w", newline="")
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+        else:
+            stream, writer, fields = table
+            extra = [key for key in row if key not in fields]
+            if extra:
+                stream.flush()
+                fields = [*fields, *extra]
+                temporary = path.with_suffix(".csv.tmp")
+                with path.open(newline="") as old, temporary.open("w", newline="") as new:
+                    expanded = csv.DictWriter(new, fieldnames=fields)
+                    expanded.writeheader()
+                    expanded.writerows(csv.DictReader(old))
+                stream.close()
+                temporary.replace(path)
+                stream = path.open("a", newline="")
+                writer = csv.DictWriter(stream, fieldnames=fields)
+        self._tables[path] = stream, writer, fields
+        writer.writerow(row)
+        stream.flush()
 
     def save_config_snapshot(self, config: Dict[str, Any]):
         """Save scenario configuration snapshot to JSON.
@@ -210,10 +215,8 @@ class CSVLogger:
 
     def close(self):
         """Close CSV files and flush buffers."""
-        if self._episode_csv:
-            self._episode_csv.close()
-        if self._agent_csv:
-            self._agent_csv.close()
+        for stream, _, _ in self._tables.values():
+            stream.close()
 
     def __del__(self):
         """Cleanup on deletion."""

@@ -25,6 +25,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+analysis = [
+    "matplotlib",
+    "jupyterlab",
+    "ipykernel",
+    "nbclient",
+]
 dev = [
     "pytest",
 ]

@@ -39,7 +39,7 @@ when a setting should apply to every team objective.
 ## Current-setup three-lap transfer
 
 `ppo_lap_completion_transfer_3lap.yaml` loads
-`outputs/ppo_current_pretrain_s42/best_model.pt` and currently targets Budapest.
+`outputs/L_map_pretrain/L_map_best_model.pt` and currently targets Budapest.
 It inherits the current vehicle profile, fixed track observation scaling, and
 400 workers. Episodes end after three laps or 16,000 steps (800 simulated seconds).
 Training uses geometric boundary resets; evaluation also terminates on collisions.
@@ -87,7 +87,7 @@ The continuous base overrides live in `configs/scenarios/mappo_2v2_continuous_ba
 `mappo_2v2_penalties_scratch.yaml` and `mappo_2v2_penalties_pretrained.yaml`
 compare random initialization with the new current-setup L-map actor under
 identical physics, observations, opponents, and event-based penalties. The
-pretrained arm defaults to `outputs/ppo_current_pretrain_s42/best_model.pt`;
+pretrained arm defaults to `outputs/L_map_pretrain/L_map_best_model.pt`;
 use `--pretrained-actor PATH` to select a different current-setup source.
 Both penalty arms default to 400 environments across 100 CPU workers, with
 256 decisions per environment per collection round. See

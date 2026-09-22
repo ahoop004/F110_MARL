@@ -38,7 +38,7 @@ class ConsoleLogger:
             self.console.print(f"[dim]{subtitle}[/dim]")
         self.console.print()
 
-    def print_summary(self, stats: Dict[str, Any]):
+    def print_summary(self, stats: Dict[str, Any], title: str = "Training Summary"):
         """Print training summary as formatted table.
 
         Args:
@@ -52,13 +52,15 @@ class ConsoleLogger:
             ... })
         """
         self.console.print()
-        table = Table(title="Training Summary", show_header=True)
+        table = Table(title=title, show_header=True)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="yellow")
 
         for key, value in stats.items():
             # Format value based on type
-            if isinstance(value, float):
+            if value is None:
+                formatted_value = "n/a"
+            elif isinstance(value, float):
                 if 'rate' in key.lower():
                     formatted_value = f"{value:.2%}"
                 else:
@@ -100,7 +102,8 @@ class ConsoleLogger:
         Args:
             message: Info message to display
         """
-        self.console.print(f"[blue]ℹ[/blue] {message}")
+        if self.verbose:
+            self.console.print(f"[blue]ℹ[/blue] {message}")
 
 
 __all__ = ['ConsoleLogger']

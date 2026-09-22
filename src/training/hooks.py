@@ -25,6 +25,10 @@ class TrainingHook:
 
     requires_transition_record: Optional[bool] = None
 
+    def on_episode_start(self, metadata: Dict) -> None:
+        """Small reset provenance record, independent of transition capture."""
+        pass
+
     def on_step(self, record: "TransitionRecord") -> None:
         """Called after each agent decision with the full transition record.
 
@@ -144,6 +148,75 @@ class ConsoleHook(TrainingHook):
             for aid, outcomes in self._agent_outcomes.items():
                 agent_counts = Counter(outcomes)
                 self._log.print_info(f"    {aid} outcomes: {dict(agent_counts)}")
+
+
+class MAPPOConsoleHook(TrainingHook):
+    """Bounded completed-episode window; update-driven even during long races."""
+
+    def __init__(self, logger, *, window=100, every_updates=10, diagnostic_every=100):
+        if min(window, every_updates) < 1 or diagnostic_every < 0:
+            raise ValueError("Monitoring window/cadence must be positive; diagnostics may be zero")
+        self._log = logger
+        self._races = deque(maxlen=window)
+        self._every = every_updates
+        self._diagnostic_every = diagnostic_every
+        self._metrics = {}
+        self._episodes = 0
+        self._last_printed = None
+
+    def on_episode_end(self, episode, reward, info, metrics):
+        if "race_record" in metrics:
+            self._races.append(metrics["race_record"])
+            self._episodes += 1
+
+    def on_update(self, metrics):
+        self._metrics = dict(metrics)
+        update = int(metrics.get("train/updates", 0))
+        if update == 1 or update % self._every == 0:
+            self._print()
+        if self._diagnostic_every and update % self._diagnostic_every == 0:
+            values = " ".join(f"{key}={value:.4g}" for key, value in metrics.items()
+                              if isinstance(value, (float, int)) and any(
+                                  token in key for token in ("loss", "entropy", "kl", "clip", "explained_variance")))
+            if values:
+                self._log.print_info("MAPPO diagnostics  " + values)
+
+    def _print(self):
+        m, rows = self._metrics, list(self._races)
+        identity = (m.get("train/environment_steps"), self._episodes)
+        if identity == self._last_printed:
+            return
+        self._last_printed = identity
+        text = (f"MAPPO update={m.get('train/updates', 0)} "
+                f"env_steps={m.get('train/environment_steps', 0)} "
+                f"env_steps/s={m.get('perf/round_env_steps_per_second', 0):.1f} "
+                f"completed_window={len(rows)} completed_total={self._episodes}")
+        def mean(key):
+            values = [r[key] for r in rows if r.get(key) is not None]
+            return float(np.mean(values)) if values else None
+        def number(key):
+            value = mean(key)
+            return "n/a" if value is None else f"{value:.2f}"
+        if rows:
+            text += f" return={number('training_return')}"
+            if rows[-1]["race_mode"] == "continuous":
+                text += (f" progress_laps={number('mean_net_progress_laps')} "
+                         f"laps={number('mean_learner_laps')} duration_s={number('duration_s')} "
+                         f"collision_dnfs={sum(r['own_collision_dnf_count'] for r in rows)} "
+                         f"boundary_dnfs={sum(r['own_boundary_dnf_count'] for r in rows)}")
+            else:
+                for label, key in (("both_finished", "both_finished"), ("first_place", "first_place"),
+                                   ("sweep", "sweep"), ("collision_dnf", "any_learner_collision_dnf")):
+                    value = mean(key)
+                    text += f" {label}=" + ("n/a" if value is None else f"{value:.1%}")
+                for aid, agent in rows[-1]["agents"].items():
+                    if agent["team"] == "trainable":
+                        rate = np.mean([r["agents"][aid]["finished"] for r in rows])
+                        text += f" {aid}_finished={rate:.1%}"
+        self._log.print_info(text)
+
+    def on_training_end(self):
+        self._print()
 
 
 class WandbHook(TrainingHook):
@@ -272,6 +345,9 @@ class CSVHook(TrainingHook):
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         self._csv.log_training_episode(episode, reward, info, metrics)
+
+    def on_update(self, metrics: Dict[str, float]) -> None:
+        self._csv.log_update(metrics)
 
     def on_training_end(self) -> None:
         self._csv.close()
@@ -455,6 +531,18 @@ class EvaluationCheckpointHook(CheckpointHook):
         self._wandb = wandb_logger
         self._best_score: Optional[tuple[float, float, float, float]] = None
         self._history_path = self._dir / "evaluation_history.jsonl"
+        self._evaluation_count = 0
+        self._policy_version = 0
+        if console is not None and selection_strategy.startswith("team_"):
+            console.print_info("Checkpoint priority: " + self.selection_priority(selection_strategy))
+
+    @staticmethod
+    def selection_priority(strategy):
+        objective = {"team_completion": "at-least-one-finished rate",
+                     "team_combined": "rank score", "team_combined_penalties": "rank plus penalty score",
+                     "team_first_place": "first-place rate", "team_sweep": "sweep rate"}.get(strategy, strategy)
+        return (f"both-finished rate > {objective} > fewer learner collision DNFs > "
+                "clean finish time if both-finished=100%, otherwise earned net progress")
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
@@ -511,6 +599,7 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._environment_steps = int(metrics.get("train/environment_steps", self._environment_steps))
+        self._policy_version = int(metrics.get("train/updates", self._policy_version))
         if self._next_evaluation_step is not None and self._environment_steps >= self._next_evaluation_step:
             self._evaluate_checkpoint(None)
             self._next_evaluation_step = (self._environment_steps // self._evaluate_every_steps + 1) * self._evaluate_every_steps
@@ -518,12 +607,23 @@ class EvaluationCheckpointHook(CheckpointHook):
     def _evaluate_checkpoint(self, completed_episodes: Optional[int]) -> None:
 
         summary = dict(self._evaluator.evaluate())
+        self._evaluation_count += 1
+        run_id = self._provenance.get("run_id", self._dir.name)
+        for index, row in enumerate(summary.get("episode_results", [])):
+            row.update(run_id=run_id, environment_id="evaluation",
+                       episode_id=f"{run_id}_eval{self._evaluation_count:06d}_ep{index:06d}",
+                       policy_version=self._policy_version,
+                       reported_at_environment_steps=self._environment_steps)
         score = self.selection_score(summary, self._selection_strategy)
         is_best = self._best_score is None or score > self._best_score
         record = {
             "training_episode": completed_episodes,
+            "run_id": run_id,
+            "policy_version": self._policy_version,
             "environment_steps": self._environment_steps,
             "selection_strategy": self._selection_strategy,
+            "selection_priority": (self.selection_priority(self._selection_strategy)
+                                   if self._selection_strategy.startswith("team_") else None),
             "selection_score": [
                 value if np.isfinite(value) else None for value in score
             ],
@@ -544,7 +644,17 @@ class EvaluationCheckpointHook(CheckpointHook):
             scalar_metrics["eval/environment_steps"] = self._environment_steps
             self._wandb.log_metrics(scalar_metrics)
 
-        if self._console is not None:
+        if self._console is not None and self._selection_strategy.startswith("team_"):
+            finish = summary.get("mean_clean_finish_time_s")
+            finish_text = "n/a" if finish is None else f"{finish:.2f}s"
+            self._console.print_info(
+                f"checkpoint eval races={summary.get('episodes', 0)} env_steps={self._environment_steps} "
+                f"both_finished={summary.get('team_both_finished_rate', 0):.1%} "
+                f"first_place={summary.get('team_first_place', 0):.1%} "
+                f"sweep={summary.get('team_sweep', 0):.1%} rank={summary.get('team_rank_score', 0):.3f} "
+                f"clean_finish={finish_text} finishers={summary.get('clean_finish_count', 0)} "
+                f"checkpoint={'saved best' if is_best else 'kept previous'}")
+        elif self._console is not None:
             finish = summary.get("mean_clean_finish_time_s")
             finish_text = "n/a" if finish is None else f"{float(finish):.1f}"
             progress_key = "mean_net_progress" if self._selection_strategy == "completion_progress" else "mean_progress"
@@ -570,10 +680,14 @@ class PhysicsEpisodeHook(TrainingHook):
     """Write sampled episode physics through the shared provenance logger."""
     requires_transition_record = True
 
-    def __init__(self, output_dir) -> None:
+    def __init__(self, output_dir, *, transition_records=True) -> None:
         from core.provenance import PhysicsEpisodeLog
+        self.requires_transition_record = transition_records
         self._log = PhysicsEpisodeLog(output_dir)
         self.path = self._log.path
+
+    def on_episode_start(self, metadata) -> None:
+        self._log.write(metadata['episode_id'], metadata['map_id'], metadata.get('physics'))
 
     def on_step(self, record) -> None:
         self._log.write(record.episode_id, record.map_id, record.info.get('physics'))

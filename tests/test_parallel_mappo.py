@@ -164,6 +164,14 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
     assert capture.ends == 1
     assert capture.updates[-1]["train/environment_steps"] == 15
     assert capture.updates[-1]["train/agent_steps"] == 30
+    assert capture.updates[-1]["train/physics_steps"] == 15
+    races = [row[3]["race_record"] for row in capture.episodes]
+    assert len({r["episode_id"] for r in races}) == 5
+    assert {r["environment_id"] for r in races} == {0, 1, 2}
+    assert all(r["run_id"] == trainer.run_id for r in races)
+    assert all(len(r["agents"]) == 4 for r in races)
+    assert all(r["policy_version_start"] <= r["policy_version_end"] for r in races)
+    assert all(r["environment_decisions"] == 3 for r in races)
     assert len({r.episode_id for r in capture.records}) == 5
     assert {r.info["worker_id"] for r in capture.records} == {0, 1, 2}
     assert {r.info["worker_seed"] for r in capture.records} == {42, 43, 44}
@@ -222,6 +230,69 @@ def test_step_budget_collects_exact_remainder_across_resets(workers, horizon):
     # The budget cut is not falsely recorded as a terminal or truncation.
     partial = [r for r in capture.records if r.info["worker_id"] == 2][-2:]
     assert all(not r.terminated and not r.truncated for r in partial)
+
+
+def test_parallel_selective_recording_keeps_all_cars_and_budget_cut(tmp_path):
+    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from src.replay.race_reader import iter_race_frames, load_clips
+    trainer, scenario, directory = setup(2, 2)
+    writer = RaceDatasetWriter(tmp_path/'races', config=dict(sample_probability=1., chunk_frames=4))
+    hook = RaceDatasetHook(writer)
+    trainer.hooks = [hook]
+    trainer._transition_hooks = []
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=3, total_steps=17)
+    finally:
+        trainer.env.close()
+        writer.close(complete=False)
+    frames = list(iter_race_frames(tmp_path/'races'))
+    assert len(frames) == 17
+    assert len({(f['episode_id'], f['physics_index']) for f in frames}) == 17
+    assert {f['environment_id'] for f in frames} == {0, 1, 2}
+    assert all(len(f['pre_state']) == len(f['post_state']) == len(f['commands']) == 4 for f in frames)
+    assert all(f['commands']['car_2']['applied'] is not None for f in frames)
+    assert all(f['learners']['car_0']['reward_components'] for f in frames)
+    samples = [c for c in load_clips(tmp_path/'races') if c['kind'] == 'representative_race']
+    assert len(samples) == 6 and sum(c['episode_complete'] for c in samples) == 5
+    assert sum(c['end_reason'] == 'budget_cut' for c in samples) == 1
+    assert all(c['spawn']['initial_states'] for c in samples)
+
+
+def test_recording_covers_opponent_only_tail(tmp_path):
+    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from src.replay.race_recorder import RaceRecorder
+    from src.replay.race_reader import iter_race_frames, load_clips
+    trainer, scenario, directory = setup(1, 4)
+    env = trainer.env
+    original_step = env.step
+    def step(actions):
+        obs, rewards, terms, truncs, infos = original_step(actions)
+        if env._elapsed_steps == 1:
+            for aid in trainer.trainable_ids:
+                env.lifecycle.record_collision(aid, step=0)
+                infos[aid].update(status='crashed', terminal_reason='collision', terminal_step=0)
+                terms[aid] = True
+            env.agents = [a for a in env.agents if a not in trainer.trainable_ids]
+        return obs, rewards, terms, truncs, infos
+    env.step = step
+    writer = RaceDatasetWriter(tmp_path/'races', config=dict(sample_probability=1., events=False))
+    hook = RaceDatasetHook(writer)
+    trainer.hooks = [hook]
+    trainer._transition_hooks = []
+    trainer.race_recorder = RaceRecorder(hook.recording_config, hook.on_race_record, run_id='tail')
+    try:
+        trainer.train(1)
+    finally:
+        env.close()
+        writer.close(complete=False)
+    frames = list(iter_race_frames(tmp_path/'races'))
+    assert len(frames) == 3
+    assert set(frames[0]['learners']) == set(trainer.trainable_ids)
+    assert frames[1]['learners'] == frames[2]['learners'] == {}
+    assert frames[1]['commands']['car_0']['requested'] is None
+    assert frames[1]['commands']['car_0']['applied'] is not None  # Terminal control, not an invented actor command.
+    assert frames[-1]['post_state']['car_0']['terminal_reason'] == 'collision'
+    assert load_clips(tmp_path/'races')[0]['all_cars_terminal']
 
 
 def test_serial_step_budget_stops_mid_episode_without_fabricating_outcome():

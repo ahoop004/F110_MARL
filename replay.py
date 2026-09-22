@@ -21,6 +21,7 @@ Recording
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -53,6 +54,14 @@ _DEFAULT_ACTION_REPEAT = 2
 
 def load_dataset(dataset_dir: Path) -> Dict[str, np.ndarray]:
     """Load and concatenate all transition chunks from *dataset_dir*."""
+    metadata = dataset_dir / 'metadata.json'
+    if metadata.exists() and json.loads(metadata.read_text()).get('schema_version') == '3.0':
+        from src.replay.race_reader import iter_race_frames
+        frames = list(iter_race_frames(dataset_dir))
+        return {'race_frame': np.asarray(frames, dtype=object),
+                'episode_id': np.asarray([f['episode_id'] for f in frames], dtype=object),
+                'map_id': np.asarray([f['map_id'] for f in frames], dtype=object),
+                'step_idx': np.asarray([f['physics_index'] for f in frames], dtype=np.int64)}
     chunks = sorted(dataset_dir.glob("transitions_*.npz"))
     if not chunks:
         raise FileNotFoundError(f"No transition chunks found in {dataset_dir}")
@@ -167,7 +176,13 @@ def replay(
     window_height: int = 800,
     action_repeat: int = _DEFAULT_ACTION_REPEAT,
     timestep: float = _DEFAULT_TIMESTEP,
+    filter_clip: Optional[str] = None,
 ) -> None:
+    metadata = dataset_dir / 'metadata.json'
+    if metadata.exists() and json.loads(metadata.read_text()).get('schema_version') == '3.0':
+        return replay_races(dataset_dir, maps_dir=maps_dir, filter_episode=filter_episode,
+                            filter_map=filter_map, filter_clip=filter_clip, speed=speed,
+                            list_only=list_only, window_width=window_width, window_height=window_height)
     print(f"Loading dataset: {dataset_dir}")
     data = load_dataset(dataset_dir)
     lifecycle_masks = data.get("lifecycle_masks")
@@ -264,9 +279,55 @@ def replay(
                 pass
 
 
-# ---------------------------------------------------------------------------
+def replay_races(dataset_dir, *, maps_dir, filter_episode=None, filter_map=None,
+                 filter_clip=None, speed=1., list_only=False, window_width=1280, window_height=800):
+    from src.replay.race_reader import load_clips, clip_frames, render_state
+    if speed <= 0:
+        raise ValueError('Playback speed must be positive')
+    clips = [c for c in load_clips(dataset_dir)
+             if (not filter_episode or filter_episode in c['episode_id'])
+             and (not filter_map or filter_map in str(c['map_id']))
+             and (not filter_clip or filter_clip in c['clip_id'])]
+    if list_only:
+        for c in clips:
+            print(f"{c['clip_id']}  {c['map_id']}  {c['kind']}  "
+                  f"physics={c['start_physics_index']}..{c['end_physics_index']}  "
+                  f"complete={c['complete']}  reasons={c['retention_reasons']} "
+                  f"end={c.get('end_reason', 'open')} all_cars_terminal={c['all_cars_terminal']}")
+        return
+    from render.renderer import EnvRenderer
+    renderer = None
+    try:
+        for clip in clips:
+            frames = clip_frames(dataset_dir, clip)
+            first = next(frames, None)
+            if first is None:
+                continue
+            if renderer is None:
+                renderer = EnvRenderer(window_width, window_height)
+            path, extension, meta = load_map(clip['map_id'], maps_dir)
+            renderer.update_map(path, extension, map_meta=meta)
+            renderer.reset_state()
+            print(f"Replaying {clip['clip_id']} ({clip['kind']}); timing from recorded physics intervals")
+            renderer.update_obs(render_state(first['pre_state']))
+            renderer.dispatch_events()
+            renderer.flip()
+            from itertools import chain
+            for frame in chain([first], frames):
+                time.sleep(max(0., frame['simulation_time_end_s'] - frame['simulation_time_s']) / speed)
+                renderer.update_obs(render_state(frame['post_state']))
+                renderer.dispatch_events()
+                renderer.flip()
+                if getattr(renderer, 'has_exit', False):
+                    return
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if renderer is not None:
+            renderer.close()
+
+
 # CLI
-# ---------------------------------------------------------------------------
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -278,6 +339,7 @@ def _parse_args() -> argparse.Namespace:
                    help="Directory containing transitions_*.npz files")
     p.add_argument("--episode", type=str, default=None,
                    help="Filter: episode ID substring (e.g. 'ep_0042')")
+    p.add_argument('--clip', type=str, default=None, help='Shared-frame dataset: clip ID substring')
     p.add_argument("--map", type=str, default=None, dest="map_filter",
                    help="Filter: map bundle substring (e.g. 'Budapest')")
     p.add_argument("--speed", type=float, default=1.0,
@@ -309,6 +371,7 @@ def main() -> None:
         window_height=args.height,
         action_repeat=args.action_repeat,
         timestep=args.timestep,
+        filter_clip=args.clip,
     )
 
 

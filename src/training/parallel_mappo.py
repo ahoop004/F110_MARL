@@ -44,6 +44,8 @@ class CollectorAgent:
         self._team_step_indices = {aid: [] for aid in self.agent_ids}
         self.fragments = []
         self.last_raw_actions = {}
+        self.policy_version = 0
+        self.physics_steps_collected = 0
 
     def store_batch(self, agent_ids, *, observations, global_state, actions,
                     rewards, log_probs, values, terminated, truncated, raw_actions=None):
@@ -184,11 +186,19 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
             decision_dt=float(env_cfg.get("timestep", .01)) * repeat,
         )
         agent = CollectorAgent(contract, horizon)
+        recorder = None
+        recording = scenario.get('recording', {})
+        if recording.get('enabled', False):
+            from src.replay.race_recorder import RaceRecorder
+            recorder = RaceRecorder(recording, lambda event: sink.send(('race_record', event)),
+                                    run_id=run_id, environment_id=env_id,
+                                    num_envs=int(scenario['experiment'].get('num_envs', 1)))
         trainer = MARLTrainer(
             env, agent, ids, opponents, obs, rewards, actions, action_repeat=repeat,
             hooks=[_WorkerHook(sink, env_id, seed, record_transitions, aggregate_wandb)],
             run_id=f"{run_id}_env{env_id:04d}", reward_mode=agent.reward_mode,
             team_reward_reduction=agent.team_reward_reduction,
+            race_recorder=recorder,
         )
         return env, agent, trainer.iter_train(episodes, parallel=True, total_steps=total_steps)
     except BaseException:
@@ -223,6 +233,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
         for env_id in generators:
             advance(env_id)
         while pending:
+            physics_start = sum(a.physics_steps_collected for a in agents.values())
             counts = {env_id: 0 for env_id in pending}
             paused = set()
             while set(pending) - paused:
@@ -254,8 +265,12 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
             pooled = None if not fragments else tuple(
                 np.concatenate([fragment[i] for fragment in fragments]) for i in range(3)
             )
-            connection.send(("rollout", (pooled, sum(counts.values()), sink.take())))
-            connection.recv()  # Policy update barrier, including an empty final rollout.
+            physics = sum(a.physics_steps_collected for a in agents.values()) - physics_start
+            connection.send(("rollout", (pooled, sum(counts.values()), physics, sink.take())))
+            metrics = connection.recv()  # Policy update barrier, including an empty final rollout.
+            for agent in agents.values():
+                agent.policy_version = metrics["train/updates"]
+                agent.recording_stop = metrics.get('recording/storage_full', False)
             for env_id in sorted(paused):
                 advance(env_id)
         connection.send(("done", sink.take()))
@@ -292,8 +307,14 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     )}
     record_hooks = [h for h in trainer._transition_hooks if type(h) is not WandbHook]
     aggregate_wandb = any(type(h) is WandbHook for h in trainer._transition_hooks)
+    race_hooks = [h for h in trainer.hooks if hasattr(h, 'on_race_record')]
+    scenario = copy.deepcopy(scenario)
+    # Enable worker capture only when the parent has a corresponding writer.
+    scenario['recording'] = race_hooks[0].recording_config if race_hooks else {'enabled': False}
     connections, processes, process_by_worker = {}, [], {}
     completed, collected, actor_samples, updates = 0, 0, 0, 0
+    physics_collected = 0
+    pending_episodes = []
     success = False
     context = mp.get_context("spawn")
     # Set before spawning, so NumPy/BLAS/Numba imports inherit single-thread limits.
@@ -316,17 +337,38 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         return kind, payload
 
     def events(items):
-        nonlocal completed
         for kind, payload in items:
             if kind == "transition":
                 for hook in record_hooks:
                     hook.on_step(payload)
             elif kind == "episode":
+                pending_episodes.append(payload)
+            elif kind == 'race_record':
+                for hook in race_hooks:
+                    hook.on_race_record(payload)
+            elif kind == 'episode_start':
                 for hook in trainer.hooks:
-                    hook.on_episode_end(completed, *payload)
-                completed += 1
+                    callback = getattr(hook, 'on_episode_start', None)
+                    if callback is not None:
+                        callback(payload)
             else:
                 raise RuntimeError(f"Unexpected MAPPO event: {kind}")
+
+    def flush_episodes():
+        nonlocal completed
+        for reward, info, metrics in pending_episodes:
+            race = metrics.get("race_record")
+            if race is not None:
+                race.update(run_id=trainer.run_id, environment_id=info["worker_id"],
+                            reported_at_environment_steps=collected)
+            metrics["train/environment_steps"] = collected
+            metrics["train/physics_steps"] = physics_collected
+            metrics["train/agent_steps"] = actor_samples
+            metrics["train/updates"] = updates
+            for hook in trainer.hooks:
+                hook.on_episode_end(completed, reward, info, metrics)
+            completed += 1
+        pending_episodes.clear()
 
     try:
         for key in thread_vars:
@@ -354,8 +396,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             for worker_id in batch:
                 if receive(worker_id, starting=True)[0] != "ready":
                     raise RuntimeError("MAPPO worker did not report readiness")
-            print(f"[MAPPO] Initialized {min(start + batch_size, workers)}/{workers} workers "
-                  f"for {num_envs} environments", flush=True)
+            if getattr(trainer, "console", None) is not None:
+                trainer.console.print_info(f"MAPPO initialized {min(start + batch_size, workers)}/{workers} workers "
+                                           f"for {num_envs} environments")
         for connection in connections.values():
             connection.send(("start", None))
         waiting = {}
@@ -371,9 +414,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     events(items)
                     requests.update({(worker_id, env_id): request for env_id, request in batch.items()})
                 elif kind == "rollout":
-                    rollout, steps, items = payload
+                    rollout, steps, physics, items = payload
                     events(items)
-                    waiting[worker_id] = (rollout, steps)
+                    waiting[worker_id] = (rollout, steps, physics)
                 elif kind == "done":
                     events(payload)
                     connections.pop(worker_id).close()
@@ -389,29 +432,33 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 steps = sum(item[1] for item in waiting.values())
                 rollouts = [waiting[i][0] for i in sorted(waiting) if waiting[i][0] is not None]
                 samples = sum(len(item[0]) for item in rollouts)
-                started = time.perf_counter()
-                metrics = agent.update_rollouts(rollouts)
-                update_s = time.perf_counter() - started
                 collected += steps
+                physics_collected += sum(item[2] for item in waiting.values())
                 actor_samples += samples
-                updates += bool(samples)
                 trainer._environment_steps = collected
+                flush_episodes()
+                started = time.perf_counter()
+                metrics = agent.update_rollouts(rollouts) if samples else {}
+                update_s = time.perf_counter() - started
+                updates += bool(samples)
                 metrics.update({
                     "train/environment_steps": collected, "train/agent_steps": actor_samples,
+                    "train/physics_steps": physics_collected,
                     "train/updates": updates, "perf/collection_seconds": collection_s,
                     "perf/update_seconds": update_s, "perf/collection_env_steps_per_second": steps / max(collection_s, 1e-9),
                     "perf/round_env_steps_per_second": steps / max(collection_s + update_s, 1e-9),
                     "train/rollout_agent_samples": samples,
                 })
-                for hook in trainer.hooks:
-                    hook.on_update(metrics)
-                print(f"[MAPPO] update={updates} env_steps={collected} samples={samples} "
-                      f"collect={collection_s:.1f}s update={update_s:.1f}s "
-                      f"env_steps/s={metrics['perf/round_env_steps_per_second']:.1f}", flush=True)
+                if race_hooks:
+                    metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
+                if steps:
+                    for hook in trainer.hooks:
+                        hook.on_update(metrics)
                 for worker_id in waiting:
                     connections[worker_id].send(metrics)
                 waiting.clear()
                 round_start = time.perf_counter()
+        flush_episodes()
         if total_steps is not None and collected != total_steps:
             raise RuntimeError(f"MAPPO collectors collected {collected} of {total_steps} environment decisions")
         if total_steps is None and completed != n_episodes:

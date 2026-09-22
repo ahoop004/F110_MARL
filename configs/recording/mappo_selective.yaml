@@ -1,0 +1,22 @@
+# Optional include for MAPPO training. --record-races also enables these defaults.
+# Change caps/probability for your run length; reaching a cap produces explicit
+# partial captures and stops recording, without changing training.
+recording:
+  enabled: true
+  sample_probability: 0.01
+  seed: 42
+  events: true
+  # Physics steps, shared across all cars: at 0.05 s, 3 s before / 5 s after.
+  pre_steps: 60
+  post_steps: 100
+  max_clip_steps: 600
+  max_clips_per_episode: 16
+  max_events_per_clip: 128
+  max_frames: 100000
+  # Serialized frame bytes BEFORE compression; small indices/metadata are extra.
+  max_bytes: 2000000000
+  chunk_frames: 128
+  encounter_distance_m: 8.0
+  lateral_distance_m: 3.0
+  pass_hysteresis_m: 0.3
+  pass_sustain_steps: 3

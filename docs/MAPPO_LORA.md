@@ -53,7 +53,7 @@ policies; attacker/defender objectives or dynamic role switching are not enabled
 
 First train a compatible 158-input PPO source. Older 50-input PPO checkpoints
 cannot initialize these scenarios. The inherited default source is
-`outputs/ppo_current_pretrain_s42/best_model.pt`; a missing source fails explicitly.
+`outputs/L_map_pretrain/L_map_best_model.pt`; a missing source fails explicitly.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \

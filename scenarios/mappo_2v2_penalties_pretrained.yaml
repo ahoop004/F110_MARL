@@ -6,4 +6,4 @@ experiment:
 training_defaults:
   # Produced by the current pretraining run; override with --pretrained-actor PATH.
   # A missing checkpoint fails instead of silently running the scratch arm.
-  pretrained_actor_checkpoint: ../outputs/ppo_current_pretrain_s42/best_model.pt
+  pretrained_actor_checkpoint: ../outputs/L_map_pretrain/L_map_best_model.pt

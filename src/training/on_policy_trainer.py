@@ -586,6 +586,9 @@ class _WorkerHook(TrainingHook):
                                        "worker_seed": self.seed})
         self.connection.send(("transition", record))
 
+    def on_episode_start(self, metadata):
+        self.connection.send(('episode_start', metadata))
+
     def on_episode_end(self, episode, reward, info, metrics):
         info = {**info, "worker_id": self.worker_id, "worker_seed": self.seed,
                 "worker_episode": episode}

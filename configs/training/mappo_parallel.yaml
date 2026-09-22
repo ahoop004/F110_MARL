@@ -7,6 +7,10 @@ experiment:
   worker_startup_batch_size: 8
   worker_startup_timeout_s: 600
   worker_response_timeout_s: 120
+  terminal_recent_episodes: 100  # bounded completed-episode window
+  terminal_every_updates: 10
+  terminal_diagnostic_every_updates: 100  # 0 disables the diagnostic line
+  terminal_episode_detail: false
 training_defaults:
   update_version: parallel-mappo-grouped256-batch2048-v1
   # Independent race decisions per environment before each pooled policy update.

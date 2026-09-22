@@ -47,7 +47,7 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --output-dir outputs/ppo_current_pretrain_s42
 ```
 
-Both pretrained arms default to `outputs/ppo_current_pretrain_s42/best_model.pt`.
+Both pretrained arms default to `outputs/L_map_pretrain/L_map_best_model.pt`.
 They fail if this file is missing. For a different run, pass
 `--pretrained-actor outputs/YOUR_RUN/best_model.pt`. Validate the source using
 the [pretraining workflow](PPO_TO_MAPPO_PRETRAINING.md#select-and-validate-a-model)
