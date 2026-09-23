@@ -230,6 +230,8 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
             for collector in trainers.values():
                 collector.updates = state['policy_version']
                 collector.recording_stop = state['recording_stop']
+                collector.recording_progress = state['recording_progress']
+                collector.recording_exhausted_windows = state['exhausted_windows']
             for env_id in sorted(paused):
                 advance(env_id)
         if race_events:
@@ -392,7 +394,9 @@ def train_parallel(trainer, scenario, scenario_dir, *, on_episode, console=None)
                             f"env_steps/s={metrics['perf/round_env_steps_per_second']:.1f}")
                 for worker_id in waiting:
                     connections[worker_id].send(('continue', dict(policy_version=trainer.updates,
-                        recording_stop=race_writer.storage_full if race_writer is not None else False)))
+                        recording_stop=race_writer.storage_full if race_writer is not None else False,
+                        recording_progress=trainer.environment_steps,
+                        exhausted_windows=sorted(race_writer.exhausted_windows) if race_writer is not None else [])))
                 waiting.clear()
                 round_start = time.perf_counter()
         actual = trainer.environment_steps if total_steps is not None else completed

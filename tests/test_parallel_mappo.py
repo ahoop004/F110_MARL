@@ -308,3 +308,37 @@ def test_serial_step_budget_stops_mid_episode_without_fabricating_outcome():
     assert len(capture.episodes) == 1
     assert capture.ends == 1
     assert all(not r.terminated and not r.truncated for r in capture.records[-2:])
+
+
+@pytest.mark.parametrize('parallel', [False, True])
+def test_recording_window_reserves_late_frames_for_fixed_opponents(tmp_path, parallel):
+    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from src.replay.race_recorder import RaceRecorder
+    from src.replay.race_reader import iter_race_frames
+    threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    trainer, scenario, directory = setup(2, 2)
+    cfg = dict(sample_probability=1., max_frames=5, max_bytes=40000000,
+        windows=[dict(start_step=0, end_step=6, max_frames=2, max_bytes=20000000),
+                 dict(start_step=6, end_step=20, max_frames=3, max_bytes=20000000)])
+    writer = RaceDatasetWriter(tmp_path, config=cfg)
+    hook = RaceDatasetHook(writer)
+    trainer.hooks, trainer._transition_hooks = [hook], []
+    if not parallel:
+        trainer.race_recorder = RaceRecorder(cfg, writer.add_event, run_id='fixed-window')
+    try:
+        if parallel:
+            trainer.train_parallel(scenario, directory, num_envs=3, total_steps=17)
+        else:
+            trainer.train(total_steps=17)
+    finally:
+        trainer.env.close()
+        writer.close()
+        torch.set_num_threads(threads)
+    frames = list(iter_race_frames(tmp_path))
+    assert trainer._environment_steps == 17
+    assert len(frames) == 5
+    assert [w['frames'] for w in writer.window_usage] == [2, 3]
+    late = [f for f in frames if f['recording_window_index'] == 1]
+    assert all(f['recording_progress'] >= 6 for f in late)
+    assert all(f['commands']['car_2']['applied'] is not None for f in frames)

@@ -32,26 +32,32 @@ def preserve_rng():
             torch.cuda.set_rng_state_all(cuda_state)
 
 
-def evaluate_pair(trainer, protocol):
+def evaluate_pair(trainer, protocol, *, context=None):
     """Fixed seeds/maps, deterministic actors, no updates or rollout mutation."""
     modes = {team: agent.actor.training for team, agent in trainer.agents.items()}
     raw = {team: deepcopy(agent.last_raw_actions) for team, agent in trainer.agents.items()}
-    rows = []
+    rows, metric_keys = [], set()
     with preserve_rng():
         try:
             for agent in trainer.agents.values():
                 agent.actor.eval()
             for index in range(protocol["episodes"]):
+                race_context = None if context is None else dict(context,
+                    episode_id=f"{trainer.run_id}_{context['evaluation_id']}_env0000_ep{index:06d}",
+                    environment_episode=index, environment_id=0, run_id=trainer.run_id)
                 row = trainer.episode(training=False, seed=protocol["seed"] + index,
-                                      map_episode_index=index)
+                                      map_episode_index=index, evaluation_context=race_context)
+                metric_keys.update(row)
                 row["map"] = getattr(trainer.env, "_map_bundle_active", None)
                 row["seed"] = protocol["seed"] + index
+                if race_context is not None:
+                    row.update(race_context, map_id=row['map'])
                 rows.append(row)
         finally:
             for team, agent in trainer.agents.items():
                 agent.actor.train(modes[team])
                 agent.last_raw_actions = raw[team]
-    keys = sorted({key for row in rows for key in row} - {"map", "seed"})
+    keys = sorted(metric_keys)
     summary = {key: float(np.mean([row.get(key, 0.0) for row in rows])) for key in keys}
     return summary, rows
 
@@ -228,9 +234,10 @@ class TwoTeamTrainer:
                             "train/agent_steps": self.agent_steps,
                             **{f"train/{key}": value for key, value in metrics.items()}})
 
-    def episode(self, *, training=True, seed=None, step_budget=None, map_episode_index=0):
+    def episode(self, *, training=True, seed=None, step_budget=None, map_episode_index=0,
+                evaluation_context=None):
         generator = self.iter_episode(training=training, seed=seed, step_budget=step_budget,
-                                      map_episode_index=map_episode_index)
+                                      map_episode_index=map_episode_index, evaluation_context=evaluation_context)
         try:
             next(generator)
         except StopIteration as result:
@@ -245,14 +252,15 @@ class TwoTeamTrainer:
             self._global_rollout.clear()
 
     def iter_episode(self, *, training=True, seed=None, step_budget=None,
-                     map_episode_index=0, parallel=False):
+                     map_episode_index=0, parallel=False, evaluation_context=None):
         options = {"map_episode_index": map_episode_index} if seed is not None else None
         obs, infos = self.env.reset(seed=seed, options=options)
-        recorder = self.race_recorder if training else None
-        episode = self.training_episode
-        episode_id = f'{self.run_id}_env{self.environment_id:04d}_ep{episode:06d}'
+        recorder = self.race_recorder if training or evaluation_context is not None else None
+        episode = self.training_episode if training else map_episode_index
+        episode_id = (evaluation_context['episode_id'] if evaluation_context else
+                      f'{self.run_id}_env{self.environment_id:04d}_ep{episode:06d}')
         agent_teams = {aid: team for team, ids in self.teams.items() for aid in ids}
-        start_policy = self.updates
+        start_policy = self.updates if training or evaluation_context is None else evaluation_context['policy_version']
         policy_version = start_policy
         if training:
             self.training_episode += 1
@@ -267,7 +275,9 @@ class TwoTeamTrainer:
                 spawn=capture_spawn_context(self.env, self.env.possible_agents),
                 physics=infos[next(iter(agent_teams))].get('physics'),
                 termination=dict(mode=self.env.episode_termination_mode, finish_on_laps=True),
-                agent_teams=agent_teams, team_policy_versions={t: start_policy for t in self.teams})
+                agent_teams=agent_teams,
+                team_policy_versions=(evaluation_context['team_policy_versions'] if evaluation_context else
+                                      {t: start_policy for t in self.teams}), evaluation=evaluation_context)
         for composer in (*self.observations.values(), *self.rewards.values(), *self.actions.values()):
             composer.reset()
         self.events.reset()
@@ -297,10 +307,20 @@ class TwoTeamTrainer:
                     team_values[team] = agent.evaluate_state(state, self.teams[team][0])
                     values.update({aid: team_values[team] for aid in ids})
             physical = {aid: self.actions[aid].process(action) for aid, action in normalized.items()}
-            policy_version = self.updates
+            policy_version = self.updates if training else start_policy
             if recorder is not None and (self.recording_stop or
                     (self.race_writer is not None and self.race_writer.storage_full)) and not recorder.stopped:
                 recorder.stop()
+            if recorder is not None:
+                recording_progress = (evaluation_context.get('environment_steps') if evaluation_context else
+                            getattr(self, 'recording_progress', 0) if parallel else self.environment_steps)
+                recorder.prepare(recording_progress, steps, policy_version,
+                    exhausted_windows=(self.race_writer.exhausted_windows if self.race_writer is not None else
+                                       getattr(self, 'recording_exhausted_windows', ())),
+                    clock=('checkpoint_training_steps' if evaluation_context else
+                           'last_completed_collection_barrier' if parallel else 'joint_environment_decisions'),
+                    team_policy_versions=(evaluation_context['team_policy_versions'] if evaluation_context else
+                                          {t: policy_version for t in self.teams}))
             recording_active = recorder is not None and recorder.capturing
             self.env.record_applied_commands = recording_active
             if recording_active:
@@ -350,7 +370,9 @@ class TwoTeamTrainer:
                 applied = getattr(self.env, '_recorded_applied_commands', None)
                 recorder.step(plain(dict(
                     physics_index=steps-1, physics_index_end=steps, decision_index=steps-1, substep_index=0,
-                    policy_version=policy_version, team_policy_versions={t: policy_version for t in self.teams},
+                    policy_version=policy_version,
+                    team_policy_versions=(evaluation_context['team_policy_versions'] if evaluation_context else
+                                          {t: policy_version for t in self.teams}),
                     timestep_s=self.env.timestep, action_repeat=1,
                     simulation_time_s=(steps-1)*self.env.timestep, simulation_time_end_s=steps*self.env.timestep,
                     pre_state=recorded_pre, post_state=capture_state(self.env, infos, next_obs, self.env.possible_agents),

@@ -16,7 +16,7 @@ import pandas as pd
 
 
 ARTIFACTS = ('config_snapshot.json', 'race_metrics.jsonl', 'evaluation_report.json',
-             'evaluation_history.jsonl', 'update_metrics.csv', 'team_metrics.jsonl', 'updates.jsonl')
+             'evaluation_history.jsonl', 'update_metrics.csv', 'team_metrics.jsonl', 'updates.jsonl', 'evaluation_races.jsonl')
 RATE_METRICS = ('both_finished', 'first_place', 'sweep', 'at_least_one_finished',
                 'any_learner_collision_dnf')
 VALUE_METRICS = ('rank_score', 'mean_net_progress_laps', 'mean_learner_laps',
@@ -65,7 +65,7 @@ def _digest(value):
 def _protocol(report, provenance, *, history=False):
     """Fingerprint recorded evaluation conditions, including ordered map/seed pairs."""
     protocol = report.get('evaluation_protocol', {}) if history else report
-    physics = dict(provenance.get('physics_contract', {}))
+    physics = dict(provenance.get('physics_contract') or {})
     friction = physics.get('friction_protocol', {})
     if friction:
         physics['friction_protocol'] = {k: v for k, v in friction.items() if k != 'train'}
@@ -93,6 +93,7 @@ class RunData:
     evaluations: pd.DataFrame
     clips: pd.DataFrame
     team_races: pd.DataFrame = field(default_factory=pd.DataFrame)
+    recording_windows: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def load_run(directory, *, label=None, dataset_dirs=()):
@@ -141,8 +142,9 @@ def load_run(directory, *, label=None, dataset_dirs=()):
         p = entry.get('evaluation_protocol', {})
         context = dict(phase='evaluation', protocol=p.get('name', 'selection'),
             protocol_id=_protocol(entry, provenance, history=True),
-            evaluation_id=f'selection_{index:06d}', environment_steps=entry.get('environment_steps'))
-        evaluation_rows.append({**identity, **context, 'checkpoint': None,
+            evaluation_id=entry.get('evaluation_id', f'selection_{index:06d}'), environment_steps=entry.get('environment_steps'))
+        evaluation_rows.append({**identity, **context, 'checkpoint': entry.get('checkpoint'),
+            'checkpoint_sha256': entry.get('checkpoint_sha256'),
             'policy_version': entry.get('policy_version'), 'is_best': entry.get('is_best'),
             'seeds': p.get('seeds'), 'reported_race_count': entry.get('race_count', entry.get('episodes'))})
         for row in entry.get('episode_results', []):
@@ -150,7 +152,7 @@ def load_run(directory, *, label=None, dataset_dirs=()):
     if report:
         context = dict(phase='evaluation', protocol=report.get('protocol', 'unknown'),
             protocol_id=_protocol(report, report.get('evaluation_provenance', {})),
-            evaluation_id='standalone', environment_steps=None)
+            evaluation_id='standalone', environment_steps=report.get('environment_steps'))
         evaluation_rows.append({**identity, **context, 'checkpoint': report.get('checkpoint'),
             'checkpoint_sha256': report.get('checkpoint_sha256'), 'seeds': report.get('seeds'),
             'reported_race_count': report.get('summary', {}).get('race_count')})
@@ -170,29 +172,65 @@ def load_run(directory, *, label=None, dataset_dirs=()):
         updates = pd.DataFrame(read_jsonl(path/'updates.jsonl'))
         for key, value in identity.items():
             updates[key] = value
-        for record in read_jsonl(path/'team_metrics.jsonl'):
-            row = {k.removeprefix('selfplay/'): v for k, v in record.items()}
+        def add_team_race(row, phase, **context):
             for team in teams:
-                team_rows.append({**identity, 'team': team, 'phase': 'training',
+                team_rows.append({**identity, 'team': team, 'phase': phase,
+                    'training_seed': row.get('checkpoint_training_seed', identity['training_seed']),
                     **{k: row.get(k) for k in ('episode_id', 'map_id', 'environment_id', 'environment_episode',
-                        'environment_steps', 'completed', 'budget_cut', 'policy_version_start', 'policy_version_end')},
+                        'environment_steps', 'completed', 'budget_cut', 'policy_version_start', 'policy_version_end',
+                        'checkpoint', 'checkpoint_sha256', 'seed', 'team_policy_versions')},
+                    **context,
                     **{k.removeprefix(team+'/'): v for k, v in row.items() if k.startswith(team+'/')}})
+        for record in read_jsonl(path/'team_metrics.jsonl'):
+            add_team_race({k.removeprefix('selfplay/'): v for k, v in record.items()}, 'training')
+        # Old self-play logs have rounds/maps/seeds, but no checkpoint identity.
+        # Leave those fields missing instead of assigning a later saved pair.
+        rounds = {}
+        summaries = {r.get('selfplay_eval/evaluation_id', f"eval_{r['selfplay_eval/round']:06d}"): r
+                     for r in read_jsonl(path/'evaluation_metrics.jsonl')}
+        for row in read_jsonl(path/'evaluation_races.jsonl'):
+            evaluation_id = row.get('evaluation_id', f"eval_{row['round']:06d}")
+            rounds.setdefault(evaluation_id, []).append(row)
+        for evaluation_id, records in rounds.items():
+            first = records[0]
+            protocol = first.get('protocol', 'unknown')
+            physics = dict(provenance.get('physics_contract') or {})
+            if 'friction_protocol' in physics:
+                physics['friction_protocol'] = {k: v for k, v in physics['friction_protocol'].items() if k != 'train'}
+            pid = _digest(dict(protocol=first.get('evaluation_protocol'), physics=physics,
+                maps=provenance.get('map_protocols'),
+                assignments=[(r.get('seed'), r.get('map_id', r.get('map'))) for r in records]))
+            context = dict(evaluation_id=evaluation_id, protocol=protocol, protocol_id=pid)
+            evaluation_rows.append({**identity, **context, 'phase': 'evaluation', 'algorithm': 'mappo_two_team',
+                'training_seed': first.get('checkpoint_training_seed', identity['training_seed']),
+                'is_best': summaries.get(evaluation_id, {}).get('selfplay_eval/is_best'),
+                'checkpoint': first.get('checkpoint'), 'checkpoint_sha256': first.get('checkpoint_sha256'),
+                'environment_steps': first.get('environment_steps'), 'reported_race_count': len(records),
+                'seeds': [r.get('seed') for r in records], 'team_policy_versions': first.get('team_policy_versions')})
+            for row in records:
+                add_team_race(dict(row, map_id=row.get('map_id', row.get('map'))), 'evaluation', **context)
     team_races = pd.DataFrame(team_rows)
     # Read small clip indices only; trajectories remain on disk until requested.
-    clip_rows = []
-    for dataset in sorted({(path/'behavior').resolve(), *(Path(d).resolve() for d in dataset_dirs)}):
+    clip_rows, window_rows = [], []
+    for dataset in sorted({(path/'behavior').resolve(), (path/'evaluation_behavior').resolve(),
+                           *(Path(d).resolve() for d in dataset_dirs),
+                           *((Path(d)/'evaluation').resolve() for d in dataset_dirs)}):
+        dataset_metadata = read_json(dataset/'metadata.json')
+        for window in dataset_metadata.get('recording_windows', []):
+            window_rows.append({**identity, 'dataset_dir': str(dataset),
+                'phase': dataset_metadata.get('phase', 'training'), **window})
         latest = {}
         for clip in read_jsonl(dataset/'clips.jsonl'):
             latest[clip['clip_id']] = clip
         for clip in latest.values():
-            clip_rows.append({**clip, **identity, 'dataset_dir': str(dataset)})
+            clip_rows.append({'phase': 'training', **clip, **identity, 'dataset_dir': str(dataset)})
     clips = pd.DataFrame(clip_rows)
     races = pd.DataFrame(race_rows)
     if not clips.empty and not races.empty:
-        facts = races.loc[races.phase == 'training', ['episode_id', 'race_mode', *[
+        facts = races.loc[races.episode_id.notna(), ['episode_id', 'race_mode', *[
             k for k in ('both_finished', 'first_place', 'sweep', 'any_learner_collision_dnf') if k in races]]]
         if facts.episode_id.duplicated().any():
-            raise ValueError(f'Duplicate training episode IDs in {path}')
+            raise ValueError(f'Duplicate episode IDs in {path}')
         clips = clips.merge(facts, on='episode_id', how='left', validate='many_to_one')
     if not clips.empty and not team_races.empty:
         # Keep each team's outcome distinct; win here means completion/progress,
@@ -205,10 +243,10 @@ def load_run(directory, *, label=None, dataset_dirs=()):
     meta.update(training_races=sum(r.get('phase') == 'training' for r in race_rows),
                 evaluation_snapshots=len(evaluation_rows), recorded_clips=len(clip_rows))
     if team_rows:
-        meta.update(training_races=int(team_races.loc[team_races.team == teams[0], 'completed'].eq(1).sum()),
+        meta.update(training_races=int(team_races.loc[(team_races.team == teams[0]) & team_races.phase.eq('training'), 'completed'].eq(1).sum()),
                     race_records_available=True, teams=teams)
     return RunData(path, meta, races, pd.DataFrame(agent_rows), updates,
-                   pd.DataFrame(evaluation_rows), clips, team_races)
+                   pd.DataFrame(evaluation_rows), clips, team_races, pd.DataFrame(window_rows))
 
 
 def combine(runs, table):
@@ -298,13 +336,15 @@ def aggregate_training_seeds(summary, comparison_groups):
 
 
 def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=None,
-                 outcome=None, checkpoint=None, policy_version=None, team=None):
+                 outcome=None, checkpoint=None, policy_version=None, team=None, phase=None, protocol=None,
+                 window_index=None):
     rows = clips.copy()
     if rows.empty:
         return rows
-    for column, value in [('run', run), ('map_id', map_id), ('kind', kind)]:
+    for column, value in [('run', run), ('map_id', map_id), ('kind', kind), ('phase', phase), ('protocol', protocol),
+                          ('recording_window_index', window_index)]:
         if value is not None:
-            rows = rows.loc[rows[column] == value]
+            rows = rows.loc[rows.get(column, pd.Series(index=rows.index, dtype=object)) == value]
     if event is not None:
         rows = rows.loc[rows.retention_reasons.map(lambda reasons: event in reasons)]
     if agent is not None:
@@ -338,3 +378,25 @@ def filter_clips(clips, *, run=None, map_id=None, kind=None, event=None, agent=N
 def replay_command(clip, repo_root, *, speed=1):
     return shlex.join([sys.executable, str(Path(repo_root)/'replay.py'), str(clip['dataset_dir']),
                        '--clip', clip['clip_id'], '--speed', str(speed)])
+
+
+def summarize_selfplay_evaluations(team_races):
+    """One row per team/map/evaluation; never pool different checkpoint pairs."""
+    if team_races.empty:
+        return pd.DataFrame()
+    rows = team_races.loc[team_races.phase.eq('evaluation') & team_races.completed.eq(1)]
+    if rows.empty:
+        return pd.DataFrame()
+    groups = ['run_key', 'run', 'training_seed', 'evaluation_id', 'protocol', 'protocol_id',
+              'checkpoint', 'checkpoint_sha256', 'environment_steps', 'team', 'map_id']
+    summaries = []
+    for keys, part in rows.groupby(groups, dropna=False):
+        summary = dict(zip(groups, keys))
+        summary.update(race_count=len(part), seeds=part.seed.tolist())
+        for metric in ('both_finished', 'win', 'draw', 'any_crash', 'finish_rate', 'progress_laps', 'reward'):
+            if metric in part:
+                measured = pd.to_numeric(part[metric], errors='coerce').dropna()
+                summary.update({metric: measured.mean(), metric+'_count': len(measured),
+                                metric+'_sum': measured.sum() if len(measured) else np.nan})
+        summaries.append(summary)
+    return pd.DataFrame(summaries)

@@ -1,0 +1,13 @@
+# Opt-in allocation for a 120M joint-decision run. Existing recording defaults
+# still apply (1% representative races plus event clips). Caps are shared across
+# workers; each window reserves its own portion of the existing total budget.
+# Parallel boundaries use completed collection barriers, not worker-local steps.
+# These caps reserve coverage at three stages, not a guarantee of complete races.
+recording:
+  enabled: true
+  max_frames: 100000
+  max_bytes: 2000000000
+  windows:
+    - {start_step: 0, end_step: 40000000, max_frames: 33333, max_bytes: 666666666}
+    - {start_step: 40000000, end_step: 80000000, max_frames: 33333, max_bytes: 666666666}
+    - {start_step: 80000000, end_step: 120000000, max_frames: 33334, max_bytes: 666666668}

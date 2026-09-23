@@ -83,6 +83,8 @@ class ClipReviewer:
         frame = self.window.frames[max(0, i-1)]
         if frame.get('team_policy_versions'):
             self.clock.value += ' · policies '+escape(str(frame['team_policy_versions']))
+        if frame.get('recording_window_index') is not None:
+            self.clock.value += f" · recording window {frame['recording_window_index']} · progress {frame['recording_progress']}"
         events = frame.get('events', []) if i else []
         descriptions = [f"{e['kind']} · {', '.join(e.get('participants', []))} · {e.get('source', 'unknown')}"
                         for e in events]

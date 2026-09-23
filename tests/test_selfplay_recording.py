@@ -172,3 +172,131 @@ def test_parallel_recording_enforces_one_shared_storage_cap(tmp_path, monkeypatc
         assert not clip['complete']
         retained = ends.get(clip['episode_id'])
         assert clip['team_policy_versions_end'] == (retained['team_policy_versions'] if retained else None)
+
+
+@pytest.mark.parametrize('num_envs', [1, 3])
+def test_evaluation_recordings_reference_pairs_without_changing_training(tmp_path, monkeypatch, num_envs):
+    import hashlib
+    import run
+    from src.analysis.run_review import load_run, summarize_selfplay_evaluations, filter_clips
+    from src.analysis.clip_review import load_window
+    from src.analysis.annotations import source_reference
+
+    def launch(output, *, enabled, checkpoint=None):
+        scenario = config(num_envs)
+        scenario['experiment']['total_steps'] = 7
+        scenario['evaluation'].update(enabled=True, episodes=2, every_steps=2, max_steps=3,
+            final_test=dict(episodes=2, seed=20042), recording=dict(max_frames=100))
+        scenario['recording']['max_frames'] = 2  # Training budget must not starve evaluation.
+        argv = ['run.py', '--scenario', 'scenarios/mappo_2v2_selfplay.yaml', '--output-dir', str(output),
+                '--no-wandb', '--run-id', 'eval_recording_test']
+        if enabled:
+            argv.append('--record-races')
+        if checkpoint:
+            argv += ['--eval', '--eval-protocol', 'final', '--checkpoint', str(checkpoint)]
+        monkeypatch.setattr('sys.argv', argv)
+        random.seed(42); np.random.seed(42); torch.manual_seed(42)
+        run._run_two_team(scenario, run.parse_args(), run.ConsoleLogger(verbose=False), Path('scenarios').resolve())
+
+    def rows(path):
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    before_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        for enabled in (False, True):
+            launch(tmp_path/('on' if enabled else 'off'), enabled=enabled)
+        for team in ('team_0.pt', 'team_1.pt'):
+            off, on = [torch.load(tmp_path/p/'final_pair'/team, map_location='cpu', weights_only=False)
+                       for p in ('off', 'on')]
+            assert all(torch.equal(v, on[kind][key]) for kind in ('actor', 'critic') for key, v in off[kind].items())
+        off, on = [rows(tmp_path/p/'evaluation_races.jsonl') for p in ('off', 'on')]
+        assert len(off) == len(on)
+        for a, b in zip(off, on):
+            assert {k:v for k,v in a.items() if k.startswith(('team_', 'car_'))} == {
+                    k:v for k,v in b.items() if k.startswith(('team_', 'car_'))}
+        dataset = tmp_path/'on'/'evaluation_behavior'
+        frames = list(iter_race_frames(dataset))
+        assert len(frames) == len(on)*3
+        clips = [c for c in load_clips(dataset) if c['kind'] == 'representative_race']
+        assert len(clips) == len(on) and all(c['complete'] for c in clips)
+        assert len({c['episode_id'] for c in clips}) == len(clips)
+        training_ids = {f['episode_id'] for f in iter_race_frames(tmp_path/'on'/'behavior')}
+        assert not training_ids & {c['episode_id'] for c in clips}
+        for clip in clips:
+            assert clip['phase'] == 'evaluation' and clip['protocol'] == 'selection'
+            pair = json.loads((Path(clip['checkpoint'])/'pair.json').read_text())
+            assert clip['team_policy_versions_start'] == pair['team_policy_versions']
+            assert clip['environment_seed'] in clip['evaluation_protocol']['seeds']
+            for item in clip['checkpoint_files'].values():
+                assert hashlib.sha256((Path(clip['checkpoint'])/item['file']).read_bytes()).hexdigest() == item['sha256']
+        report = load_run(tmp_path/'on')
+        assert set(report.team_races.phase) == {'training', 'evaluation'}
+        assert report.metadata['training_races'] == (2 if num_envs == 1 else 1)
+        assert len(filter_clips(report.clips, phase='evaluation', protocol='selection', checkpoint=clips[0]['checkpoint'])) >= 2
+        summary = summarize_selfplay_evaluations(report.team_races)
+        assert summary.groupby('team').race_count.sum().to_dict() == {'team_a': len(on), 'team_b': len(on)}
+        ref = source_reference(load_window(dataset, clips[0]))
+        assert ref['checkpoint_sha256'] == clips[0]['checkpoint_sha256']
+        assert ref['evaluation_protocol']['seeds'] == [10042, 10043]
+        if num_envs == 1:
+            launch(tmp_path/'final', enabled=True, checkpoint=tmp_path/'on'/'final_pair')
+            final = load_run(tmp_path/'final')
+            assert final.metadata['training_races'] == 0
+            assert set(final.team_races.protocol) == {'final'}
+            assert set(final.team_races.seed) == {20042, 20043}
+            assert final.team_races.environment_steps.eq(7).all()
+            assert len(list(iter_race_frames(tmp_path/'final'/'behavior'))) == 6
+            assert set(final.clips.checkpoint) == {str((tmp_path/'on'/'final_pair').resolve())}
+            assert not (tmp_path/'final'/'evaluation_pairs').exists()
+    finally:
+        torch.set_num_threads(before_threads)
+
+
+@pytest.mark.parametrize('num_envs', [1, 3])
+def test_windowed_selfplay_resumes_and_preserves_learning(tmp_path, monkeypatch, num_envs):
+    import run
+    from src.analysis.run_review import load_run, filter_clips
+    from src.analysis.clip_review import load_window
+    from src.analysis.annotations import source_reference
+
+    before_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        for enabled in (False, True):
+            random.seed(42); np.random.seed(42); torch.manual_seed(42)
+            scenario = config(num_envs)
+            scenario['experiment']['total_steps'] = 18
+            scenario['environment']['max_steps'] = 100
+            scenario['recording'].update(max_frames=6, max_bytes=40000000,
+                windows=[dict(start_step=0, end_step=6, max_frames=2, max_bytes=20000000),
+                         dict(start_step=6, end_step=18, max_frames=4, max_bytes=20000000)])
+            output = tmp_path/('on' if enabled else 'off')
+            argv = ['run.py', '--scenario', 'scenarios/mappo_2v2_selfplay.yaml', '--output-dir', str(output),
+                    '--run-id', 'windowed', '--no-wandb']
+            if enabled:
+                argv.append('--record-races')
+            monkeypatch.setattr('sys.argv', argv)
+            run._run_two_team(scenario, run.parse_args(), run.ConsoleLogger(verbose=False), Path('scenarios').resolve())
+    finally:
+        torch.set_num_threads(before_threads)
+    for team in ('team_0.pt', 'team_1.pt'):
+        off, on = [torch.load(tmp_path/p/'final_pair'/team, map_location='cpu', weights_only=False)
+                   for p in ('off', 'on')]
+        assert all(torch.equal(v, on[kind][key]) for kind in ('actor', 'critic') for key, v in off[kind].items())
+    frames = list(iter_race_frames(tmp_path/'on'/'behavior'))
+    assert len(frames) == 6
+    assert len({(f['episode_id'], f['physics_index']) for f in frames}) == 6
+    assert sum(f['recording_window_index'] == 0 for f in frames) == 2
+    assert sum(f['recording_window_index'] == 1 for f in frames) == 4
+    assert all(f['recording_progress'] >= 6 and f['policy_version'] > 0 for f in frames if f['recording_window_index'] == 1)
+    clock = 'joint_environment_decisions' if num_envs == 1 else 'last_completed_collection_barrier'
+    assert all(f['recording_progress_clock'] == clock for f in frames)
+    report = load_run(tmp_path/'on')
+    assert report.recording_windows.frames.tolist() == [2, 4]
+    late = filter_clips(report.clips, window_index=1, kind='representative_segment')
+    assert not late.empty and not late.complete.any()
+    clip = next(row for row in late.to_dict('records') if row['end_physics_index'] >= row['start_physics_index'])
+    window = load_window(clip['dataset_dir'], clip)
+    assert source_reference(window)['recording_window_index'] == 1
+    assert window.frames[0]['team_policy_versions'] == clip['team_policy_versions_start']

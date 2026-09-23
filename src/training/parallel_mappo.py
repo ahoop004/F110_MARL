@@ -271,6 +271,8 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
             for agent in agents.values():
                 agent.policy_version = metrics["train/updates"]
                 agent.recording_stop = metrics.get('recording/storage_full', False)
+                agent.recording_progress = metrics['train/environment_steps']
+                agent.recording_exhausted_windows = metrics.get('recording/exhausted_windows', [])
             for env_id in sorted(paused):
                 advance(env_id)
         connection.send(("done", sink.take()))
@@ -451,6 +453,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 })
                 if race_hooks:
                     metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
+                    metrics['recording/exhausted_windows'] = sorted(set().union(*(h.exhausted_windows for h in race_hooks)))
                 if steps:
                     for hook in trainer.hooks:
                         hook.on_update(metrics)

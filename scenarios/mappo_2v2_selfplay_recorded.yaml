@@ -1,0 +1,4 @@
+# Same training task/budget; opt into recording reserved across three stages.
+includes:
+  - mappo_2v2_selfplay.yaml
+  - ../configs/recording/mappo_windowed.yaml

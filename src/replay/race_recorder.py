@@ -16,7 +16,7 @@ DEFAULTS = dict(enabled=True, sample_probability=0.01, seed=42,
                 max_clips_per_episode=16, max_events_per_clip=128,
                 max_frames=100000, max_bytes=2_000_000_000, chunk_frames=128,
                 encounter_distance_m=8.0, lateral_distance_m=3.0,
-                pass_hysteresis_m=0.3, pass_sustain_steps=3)
+                pass_hysteresis_m=0.3, pass_sustain_steps=3, windows=[])
 
 
 def recording_config(config=None):
@@ -41,6 +41,23 @@ def recording_config(config=None):
     for name in ('encounter_distance_m', 'lateral_distance_m', 'pass_hysteresis_m'):
         if not math.isfinite(float(cfg[name])) or cfg[name] <= 0:
             raise ValueError(f"recording.{name} must be finite and positive")
+    windows = cfg['windows']
+    if not isinstance(windows, list):
+        raise ValueError('recording.windows must be a list')
+    previous_end = 0
+    for window in windows:
+        if not isinstance(window, dict) or set(window) != {'start_step', 'end_step', 'max_frames', 'max_bytes'}:
+            raise ValueError('Each recording window needs start_step, end_step, max_frames, max_bytes')
+        for key, value in window.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < (0 if key == 'start_step' else 1):
+                raise ValueError(f'recording window {key} must be a valid nonnegative/positive integer')
+        if window['start_step'] < previous_end or window['end_step'] <= window['start_step']:
+            raise ValueError('Recording windows must be ordered, non-overlapping [start_step, end_step) ranges')
+        previous_end = window['end_step']
+    for limit in ('max_frames', 'max_bytes'):
+        if sum(w[limit] for w in windows) > cfg[limit]:
+            raise ValueError(f'Recording window {limit} allocations exceed the dataset-wide cap')
+    cfg['windows'] = [dict(w) for w in windows]
     return cfg
 
 
@@ -183,15 +200,66 @@ class RaceRecorder:
         self.buffer = deque(maxlen=self.cfg['pre_steps'] + 1)
         self.sample = self.clip = None
         self.clip_count = 0
+        self.window_index = None
+        self.window_frames = 0
+        self.window_stopped = False
+        self.progress = None
 
     @property
     def capturing(self):
-        return not self.stopped and (self.sample is not None or (self.cfg['events'] and
-            (self.clip is not None or self.clip_count < self.cfg['max_clips_per_episode'])))
+        return (not self.stopped and not self.window_stopped and
+            (not self.cfg['windows'] or self.window_index is not None) and
+            (self.sample is not None or (self.cfg['events'] and
+            (self.clip is not None or self.clip_count < self.cfg['max_clips_per_episode']))))
+
+    def prepare(self, progress, physics_index, policy_version, *, exhausted_windows=(),
+                clock='joint_environment_decisions', team_policy_versions=None):
+        """Select a budget using the authoritative serial count or parallel barrier.
+
+        Called before copying a physics frame. Switching windows closes existing
+        clips and drops pre-event context; no clip bridges a recording gap.
+        """
+        if not self.cfg['windows'] or self.stopped:
+            return
+        self.progress = progress
+        index = next((i for i, w in enumerate(self.cfg['windows'])
+                      if progress is not None and w['start_step'] <= progress < w['end_step']), None)
+        changed = index != self.window_index
+        if changed:
+            self._pause('window_end')
+            self.window_index, self.window_frames, self.window_stopped = index, 0, False
+            self.clip_count = 0
+        if index is None:
+            return
+        if index in exhausted_windows:
+            if not self.window_stopped:
+                self._pause('window_storage_limit')
+            return
+        if self.window_stopped:
+            return
+        if changed or self._window_needs_start:
+            self._window_needs_start = False
+            self.last_frame = self.last_retained = None
+            self.last_sent = physics_index-1
+            self.detector = EventDetector(self.cfg, self.context['track_length_m'])
+            self.context.update(recording_window_index=index, recording_window=self.cfg['windows'][index],
+                recording_progress_start=progress, recording_progress_clock=clock,
+                capture_policy_version_start=policy_version,
+                capture_team_policy_versions_start=team_policy_versions,
+                coverage_scope='environment_episode' if physics_index == 0 else 'partial_environment_episode')
+            if self._sample_selected:
+                self.sample = self._open('representative_race' if physics_index == 0 else 'representative_segment', physics_index)
+
+    def _pause(self, reason):
+        self._close(self.sample, self.last_sent, reason)
+        self._close(self.clip, self.last_sent, reason)
+        self.sample = self.clip = None
+        self.window_stopped = True
+        self.buffer.clear()
 
     def start(self, *, episode_id, episode, map_id, seed, timestep, action_repeat,
               trainable_ids, agent_ids, track_length, policy_version, spawn, physics, termination,
-              agent_teams=None, team_policy_versions=None):
+              agent_teams=None, team_policy_versions=None, evaluation=None):
         self.buffer.clear()
         self.last_sent = -1
         self.last_frame = None
@@ -207,27 +275,35 @@ class RaceRecorder:
                           probability=self.cfg['sample_probability']), detector_version=EventDetector.version))
         self.context['shared_frame_budget'] = self.quota
         self.context['coverage_scope'] = 'environment_episode'
+        self.context['phase'] = 'evaluation' if evaluation is not None else 'training'
+        if evaluation is not None:
+            self.context.update(plain(evaluation))
         if agent_teams is not None:
             self.context.update(agent_teams=plain(agent_teams),
                                 episode_team_policy_versions_start=plain(team_policy_versions))
         draw = int.from_bytes(hashlib.sha256(f"{self.cfg['seed']}:{self.env_id}:{episode}".encode()).digest()[:8], 'big') / 2**64
         self.sample = self.clip = None
+        self._window_needs_start = True
+        self._sample_selected = draw < self.cfg['sample_probability']
         if self.frames_sent >= self.quota:
             self.stopped = True
-        if not self.stopped and draw < self.cfg['sample_probability']:
+        if not self.stopped and self._sample_selected and not self.cfg['windows']:
             self.sample = self._open('representative_race', 0)
 
     def _open(self, kind, start):
-        suffix = 'sample' if kind == 'representative_race' else f'event{self.clip_count:04d}'
+        suffix = 'sample' if kind.startswith('representative_') else f'event{self.clip_count:04d}'
+        if self.cfg['windows']:
+            suffix = f'window{self.window_index:04d}_{suffix}'
         clip = {**self.context, 'clip_id': f"{self.context['episode_id']}_{suffix}",
                 'kind': kind, 'start_physics_index': start, 'end_physics_index': None,
                 'policy_version_start': (self.buffer[0]['policy_version'] if kind == 'event_clip' and self.buffer
-                                         else self.context['episode_policy_version_start']),
+                                         else self.context.get('capture_policy_version_start', self.context['episode_policy_version_start'])),
                 'status': 'open', 'events': [], 'event_count': 0, 'retention_reasons': [],
                 'complete': False, 'episode_complete': False, 'all_cars_terminal': False}
         if 'agent_teams' in self.context:
             clip['team_policy_versions_start'] = (self.buffer[0].get('team_policy_versions')
-                if kind == 'event_clip' and self.buffer else self.context['episode_team_policy_versions_start'])
+                if kind == 'event_clip' and self.buffer else self.context.get(
+                    'capture_team_policy_versions_start', self.context['episode_team_policy_versions_start']))
         self.emit(('clip', dict(clip)))
         return clip
 
@@ -238,12 +314,12 @@ class RaceRecorder:
         clip = dict(clip)
         end_context = clip.pop('_end_context', {})
         clip.update(status='closed', end_physics_index=min(end, self.last_sent), end_reason=reason,
-                    complete=reason in ('episode_end', 'post_event_complete'),
+                    complete=reason in ('episode_end', 'post_event_complete') and clip['kind'] != 'representative_segment',
                     episode_complete=episode_complete,
                     all_cars_terminal=end_context.get('all_cars_terminal', bool(frame and all(not s['active'] for s in frame['post_state'].values()))),
                     policy_version_end=end_context.get('policy_version', frame['policy_version'] if frame else None),
                     post_context_complete=(reason == 'post_event_complete' or (reason == 'episode_end' and
-                        (clip['kind'] == 'representative_race' or
+                        (clip['kind'].startswith('representative_') or
                          (clip['end_physics_index'] is not None and end >= clip['end_physics_index'])))))
         if 'agent_teams' in self.context:
             clip['team_policy_versions_end'] = end_context.get('team_policy_versions',
@@ -257,8 +333,12 @@ class RaceRecorder:
         if self.frames_sent >= self.quota:
             self.stop('frame_limit')
             return
+        if self.cfg['windows'] and self.window_frames >= self.cfg['windows'][self.window_index]['max_frames']:
+            self._pause('window_frame_limit')
+            return
         self.emit(('frame', frame))
         self.frames_sent += 1
+        self.window_frames += 1
         self.last_sent = step
         self.last_retained = frame
 
@@ -269,6 +349,11 @@ class RaceRecorder:
         step = frame['physics_index']
         frame.update(run_id=self.run_id, environment_id=self.env_id,
                      episode_id=self.context['episode_id'], map_id=self.context['map_id'])
+        frame.update({key: self.context[key] for key in
+            ('phase', 'evaluation_id', 'protocol', 'checkpoint', 'checkpoint_sha256') if key in self.context})
+        if self.cfg['windows']:
+            frame.update(recording_window_index=self.window_index, recording_progress=self.progress,
+                         recording_progress_clock=self.context['recording_progress_clock'])
         events = self.detector.detect(frame['pre_state'], frame['post_state'], step)
         frame['events'] = events
         self.buffer.append(frame)
@@ -290,9 +375,9 @@ class RaceRecorder:
                 clip['retention_reasons'] = sorted(set(clip['retention_reasons']) | {e['kind'] for e in triggers})
                 self.emit(('clip', {k: v for k, v in clip.items() if not k.startswith('_')}))
                 for previous in tuple(self.buffer):
-                    if previous['physics_index'] <= clip['end_physics_index'] and not self.stopped:
+                    if previous['physics_index'] <= clip['end_physics_index'] and self.capturing:
                         self._send(previous)
-        if not self.stopped and (self.sample is not None or (self.clip and step <= self.clip['end_physics_index'])):
+        if self.capturing and (self.sample is not None or (self.clip and step <= self.clip['end_physics_index'])):
             self._send(frame)
         if self.clip and step <= self.clip['end_physics_index']:
             self.clip['_end_context'] = dict(policy_version=frame['policy_version'],
@@ -302,9 +387,9 @@ class RaceRecorder:
             self._close(self.clip, self.clip['end_physics_index'], 'clip_length_limit')
             self.clip = None
 
-    def end(self, episode_complete):
+    def end(self, episode_complete, *, reason=None):
         step = self.last_frame['physics_index'] if self.last_frame else -1
-        reason = 'episode_end' if episode_complete else 'budget_cut'
+        reason = reason or ('episode_end' if episode_complete else 'budget_cut')
         self._close(self.sample, step, reason, episode_complete)
         self._close(self.clip, min(step, self.clip['end_physics_index']) if self.clip else step,
                     reason if self.clip and step < self.clip['end_physics_index'] else 'post_event_complete', episode_complete)

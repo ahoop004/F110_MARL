@@ -24,7 +24,10 @@ def source_reference(window):
     clip = window.clip
     return {**{k: clip.get(k) for k in ('run_id', 'environment_id', 'episode_id', 'clip_id', 'map_id',
         'policy_version_start', 'policy_version_end', 'team_policy_versions_start',
-        'team_policy_versions_end', 'agent_teams', 'detector_version', 'kind', 'complete')},
+        'team_policy_versions_end', 'agent_teams', 'detector_version', 'kind', 'complete',
+        'phase', 'evaluation_id', 'protocol', 'evaluation_protocol', 'checkpoint', 'checkpoint_sha256',
+        'checkpoint_files', 'environment_seed', 'recording_window_index', 'recording_window',
+        'recording_progress_start', 'recording_progress_clock', 'coverage_scope')},
         'dataset_dir': str(window.dataset), 'agent_ids': clip['agent_ids'],
         'available_start': window.boundaries[0], 'available_end': window.boundaries[-1]}
 

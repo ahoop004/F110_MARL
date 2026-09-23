@@ -147,7 +147,7 @@ def draw_review(window, *, maps_dir=None, reference=None):
     low, high = points.min(axis=0)-3, points.max(axis=0)+3
     scene.set(xlim=(low[0], high[0]), ylim=(low[1], high[1]), aspect='equal', xlabel='x (m)', ylabel='y (m)')
     patches, texts = {}, {}
-    params = window.metadata.get('physics_contract', {}).get('vehicle_params', {})
+    params = (window.metadata.get('physics_contract') or {}).get('vehicle_params', {})
     half_l, half_w = params.get('length', .58)/2, params.get('width', .31)/2
     corners = np.array([[half_l, half_w], [half_l, -half_w], [-half_l, -half_w], [-half_l, half_w]])
     for aid in ids:

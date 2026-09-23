@@ -66,9 +66,47 @@ rewards, and policy versions are retained, including rewards after a team become
 inactive and terminal-car clearance/removal. Open `notebooks/run_review.ipynb`
 and select `selfplay_recorded` to plot team metrics, play clips, and save labels.
 Its self-play win metric compares completion/progress; it is not first place.
-Evaluation recording is still pending. Recording stops when its storage cap is
-reached; tune the caps/sampling before a long run (defaults do not guarantee
-coverage across the full 120M-step budget).
+With recording enabled, selection evaluations also write to `evaluation_behavior`
+and save the evaluated pairs under `evaluation_pairs/eval_NNNNNN`. These fixed
+pairs, their file hashes, protocol, and seeds are linked from clips and labels.
+Standalone `--eval --checkpoint PATH --eval-protocol final --record-races` writes
+to `behavior` and references the loaded pair. Both paths appear in the notebook's
+separate self-play evaluation tables/plots; clip filters accept `phase`,
+`protocol`, and the exact checkpoint path or hash.
+
+Evaluation defaults to sampling every race, with an independent storage budget
+inheriting the top-level recording caps. Override `evaluation.recording` with
+the same settings to adjust its budget/sampling, enable only evaluation recording,
+or set `enabled: false` to keep training-only recording. Paired checkpoint files
+are additional disk usage outside the frame/byte caps. Recording stops when a
+cap is reached; defaults do not guarantee coverage across the full 120M-step
+budget. To reserve capacity across training stages, use:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_2v2_selfplay_recorded.yaml --no-wandb --output-dir outputs/selfplay_windowed
+```
+
+This opt-in scenario includes `configs/recording/mappo_windowed.yaml`: three
+non-overlapping ranges (0–40M, 40–80M, 80–120M joint decisions) share the existing
+100,000-frame / 2 GB total cap. Early data cannot borrow a later range's reserved
+frames or bytes. Fixed-opponent MAPPO scenarios can include the same config.
+Set `recording.windows: []` for the original single-budget behavior.
+
+Each window requires `start_step`, `end_step` (exclusive), `max_frames`, and
+`max_bytes`; allocations must fit within the dataset-wide caps. Exhausting a
+window pauses capture until another window begins. Serial training uses the
+current joint-decision count; parallel training uses the last completed
+collection barrier. Narrow windows can be skipped if no barrier falls inside
+them. Tune ranges when changing the total training budget or rollout size.
+Unused capacity is not redistributed, and complete races are not guaranteed.
+
+Clips close at window boundaries and pre-event buffers are cleared. Resuming
+mid-race creates a `representative_segment`, explicitly marked incomplete;
+event-clip limits restart for each window within the episode. The notebook shows
+window budgets/usage and accepts `window_index` in `CLIP_FILTERS`. Annotation
+sources retain window and progress-clock references. Evaluation does not inherit
+training windows; explicit `evaluation.recording.windows` uses the evaluated
+checkpoint's training-step count instead (unknown counts are not recorded).
 
 Training uses **120,000,000 aggregate joint environment decisions**, matching the
 continuous trainers' budget. One four-car race step counts once, with up to four
@@ -169,6 +207,48 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --scenario scenarios/mappo_2v2_selfplay.yaml \
   --num-envs 1 --total-steps 128 --max-steps 128 --no-wandb
 ```
+
+## PPO and fixed-opponent MAPPO evaluation recordings
+
+Standalone evaluations support the same shared-frame playback and annotations:
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py \
+  --scenario scenarios/ppo_lap_completion_transfer_3lap.yaml \
+  --eval --eval-protocol final --checkpoint outputs/RUN/best_model.pt \
+  --record-races --no-wandb --output-dir outputs/transfer_final_recorded
+venv/bin/python -m jupyter lab notebooks/run_review.ipynb
+```
+
+Use the matching training scenario/checkpoint, or explicitly allow provenance
+mismatches for an intentional transfer evaluation. Select the output folder in
+the notebook. Frames go to `behavior` (`--dataset-dir` redirects it); clips retain
+the loaded checkpoint path/hash, protocol, seeds, and computed reward components.
+
+During training, enable only checkpoint-selection recording with:
+
+```yaml
+evaluation:
+  recording:
+    enabled: true
+    max_frames: 100000
+    max_bytes: 2000000000
+```
+
+Selection recordings go to `OUTPUT_DIR/evaluation_behavior`, with exact evaluated
+snapshots in `evaluation_checkpoints/evalNNNNNN.pt`. Fixed-opponent MAPPO training
+also enables evaluation capture with `--record-races`; PPO training uses the YAML
+evaluation switch above because selective shared-frame training capture remains
+MAPPO-only. Evaluation budgets are separate from training, default to sampling
+every race, and do not inherit training windows. `evaluation.recording.enabled:
+false` explicitly disables evaluation capture, including when the CLI flag is set.
+Checkpoint files are additional disk usage outside frame/byte caps.
+
+Selection evaluators measure outcomes without computing rewards; those recorded
+reward channels remain unavailable. MAPPO retains opponent tails after learner
+exits. PPO selection preserves its existing learner-exit boundary, marking such
+clips incomplete (`evaluator_boundary`) if the environment is still running.
+Notebook outcome and checkpoint filters cover both selection and standalone clips.
 
 ## Current-setup three-lap transfer
 

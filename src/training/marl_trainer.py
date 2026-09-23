@@ -371,6 +371,13 @@ class MARLTrainer:
                 team_breakdowns: Dict[str, float] = {}
 
                 for substep in range(self.action_repeat):
+                    if recorder is not None:
+                        exhausted = set(getattr(self.agent, 'recording_exhausted_windows', ()))
+                        for hook in self.hooks:
+                            exhausted.update(getattr(hook, 'exhausted_windows', ()))
+                        recorder.prepare(getattr(self.agent, 'recording_progress', 0) if parallel else self._environment_steps,
+                            physics_steps, decision_policy, exhausted_windows=exhausted,
+                            clock='last_completed_collection_barrier' if parallel else 'joint_environment_decisions')
                     recording_active = recorder is not None and recorder.capturing
                     self.env.record_applied_commands = recording_active
                     if recording_active:

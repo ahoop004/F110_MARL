@@ -599,14 +599,30 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._environment_steps = int(metrics.get("train/environment_steps", self._environment_steps))
-        self._policy_version = int(metrics.get("train/updates", self._policy_version))
+        self._policy_version = int(metrics.get("train/updates", self._policy_version + 1))
         if self._next_evaluation_step is not None and self._environment_steps >= self._next_evaluation_step:
             self._evaluate_checkpoint(None)
             self._next_evaluation_step = (self._environment_steps // self._evaluate_every_steps + 1) * self._evaluate_every_steps
 
     def _evaluate_checkpoint(self, completed_episodes: Optional[int]) -> None:
-
+        recording = getattr(self._evaluator, 'recording', None)
+        context = {}
+        if recording is not None:
+            import hashlib
+            evaluation_id = f'eval{self._evaluation_count+1:06d}'
+            checkpoint, digest = None, None
+            if recording.writer.can_record(self._environment_steps):
+                checkpoint = (self._dir/'evaluation_checkpoints'/f'{evaluation_id}.pt').resolve()
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                self._save(checkpoint, metadata=dict(environment_steps=self._environment_steps,
+                    policy_version=self._policy_version))
+                digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+            context = dict(evaluation_id=evaluation_id, environment_steps=self._environment_steps,
+                policy_version=self._policy_version, checkpoint=str(checkpoint) if checkpoint else None,
+                checkpoint_sha256=digest)
+            recording.begin(context)
         summary = dict(self._evaluator.evaluate())
+        summary.update(context)
         self._evaluation_count += 1
         run_id = self._provenance.get("run_id", self._dir.name)
         for index, row in enumerate(summary.get("episode_results", [])):

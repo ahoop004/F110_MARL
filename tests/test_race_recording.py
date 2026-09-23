@@ -180,3 +180,66 @@ def test_pass_candidates_use_unwrapped_progress_sustain_and_active_filter():
     assert len(passes) == 1 and passes[0]['passing_agent'] == 'a' and passes[0]['source'] == 'heuristic'
     post['b'].update(active=False, terminal_reason='collision')
     assert not any(e['kind'] == 'candidate_pass' for e in detector.detect(pre, post, 5))
+
+
+def window_config(**overrides):
+    return dict(sample_probability=1., events=False, max_frames=5, max_bytes=100000,
+        windows=[dict(start_step=0, end_step=3, max_frames=2, max_bytes=50000),
+                 dict(start_step=5, end_step=10, max_frames=3, max_bytes=50000)], **overrides)
+
+
+def test_window_budget_resumes_mid_race_without_stitching_gaps(tmp_path):
+    cfg = window_config()
+    writer = RaceDatasetWriter(tmp_path, config=cfg)
+    recorder = RaceRecorder(cfg, writer.add_event, run_id='run')
+    start(recorder)
+    for i in range(9):
+        recorder.prepare(i, i, i//4, exhausted_windows=writer.exhausted_windows)
+        recorder.step(frame(i))
+    recorder.end(True)
+    writer.close()
+    frames = list(iter_race_frames(tmp_path))
+    assert [f['physics_index'] for f in frames] == [0, 1, 5, 6, 7]
+    assert [f['recording_window_index'] for f in frames] == [0, 0, 1, 1, 1]
+    clips = load_clips(tmp_path)
+    assert len(clips) == 2 and len({c['clip_id'] for c in clips}) == 2
+    assert not any(c['complete'] for c in clips)
+    assert clips[1]['kind'] == 'representative_segment'
+    assert clips[1]['start_physics_index'] == 5 and clips[1]['policy_version_start'] == 1
+    assert [f['physics_index'] for f in clip_frames(tmp_path, clips[1])] == [5, 6, 7]
+    metadata = json.loads((tmp_path/'metadata.json').read_text())
+    assert [w['frames'] for w in metadata['recording_windows']] == [2, 3]
+    assert all(w['exhausted'] for w in metadata['recording_windows'])
+
+
+def test_shared_window_byte_cap_preserves_later_allocation_and_event_context(tmp_path):
+    cfg = window_config()
+    cfg['events'] = True
+    cfg['sample_probability'] = 0.
+    cfg['windows'][0]['max_bytes'] = 1  # No frame can fit, but the later budget survives.
+    writer = RaceDatasetWriter(tmp_path, config=cfg)
+    recorders = [RaceRecorder(cfg, writer.add_event, run_id='run', environment_id=i) for i in range(2)]
+    for recorder in recorders:
+        start(recorder)
+        for step in range(7):
+            recorder.prepare(step, step, step//4, exhausted_windows=writer.exhausted_windows,
+                             clock='last_completed_collection_barrier')
+            recorder.step(frame(step, boundary=step in (0, 6)))
+        recorder.end(False)
+    writer.close()
+    frames = list(iter_race_frames(tmp_path))
+    assert len(frames) == 3  # Shared cap across collectors, not three per collector.
+    assert all(f['recording_window_index'] == 1 and f['physics_index'] >= 5 for f in frames)
+    assert not writer.storage_full and writer.exhausted_windows == {0, 1}
+    assert all(not c['complete'] for c in load_clips(tmp_path))
+    assert all(c['start_physics_index'] >= 5 for c in load_clips(tmp_path) if c['recording_window_index'] == 1)
+
+
+@pytest.mark.parametrize('change', [
+    dict(start_step=2, end_step=2), dict(start_step=-1), dict(max_frames=True), dict(max_bytes=100001),
+])
+def test_recording_windows_validate_ranges_and_reservations(change):
+    cfg = window_config()
+    cfg['windows'][0].update(change)
+    with pytest.raises(ValueError):
+        recording_config(cfg)

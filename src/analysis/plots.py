@@ -191,9 +191,10 @@ def export_figures(figures, directory):
 def selfplay_curves(team_races, updates):
     """Symmetric team views; completion/progress wins are not first-place wins."""
     figures = {}
-    if not team_races.empty:
+    training = team_races.loc[team_races.phase.eq('training')] if not team_races.empty else team_races
+    if not training.empty:
         fig, axes = plt.subplots(2, 2, figsize=(13, 8), layout='constrained')
-        complete = team_races.loc[team_races.completed.eq(1)]
+        complete = training.loc[training.completed.eq(1)]
         for ax, metric, label in zip(axes.flat,
                 ['both_finished', 'progress_laps', 'any_crash', 'reward'],
                 ['Both teammates finished', 'Team earned progress (laps)', 'Any team collision', 'Joint team episode return']):
@@ -221,4 +222,26 @@ def selfplay_curves(team_races, updates):
                                 ax.plot(data.iloc[:, 0], data.iloc[:, 1], marker='.', label=f'{rows.run.iloc[0]} / {key.split("/")[1]}')
                 _finish_axis(ax, suffix.replace('_', ' '), 'Joint environment decisions')
             figures['selfplay_optimizer'] = fig
+    return figures
+
+
+def selfplay_evaluation_curves(summary):
+    """Plot matched evaluation conditions separately, with counts in the table."""
+    figures = {}
+    if summary.empty:
+        return figures
+    for (protocol, pid), rows in summary.groupby(['protocol', 'protocol_id']):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4), layout='constrained')
+        for ax, metric, label in zip(axes, ('both_finished', 'win', 'any_crash'),
+                ('Both teammates finished', 'Completion/progress win', 'Any team collision')):
+            if metric in rows:
+                for (_, team, map_id), part in rows.groupby(['run_key', 'team', 'map_id']):
+                    part = part.dropna(subset=['environment_steps', metric]).sort_values('environment_steps')
+                    if not part.empty:
+                        ax.plot(part.environment_steps, part[metric], marker='o',
+                            label=f'{part.run.iloc[0]} / {team} / {map_id}')
+            ax.set_ylim(-.03, 1.03)
+            _finish_axis(ax, label, 'Checkpoint training environment steps')
+        fig.suptitle(f'Self-play evaluation · {protocol} · conditions {pid} (counts in table)')
+        figures[f'selfplay_evaluation_{protocol}_{pid}'] = fig
     return figures

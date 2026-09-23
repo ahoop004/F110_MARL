@@ -328,6 +328,9 @@ class RaceDatasetWriter(DatasetWriter):
         self.config = recording_config(config)
         self.payload_bytes = 0
         self.storage_full = False
+        self.exhausted_windows = set()
+        self.window_usage = [dict(index=i, **w, frames=0, serialized_frame_bytes=0, exhausted=False)
+                             for i, w in enumerate(self.config['windows'])]
         self._accepted_ends = {}
         self._accepted_contexts = {}
         super().__init__(output_dir, chunk_size=self.config['chunk_frames'], metadata=metadata)
@@ -335,39 +338,73 @@ class RaceDatasetWriter(DatasetWriter):
     def __exit__(self, exc_type, exc_value, traceback):
         self.close(complete=exc_type is None)
 
+    def can_record(self, progress):
+        """Whether this progress point has any unexhausted allocation."""
+        if self.storage_full:
+            return False
+        if not self.window_usage:
+            return True
+        return any(progress is not None and w['start_step'] <= progress < w['end_step']
+                   and not w['exhausted'] for w in self.window_usage)
+
     def add_event(self, event):
         from src.replay.race_recorder import plain
         if self._closed:
             raise RuntimeError("RaceDatasetWriter is closed")
         kind, row = event
+        key = (row['episode_id'], row.get('recording_window_index'))
         if kind == 'frame':
             if self.storage_full:
                 return
             row = plain(row)
             encoded = json.dumps(row, separators=(',', ':'), allow_nan=False) + '\n'
+            size = len(encoded.encode('utf-8'))
+            window = None
+            if self.window_usage:
+                index = row.get('recording_window_index')
+                if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(self.window_usage):
+                    raise ValueError('Windowed recording frame requires a valid recording_window_index')
+                window = self.window_usage[index]
+                progress = row.get('recording_progress')
+                if progress is None or not window['start_step'] <= progress < window['end_step']:
+                    raise ValueError('Recording frame progress is outside its assigned window')
+                if index in self.exhausted_windows:
+                    return
+                if window['frames'] >= window['max_frames'] or window['serialized_frame_bytes'] + size > window['max_bytes']:
+                    self.exhausted_windows.add(index)
+                    window['exhausted'] = True
+                    self._write_metadata()
+                    return
             if (self._total + len(self._buffer) >= self.config['max_frames'] or
-                    self.payload_bytes + len(encoded.encode('utf-8')) > self.config['max_bytes']):
+                    self.payload_bytes + size > self.config['max_bytes']):
                 self.storage_full = True
                 self._write_metadata()
                 return
-            self.payload_bytes += len(encoded.encode('utf-8'))
+            self.payload_bytes += size
+            if window is not None:
+                window['frames'] += 1
+                window['serialized_frame_bytes'] += size
+                if window['frames'] >= window['max_frames'] or window['serialized_frame_bytes'] >= window['max_bytes']:
+                    self.exhausted_windows.add(window['index'])
+                    window['exhausted'] = True
             self._buffer.append((row['episode_id'], row['physics_index'], encoded))
-            self._accepted_ends[row['episode_id']] = row['physics_index']
-            self._accepted_contexts[row['episode_id']] = dict(
+            self._accepted_ends[key] = row['physics_index']
+            self._accepted_contexts[key] = dict(
                 all_cars_terminal=all(not s['active'] for s in row['post_state'].values()),
                 policy_version_end=row['policy_version'])
             if 'team_policy_versions' in row:
-                self._accepted_contexts[row['episode_id']]['team_policy_versions_end'] = row['team_policy_versions']
+                self._accepted_contexts[key]['team_policy_versions_end'] = row['team_policy_versions']
             if len(self._buffer) >= self._chunk_size:
                 self._flush()
         elif kind == 'clip':
             row = plain(row)
             if row['status'] == 'closed':
-                accepted = self._accepted_ends.get(row['episode_id'], -1)
+                accepted = self._accepted_ends.get(key, -1)
                 end = row['end_physics_index']
                 if end is not None and end > accepted:
-                    row.update(end_physics_index=accepted, complete=False, end_reason='storage_limit',
-                               post_context_complete=False, **self._accepted_contexts.get(row['episode_id'],
+                    reason = 'window_storage_limit' if row.get('recording_window_index') in self.exhausted_windows else 'storage_limit'
+                    row.update(end_physics_index=accepted, complete=False, end_reason=reason,
+                               post_context_complete=False, **self._accepted_contexts.get(key,
                                    dict(all_cars_terminal=False, policy_version_end=None)))
                     if accepted < 0 and 'team_policy_versions_end' in row:
                         row['team_policy_versions_end'] = None
@@ -402,6 +439,7 @@ class RaceDatasetWriter(DatasetWriter):
                 'total_frames': self._total, 'num_chunks': self._chunk_idx,
                 'recording': self.config, 'serialized_frame_bytes': self.payload_bytes,
                 'storage_full': self.storage_full,
+                'recording_windows': self.window_usage,
                 'frame_contract': {'version': '1.0', 'interval': 'one physics step',
                     'state': 'explicit pre_state and post_state',
                     'learner_observation': 'pre_decision; repeated on held-action substeps',
@@ -441,3 +479,7 @@ class RaceDatasetHook(DatasetHook):
     @property
     def storage_full(self):
         return self._writer.storage_full
+
+    @property
+    def exhausted_windows(self):
+        return self._writer.exhausted_windows

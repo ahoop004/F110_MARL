@@ -412,8 +412,6 @@ def main() -> None:
         _run_two_team(scenario, args, console, scenario_dir)
         return
     if args.eval:
-        if args.record_races:
-            raise ValueError("--record-races currently records MAPPO training; omit it for evaluation")
         _run_eval(scenario, args, console, scenario_dir)
         return
 
@@ -987,6 +985,9 @@ def _run_eval(
     from utils.torch_io import safe_load
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     checkpoint_payload = safe_load(str(checkpoint_path), map_location="cpu")
+    selection = checkpoint_payload.get('checkpoint_selection') or {}
+    checkpoint_steps = checkpoint_payload.get('environment_steps', selection.get('environment_steps'))
+    checkpoint_version = checkpoint_payload.get('policy_version', selection.get('policy_version'))
     stored_provenance = (
         checkpoint_payload.get("provenance")
         if isinstance(checkpoint_payload, dict)
@@ -1041,6 +1042,32 @@ def _run_eval(
         f"action_dim={action_dim}"
     )
 
+    run_id = args.run_id or resolve_run_id(
+        scenario_name=exp_cfg.get("name"), algorithm=f"{algorithm}-eval", seed=base_seed)
+    output_dir = Path(args.output_dir) if args.output_dir else Path("outputs") / exp_cfg.get("name", "unnamed") / "evaluation" / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_provenance = build_run_provenance(scenario, scenario_path=args.scenario,
+        run_id=run_id, algorithm=algorithm, trainable_agents=trainable_ids)
+    recorded_protocol = dict(name=protocol_name or 'custom', seeds=list(range(base_seed, base_seed+eval_episodes)),
+        max_steps=env.max_steps, target_laps=getattr(env, 'target_laps', None),
+        timestep_s=env.timestep, action_repeat=action_repeat)
+    from src.replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
+    recording_cfg = evaluation_recording_config(scenario, requested=bool(
+        getattr(args, 'record_races', False) or getattr(args, 'dataset_dir', None)))
+    recording = None
+    if recording_cfg is not None:
+        recording = EvaluationRecording(getattr(args, 'dataset_dir', None) or output_dir/'behavior',
+            config=recording_cfg, env=env, trainable_ids=trainable_ids, run_id=run_id,
+            action_repeat=action_repeat, metadata=dict(algorithm=algorithm, provenance=evaluation_provenance,
+                physics_contract=params.get('_physics_contract'),
+                action_contract=ActionComposer.contract_from_config(focal_cfg.get('action_constraints', {}), env.timestep*action_repeat),
+                observation_contracts={aid: obs_composers[aid].contract for aid in trainable_ids},
+                checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash))
+        recording.begin(dict(evaluation_id='standalone', checkpoint=str(checkpoint_path.resolve()),
+            checkpoint_sha256=checkpoint_hash, policy_version=checkpoint_version,
+            environment_steps=checkpoint_steps))
+    recording_complete = False
+
     all_agent_ids = list(getattr(env, "possible_agents", list(agent_configs)))
     opponent_ids = [aid for aid in all_agent_ids if aid not in trainable_set]
     target_id = str(focal_cfg.get("target_id", "") or "")
@@ -1060,6 +1087,8 @@ def _run_eval(
             eval_maps[episode] = info_dict.get(focal_agent_id, {}).get("map_bundle") or getattr(
                 env, "_map_bundle_active", None)
             eval_spawns[episode] = capture_spawn_context(env, all_agent_ids)
+            if recording is not None:
+                recording.start(episode, info_dict, protocol=recorded_protocol)
             for composer in obs_composers.values():
                 composer.reset()
             for composer in reward_composers.values():
@@ -1084,6 +1113,7 @@ def _run_eval(
                 opponent_ids=opponent_ids,
             )
             env_steps = 0
+            decision_index = 0
             episode_team_reward = 0.0
 
             while True:
@@ -1128,7 +1158,9 @@ def _run_eval(
                 if not actions:
                     break
 
-                for _ in range(max(1, action_repeat)):
+                for substep in range(max(1, action_repeat)):
+                    if recording is not None:
+                        recording.before_step(info_dict, obs_dict, env_steps)
                     obs_dict, _rew_dict, term_dict, trunc_dict, info_dict = env.step(actions)
                     step_facts = getattr(env, "last_step_facts", None)
                     post_step_global_state = getattr(
@@ -1153,6 +1185,7 @@ def _run_eval(
                     )
 
                     substep_individual_rewards: Dict[str, float] = {}
+                    recorded_components, team_components = {}, {}
                     for aid, action_norm in actions_norm.items():
                         if aid not in trainable_set:
                             continue
@@ -1178,6 +1211,8 @@ def _run_eval(
                             )
                         )
                         sub_reward, breakdown = reward_composers[aid].compute(sub_step_info)
+                        if recording is not None:
+                            recorded_components[aid] = dict(breakdown)
                         facts = episode_facts.agents[aid]
                         facts.individual_reward_total += float(sub_reward)
                         substep_individual_rewards[aid] = float(sub_reward)
@@ -1200,7 +1235,7 @@ def _run_eval(
                             obs_dict=obs_dict, actions=actions,
                             global_state=post_step_global_state,
                         )
-                        bonus, _ = reward_composers[focal_agent_id].compute(team_context, team=True)
+                        bonus, team_components = reward_composers[focal_agent_id].compute(team_context, team=True)
                         for aid in learning_rewards:
                             learning_rewards[aid] += bonus
                     if learning_rewards and params.get("team_return_mode") == "joint":
@@ -1208,10 +1243,18 @@ def _run_eval(
                     for aid, learning_reward in learning_rewards.items():
                         episode_facts.agents[aid].reward_total += learning_reward
 
+                    if recording is not None:
+                        recording.step(infos=info_dict, obs=obs_dict, physical=actions, normalized=actions_norm,
+                            wrapped=wrapped_obs, physics_index=env_steps-1, decision_index=decision_index, substep=substep,
+                            terminated=term_dict, truncated=trunc_dict, rewards=learning_rewards,
+                            individual_rewards=substep_individual_rewards, components=recorded_components,
+                            team_components=team_components)
+
                     active_after_step = set(getattr(env, "agents", []))
                     if not active_after_step or not set(actions).issubset(active_after_step):
                         break
 
+                decision_index += 1
                 for aid in trainable_ids:
                     if aid not in getattr(env, "agents", []):
                         continue
@@ -1222,6 +1265,8 @@ def _run_eval(
                         info_dict.get(aid, {}),
                     )
 
+            if recording is not None:
+                recording.end()
             finalize_episode_facts(episode_facts)
             if info_dict.get(focal_agent_id, {}).get("physics") is not None:
                 eval_physics[episode_facts.episode] = info_dict[focal_agent_id]["physics"]
@@ -1257,7 +1302,10 @@ def _run_eval(
                 f"reward={reward_total:+.2f}  steps={env_steps:5d}  "
                 f"win={win_value:.0f}  outcome={focal_outcome}"
             )
+        recording_complete = True
     finally:
+        if recording is not None:
+            recording.close(complete=recording_complete)
         close = getattr(env, "close", None)
         if callable(close):
             close()
@@ -1296,23 +1344,17 @@ def _run_eval(
             "mean_valid_lap_time_s") if key in summary}, title="Evaluation Summary")
     else:
         console.print_summary(summary, title="Evaluation Summary")
-    run_id = args.run_id or resolve_run_id(
-        scenario_name=exp_cfg.get("name"), algorithm=f"{algorithm}-eval", seed=base_seed
-    )
-    output_dir = Path(args.output_dir) if args.output_dir else Path("outputs") / exp_cfg.get("name", "unnamed") / "evaluation" / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
     report = {
         "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_sha256": checkpoint_hash,
         "checkpoint_provenance": stored_provenance,
         "provenance_mismatches": mismatches,
-        "evaluation_provenance": build_run_provenance(
-            scenario, scenario_path=args.scenario, run_id=run_id,
-            algorithm=algorithm, trainable_agents=trainable_ids,
-        ),
+        "evaluation_provenance": evaluation_provenance,
         "protocol": protocol_name or "custom",
+        "environment_steps": checkpoint_steps,
         "seeds": list(range(base_seed, base_seed + eval_episodes)),
         "max_steps": env.max_steps,
+        "target_laps": getattr(env, 'target_laps', None),
         "timestep_s": float(env.timestep),
         "horizon_s": env.max_steps * float(env.timestep) if env.max_steps > 0 else None,
         "action_repeat": action_repeat,
@@ -1334,7 +1376,7 @@ def _run_eval(
                              "map_id": eval_maps[facts.episode],
                              "spawn_configuration": eval_spawns[facts.episode],
                              "action_repeat": action_repeat,
-                             "episode_id": f"{run_id}_ep{facts.episode:06d}",
+                             "episode_id": f"{run_id}_standalone_ep{facts.episode:06d}",
                              "checkpoint_sha256": checkpoint_hash},
              **({"physics": eval_physics[facts.episode]} if facts.episode in eval_physics else {}),
              **aggregate_eval_episodes(
@@ -1347,6 +1389,24 @@ def _run_eval(
     report_path = output_dir / "evaluation_report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     console.print_info(f"Evaluation report: {report_path}")
+
+
+def _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance):
+    from src.replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
+    config = evaluation_recording_config(scenario)
+    if config is None:
+        return
+    ids = getattr(evaluator, 'trainable_ids', None) or [evaluator.rl_agent_id]
+    composers = getattr(evaluator, 'obs_composers', None) or {ids[0]: evaluator.obs_composer}
+    env = evaluator.env
+    evaluator.recording = EvaluationRecording(Path(output_dir)/'evaluation_behavior', config=config,
+        env=env, trainable_ids=ids, run_id=run_id, action_repeat=evaluator.action_repeat,
+        metadata=dict(algorithm=scenario['agents'][ids[0]]['algorithm'], provenance=provenance or {},
+            physics_contract=(provenance or {}).get('physics_contract'),
+            action_contract=ActionComposer.contract_from_config(
+                scenario['agents'][ids[0]].get('action_constraints', {}), env.timestep*evaluator.action_repeat),
+            observation_contracts={aid: composer.contract for aid, composer in composers.items()},
+            reward_availability='not_computed_by_selection_evaluator'))
 
 
 def _run_on_policy(
@@ -1460,6 +1520,7 @@ def _run_on_policy(
 
     if evaluator is not None:
         evaluator.bind_agent(agent)
+        _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance)
         hooks.append(
             EvaluationCheckpointHook(
                 agent=agent,
@@ -1521,8 +1582,6 @@ def _run_two_team(scenario, args, console, scenario_dir):
 
     selective_recording = bool(args.record_races or args.dataset_dir or scenario.get('recording', {}).get('enabled'))
     if selective_recording:
-        if args.eval:
-            raise ValueError('Two-team recording currently supports training only; evaluation recording is pending')
         from src.replay.race_recorder import recording_config
         scenario['recording'] = recording_config({**scenario.get('recording', {}), 'enabled': True})
     if args.pretrained_actor or scenario.get("training_defaults", {}).get("pretrained_actor_checkpoint"):
@@ -1555,8 +1614,10 @@ def _run_two_team(scenario, args, console, scenario_dir):
     protocol = resolve_evaluation_protocol(scenario, args.eval_protocol or "selection")
     if args.eval and not args.eval_protocol:
         protocol["episodes"] = args.eval_episodes or args.episodes or protocol["episodes"]
+        if args.eval_episodes is not None or args.episodes is not None:
+            protocol["name"] = "custom"
     env, _, _ = create_training_setup(scenario, mode="eval" if args.eval else "train", scenario_dir=scenario_dir)
-    logger, eval_env, race_writer = None, None, None
+    logger, eval_env, race_writer, eval_writer = None, None, None, None
     recording_complete = False
     try:
         observations = build_obs_composers(scenario["agents"], trainable_ids, cfg, scenario_dir)
@@ -1587,7 +1648,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
 
         def save_pair(name, episode, summary=None):
             directory = output / name
-            directory.mkdir(exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True)
             # Numeric filenames keep arbitrary team names out of filesystem paths.
             files = {team: f"team_{index}.pt" for index, team in enumerate(teams)}
             for team, agent in agents.items():
@@ -1633,12 +1694,10 @@ def _run_two_team(scenario, args, console, scenario_dir):
             if logger:
                 logger.log_metrics(row)
 
-        if selective_recording:
+        def recording_writer(directory, recording, phase):
             from src.replay.dataset_writer import RaceDatasetWriter
-            from src.replay.race_recorder import RaceRecorder
-            recording_dir = args.dataset_dir or output/'behavior'
-            race_writer = RaceDatasetWriter(recording_dir, config=scenario['recording'],
-                metadata=dict(run_id=run_id, algorithm='mappo_two_team', scenario=exp['name'],
+            writer = RaceDatasetWriter(directory, config=recording,
+                metadata=dict(run_id=run_id, algorithm='mappo_two_team', scenario=exp['name'], phase=phase,
                     provenance=provenance, physics_contract=provenance['physics_contract'],
                     action_contract=ActionComposer.contract_from_config(
                         scenario['agents'][trainable_ids[0]].get('action_constraints', {}), env.timestep),
@@ -1649,12 +1708,28 @@ def _run_two_team(scenario, args, console, scenario_dir):
                     policy_version_rule='completed synchronous pair updates; zero is initialization',
                     episode_termination=cfg['episode_termination'], terminal_agents=cfg.get('terminal_agents'),
                     map_protocols=provenance.get('map_protocols')))
-            console.print_info(f'Self-play recording → {recording_dir} (sampled shared frames and event clips)')
+            console.print_info(f'Self-play {phase} recording → {directory}')
+            return writer
+
+        eval_recording = scenario.get('evaluation', {}).get('recording', {})
+        record_evaluation = eval_recording.get('enabled', selective_recording)
+        if selective_recording and not args.eval:
+            race_writer = recording_writer(args.dataset_dir or output/'behavior', scenario['recording'], 'training')
+        if record_evaluation and (args.eval or scenario.get('evaluation', {}).get('enabled', False)):
+            from src.replay.race_recorder import recording_config
+            # Small matched evaluations default to whole-race sampling. Their
+            # global budget is independent of training's event-heavy stream.
+            evaluation_config = recording_config({**scenario.get('recording', {}),
+                'sample_probability': 1., 'windows': [], **eval_recording, 'enabled': True})
+            evaluation_dir = (args.dataset_dir or output/'behavior') if args.eval else (
+                Path(args.dataset_dir)/'evaluation' if args.dataset_dir else output/'evaluation_behavior')
+            eval_writer = recording_writer(evaluation_dir, evaluation_config, 'evaluation')
         trainer = TwoTeamTrainer(env=env, teams=teams, agents=agents, observations=observations,
             rewards=rewards, actions=actions, event_config=scenario["two_team"].get("events"),
             render=bool(cfg.get("render")), on_update=lambda row: emit("updates.jsonl", row),
             run_id=run_id, race_writer=race_writer)
         if race_writer is not None and num_envs == 1:
+            from src.replay.race_recorder import RaceRecorder
             trainer.race_recorder = RaceRecorder(race_writer.config, race_writer.add_event, run_id=run_id)
         eval_trainer = trainer
         if not args.eval and scenario.get("evaluation", {}).get("enabled", False):
@@ -1665,7 +1740,12 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 eval_env, _, _ = create_training_setup(eval_scenario, mode="eval", scenario_dir=scenario_dir)
             eval_trainer = TwoTeamTrainer(env=eval_env, teams=teams, agents=agents,
                 observations=copy.deepcopy(observations), rewards=copy.deepcopy(rewards),
-                actions=copy.deepcopy(actions), event_config=scenario["two_team"].get("events"))
+                actions=copy.deepcopy(actions), event_config=scenario["two_team"].get("events"), run_id=run_id)
+
+        if eval_writer is not None:
+            from src.replay.race_recorder import RaceRecorder
+            eval_trainer.race_writer = eval_writer
+            eval_trainer.race_recorder = RaceRecorder(eval_writer.config, eval_writer.add_event, run_id=run_id)
 
         console.print_info(f"Two trainable teams: {teams}; actor/critic per team; three objectives: completion, own safety, opponent crashes")
         console.print_info(f"Outputs: {output}; reward aggregation=sum; gamma={params['gamma']}; actor inputs={agents[next(iter(teams))].obs_dim}")
@@ -1675,19 +1755,55 @@ def _run_two_team(scenario, args, console, scenario_dir):
 
         def evaluate(episode):
             nonlocal best, eval_round, last_evaluation_step
-            summary, rows = evaluate_pair(eval_trainer, protocol)
             eval_round += 1
+            evaluation_id = f"eval_{eval_round:06d}"
+            versions = (manifest.get('team_policy_versions', {team: None for team in teams}) if args.eval
+                        else {team: trainer.updates for team in teams})
+            policy_version = next(iter(versions.values())) if len(set(versions.values())) == 1 else None
+            checkpoint = directory if args.eval else None
+            if not args.eval and eval_writer is not None and eval_writer.can_record(trainer.environment_steps):
+                name = f'evaluation_pairs/{evaluation_id}'
+                save_pair(name, episode)
+                checkpoint = (output/name).resolve()
+            files = {}
+            if checkpoint is not None:
+                pair = json.loads((checkpoint/'pair.json').read_text())
+                files = {team: dict(file=filename,
+                    sha256=hashlib.sha256((checkpoint/filename).read_bytes()).hexdigest())
+                    for team, filename in pair['files'].items()}
+            checkpoint_hash = (hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+                               if files else None)
+            recorded_protocol = {**protocol, 'seeds': list(range(protocol['seed'], protocol['seed']+protocol['episodes'])),
+                'deterministic': True, 'map_pick': cfg.get('map_pick'),
+                'map_bundles': cfg.get('map_bundles_eval', cfg.get('map_bundles')),
+                'max_steps': eval_trainer.env.max_steps, 'target_laps': eval_trainer.env.target_laps,
+                'timestep_s': eval_trainer.env.timestep, 'action_repeat': 1,
+                'episode_termination': eval_trainer.env.episode_termination_mode,
+                'terminal_agents': cfg.get('terminal_agents'), 'random_spawn': cfg.get('random_spawn'),
+                'terminate_on_collision': eval_trainer.env.terminate_on_collision,
+                'track_limits_enabled': eval_trainer.env.track_limits_enabled,
+                'terminate_on_track_boundary': eval_trainer.env.terminate_on_track_boundary,
+                'agent_teams': cfg['agent_teams']}
+            context = dict(phase='evaluation', evaluation_id=evaluation_id,
+                protocol=protocol.get('name', 'selection'), evaluation_protocol=recorded_protocol,
+                environment_steps=manifest.get('environment_steps') if args.eval else trainer.environment_steps,
+                checkpoint_training_seed=(manifest.get('provenance', {}).get('seed') if args.eval else exp['seed']),
+                team_policy_versions=versions, policy_version=policy_version,
+                checkpoint=str(checkpoint) if checkpoint is not None else None,
+                checkpoint_sha256=checkpoint_hash, checkpoint_files=files)
+            summary, rows = evaluate_pair(eval_trainer, protocol, context=context)
             last_evaluation_step = trainer.environment_steps
+            score = selection_score(summary, teams)
+            is_best = not args.eval and (best is None or score > best)
             emit("evaluation_metrics.jsonl", {"selfplay_eval/round": eval_round,
                 "selfplay_eval/training_episode": episode,
-                "selfplay_eval/environment_steps": trainer.environment_steps,
+                **{f"selfplay_eval/{key}": value for key, value in context.items()},
+                "selfplay_eval/is_best": is_best,
                 **{f"selfplay_eval/{key}": value for key, value in summary.items()}})
             with (output / "evaluation_races.jsonl").open("a") as stream:
                 for row in rows:
-                    stream.write(json.dumps({"round": eval_round,
-                        "environment_steps": trainer.environment_steps, **row}) + "\n")
-            score = selection_score(summary, teams)
-            if not args.eval and (best is None or score > best):
+                    stream.write(json.dumps({"round": eval_round, **row}) + "\n")
+            if is_best:
                 best = score
                 save_pair("best_pair", episode, summary)
             console.print_info(f"Pair evaluation {eval_round}: " + " | ".join(
@@ -1789,6 +1905,8 @@ def _run_two_team(scenario, args, console, scenario_dir):
     finally:
         if race_writer is not None:
             race_writer.close(complete=recording_complete)
+        if eval_writer is not None:
+            eval_writer.close(complete=recording_complete)
         env.close()
         if eval_env is not None:
             eval_env.close()
@@ -1949,6 +2067,7 @@ def _run_mappo(
                 episodes=protocol["episodes"], base_seed=protocol["seed"],
                 action_repeat=action_repeat,
             ).bind_agent(agent)
+            _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance)
             trainer.hooks.append(EvaluationCheckpointHook(
                 agent, str(output_dir), evaluator,
                 evaluate_every=int(eval_cfg.get("every_episodes", 100)),

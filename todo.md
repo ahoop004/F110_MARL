@@ -204,12 +204,15 @@ with linked constituent segments, then reopen the same clips and annotations.
   show explicit team identities/outcomes and preserve them in annotations.
 - [x] Verify enabled/disabled training consistency, shared worker storage caps,
   terminal tails, notebook execution, and a short recording throughput comparison.
-- [ ] Add recording to evaluation races (selection and standalone), with paired
+- [x] Add self-play recording to evaluation races (selection and standalone), with paired
   checkpoint identity and evaluation protocol/seed references; adapt self-play
   evaluation outputs for notebook comparisons.
-- [ ] Add recording allocation across long runs (e.g. training-step windows),
-  so early event clips cannot consume all storage before later policies are seen.
-  Current caps stop recording; they do not reserve capacity across 120M steps.
+- [x] Add recording allocation across long runs with explicit training-step
+  windows and separate reserved frame/byte budgets. Exhausting an early window
+  pauses recording until a later window; it cannot consume later capacity.
+- [x] Extend shared-frame evaluation recording to fixed-opponent MAPPO and PPO:
+  selection and standalone paths, exact checkpoint references, notebook outcome
+  joins, and explicit unavailable rewards/incomplete evaluator boundaries.
 
 Training recording is opt-in; the production self-play scenario is unchanged:
 
@@ -225,7 +228,159 @@ Use `CLIP_FILTERS` with `team="team_a"` or `"team_b"` for team outcomes. The
 existing annotation workflow retains explicit teams and paired policy versions.
 Use top-level `recording` settings for sample probability and global frame/byte
 caps; `--dataset-dir` can redirect shared-frame output for self-play.
-Self-play evaluation recording/comparison tables remain pending, as above.
+Self-play evaluations now use the existing `--record-races` opt-in too. Selection
+evaluations write to `evaluation_behavior` (or `--dataset-dir/evaluation`), with
+fixed paired checkpoints under `evaluation_pairs/eval_NNNNNN`. Standalone
+evaluation writes to `behavior` (or `--dataset-dir`) and references its loaded
+pair. Clips, scalar records, and annotations retain phase, protocol, seed plan,
+exact pair path/file hashes, and both policies' update versions. Training and
+evaluation have separate frame/byte budgets; evaluation samples every race by
+default. Override `evaluation.recording` with the existing recording settings,
+or set `enabled: false` there to keep training-only recording. Checkpoint files
+are additional disk usage outside frame/byte limits.
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_2v2_selfplay.yaml --eval --eval-protocol final --checkpoint outputs/selfplay_recorded/final_pair --record-races --no-wandb --output-dir outputs/selfplay_final_eval
+```
+
+Select that output folder in the notebook; use `CLIP_FILTERS` with
+`phase="evaluation"`, `protocol="final"` (or `"selection"`/`"custom"`), and the
+exact checkpoint path/hash if desired. Self-play evaluation tables and plots
+show each team/map with counts, seeds, and separate checkpoint/protocol groups.
+They remain separate from the original fixed-opponent comparison/seed tables.
+Older logs retain missing checkpoint/protocol facts rather than inventing them.
+Fixed-opponent/PPO evaluation recording is delivered in the handoff below.
+Windowed allocation is also available below.
+
+Validation: 44 focused tests passed across self-play trainers, recording,
+analysis, and playback (including four new self-play recording checks). Serial
+and spawned parallel enabled/disabled runs produced bit-identical actor and
+critic weights for both teams. Targeted checks cover delayed rewards after a
+team becomes inactive, clearance removal in playback, shared global frame caps,
+policy-version references, and annotation save/load.
+
+A separate 128-step CPU CLI comparison (2 environments / 1 worker, 100% sample
+probability, small networks) retained 128 unique frames, four complete sampled
+races, and four event clips; both policies again matched exactly. Collection
+plus update throughput was 33.61 steps/s disabled and 28.97 enabled (about 14%
+lower). This short noisy run is not a 400-environment benchmark or an estimate
+of default sampling overhead. Smoke overrides were removed; production budgets
+were not changed. Artifacts: `outputs/selfplay_recording_{disabled,enabled}`.
+
+The notebook executed against the self-play recording, exported CSV/PNG/PDF
+artifacts, and the team plots/playback image were visually inspected. The
+executed example and validation measurements are under
+`outputs/analysis/selfplay_recording_review`. Playback removal and annotation
+controls passed focused checks; browser/IDE interaction was not repeated for
+this increment (the earlier P3 browser check is documented below).
+
+Evaluation increment validation: 38 focused trainer/recording/analysis/playback
+checks passed, including serial and spawned parallel training with recorded
+selection evaluations and a standalone final evaluation. Both teams' actor and
+critic weights and evaluation outcomes matched recording-disabled runs exactly.
+Checks cover independent recording caps, unique phase/round/race IDs, checkpoint
+file hashes, policy versions, protocol seeds, clip filters, and annotation source
+references. Custom episode budgets are labeled `custom`, not fixed selection.
+
+CLI artifacts: `outputs/selfplay_evaluation_recording` (32 training steps,
+32 evaluation frames across two paired snapshots) and
+`outputs/selfplay_final_recording` (16 held-out evaluation frames). The full
+notebook executed against both folders and exported per-team/per-map tables and
+separate selection/final figures under `outputs/analysis/selfplay_evaluation_review`.
+Smoke overrides were removed; production scenario budgets were unchanged.
+Browser/IDE interaction was not repeated for this increment.
+
+### Recording allocation across long runs
+
+- Optional `recording.windows` is an ordered list of non-overlapping
+  `{start_step, end_step, max_frames, max_bytes}` ranges. Ends are exclusive;
+  reserved budgets must sum to no more than the existing dataset caps. Limits
+  are enforced globally across workers, with bounded capture/transfer before the
+  next barrier reports exhausted windows. Unused allocations are not borrowed.
+- Serial progress counts completed joint decisions; parallel progress is the
+  aggregate count at the last completed collection barrier, held fixed during
+  that collection round. Recorded fields identify the clock explicitly. Windows
+  shorter than the collection round can be skipped; choose ranges accordingly.
+- Both fixed-opponent MAPPO and two-team self-play support serial/parallel
+  windowed recording. Capture stops outside configured ranges or at a window
+  cap and resumes in later ranges, even during a continuous race. Training,
+  rewards, observations, policy updates, and race reset boundaries are preserved.
+- Clips close at boundaries; event history is discarded across gaps. Sampling
+  still uses the deterministic episode hash, with no training RNG consumption.
+  A sample resumed mid-race is `representative_segment` with `complete=false`,
+  not a complete race. Event-clip limits restart per episode/window. Later
+  segments have unique IDs and policy versions at their actual capture start.
+- Dataset metadata exposes configured windows and actual accepted frames/bytes,
+  including unused windows. Notebook `recording_windows` tables/CSV exports,
+  `CLIP_FILTERS["window_index"]`, the playback clock, and annotation sources
+  expose the selected window. Existing recordings and `windows: []` still work.
+- Evaluation keeps its independent, unwindowed budget by default. Explicit
+  `evaluation.recording.windows` uses checkpoint training steps; a checkpoint
+  with unknown steps cannot be assigned a window. Selection snapshot files are
+  saved only when the corresponding evaluation recording allocation is available.
+
+```bash
+PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/mappo_2v2_selfplay_recorded.yaml --no-wandb --output-dir outputs/selfplay_windowed
+```
+
+The new optional scenario includes `configs/recording/mappo_windowed.yaml`,
+splitting the unchanged 100,000-frame / 2 GB precompression budget into three
+stages of the existing 120M-step task. Original scenarios remain opt-in via their
+existing flags. The preset reserves three stages, not continuous coverage or
+complete races; event-heavy recording at 400 environments can still use each
+stage's allocation quickly. Adjust windows, caps, sampling, or event capture for
+the intended analysis. Fixed-opponent MAPPO scenarios can include the same file.
+
+Windowed recording validation: 38 focused checks passed across the recorder,
+self-play, fixed-opponent MAPPO, analysis, and playback. Checks cover frame/byte
+reservations, gaps, event-buffer boundaries, mid-race resumption, shared caps
+across spawned workers, config validation, and legacy unwindowed recording.
+Both serial and parallel self-play produced bit-identical actor/critic weights
+with recording disabled/enabled. No full training sweep was launched.
+
+A separate 64-step CLI comparison retained exactly six training frames in each
+of three windows, no frames in the intervening gap, and six evaluation frames
+under the independent unwindowed default. Both teams' final weights matched
+exactly. Artifacts: `outputs/window_recording_{disabled,enabled}`. The notebook
+executed on this run with `window_index=2` selected and exported budget/clip
+CSV tables and plots to `outputs/analysis/window_recording_review`; each late
+sample reopened as a bounded partial segment. The temporary smoke scenario was
+removed. Browser/IDE interaction was not repeated for this increment.
+
+### Fixed-opponent MAPPO and PPO evaluation handoff
+
+- Standalone evaluation now accepts `--record-races`; shared frames go to
+  `OUTPUT_DIR/behavior` or `--dataset-dir`. Use the matching scenario/checkpoint
+  with `--eval --eval-protocol final`, then select that output in the notebook.
+- During training, `evaluation.recording.enabled: true` enables selection
+  recording independently of training capture. MAPPO's global recording opt-in
+  also enables it. Selection datasets live in `OUTPUT_DIR/evaluation_behavior`,
+  with exact evaluated snapshots under `evaluation_checkpoints/evalNNNNNN.pt`.
+  Frame/byte caps exclude checkpoint files. PPO shared-frame training capture
+  remains unsupported; this increment adds its evaluation paths.
+- Clip/race IDs, checkpoint hashes, training steps when known, policy versions,
+  protocol, seed, and map references connect evaluation clips to notebook facts
+  and annotations. Older best-model checkpoints recover their training step and
+  policy version from embedded checkpoint-selection metadata.
+- Selection evaluators do not compute rewards: frames explicitly mark them
+  unavailable. Standalone evaluation retains existing computed components.
+  MAPPO records opponent tails after learner exits. PPO selection retains its
+  learner-exit stopping point and marks a still-running race incomplete with
+  `end_reason: evaluator_boundary`. Action-repeat substeps keep physics timing.
+
+Validation includes enabled/disabled actor/critic equality and identical
+evaluation outcomes/checkpoint choices for both algorithms, exact checkpoint
+hashes, replay/annotation source loading, held-action timing, opponent tails,
+and incomplete PPO boundaries. Existing evaluator, recorder, analysis, and
+widget tests also pass. Four tiny CPU CLI runs are saved as
+`outputs/{ppo,mappo}_{evaluation,final}_recording`. The notebook executed against
+all four and exported tables/PNG/PDF plots to
+`outputs/analysis/fixed_evaluation_review`, including `executed_review.ipynb`.
+Playback images were inspected; browser/IDE interaction was not repeated.
+Production scenario files and training budgets were not changed.
+
+Next: P4's bounded candidate-segment export with traceable source intervals,
+before adding similarity grouping or learned skills.
 
 ## P4 - Group segments for future hierarchical learning
 
@@ -270,9 +425,10 @@ traceable source clips and constituent links for later hierarchical learning.
   is required for this delivery.
 
 P0/P1 metrics and monitoring, P2 selective recording, and P3 notebook review
-and annotation are implemented for the original fixed-opponent MAPPO path.
-Before P4, finish scenario recording integration below, including the newer
-two-trainable-team self-play path.
+and annotation are implemented for fixed-opponent MAPPO and two-team self-play.
+PPO and MAPPO selection/standalone evaluations now support shared-frame capture.
+The remaining planned increment is P4 candidate segments and feature exports;
+selective shared-frame PPO training capture remains outside this delivery.
 
 Validation: focused metric, lifecycle, CSV, checkpoint, and parallel-collector
 checks passed. Two-environment headless runs covered continuous pretrained and
