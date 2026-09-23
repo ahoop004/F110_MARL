@@ -128,7 +128,7 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
     for key in ("terminate_on_track_limit", "terminate_on_collision"):
         if key in evaluation and not isinstance(evaluation[key], bool):
@@ -146,8 +146,12 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     final = evaluation.get("final_test")
     if final is not None and (not isinstance(final, dict) or not {"seed", "episodes"} <= final.keys()):
         raise ScenarioError("'evaluation.final_test' requires explicit seed and episodes.")
-    if final is not None and set(final) - {"seed", "episodes"}:
-        raise ScenarioError("'evaluation.final_test' accepts only seed and episodes; both protocols share evaluation.max_steps.")
+    if final is not None and set(final) - {"seed", "episodes", "target_laps", "max_steps"}:
+        raise ScenarioError("'evaluation.final_test' accepts seed, episodes, target_laps and max_steps.")
+    for key in ("target_laps", "max_steps"):
+        value = (final or {}).get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+            raise ScenarioError(f"evaluation.final_test.{key} must be a positive integer")
     for name, config in (("selection", selection), ("final", final)):
         if config is None:
             continue
@@ -164,13 +168,18 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     if protocol == "final" and final is None:
         raise ScenarioError("--eval-protocol final requires evaluation.final_test.")
     config = selection if protocol == "selection" else final
-    # Both fixed protocols share the selection horizon, inheriting training by default.
+    # Final evaluation may override the horizon; otherwise inherit selection.
     max_steps = evaluation.get("max_steps")
     if max_steps is None:
         max_steps = scenario["environment"].get("max_steps", 5000)
     if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 0:
         raise ScenarioError("Evaluation max_steps must be a nonnegative integer.")
-    return {"name": protocol, "seed": config["seed"], "episodes": config["episodes"], "max_steps": max_steps}
+    result = {"name": protocol, "seed": config["seed"], "episodes": config["episodes"],
+              "max_steps": config.get("max_steps", max_steps)}
+    target_laps = config.get("target_laps")
+    if target_laps is not None:
+        result["target_laps"] = target_laps
+    return result
 
 
 def validate_scenario(scenario: Dict[str, Any]) -> None:
@@ -346,6 +355,14 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         value = experiment.get(name, 1)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ScenarioError(f"'experiment.{name}' must be a positive integer.")
+    if scenario.get("map_curriculum") is not None:
+        from training.map_curriculum import validate_map_curriculum
+        try:
+            validate_map_curriculum(scenario)
+        except ValueError as exc:
+            raise ScenarioError(str(exc)) from exc
+    elif scenario.get("evaluation", {}).get("selection_strategy") == "map_curriculum":
+        raise ScenarioError("map_curriculum selection requires map_curriculum configuration")
     if num_envs > 1:
         if trainable_algos not in ({"ppo"}, {"mappo"}):
             raise ScenarioError("Parallel environments require PPO or MAPPO.")

@@ -1383,3 +1383,34 @@ def test_invalid_collector_startup_settings_fail_before_launch(field, value):
     scenario['experiment'][field] = value
     with pytest.raises(ValueError, match=field): _worker_startup_settings(scenario)
     with pytest.raises(ScenarioError, match=field): validate_scenario(scenario)
+
+
+@pytest.mark.parametrize("terminal_on_update", [True, False])
+def test_curriculum_stop_prevents_further_collection_or_updates(terminal_on_update):
+    from training.hooks import TrainingHook
+
+    class Stop(TrainingHook):
+        should_stop = False
+        updates = 0
+
+        def on_update(self, metrics):
+            self.updates += 1
+            self.should_stop = True
+
+    class Env(_OneStepTruncationEnv):
+        def step(self, actions):
+            obs, rewards, terms, truncs, infos = super().step(actions)
+            if not terminal_on_update:
+                self.agents = ["car_0"]
+                truncs["car_0"] = False
+                infos["car_0"] = {}
+            return obs, rewards, terms, truncs, infos
+
+    agent = PPOAgent(1, -np.ones(2), np.ones(2),
+        {"hidden_dims": [4], "n_steps": 2, "n_epochs": 1, "batch_size": 2})
+    hook = Stop()
+    trainer = OnPolicyTrainer(Env(), "car_0", agent, {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(), hooks=[hook])
+    trainer.train(total_steps=100)
+    assert trainer.collected_steps == 2
+    assert hook.updates == 1

@@ -535,3 +535,22 @@ def test_pretraining_reward_favors_forward_motion_and_penalizes_boundaries():
                         for i in range(2000))
     waiting_return = idle * (1 - gamma ** 2000) / (1 - gamma)
     assert moving_return > waiting_return
+
+
+@pytest.mark.parametrize("violation", ["collision", "boundary", None])
+def test_strict_clean_finish_rejects_same_step_finish_violation(violation):
+    class Env(_OneStepFinishEnv):
+        map_name = "L"
+
+        def step(self, actions):
+            obs, rewards, terms, truncs, infos = super().step(actions)
+            infos["car_0"].update(collision=violation == "collision",
+                track_limits={"exceeded": violation == "boundary", "offtrack_distance": 0.1})
+            return obs, rewards, terms, truncs, infos
+
+    evaluator = DeterministicPPOEvaluator(env=Env(), rl_agent_id="car_0", other_agents={},
+        obs_composer=_Composer(), action_composer=_ActionComposer(), episodes=1, base_seed=100)
+    summary = evaluator.evaluate(_ActorOwner())
+    assert summary["completion_rate"] == 1.0
+    assert summary["strict_clean_finish_count"] == int(violation is None)
+    assert summary["per_map"]["L"]["strict_clean_finish_count"] == int(violation is None)

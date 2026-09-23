@@ -510,7 +510,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+        if selection_strategy not in {"map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -546,6 +546,8 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+        if strategy == "map_curriculum":
+            return tuple(summary["curriculum_selection_score"])
         if strategy.startswith("team_"):
             objective_key = {"team_completion": "team_completion_rate",
                              "team_combined": "team_rank_score",

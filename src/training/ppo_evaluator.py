@@ -118,6 +118,7 @@ class DeterministicPPOEvaluator:
                     )
                     env_steps = 0
                     decision = 0
+                    clean_episode = True
 
                     while True:
                         active = set(getattr(self.env, "agents", list(obs_dict)))
@@ -135,6 +136,12 @@ class DeterministicPPOEvaluator:
                                 self.recording.before_step(info_dict, obs_dict, env_steps)
                             obs_dict, _, terms, truncs, info_dict = self.env.step(actions)
                             env_steps += 1
+                            ego_info = info_dict.get(self.rl_agent_id, {})
+                            # Finish transitions can precede collision/boundary
+                            # transitions on the same step. Check raw facts too.
+                            clean_episode = clean_episode and not (
+                                ego_info.get("collision", False)
+                                or (ego_info.get("track_limits") or {}).get("exceeded", False))
                             update_agent_step_facts(
                                 facts,
                                 step_idx=env_steps,
@@ -173,7 +180,9 @@ class DeterministicPPOEvaluator:
                     episode_records.append({**episode_race_record(result,
                         timestep=getattr(self.env, 'timestep', None), include_rewards=False),
                         'phase': 'evaluation', 'map_id': map_id, 'environment_episode': episode,
-                        'seed': self.base_seed+episode, **record_context})
+                        'seed': self.base_seed+episode,
+                        'strict_clean_finish': bool(clean_episode and result.agents[self.rl_agent_id].clean_finish),
+                        **record_context})
                     physics = info_dict.get(self.rl_agent_id, {}).get("physics")
                     if physics is not None:
                         physics_episodes.append({"seed": self.base_seed + episode, "physics": physics})
@@ -198,6 +207,10 @@ class DeterministicPPOEvaluator:
         summary['episode_results'] = episode_records
         summary['per_map'] = {name: aggregate_eval_episodes(rows, focal_agent_id=self.rl_agent_id,
             timestep=getattr(self.env, 'timestep', None)) for name, rows in by_map.items()}
+        summary["strict_clean_finish_count"] = sum(row["strict_clean_finish"] for row in episode_records)
+        for name, row in summary["per_map"].items():
+            row["strict_clean_finish_count"] = sum(record["strict_clean_finish"]
+                for record in episode_records if (record["map_id"] or "unknown") == name)
         summary["evaluation_protocol"] = protocol
         if physics_episodes:
             summary["evaluation_protocol"]["physics_episodes"] = physics_episodes

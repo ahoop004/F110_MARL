@@ -1,0 +1,49 @@
+# Start from scratch on L; advance using five clean laps on fixed evaluation starts.
+includes:
+  - ppo_lap_completion_pretrain.yaml
+
+experiment:
+  name: ppo_lap_completion_curriculum
+  num_envs: 400  # 400 CPU collectors; batched policy inference/updates in the parent.
+
+map_curriculum:
+  success_threshold: 0.9
+  required_evaluations: 2
+  episodes_per_map: 10
+
+environment:
+  map_bundles: [L_map, circle_map, Budapest_map, Melbourne_map, Montreal_map, Shanghai_map, Silverstone_map, Spa_map, Spielberg_map]
+  map_bundles_train: [L_map]
+  map_bundles_eval: [L_map, circle_map, Budapest_map, Melbourne_map, Montreal_map, Shanghai_map, Silverstone_map, Spa_map, Spielberg_map]
+  map_cycle: per_episode
+  map_pick: round_robin
+  target_laps: 5
+  max_steps: 16000
+  episode_termination: {mode: any_agent, lap_completion: true}
+
+# Ninety episodes = ten starts on each of nine maps, every PPO collection/update.
+evaluation:
+  every_steps: 409600
+  episodes: 90
+  target_laps: 5
+  max_steps: 16000
+  terminate_on_track_limit: true
+  terminate_on_collision: true
+  selection_strategy: map_curriculum
+  final_test:
+    episodes: 180
+    seed: 20042
+    target_laps: 20
+    max_steps: 64000
+
+agents:
+  car_0:
+    params:
+      n_steps: 409600  # pooled: 400 environments x 1,024 decisions
+      checkpoint_every_steps: 409600
+
+wandb:
+  group: ppo-lap-completion-curriculum
+  job_type: map-curriculum
+  tags: [ppo, single-agent, map-curriculum, five-clean-laps]
+  notes: "L-first growing map curriculum; 9/10 clean five-lap starts per map twice; retain previous maps; stop and test frozen policy on fresh twenty-lap starts."

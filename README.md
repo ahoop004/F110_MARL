@@ -199,6 +199,10 @@ per-map summaries. Fixed track scaling changes observation semantics and require
 fresh pretraining. See [the current workflow](docs/PPO_TO_MAPPO_PRETRAINING.md)
 for matched scratch comparisons, independent seeds, and acceptance criteria.
 
+For L-first training that automatically adds maps after five clean laps and
+checks retention across the full bundle, see [the map curriculum workflow](docs/PPO_MAP_CURRICULUM.md).
+Its entry point is `scenarios/ppo_lap_completion_curriculum.yaml`.
+
 Use the independent final evaluation seeds after selecting a checkpoint:
 
 ```bash

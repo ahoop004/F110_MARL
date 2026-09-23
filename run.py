@@ -902,6 +902,9 @@ def _run_eval(
         scenario["experiment"]["seed"] = protocol["seed"]
         scenario["experiment"]["episodes"] = protocol["episodes"]
         scenario["environment"]["max_steps"] = protocol["max_steps"]
+        scenario.setdefault("evaluation", {})["max_steps"] = protocol["max_steps"]
+        if "target_laps" in protocol:
+            scenario["evaluation"]["target_laps"] = protocol["target_laps"]
     exp_cfg = scenario.get("experiment", {})
     env_cfg = scenario.get("environment", {})
     eval_episodes = (
@@ -1518,11 +1521,19 @@ def _run_on_policy(
         if hasattr(hook, "_agent") and hook._agent is None:
             hook._agent = agent
 
+    curriculum = None
+    checkpoint_hook_type = EvaluationCheckpointHook
     if evaluator is not None:
         evaluator.bind_agent(agent)
         _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance)
+        if (scenario or {}).get("map_curriculum") is not None:
+            from training.map_curriculum import MapCurriculum, CurriculumEvaluator, MapCurriculumCheckpointHook
+            curriculum = MapCurriculum(scenario["environment"]["map_bundles_eval"],
+                scenario["environment"]["map_bundles_train"][0], **scenario["map_curriculum"])
+            evaluator = CurriculumEvaluator(evaluator, curriculum, env._map_scheduler, console)
+            checkpoint_hook_type = MapCurriculumCheckpointHook
         hooks.append(
-            EvaluationCheckpointHook(
+            checkpoint_hook_type(
                 agent=agent,
                 output_dir=output_dir,
                 evaluator=evaluator,
@@ -1568,6 +1579,36 @@ def _run_on_policy(
         else:
             trainer.train(n_episodes=n_episodes,
                           **({"total_steps": total_steps} if total_steps is not None else {}))
+        if curriculum is not None and curriculum.complete:
+            # Training stops at the gate, so the in-memory policy is exactly
+            # curriculum_passed.pt. Final results never select or tune weights.
+            final_protocol = resolve_evaluation_protocol(scenario, "final")
+            final_scenario = copy.deepcopy(scenario)
+            final_scenario["experiment"]["seed"] = final_protocol["seed"]
+            final_scenario["evaluation"]["max_steps"] = final_protocol["max_steps"]
+            final_scenario["evaluation"]["target_laps"] = final_protocol.get("target_laps", eval_cfg["target_laps"])
+            final_env, final_agents, _ = create_training_setup(
+                final_scenario, mode="eval", scenario_dir=scenario_dir)
+            try:
+                final_evaluator = DeterministicPPOEvaluator(
+                    env=final_env, rl_agent_id=rl_agent_id,
+                    other_agents={aid: ctrl for aid, ctrl in final_agents.items() if aid != rl_agent_id},
+                    obs_composer=eval_obs_composer, action_composer=eval_action_composer,
+                    episodes=final_protocol["episodes"], base_seed=final_protocol["seed"],
+                    action_repeat=action_repeat).bind_agent(agent)
+                report = final_evaluator.evaluate()
+                report["evaluation_protocol"]["name"] = "final"
+                report["checkpoint"] = str(Path(output_dir) / "curriculum_passed.pt")
+                report["all_maps_passed"] = all(
+                    report["per_map"].get(name, {}).get("episodes", 0) > 0
+                    and report["per_map"][name]["strict_clean_finish_count"]
+                    / report["per_map"][name]["episodes"] >= curriculum.threshold
+                    for name in curriculum.maps)
+                report_path = Path(output_dir) / "curriculum_final_evaluation.json"
+                report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+                console.print_info(f"Final endurance validation: all_maps_passed={report['all_maps_passed']}; {report_path}")
+            finally:
+                final_env.close()
     finally:
         env.close()
         if evaluator is not None:

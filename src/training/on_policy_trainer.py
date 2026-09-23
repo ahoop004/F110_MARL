@@ -85,6 +85,7 @@ class OnPolicyTrainer:
         waiting = {}
         completed = 0
         collected = 0
+        stopped = False
         if total_steps is not None and total_steps < num_envs:
             raise ValueError("total_steps must be at least num_envs")
         self._set_training_progress(0, total_steps or n_episodes)
@@ -165,6 +166,9 @@ class OnPolicyTrainer:
                         if kind == "transition":
                             for hook in record_hooks:
                                 hook.on_step(payload)
+                        elif kind == "episode_start":
+                            for hook in self.hooks:
+                                hook.on_episode_start(payload)
                         elif kind == "episode":
                             if total_steps is None:
                                 self._set_training_progress(completed + 1, n_episodes)
@@ -204,14 +208,22 @@ class OnPolicyTrainer:
                         metrics["train/environment_steps"] = collected
                         for hook in self.hooks:
                             hook.on_update(metrics)
+                    stopped = self._should_stop()
+                    reply = metrics
+                    if scenario.get("map_curriculum") is not None or stopped:
+                        control = {"stop": stopped}
+                        if scenario.get("map_curriculum") is not None:
+                            control["training_bundles"] = self.env._map_scheduler.training_bundles
+                        reply = {"metrics": metrics, "collector_control": control}
                     for worker_id in waiting:
-                        connections[worker_id].send(metrics)
+                        connections[worker_id].send(reply)
                     waiting.clear()
-            if total_steps is not None and collected != total_steps:
+            if not stopped and total_steps is not None and collected != total_steps:
                 raise RuntimeError(f"PPO collected {collected} of {total_steps} transitions")
-            if total_steps is None and completed != n_episodes:
+            if not stopped and total_steps is None and completed != n_episodes:
                 raise RuntimeError(f"PPO workers completed {completed} of {n_episodes} episodes.")
-            self._flush_pending_update()
+            if not stopped:
+                self._flush_pending_update()
             for hook in self.hooks:
                 hook.on_training_end()
             completed_normally = True
@@ -452,7 +464,7 @@ class OnPolicyTrainer:
                             hook.on_update(update_metrics)
 
                 obs = next_obs
-                if budget_done:
+                if budget_done or self._should_stop():
                     break
 
             # Exhausting the training budget is not an environment terminal.
@@ -476,10 +488,18 @@ class OnPolicyTrainer:
             for hook in self.hooks:
                 hook.on_episode_end(episode, episode_reward, last_info, update_metrics)
             episode += 1
+            if self._should_stop():
+                break
 
-        self._flush_pending_update()
+        # A passed evaluation gate freezes the evaluated weights exactly.
+        if not self._should_stop():
+            self._flush_pending_update()
         for hook in self.hooks:
             hook.on_training_end()
+
+    def _should_stop(self) -> bool:
+        return bool(getattr(self.agent, "should_stop", False)) or any(
+            getattr(hook, "should_stop", False) for hook in self.hooks)
 
     def _flush_pending_update(self) -> None:
         flush = getattr(self.agent, "flush_pending_update", None)
@@ -538,13 +558,18 @@ def _report_worker_error(connection):
 
 
 class _RemotePolicy:
-    def __init__(self, connection, n_steps, obs_dim, action_dim, gamma, gae_lambda):
+    def __init__(self, connection, n_steps, obs_dim, action_dim, gamma, gae_lambda,
+                 *, map_scheduler=None, worker_id=0):
         import torch
         from agents.ppo import RolloutBuffer
 
         self.connection = connection
         self.buffer = RolloutBuffer(n_steps, obs_dim, action_dim, torch.device("cpu"))
         self.gamma, self.gae_lambda = gamma, gae_lambda
+        self.map_scheduler = map_scheduler
+        self.worker_id = worker_id
+        self.should_stop = False
+        self._training_bundles = None
 
     def act(self, obs):
         self.connection.send(("act", obs))
@@ -564,7 +589,20 @@ class _RemotePolicy:
             buffer.obs[:n], buffer.actions[:n], buffer.log_probs[:n], advantages, returns,
             buffer.raw_actions[:n],
         ))))
-        return self.connection.recv()
+        reply = self.connection.recv()
+        if "collector_control" not in reply:
+            return reply
+        control = reply["collector_control"]
+        self.should_stop = bool(control["stop"])
+        bundles = tuple(control.get("training_bundles", ()))
+        if bundles and bundles != self._training_bundles:
+            if self.map_scheduler is None:
+                raise RuntimeError("Collector received map curriculum without a scheduler")
+            # Stagger equal-length workers across the same weighted schedule.
+            offset = self.worker_id % len(bundles)
+            self.map_scheduler.set_training_bundles(list(bundles[offset:] + bundles[:offset]))
+            self._training_bundles = bundles
+        return reply["metrics"]
 
 
 class _WorkerHook(TrainingHook):
@@ -630,7 +668,9 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
         space = env.action_spaces[agent_id]
         observations = build_obs_composer(cfg, env_cfg, Path(scenario_dir), space.n)
         rewards = build_reward_composer(cfg, Path(scenario_dir))
-        policy = _RemotePolicy(connection, n_steps, observations.obs_dim, space.n, gamma, gae_lambda)
+        policy = _RemotePolicy(connection, n_steps, observations.obs_dim, space.n, gamma, gae_lambda,
+            **({"map_scheduler": env._map_scheduler, "worker_id": worker_id}
+               if scenario.get("map_curriculum") is not None else {}))
         trainer = OnPolicyTrainer(
             env, agent_id, policy, opponents, observations, rewards,
             ActionComposer.from_config(

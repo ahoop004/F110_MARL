@@ -5,14 +5,14 @@ includes:
 
 experiment:
   name: ppo_lap_completion_transfer_budapest_3lap
-  checkpoint: ../outputs/L_map_pretrain/L_map_best_model.pt
+  checkpoint: ../outputs/L_map_pretrain/best_model.pt
   # Inherit the local worker count and 4,096,000-transition transfer budget.
 
 environment:
   map_bundles:
      - Budapest_map
      - circle_map
-     - L_map
+    #  - L_map
      - Melbourne_map
      - Montreal_map
      - Shanghai_map
@@ -22,7 +22,7 @@ environment:
   map_bundles_train:
      - Budapest_map
      - circle_map
-     - L_map
+    #  - L_map
      - Melbourne_map
      - Montreal_map
      - Shanghai_map
@@ -32,7 +32,7 @@ environment:
   map_bundles_eval:
     - Budapest_map
     - circle_map
-    - L_map
+    # - L_map
     - Melbourne_map
     - Montreal_map
     - Shanghai_map

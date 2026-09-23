@@ -116,6 +116,19 @@ class MapScheduler:
                 if order:
                     self._rng.shuffle(order)
 
+    @property
+    def training_bundles(self) -> Tuple[str, ...]:
+        """Current training order, including curriculum sampling weights."""
+        return tuple(self._initial_order["train"])
+
+    def set_training_bundles(self, bundles: List[str]) -> None:
+        """Replace the training schedule; apply at the next episode reset."""
+        if not bundles or any(name not in self._configured_bundles for name in bundles):
+            raise ValueError("Training schedule must contain configured map bundles")
+        self._initial_order["train"] = list(bundles)
+        self._cycle_order["train"] = list(bundles)
+        self._cycle_indices["train"] = 0
+
     def seek_episode(self, split_mode: str, episode_index: int) -> None:
         """Advance a freshly seeded schedule to an explicit evaluation episode.
 
