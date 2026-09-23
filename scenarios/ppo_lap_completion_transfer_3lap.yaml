@@ -5,7 +5,9 @@ includes:
 
 experiment:
   name: ppo_lap_completion_transfer_budapest_3lap
-  checkpoint: ../outputs/L_map_pretrain/best_model.pt
+  # checkpoint: ../outputs/L_map_pretrain/best_model.pt
+  checkpoint: ../outputs/L_map_pretrain/checkpoint_step008192000.pt
+  # checkpoint: ../outputs/L_map_pretrain/checkpoint_step004096000.pt
   # Inherit the local worker count and 4,096,000-transition transfer budget.
 
 environment:

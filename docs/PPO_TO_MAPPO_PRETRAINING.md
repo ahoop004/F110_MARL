@@ -174,28 +174,29 @@ resume. Older reduced-physics checkpoints are incompatible.
 
 ## Transfer the driving actor into MAPPO
 
-All active `mappo_2v2_*.yaml` training scenarios share
+The MAPPO-versus-MPC training scenarios share
 `configs/scenarios/mappo_2v2_base.yaml`: the same MF6.1 dynamics, friction
 protocol, 0.05 s decisions, wheel-acceleration actions, and two fixed racing MPC
 opponents. The explicit base and penalty scratch/pretrained pairs use 400
 environments across 100 workers. Other MAPPO objectives retain their serial
-defaults. PPO retains 400 environments.
+defaults. Self-play trains both teams under its separate scenario.
 
-PPO and MAPPO use the same 158-input actor observation: 108 LiDAR ranges,
-normalized by the 10 m sensor range and capped at one, followed by the same
-50 vehicle/Frenet/track values. There are no explicit neighbor slots, relative
-velocities, or teammate labels. LiDAR observes walls and visible vehicles as
-obstacles; the driving block retains the same fixed scales and 20-point preview.
-Single-car transfer and validation inherit this observation from pretraining.
+PPO uses 158 inputs: 108 normalized LiDAR ranges followed by 50 driving
+values. MAPPO retains this exact prefix and appends 18 simulator-provided
+traffic values: three slots of relative Frenet position/velocity, presence,
+and teammate identity. The MAPPO actor therefore has 176 inputs. The neighbor
+block is privileged sensing without a range cutoff. Single-car transfer and
+validation retain the original 158-input observation.
 
 Use `--pretrained-actor` with a compatible PPO checkpoint or run directory.
 Omitting it uses the scenario default: the explicitly pretrained base and penalty
-arms require `outputs/L_map_pretrain/L_map_best_model.pt`; other training arms
-start from scratch. `pretrained_actor_observation_extension` is null because
-both actors have identical observation contracts. All actor weights and exploration
-parameters are copied directly; the centralized critic and optimizer start fresh.
-Old 50-input PPO and 65/68-input MAPPO checkpoints are incompatible. Train a fresh
-LiDAR-enabled PPO source before running the pretrained arms.
+arms require `outputs/L_map_pretrain/L_map_best_model.pt`; scratch arms
+start randomly. `pretrained_actor_observation_extension: frenet_neighbors`
+explicitly enables first-layer expansion: the original 158 columns are copied,
+the 18 new columns start at zero, and later weights and exploration parameters
+are copied. The centralized critic and optimizer start fresh. Initial actions
+match solo PPO; full tuning or LoRA can subsequently learn to use traffic.
+Existing 158-input MAPPO checkpoints cannot resume in the expanded layout.
 
 | Scenario | Purpose |
 |---|---|

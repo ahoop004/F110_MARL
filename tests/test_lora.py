@@ -280,9 +280,11 @@ def test_lora_cli_parallel_training_and_checkpoint_evaluation(tmp_path, monkeypa
     config = scenario['agents']['car_0']
     composer = run.build_obs_composer(config, scenario['environment'], path.parent)
     params = run.resolve_training_params(config, scenario)
-    params['_observation_contract'] = composer.contract
+    source_config = {**config, 'observation': '../configs/observations/rl_racer_simulated_wheel.yaml'}
+    source_composer = run.build_obs_composer(source_config, scenario['environment'], path.parent)
+    params['_observation_contract'] = source_composer.contract
     space, _ = build_action_spaces(['car_0'], scenario['environment']['vehicle_params'])
-    source = PPOAgent(composer.obs_dim, space.low, space.high, params)
+    source = PPOAgent(source_composer.obs_dim, space.low, space.high, params)
     checkpoint = tmp_path / 'source.pt'
     source.save(str(checkpoint))
     scenario['training_defaults']['pretrained_actor_checkpoint'] = str(checkpoint)
@@ -294,10 +296,15 @@ def test_lora_cli_parallel_training_and_checkpoint_evaluation(tmp_path, monkeypa
     saved = output / 'best_model.pt'
     payload = safe_load(str(saved), map_location='cpu')
     assert payload['lora_contract']['mode'] == mode
-    assert payload['obs_dim'] == 158
+    assert payload['obs_dim'] == 176
     assert payload['checkpoint_selection']['environment_steps'] > 0
     for key, value in source.actor.net.state_dict().items():
-        assert torch.equal(payload['actor']['net.' + key], value)
+        actual = payload['actor']['net.' + key]
+        if key == '0.weight':
+            assert torch.equal(actual[:, :158], value)
+            assert actual[:, 158:].count_nonzero() == 0
+        else:
+            assert torch.equal(actual, value)
     assert any(value.count_nonzero() for key, value in payload['actor'].items()
                if key.startswith('adapters.') and key.endswith('.B'))
     checkpoint.unlink()

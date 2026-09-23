@@ -278,9 +278,9 @@ def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
     )
     environment = scenario["environment"]
 
-    assert environment["map_bundles"] == ["Budapest_map", "circle_map"]
-    assert environment["map_bundles_train"] == ["Budapest_map", "circle_map"]
-    assert environment["map_bundles_eval"] == ["circle_map", "Budapest_map"]
+    assert environment["map_bundles"] == ["circle_map"]
+    assert environment["map_bundles_train"] == ["circle_map"]
+    assert environment["map_bundles_eval"] == ["circle_map"]
     assert environment["target_laps"] == 3
     assert environment["action_repeat"] == 1
     assert scenario["mappo"] == {
@@ -295,7 +295,7 @@ def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
         for agent in scenario["agents"].values() if agent.get('trainable')
     )
     assert scenario["training_defaults"]["pretrained_actor_checkpoint"] is None
-    assert scenario["training_defaults"]["pretrained_actor_observation_extension"] is None
+    assert scenario["training_defaults"]["pretrained_actor_observation_extension"] == "frenet_neighbors"
 
 
 @pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])

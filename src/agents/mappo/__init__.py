@@ -812,11 +812,13 @@ class MAPPOAgent:
         # this migration to that layout; never pad arbitrary or reordered inputs.
         enabled = {key for key, value in source_obs.items()
                    if isinstance(value, dict) and value.get("enabled", False)}
-        if (target != source or enabled != {"frenet_vehicle_track"}
+        if (target != source or enabled not in ({"frenet_vehicle_track"}, {"lidar", "frenet_vehicle_track"})
                 or not neighbors.get("enabled", False)):
-            raise ValueError("Neighbor extension requires an unchanged Frenet-only observation prefix")
+            raise ValueError("Neighbor extension requires an unchanged LiDAR/Frenet observation prefix")
         points = int(source_obs["frenet_vehicle_track"].get("points", 20))
         source_dim = 10 + 2 * points
+        if "lidar" in enabled:
+            source_dim += int(source.get("lidar_beams", 108))
         added_dim = (6 if neighbors.get("include_team", False) else 5) * int(neighbors.get("max_neighbors", 1))
         if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
                 or self.obs_dim != source_dim + added_dim):

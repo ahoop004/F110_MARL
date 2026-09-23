@@ -2,7 +2,7 @@
 
 Run the base scratch/pretrained comparison first, then the penalty pair, then
 shared and per-teammate LoRA comparisons. All four current arms use
-the same 158-input LiDAR/driving observation, vehicle physics, MPC opponents, seed, and 400
+the same 176-input LiDAR/driving/traffic observation, vehicle physics, MPC opponents, seed, and 400
 environments across 100 workers. Collection, minibatch size, and evaluation
 cadence come from `configs/training/mappo_parallel.yaml`. Within each pair only
 actor initialization and experiment name differ. The critic and optimizer start
@@ -39,7 +39,7 @@ penalties, and its original finite-race horizons. These are now different task
 protocols as well as different rewards; compare scratch/pretrained within each
 pair, and do not attribute cross-stage differences solely to penalty shaping.
 
-Train the new source with the unchanged 400-environment pretraining scenario:
+Train a new solo source with the pretraining scenario:
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
@@ -73,9 +73,18 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
 
 These scenarios inherit the current shared vehicle profile and fixed track
 observation scaling. PPO and MAPPO share 108 normalized LiDAR ranges followed
-by 50 driving inputs, so the complete actor transfers without input expansion.
-Explicit neighbor states and teammate labels are not actor inputs. Older 50-input
-PPO and 68-input MAPPO checkpoints require fresh training under this layout.
+by 50 driving inputs. MAPPO appends three six-value neighbor slots:
+`[delta_s/20, delta_d/5, delta_vs/20, delta_vd/10, present, is_teammate]`.
+Slots are sorted by absolute wrapped longitudinal distance, zero-filled when
+missing, and unclipped. Traffic states are simulator-provided without a range
+cutoff. No deadline or remaining-lap features are appended in these MPC scenarios.
+
+Transfer copies the original 158 first-layer columns and all later actor weights;
+the 18 new columns start at zero. Initial actions therefore match solo PPO even
+with nonzero traffic inputs. Full tuning learns all columns; LoRA freezes the
+expanded base and learns traffic responses through its first-layer adapters.
+Scratch uses the same 176 inputs. Existing 158-input MAPPO checkpoints cannot
+resume into this layout; start new matched runs. Solo PPO stays at 158 inputs.
 Both fixed racing MPC opponents use the same 3.5 m/s speed cap
 and the environment's 0.58 m by 0.31 m vehicle geometry. Their traffic sensing
 uses perfect current simulator states within 10 m; this is privileged sensing.

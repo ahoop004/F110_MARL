@@ -57,16 +57,23 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         raw, infos = env.reset(seed=42)
         assert len(env.agents) == 4
         composers = build_obs_composers(scenario["agents"], ids, scenario["environment"], Path("scenarios").resolve())
-        assert [composers[aid].obs_dim for aid in ids] == [158, 158]
+        assert [composers[aid].obs_dim for aid in ids] == [176, 176]
         source_composer = build_obs_composers(pretraining['agents'], ['car_0'],
             pretraining['environment'], Path('scenarios').resolve())['car_0']
         assert source_composer.obs_dim == 158
         for aid in ids:
-            assert composers[aid].contract == source_composer.contract
-            assert 'frenet_neighbors' not in infos[aid]
+            from copy import deepcopy
+            prefix = deepcopy(composers[aid].contract)
+            prefix['observation'].pop('frenet_neighbors')
+            assert prefix == source_composer.contract
+            assert len(infos[aid]['frenet_neighbors']) == 3
+            assert sum(n['is_teammate'] for n in infos[aid]['frenet_neighbors']) == 1
             wrapped = composers[aid].wrap(raw[aid], infos[aid])
             np.testing.assert_allclose(wrapped[:108], np.minimum(raw[aid]['lidar'] / 10., 1.), atol=1e-7)
             assert np.any(wrapped[:108] > 0.)
+            slots = wrapped[158:].reshape(3, 6)
+            np.testing.assert_array_equal(slots[:, 4], 1.)
+            assert slots[:, 5].sum() == 1.
         space = env.action_spaces["car_0"]
         source_params = resolve_training_params(pretraining["agents"]["car_0"], pretraining)
         params = resolve_training_params(scenario["agents"]["car_0"], scenario)
@@ -79,22 +86,27 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         checkpoint = tmp_path / "forward_frenet.pt"
         source.save(str(checkpoint))
         recipient = MAPPOAgent(
-            158, len(env.get_global_state().vector), space.low, space.high, ids,
+            176, len(env.get_global_state().vector), space.low, space.high, ids,
             {**params, **resolve_mappo_config(scenario), "device": "cpu"},
         )
         critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
         recipient.load_pretrained_actor(str(checkpoint))
         for key, value in recipient.actor.state_dict().items():
-            torch.testing.assert_close(value, source.actor.state_dict()[key])
+            if key == "net.0.weight":
+                torch.testing.assert_close(value[:, :158], source.actor.state_dict()[key])
+                assert value[:, 158:].count_nonzero() == 0
+            else:
+                torch.testing.assert_close(value, source.actor.state_dict()[key])
         for key, value in recipient.critic.state_dict().items():
             torch.testing.assert_close(value, critic_before[key])
         assert not recipient.optimizer.state
-        observations = np.random.default_rng(42).normal(size=(2, 158)).astype(np.float32)
+        observations = np.random.default_rng(42).normal(size=(2, 176)).astype(np.float32)
         actions, _ = recipient.act_batch(ids, observations, deterministic=True)
         for i, aid in enumerate(ids):
-            np.testing.assert_allclose(actions[aid], source.predict(observations[i]), atol=1e-7)
+            np.testing.assert_allclose(actions[aid], source.predict(observations[i, :158]), atol=1e-7)
         recipient.actor.net(torch.from_numpy(observations)).sum().backward()
         assert recipient.actor.net[0].weight.grad[:, :108].count_nonzero() > 0
+        assert recipient.actor.net[0].weight.grad[:, 158:].count_nonzero() > 0
         controls = [ActionComposer.from_config(
             space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.05,
         ) for aid in ids]

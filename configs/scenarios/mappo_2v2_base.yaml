@@ -1,9 +1,6 @@
-# PPO driving actor transfer to two MAPPO teammates under the same MF6.1 physics.
-# Set training_defaults.pretrained_actor_checkpoint to a NEW PPO best_model.pt.
-# null deliberately runs the matched from-scratch arm. The 158-input LiDAR/driving
-# layout matches PPO pretraining exactly; no observation extension is needed.
-# Both fixed opponents use the validated racing MPC with an explicit wheel adapter.
-# MPC reads perfect current traffic state within 10 m; this is privileged sensing.
+# PPO actor transfer with an unchanged 158-input driving prefix and 18 traffic inputs.
+# New neighbor columns start at zero; critic and optimizer start fresh.
+# Both fixed MPC opponents retain their range-limited privileged sensing.
 includes:
 - ../env/default.yaml
 - ../vehicle/combined_slip.yaml
@@ -18,7 +15,7 @@ experiment:
 training_defaults:
   team_return_mode: joint
   pretrained_actor_checkpoint: null
-  pretrained_actor_observation_extension: null
+  pretrained_actor_observation_extension: frenet_neighbors
   device: cuda
 mappo:
   reward_mode: team_shared
@@ -88,7 +85,7 @@ agents:
     trainable: true
     role: racer
     target_id: car_2
-    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
+    observation: ../configs/observations/rl_racer_two_team.yaml
     reward: ../configs/reward/tasks/race_team_completion.yaml
     params: &learner_params
       learning_rate: 0.0001
@@ -112,7 +109,7 @@ agents:
     trainable: true
     role: racer
     target_id: car_3
-    observation: ../configs/observations/rl_racer_simulated_wheel.yaml
+    observation: ../configs/observations/rl_racer_two_team.yaml
     reward: ../configs/reward/tasks/race_team_completion.yaml
     params: *learner_params
     action_constraints: *learner_actions
@@ -152,6 +149,8 @@ wandb:
   - wheel-acceleration
   - lidar
   - racing-mpc-opponents
-  notes: Shared PPO/MAPPO 158-input LiDAR and MF6.1 driving observation; the full
-    actor transfers directly. Critic and optimizer start fresh. Both opponents use
-    racing_mpc with a 3.5 m/s rolling-speed cap and range-limited perfect traffic state.
+  notes: >-
+    MAPPO uses 176 inputs: the PPO 158-input LiDAR/driving prefix plus three
+    simulator-provided neighbor slots with teammate flags. Transfer preserves
+    the PPO actor with zero new input columns. Critic and optimizer start fresh.
+    Both fixed racing MPC opponents retain the 3.5 m/s rolling-speed cap.
