@@ -8,12 +8,10 @@ experiment:
   num_envs: 1
 
 environment:
-  target_laps: 5
   max_steps: 0
   episode_termination:
     mode: any_agent
-    lap_completion: true
-    lap_finish_agents: [car_1]
+    lap_completion: false
   respawn_agents: [car_1]
   terminate_on_collision: true
   track_limits: {enabled: true, terminate: true}
@@ -24,7 +22,7 @@ environment:
     ego: {speed: 0.0}
 
 evaluation:
-  target_laps: 20
+  lap_completion: false  # count laps without ending evaluation
   max_steps: 120000
   terminate_on_track_limit: true
   terminate_on_collision: true
@@ -57,4 +55,4 @@ wandb:
   group: ppo-1v1-racing-mpc-circle
   job_type: race-finetuning
   tags: [ppo, 1v1, circle, racing-mpc, pretrained]
-  notes: "Pretrained PPO metre-progress reward, trailing penalty and opponent respawn bonus. Ego crashes/collisions or MPC five laps end training episodes; evaluation uses twenty MPC laps."
+  notes: "Pretrained PPO metre-progress reward, trailing penalty and opponent respawn bonus. Ego crashes/collisions end training episodes; no lap-based termination in training or evaluation."

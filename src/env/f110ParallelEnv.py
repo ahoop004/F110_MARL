@@ -307,6 +307,7 @@ class F110ParallelEnv:
                                        finish_on_laps=bool(episode_termination.get("lap_completion", True)),
                                        lap_finish_agents=episode_termination.get("lap_finish_agents"))
         self.respawn_agents = set(merged.get("respawn_agents", []))
+        self.respawn_on_vehicle_collision = bool(merged.get("respawn_on_vehicle_collision", False))
         if not self.respawn_agents <= set(self.possible_agents):
             raise ValueError("respawn_agents contains unknown agents")
         self.terminal_agent_config = TerminalAgentConfig.from_mapping(
@@ -1001,12 +1002,15 @@ class F110ParallelEnv:
                 continue
             collision_event = idx < collision_array.size and bool(collision_array[idx])
             if collision_event and self.terminate_on_collision.get(agent_id, True):
-                if agent_id in self.respawn_agents and self.sim.collision_idx[idx] < 0:
+                if agent_id in self.respawn_agents and (
+                    self.sim.collision_idx[idx] < 0 or self.respawn_on_vehicle_collision
+                ):
                     respawn.add(agent_id)
                 else:
                     self.lifecycle.record_collision(agent_id, step=self._elapsed_steps)
 
-        # Never reward/reset an opponent when ego also crashes or cars collide.
+        # Never reward/reset fixed cars when ego also crashes. Traffic scenarios
+        # can recover collisions between fixed cars without ending ego's race.
         if respawn and all(self.lifecycle.records[a].is_active for a in active_before_step):
             obs_joint = self._respawn_on_centerline(respawn)
             obs = self._split_obs(obs_joint)
@@ -1119,7 +1123,7 @@ class F110ParallelEnv:
         points = np.asarray(self.centerline_points)[:, :2]
         poses = self.sim.agent_poses.copy()
         indices = []
-        for aid in agent_ids:
+        for aid in sorted(agent_ids):
             idx = self._agent_id_to_index[aid]
             order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
             others = np.delete(poses[:, :2], idx, axis=0)

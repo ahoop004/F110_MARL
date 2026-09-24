@@ -65,6 +65,9 @@ def create_training_setup(
                                              "lap_completion": True}
         env_config["target_laps"] = int(evaluation.get("target_laps", 20))
         env_config["max_steps"] = int(evaluation.get("max_steps", 16000))
+    if env_config["physics_phase"] == "eval" and "lap_completion" in evaluation:
+        env_config["episode_termination"] = {**env_config.get("episode_termination", {}),
+                                             "lap_completion": evaluation["lap_completion"]}
     agent_configs = scenario['agents']
     env_config.setdefault("trainable_agents", get_trainable_agent_ids(agent_configs))
     env_config.setdefault("fixed_policy_agents", get_fixed_agent_ids(agent_configs))

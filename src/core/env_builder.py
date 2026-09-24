@@ -116,6 +116,7 @@ def build_env_kwargs(
         "lap_counting",
         "terminal_agents",
         "respawn_agents",
+        "respawn_on_vehicle_collision",
         "agent_teams",
         "finish_line",
         "info_level",

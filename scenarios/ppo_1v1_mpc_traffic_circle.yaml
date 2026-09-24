@@ -1,0 +1,69 @@
+# One PPO racer versus the red racing MPC, with five fixed MPC traffic cars.
+# All seven cars independently respawn around the circle at each episode reset.
+includes:
+  - ppo_1v1_racing_mpc_circle.yaml
+
+experiment:
+  name: ppo_1v1_mpc_traffic_circle
+
+environment:
+  spawn:
+    policy: centerline_random
+    centerline:
+      min_distance: 2.0  # metres between vehicle centres; fail rather than overlap
+    ego: {speed: 0.0}
+  # Lap counts never end the episode; all fixed cars keep circulating.
+  respawn_agents: [car_1, car_2, car_3, car_4, car_5, car_6]
+  # Fixed-car collisions recover; any ego collision still ends the episode.
+  respawn_on_vehicle_collision: true
+  rendering:
+    vehicle_colors:
+      car_0: '#3288ff'
+      car_1: '#ff2020'  # designated race opponent
+      car_2: '#a0a0a0'
+      car_3: '#a0a0a0'
+      car_4: '#a0a0a0'
+      car_5: '#a0a0a0'
+      car_6: '#a0a0a0'
+
+agents:
+  car_2:
+    algorithm: kinematic_mpc
+    trainable: false
+    role: traffic
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params: {dt: 0.05, target_speed: 1.5, min_speed: 0.5, max_speed: 2.0}
+  car_3:
+    algorithm: obstacle_aware_mpc
+    trainable: false
+    role: traffic
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params: {dt: 0.05, target_speed: 2.0, min_speed: 0.5, max_speed: 2.5}
+  car_4:
+    algorithm: defensive_mpc
+    trainable: false
+    role: traffic
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params: {dt: 0.05, target_speed: 2.0, min_speed: 0.5, max_speed: 2.5}
+  car_5:
+    algorithm: cbf_mpc
+    trainable: false
+    role: traffic
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params: {dt: 0.05, target_speed: 2.5, min_speed: 0.5, max_speed: 3.0}
+  car_6:
+    algorithm: mpcc
+    trainable: false
+    role: traffic
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params: {dt: 0.05, target_speed: 2.5, min_speed: 0.5, max_speed: 3.0}
+
+wandb:
+  group: ppo-1v1-mpc-traffic-circle
+  tags: [ppo, 1v1, circle, randomized-traffic, fixed-mpc, pretrained]
+  notes: "Same pursuit reward, no lap limit, against red car_1; five mixed fixed MPC traffic cars, independently randomized track spawns with 2 m clearance. Only target respawns earn a bonus."

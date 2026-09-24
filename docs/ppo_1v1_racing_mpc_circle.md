@@ -18,14 +18,12 @@ and +1 for each isolated opponent crash. Ordering tracks unwrapped progress
 across the finish seam; respawn displacement earns no progress. There is no
 extra finish bonus or collision penalty beyond the inherited reward.
 
-Ego boundary violations, ego collisions, vehicle-to-vehicle collisions, or the
-MPC completing five laps terminate training episodes. Ego lap completion does
-not terminate. There is no training timeout. An isolated MPC boundary/wall crash
+Ego boundary violations and vehicle collisions terminate training episodes.
+Lap counts never terminate episodes. There is no training timeout. An isolated MPC boundary/wall crash
 resets only that vehicle to rest at a nearby unoccupied centerline point,
 preserving completed laps and episode time. A simultaneous ego crash suppresses
 the respawn bonus.
 
-Evaluation uses the same rules with twenty MPC laps and a 120,000-step safety
-cap. Selection evaluates eight seeded episodes every 409,600 transitions;
+Evaluation also has no lap limit and retains a 120,000-step safety cap. Selection evaluates eight seeded episodes every 409,600 transitions;
 final evaluation uses twenty episodes. `--checkpoint` overrides initialization;
 `--total-steps` overrides the training budget.

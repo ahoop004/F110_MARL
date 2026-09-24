@@ -13,7 +13,7 @@ Nested scenario form (``environment.spawn:``)
 
     environment:
       spawn:
-        policy: centerline_relative   # or: random_named, fixed, replay_plan
+        policy: centerline_relative   # or: centerline_random, random_named, fixed, replay_plan
         enabled: true                 # enables random named-point spawn
         allow_reuse: false            # allow the same point for multiple agents
         centerline:                   # → spawn_centerline sub-config

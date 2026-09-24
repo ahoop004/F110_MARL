@@ -48,11 +48,11 @@ class SpawnResult:
 
 @dataclass(frozen=True)
 class CenterlineSpawnResult:
-    """Resolved centerline-relative spawn payload."""
+    """Resolved centerline spawn payload."""
 
     poses: np.ndarray
     velocities: Dict[str, float]
-    metadata: Dict[str, float]
+    metadata: Dict[str, Any]
     next_index: int
 
 
@@ -214,6 +214,42 @@ def sample_random_spawn(
     }
 
     return spawn_mapping, np.stack(selected_poses, axis=0)
+def sample_random_centerline_spawn(*, centerline, agent_ids, rng, config, speed=0.0):
+    """Independently sample arc-length positions on a closed track with clearance."""
+    if centerline is None or len(centerline) < 3:
+        raise ValueError("centerline_random requires a closed track centerline")
+    points = np.asarray(centerline, dtype=np.float64)[:, :2]
+    segments = np.roll(points, -1, axis=0) - points
+    lengths = np.linalg.norm(segments, axis=1)
+    cumulative = np.r_[0.0, np.cumsum(lengths)]
+    total = cumulative[-1]
+    clearance = float(config.get("min_distance", 2.0))
+    if not np.isfinite(total) or total <= 0 or not np.isfinite(clearance) or clearance <= 0:
+        raise ValueError("Random centerline spawn requires positive length and min_distance")
+    poses = []
+    progress = {}
+    for aid in agent_ids:
+        for _ in range(2000):
+            distance = rng.uniform(0.0, total)
+            index = min(int(np.searchsorted(cumulative, distance, side="right") - 1), len(points) - 1)
+            if lengths[index] <= 0:
+                continue
+            xy = points[index] + segments[index] * ((distance - cumulative[index]) / lengths[index])
+            if any(np.linalg.norm(xy - pose[:2]) < clearance for pose in poses):
+                continue
+            poses.append(np.array([*xy, np.arctan2(segments[index, 1], segments[index, 0])]))
+            progress[aid] = float(distance / total)
+            break
+        else:
+            raise ValueError("Cannot place random traffic with configured min_distance; reduce traffic or clearance")
+    return CenterlineSpawnResult(
+        poses=np.asarray(poses, dtype=np.float32),
+        velocities={aid: float(speed) for aid in agent_ids},
+        metadata={"policy": "centerline_random", "progress_by_agent": progress},
+        next_index=0,
+    )
+
+
 def sample_centerline_relative_spawn(
     *,
     spawn_policy: Optional[Any],
@@ -228,8 +264,13 @@ def sample_centerline_relative_spawn(
     current_index: int,
     walls: Optional[Mapping[str, np.ndarray]] = None,
 ) -> Optional[CenterlineSpawnResult]:
-    """Generate legacy centerline-relative reset poses."""
+    """Generate relative grid poses or independently randomized track poses."""
 
+    if str(spawn_policy or "").lower() == "centerline_random":
+        return sample_random_centerline_spawn(
+            centerline=centerline, agent_ids=agent_ids, rng=rng,
+            config=spawn_centerline_cfg, speed=spawn_ego_cfg.get("speed", 0.0),
+        )
     if str(spawn_policy or "").lower() != "centerline_relative":
         return None
     if centerline is None or centerline.shape[0] == 0:

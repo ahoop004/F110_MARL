@@ -130,7 +130,7 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
         raise ScenarioError("'evaluation' must be a dictionary.")
     if evaluation.get("selection_strategy", "completion_safety") not in {"map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
-    for key in ("terminate_on_track_limit", "terminate_on_collision"):
+    for key in ("terminate_on_track_limit", "terminate_on_collision", "lap_completion"):
         if key in evaluation and not isinstance(evaluation[key], bool):
             raise ScenarioError(f"evaluation.{key} must be boolean")
     for key in ("target_laps", "every_steps", "every_episodes"):
@@ -351,10 +351,14 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     if (not isinstance(respawn_agents, list) or
             any(aid not in agents or aid in trainable_ids for aid in respawn_agents)):
         raise ScenarioError("respawn_agents must list fixed-policy agent IDs")
-    if respawn_agents and (len(agents) != 2 or len(trainable_ids) != 1 or
+    if respawn_agents and (len(agents) < 2 or len(trainable_ids) != 1 or
                            not limits.get("enabled") or not limits.get("terminate") or
                            not environment.get("terminate_on_collision", True)):
-        raise ScenarioError("Opponent respawning requires 1v1 with boundary and collision termination")
+        raise ScenarioError("Opponent respawning requires one learner with boundary and collision termination")
+    if not isinstance(environment.get("respawn_on_vehicle_collision", False), bool):
+        raise ScenarioError("respawn_on_vehicle_collision must be boolean")
+    if environment.get("respawn_on_vehicle_collision", False) and not respawn_agents:
+        raise ScenarioError("respawn_on_vehicle_collision requires respawn_agents")
     if limits.get("enabled") and not respawn_agents and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)

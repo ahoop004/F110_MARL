@@ -18,16 +18,13 @@ def setup():
     env.close()
 
 
-def test_only_opponent_laps_end_race(setup):
+def test_laps_do_not_end_race(setup):
     env, _, _ = setup
-    for lap in range(6):
-        env.lifecycle.record_lap_crossing('car_0', step=lap)
-    assert env.lifecycle.records['car_0'].is_active
-    for lap in range(4):
-        env.lifecycle.record_lap_crossing('car_1', step=lap)
-    assert env.lifecycle.records['car_1'].is_active
-    env.lifecycle.record_lap_crossing('car_1', step=5)
-    assert env.step({})[2]['car_0']
+    for lap in range(30):
+        for aid in env.possible_agents:
+            env.lifecycle.record_lap_crossing(aid, step=lap)
+    assert all(record.is_active for record in env.lifecycle.records.values())
+    assert not any(env.step({})[2].values())
 
 
 def test_opponent_respawn_preserves_ego_and_laps(setup):
@@ -90,18 +87,19 @@ def test_reward_preserves_progress_and_wraps_order():
     assert reward.compute(step)[0] == pytest.approx(6.)
 
 
-def test_evaluation_uses_twenty_opponent_laps():
+def test_evaluation_has_no_lap_limit():
     scenario = load_and_expand_scenario('scenarios/ppo_1v1_racing_mpc_circle.yaml')
     scenario['agents']['car_0']['params']['device'] = 'cpu'
     env, _, _ = create_training_setup(scenario, mode='eval', scenario_dir=Path('scenarios').resolve())
     try:
         env.reset(seed=42)
-        assert env.target_laps == 20
-        for lap in range(19):
+        assert not env.lifecycle.finish_on_laps
+        assert env.max_steps == 120000
+        for lap in range(30):
             env.lifecycle.record_lap_crossing('car_1', step=lap)
         assert env.lifecycle.records['car_1'].is_active
         env.lifecycle.record_lap_crossing('car_1', step=20)
-        assert not env.lifecycle.records['car_1'].is_active
+        assert env.lifecycle.records['car_1'].is_active
         assert env.lifecycle.records['car_0'].is_active
     finally:
         env.close()
