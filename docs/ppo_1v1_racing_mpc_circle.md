@@ -16,7 +16,8 @@ The reward retains signed metre progress and the exclusive -1 boundary cost.
 `configs/reward/tasks/race_1v1_pursuit.yaml` adds -0.01 per decision while behind
 and +1 for each isolated opponent crash. Ordering tracks unwrapped progress
 across the finish seam; respawn displacement earns no progress. There is no
-extra finish bonus or collision penalty beyond the inherited reward.
+extra finish bonus. Ego collision termination adds a -1 penalty to that step's
+progress and trailing reward.
 
 Ego boundary violations and vehicle collisions terminate training episodes.
 Lap counts never terminate episodes. There is no training timeout. An isolated MPC boundary/wall crash

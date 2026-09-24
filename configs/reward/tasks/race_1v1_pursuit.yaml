@@ -4,6 +4,9 @@ task:
   name: race_1v1_pursuit
   description: Pretraining progress reward with trailing pressure and MPC respawn bonuses.
 reward:
+  collision:
+    enabled: true
+    penalty: -1.0  # additive cost when ego terminates due to collision
   race_pursuit:
     enabled: true
     target_id: car_1
