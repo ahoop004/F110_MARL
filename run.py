@@ -582,6 +582,7 @@ def main() -> None:
             "path": str(initial_checkpoint),
             "sha256": params["_initial_checkpoint_sha256"],
             "load_scope": "actor_and_critic",
+            "observation_extension": params.get("pretrained_observation_extension"),
             "optimizer_restored": False,
             "training_progress_restored": False,
         }
@@ -1508,7 +1509,8 @@ def _run_on_policy(
     )
     initial_checkpoint = params.get("_initial_checkpoint")
     if initial_checkpoint:
-        agent.load(initial_checkpoint, load_optimizer=False)
+        agent.load(initial_checkpoint, load_optimizer=False,
+                   observation_extension=params.get("pretrained_observation_extension"))
         if hashlib.sha256(Path(initial_checkpoint).read_bytes()).hexdigest() != params["_initial_checkpoint_sha256"]:
             raise ValueError("Checkpoint changed while loading for training; use a stable checkpoint file.")
         console.print_info(

@@ -169,3 +169,29 @@ def _finite_number(value: object) -> float:
 
 
 __all__ = ["TargetStateComponent", "RelativePoseComponent", "FrenetNeighborsComponent"]
+
+
+class TargetFrenetComponent(ObservationComponent):
+    """Dedicated configured target: normalized [ds, dd, dvs, dvd, present]."""
+
+    def __init__(self, maxima):
+        if set(maxima) != set(_FIELDS):
+            raise ValueError("target_frenet requires fixed scales for all four fields")
+        self.scales = np.asarray([maxima[field] for field in _FIELDS], dtype=np.float32)
+        if not np.isfinite(self.scales).all() or (self.scales <= 0).any():
+            raise ValueError("target_frenet scales must be finite and positive")
+
+    @property
+    def dim(self):
+        return 5
+
+    def compute_into(self, raw_obs, info, out):
+        out.fill(0.0)
+        target = info.get("target_frenet")
+        if target is None:
+            return
+        values = np.asarray([target[field] for field in _FIELDS], dtype=np.float32)
+        if not np.isfinite(values).all():
+            raise ValueError("Target Frenet facts must be finite")
+        out[:4] = values / self.scales
+        out[4] = 1.0

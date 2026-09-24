@@ -319,10 +319,33 @@ class PPOAgent:
             path,
         )
 
-    def load(self, path: str, *, load_optimizer: bool = True) -> None:
+    def load(self, path: str, *, load_optimizer: bool = True, observation_extension: Optional[str] = None) -> None:
         """Load actor/critic weights; transfer runs keep their fresh optimizer."""
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if observation_extension not in {None, "target_frenet"}:
+            raise ValueError("Unsupported PPO observation extension")
+        if (observation_extension == "target_frenet" and
+                ckpt.get("observation_contract") != self.observation_contract):
+            from copy import deepcopy
+            if load_optimizer:
+                raise ValueError("Observation expansion requires a fresh optimizer")
+            destination = deepcopy(self.observation_contract)
+            if not isinstance(destination, dict) or not isinstance(destination.get("observation"), dict):
+                raise ValueError("Observation expansion requires explicit observation contracts")
+            target = destination["observation"].pop("target_frenet", {})
+            if (not target.get("enabled") or destination != ckpt.get("observation_contract")
+                    or self.obs_dim != ckpt.get("obs_dim", -1) + 5):
+                raise ValueError("Target extension must preserve the complete pretrained observation prefix")
+            # Pad only the first linear layer; every original column and every
+            # other actor/critic parameter is retained exactly.
+            for network in ("actor", "critic"):
+                weights = ckpt[network]["net.0.weight"]
+                if weights.shape[1] != ckpt["obs_dim"]:
+                    raise ValueError("Checkpoint input weights disagree with observation dimensions")
+                ckpt[network]["net.0.weight"] = torch.nn.functional.pad(weights, (0, 5))
+            ckpt["obs_dim"] = self.obs_dim
+            ckpt["observation_contract"] = self.observation_contract
         for key in ("physics_contract", "observation_contract"):
             if ckpt.get(key) != getattr(self, key):
                 raise ValueError(f"Incompatible checkpoint {key}; physics/observation semantics differ")

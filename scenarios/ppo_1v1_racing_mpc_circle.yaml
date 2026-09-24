@@ -30,9 +30,11 @@ evaluation:
 
 agents:
   car_0:
+    observation: ../configs/observations/rl_racer_simulated_wheel_target.yaml
     target_id: car_1
     reward: ../configs/reward/tasks/race_1v1_pursuit.yaml
     params:
+      pretrained_observation_extension: target_frenet
       n_steps: 1024
       batch_size: 1024
   car_1:

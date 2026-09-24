@@ -26,4 +26,7 @@ Any ego collision or boundary violation ends the episode. Fixed cars recover
 from wall, boundary, or fixed-car collisions on the centerline while preserving
 lap counts and episode time. The target's recovery still earns the original
 +1 bonus, unless ego also crashes that step. Traffic-only recoveries earn no
-bonus. Ego sees traffic through its existing LiDAR observation.
+bonus. Ego sees traffic through its existing LiDAR observation. Five extra inputs
+always describe its configured target (`car_1`), regardless of which traffic car
+is closest. The observation has 163 inputs; pretrained actor/critic input layers
+are expanded with zero new columns, preserving initial behavior.

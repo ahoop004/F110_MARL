@@ -1657,6 +1657,11 @@ class F110ParallelEnv:
             if agent_id not in self._frenet_neighbor_agents:
                 continue
             infos.setdefault(agent_id, {})["frenet_neighbors"] = neighbors
+            target_index = self._agent_target_index.get(agent_id)
+            target_id = self.possible_agents[target_index] if target_index is not None else None
+            infos[agent_id]["target_frenet"] = next(
+                (neighbor for neighbor in neighbors if neighbor["agent_id"] == target_id), None)
+
 
     def _update_centerline_observation_facts(
         self,

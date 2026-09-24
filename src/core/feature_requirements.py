@@ -13,6 +13,7 @@ _CENTERLINE_OBSERVATIONS = {
     "progress",
     "frenet_vehicle_track",
     "frenet_neighbors",
+    "target_frenet",
 }
 _CENTERLINE_REWARDS = {
     "centerline",
@@ -106,7 +107,9 @@ def derive_environment_feature_requirements(
         if "frenet_vehicle_track" in observation_keys:
             vehicle_state.add(agent_id)
             preview.add(agent_id)
-        if "frenet_neighbors" in observation_keys:
+        if "target_frenet" in observation_keys and not agent_config.get("target_id"):
+            raise ValueError("target_frenet observations require an explicit target_id")
+        if observation_keys & {"frenet_neighbors", "target_frenet"}:
             neighbors.add(agent_id)
 
     return EnvironmentFeatureRequirements(

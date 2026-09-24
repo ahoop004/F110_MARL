@@ -17,7 +17,7 @@ from .centerline import (
 )
 
 
-TRACK_PREVIEW_PREPROCESSING_VERSION = 1
+TRACK_PREVIEW_PREPROCESSING_VERSION = 2
 
 
 @njit(cache=True)
@@ -321,6 +321,14 @@ def _track_width(
     if not wall_arrays:
         return np.ones(points.shape[0], dtype=np.float32)
 
+    if closed and len(wall_arrays) == 2:
+        # Racing maps describe an inner and an outer closed boundary. At a
+        # hairpin, a centerline normal can miss the local inner corner and hit
+        # a remote wall, greatly overstating the usable lane width. Sum local
+        # distances to the two boundaries instead. This preserves real wider
+        # corners and does not impose a map-specific width cap.
+        return np.maximum(sum(_distance_to_wall(points, wall) for wall in wall_arrays), 1e-3)
+
     if closed:
         tangent = np.roll(points, -1, axis=0) - np.roll(points, 1, axis=0)
     else:
@@ -352,6 +360,21 @@ def _track_width(
             nearest = float(np.min(np.linalg.norm(all_wall_points - point, axis=1)))
             widths[idx] = 2.0 * nearest
     return np.maximum(widths, 1e-3)
+
+
+def _distance_to_wall(points: np.ndarray, wall: np.ndarray) -> np.ndarray:
+    """Shortest distance to a closed wall polyline, including segment interiors."""
+    starts = np.asarray(wall, dtype=np.float64)
+    vectors = np.roll(starts, -1, axis=0) - starts
+    squared_lengths = np.sum(vectors * vectors, axis=1)
+    distances = np.empty(len(points), dtype=np.float32)
+    for index, point in enumerate(points):
+        relative = point - starts
+        fractions = np.divide(np.sum(relative * vectors, axis=1), squared_lengths,
+                              out=np.zeros(len(starts)), where=squared_lengths > 0)
+        residual = relative - np.clip(fractions, 0.0, 1.0)[:, None] * vectors
+        distances[index] = np.sqrt(np.min(np.sum(residual * residual, axis=1)))
+    return distances
 
 
 def _cross_2d(a: np.ndarray, b: np.ndarray) -> np.ndarray:

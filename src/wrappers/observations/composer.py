@@ -17,6 +17,7 @@ from wrappers.observations.track import (
 )
 from wrappers.observations.neighbors import (
     FrenetNeighborsComponent,
+    TargetFrenetComponent,
     TargetStateComponent,
     RelativePoseComponent,
 )
@@ -167,6 +168,10 @@ class ObservationComposer:
         pa_cfg = obs.get("prev_action", {})
         if pa_cfg.get("enabled", False):
             components.append(PrevActionComponent(action_dim=action_dim))
+
+        target_frenet_cfg = obs.get("target_frenet", {})
+        if target_frenet_cfg.get("enabled", False):
+            components.append(TargetFrenetComponent(target_frenet_cfg.get("maxima", {})))
 
         if not components:
             raise ValueError("ObservationComposer: no components enabled in obs config.")

@@ -1,0 +1,10 @@
+# Preserve all 158 driving inputs, append one five-value designated-target slot.
+includes:
+  - rl_racer_simulated_wheel.yaml
+observation:
+  target_frenet:
+    enabled: true
+    # Fixed SI scales across maps. No clipping: distant opponents stay distinct.
+    # Signed delta_s is the shortest wrapped arc distance, not a lap-count gap.
+    # Global simulator sensing, including outside the LiDAR range.
+    maxima: {delta_s: 30.0, delta_d: 5.0, delta_vs: 20.0, delta_vd: 20.0}
