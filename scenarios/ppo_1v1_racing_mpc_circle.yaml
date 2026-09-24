@@ -1,0 +1,60 @@
+# Continuous PPO fine-tuning against the fixed racing MPC on circle_map.
+includes:
+  - ppo_lap_completion_transfer.yaml
+experiment:
+  name: ppo_1v1_racing_mpc_circle
+  checkpoint: ../outputs/L_map_pretrain/best_model.pt
+  total_steps: 120000000
+  num_envs: 1
+
+environment:
+  target_laps: 5
+  max_steps: 0
+  episode_termination:
+    mode: any_agent
+    lap_completion: true
+    lap_finish_agents: [car_1]
+  respawn_agents: [car_1]
+  terminate_on_collision: true
+  track_limits: {enabled: true, terminate: true}
+  spawn:
+    policy: centerline_relative
+    offsets: {s_offset: -3.0, d_offset: 0.0}
+    target: {enabled: true, speed: 0.0}
+    ego: {speed: 0.0}
+
+evaluation:
+  target_laps: 20
+  max_steps: 120000
+  terminate_on_track_limit: true
+  terminate_on_collision: true
+  selection_strategy: completion_progress
+
+agents:
+  car_0:
+    target_id: car_1
+    reward: ../configs/reward/tasks/race_1v1_pursuit.yaml
+    params:
+      n_steps: 1024
+      batch_size: 1024
+  car_1:
+    algorithm: racing_mpc
+    trainable: false
+    role: opponent
+    target_id: car_0
+    action_adapter: rolling_speed_to_wheel_v1
+    params:
+      max_speed: 3.5
+      max_acceleration: 5.0
+      horizon: 30
+      knots: 6
+      iterations: 18
+      max_evaluations: 260
+      margin: 0.1
+      sensing_range: 10.0
+
+wandb:
+  group: ppo-1v1-racing-mpc-circle
+  job_type: race-finetuning
+  tags: [ppo, 1v1, circle, racing-mpc, pretrained]
+  notes: "Pretrained PPO metre-progress reward, trailing penalty and opponent respawn bonus. Ego crashes/collisions or MPC five laps end training episodes; evaluation uses twenty MPC laps."

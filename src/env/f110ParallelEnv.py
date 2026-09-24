@@ -237,7 +237,7 @@ class F110ParallelEnv:
         limits_cfg = merged.get("track_limits", {}) or {}
         self.track_limits_enabled = bool(limits_cfg.get("enabled", False))
         self.terminate_on_track_boundary = bool(limits_cfg.get("terminate", True))
-        if self.track_limits_enabled and self.n_agents != 1:
+        if self.track_limits_enabled and self.n_agents != 1 and not merged.get("respawn_agents"):
             raise ValueError("Track-limit time trials require one vehicle")
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
@@ -304,7 +304,11 @@ class F110ParallelEnv:
         raw_target_laps = merged.get("target_laps", merged.get("laps", 1))
         self.target_laps = validate_target_laps(raw_target_laps)
         self.lifecycle = RaceLifecycle(self.possible_agents, self.target_laps,
-                                       finish_on_laps=bool(episode_termination.get("lap_completion", True)))
+                                       finish_on_laps=bool(episode_termination.get("lap_completion", True)),
+                                       lap_finish_agents=episode_termination.get("lap_finish_agents"))
+        self.respawn_agents = set(merged.get("respawn_agents", []))
+        if not self.respawn_agents <= set(self.possible_agents):
+            raise ValueError("respawn_agents contains unknown agents")
         self.terminal_agent_config = TerminalAgentConfig.from_mapping(
             merged.get("terminal_agents")
         )
@@ -972,10 +976,14 @@ class F110ParallelEnv:
         # decisions, so reward and termination consume exactly the same test.
         infos = {aid: {} for aid in self.possible_agents}
         self._update_centerline_observation_facts(infos)
+        respawn = set()
         if self.track_limits_enabled and self.terminate_on_track_boundary:
             for aid in active_before_step:
                 if infos[aid]["track_limits"]["exceeded"]:
-                    self.lifecycle.record_track_boundary(aid, step=self._elapsed_steps)
+                    if aid in self.respawn_agents:
+                        respawn.add(aid)
+                    else:
+                        self.lifecycle.record_track_boundary(aid, step=self._elapsed_steps)
 
         # terminations/truncations
         collisions = obs_joint["collisions"]
@@ -993,7 +1001,30 @@ class F110ParallelEnv:
                 continue
             collision_event = idx < collision_array.size and bool(collision_array[idx])
             if collision_event and self.terminate_on_collision.get(agent_id, True):
-                self.lifecycle.record_collision(agent_id, step=self._elapsed_steps)
+                if agent_id in self.respawn_agents and self.sim.collision_idx[idx] < 0:
+                    respawn.add(agent_id)
+                else:
+                    self.lifecycle.record_collision(agent_id, step=self._elapsed_steps)
+
+        # Never reward/reset an opponent when ego also crashes or cars collide.
+        if respawn and all(self.lifecycle.records[a].is_active for a in active_before_step):
+            obs_joint = self._respawn_on_centerline(respawn)
+            obs = self._split_obs(obs_joint)
+            previous_velocities = [getattr(self.state_buffers, name).copy() for name in
+                                   ("linear_vels_x_prev", "linear_vels_y_prev", "angular_vels_prev")]
+            self._update_state(obs_joint)
+            for name, values in zip(("linear_vels_x_prev", "linear_vels_y_prev", "angular_vels_prev"),
+                                    previous_velocities):
+                getattr(self.state_buffers, name)[:] = values
+            saved_deltas = {a: f["centerline"]["progress_delta"] for a, f in infos.items()
+                            if "centerline" in f}
+            self._update_centerline_observation_facts(infos)
+            for aid, delta in saved_deltas.items():
+                infos[aid]["centerline"]["progress_delta"] = 0.0 if aid in respawn else delta
+            for aid in self.possible_agents:
+                target = self._agent_target_index.get(aid)
+                infos[aid]["target_respawned"] = (target is not None and
+                    self.possible_agents[target] in respawn)
 
         trunc_flag = self.max_steps > 0 and self._elapsed_steps + 1 >= self.max_steps
         if trunc_flag:
@@ -1082,6 +1113,33 @@ class F110ParallelEnv:
         )
 
         return obs, rewards, terminations, truncations, infos
+
+    def _respawn_on_centerline(self, agent_ids):
+        """Reset only crashed opponents at the nearest unoccupied centerline point."""
+        points = np.asarray(self.centerline_points)[:, :2]
+        poses = self.sim.agent_poses.copy()
+        indices = []
+        for aid in agent_ids:
+            idx = self._agent_id_to_index[aid]
+            order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
+            others = np.delete(poses[:, :2], idx, axis=0)
+            clearance = 2.0 * float(self.sim.params["length"])
+            valid = order[np.all(np.linalg.norm(points[order, None] - others[None], axis=2)
+                                 > clearance, axis=1)]
+            if not len(valid):
+                raise RuntimeError("No unoccupied centerline respawn point")
+            k = int(valid[0])
+            tangent = points[(k + 1) % len(points)] - points[k]
+            poses[idx] = [*points[k], np.arctan2(tangent[1], tangent[0])]
+            indices.append(idx)
+            self._collision_flags[idx] = False
+            self._collision_steps[idx] = -1
+            self._centerline_progress_tracker._last_indices[aid] = -1
+            self._centerline_progress_tracker._prev_progress[aid] = -1.0
+            self._track_preview_last_indices.pop(aid, None)
+            if self._lap_tracker is not None:
+                self._lap_tracker.relocate(aid, poses[idx, :2])
+        return self.sim.reset(poses, agent_indices=indices)
 
     # ------------------------------------------------------------------
     # Finish line helpers
@@ -1323,7 +1381,7 @@ class F110ParallelEnv:
             lidar_range=self.lidar_range,
             vehicle_params=self.params,
             target_laps=getattr(self, "target_laps", 1),
-            continuous_laps=not self.lifecycle.finish_on_laps,
+            continuous_laps=any(not record.finish_on_laps for record in self.lifecycle.records.values()),
             x_min=x_min,
             x_max=x_max,
             y_min=y_min,

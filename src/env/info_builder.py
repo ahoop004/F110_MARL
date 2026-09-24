@@ -10,6 +10,7 @@ from src.env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFac
 
 
 MINIMAL_INFO_KEYS = {
+    "target_respawned",
     "lap_start_step", "lap_time_steps",
     "track_limits",
     "collision",

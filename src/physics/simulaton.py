@@ -370,13 +370,14 @@ class Simulator(object):
         }
 
 
-    def reset(self, poses: np.ndarray, velocities: Optional[np.ndarray] = None, *, friction_mu=None) -> dict:
+    def reset(self, poses: np.ndarray, velocities: Optional[np.ndarray] = None, *, friction_mu=None, agent_indices=None) -> dict:
         """
         Reset the simulator to the given poses and return initial vectorized observations.
 
         Args:
             poses: np.ndarray of shape (N, 3) with (x, y, theta) per agent.
             velocities: Optional np.ndarray of shape (N,) with initial forward speeds (m/s) per agent.
+            agent_indices: Optional subset to reset; other vehicle states and velocities are preserved.
 
         Returns:
             obs_dict with scans, poses, velocities, collisions.
@@ -403,7 +404,11 @@ class Simulator(object):
 
         pose_buffer = self._pose_buffer
 
+        selected = set(range(N) if agent_indices is None else agent_indices)
         for i, agent in enumerate(self.agents):
+            if i not in selected:
+                np.copyto(self._scan_buffer[i], agent.compute_scan())
+                continue
             if friction_mu is not None:
                 if not agent.nonlinear:
                     raise ValueError("Episode friction requires combined_slip_st")

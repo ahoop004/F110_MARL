@@ -37,10 +37,13 @@ def validate_target_laps(value: object) -> int:
 class RaceLifecycle:
     """Framework-independent owner of monotonic per-agent race results."""
 
-    def __init__(self, agent_ids: Sequence[str], target_laps: int, *, finish_on_laps: bool = True) -> None:
+    def __init__(self, agent_ids: Sequence[str], target_laps: int, *, finish_on_laps: bool = True, lap_finish_agents=None) -> None:
         self.agent_ids = tuple(str(agent_id) for agent_id in agent_ids)
         self.target_laps = validate_target_laps(target_laps)
         self.finish_on_laps = finish_on_laps
+        self.lap_finish_agents = set(self.agent_ids if lap_finish_agents is None else lap_finish_agents)
+        if not self.lap_finish_agents <= set(self.agent_ids):
+            raise ValueError("lap_finish_agents contains unknown agents")
         self.records: Dict[str, AgentLifecycleRecord] = {}
         self._next_finish_position = 1
         self.reset()
@@ -50,7 +53,7 @@ class RaceLifecycle:
             agent_id: AgentLifecycleRecord(
                 agent_id=agent_id,
                 target_laps=self.target_laps,
-                finish_on_laps=self.finish_on_laps,
+                finish_on_laps=self.finish_on_laps and agent_id in self.lap_finish_agents,
             )
             for agent_id in self.agent_ids
         }

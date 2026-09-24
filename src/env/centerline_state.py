@@ -520,6 +520,14 @@ class LapTracker:
             # Spawning on or beyond the completed side cannot count immediately.
             self._armed[idx] = oriented <= -hysteresis
 
+    def relocate(self, agent_id: str, point: np.ndarray) -> None:
+        """Rebase geometry after teleporting without changing completed laps."""
+        idx = self.agent_ids.index(agent_id)
+        oriented = self._oriented_distance(point)
+        self._previous[idx] = oriented
+        self._previous_points[idx] = point
+        self._armed[idx] = oriented <= -float(self.finish_line["hysteresis"])
+
     def update(
         self,
         poses_x: np.ndarray,

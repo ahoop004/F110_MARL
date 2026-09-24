@@ -28,7 +28,7 @@ from wrappers.rewards.events import (
     TargetCrashBonusComponent,
     TimeoutPenaltyComponent,
 )
-from wrappers.rewards.interaction import TargetProximityComponent, TargetEdgePressureComponent
+from wrappers.rewards.interaction import TargetProximityComponent, TargetEdgePressureComponent, RacePursuitComponent
 from wrappers.rewards.completion import (
     LapCompletionComponent,
     PerLapBonusComponent,
@@ -43,6 +43,7 @@ from wrappers.rewards.completion import (
 
 
 COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
+    "race_pursuit": RacePursuitComponent,
     "team_race_result": TeamRaceResultComponent,
     "team_race_penalties": TeamRacePenaltiesComponent,
     "centerline": CenterlineRewardComponent,

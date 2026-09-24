@@ -347,7 +347,15 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("track_limits accepts enabled and terminate booleans")
     if any(not isinstance(v, bool) for v in limits.values()):
         raise ScenarioError("track_limits values must be booleans")
-    if limits.get("enabled") and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
+    respawn_agents = environment.get("respawn_agents", [])
+    if (not isinstance(respawn_agents, list) or
+            any(aid not in agents or aid in trainable_ids for aid in respawn_agents)):
+        raise ScenarioError("respawn_agents must list fixed-policy agent IDs")
+    if respawn_agents and (len(agents) != 2 or len(trainable_ids) != 1 or
+                           not limits.get("enabled") or not limits.get("terminate") or
+                           not environment.get("terminate_on_collision", True)):
+        raise ScenarioError("Opponent respawning requires 1v1 with boundary and collision termination")
+    if limits.get("enabled") and not respawn_agents and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)
     for name in ("num_envs", "num_workers", "torch_threads", "worker_startup_batch_size",

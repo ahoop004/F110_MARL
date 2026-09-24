@@ -36,3 +36,32 @@ class TargetEdgePressureComponent(RewardComponent):
         info = step_info.get("info") or {}
         pressure_val = float(info.get("forcing_reward", 0.0))
         return {"target_edge_pressure/bonus": self.weight * pressure_val}
+
+
+class RacePursuitComponent(RewardComponent):
+    """Penalize trailing by unwrapped progress; reward each isolated respawn."""
+
+    def __init__(self, config):
+        self.penalty = float(config.get("behind_penalty", -0.01))
+        self.bonus = float(config.get("respawn_bonus", 1.0))
+        self.target_id = str(config.get("target_id", "car_1"))
+        self.reset()
+
+    def reset(self):
+        self._gap = None
+
+    def compute(self, step_info):
+        info = step_info.get("info") or {}
+        other = (step_info.get("all_infos") or {}).get(self.target_id, {})
+        ego = info.get("centerline", {})
+        target = other.get("centerline", {})
+        if not ego or not target:
+            raise ValueError("race_pursuit requires both agents' centerline facts")
+        if self._gap is None:
+            # Initial grid is local; subsequent progress stays unwrapped, so
+            # lapping the opponent cannot flip the ordering at the seam.
+            self._gap = (target["progress"] - ego["progress"] + .5) % 1.0 - .5
+        else:
+            self._gap += target["progress_delta"] - ego["progress_delta"]
+        return {"race_pursuit/behind": self.penalty if self._gap > 0 else 0.0,
+                "race_pursuit/respawn": self.bonus if info.get("target_respawned") else 0.0}
