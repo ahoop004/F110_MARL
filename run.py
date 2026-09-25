@@ -56,7 +56,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num-envs", type=int, default=None,
                    help="Parallel CPU environments for PPO or MAPPO training")
     p.add_argument("--num-workers", type=int, default=None,
-                   help="MAPPO CPU worker processes; capped at num-envs")
+                   help="PPO/MAPPO CPU worker processes; capped at num-envs")
+    p.add_argument("--rollout-steps-per-env", type=int, default=None,
+                   help="Decisions per environment per rollout; PPO pools num-envs times this value")
+    p.add_argument("--collector-scheduling", choices=("synchronous", "ready"), default=None,
+                   help="Serve all collectors together or serve ready workers without a per-step barrier")
     p.add_argument("--torch-threads", type=int, default=None,
                    help="Parent PyTorch CPU threads; parallel collectors use one each")
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
@@ -114,10 +118,19 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
         scenario.setdefault("environment", {})["render"] = True
     elif args.no_render:
         scenario.setdefault("environment", {})["render"] = False
-    for name in ("num_envs", "num_workers", "torch_threads"):
+    for name in ("num_envs", "num_workers", "torch_threads", "collector_scheduling"):
         value = getattr(args, name, None)
         if value is not None:
             scenario.setdefault("experiment", {})[name] = value
+    horizon = getattr(args, "rollout_steps_per_env", None)
+    if horizon is not None:
+        if horizon <= 0:
+            raise ValueError("--rollout-steps-per-env must be positive")
+        num_envs = int(scenario.get("experiment", {}).get("num_envs", 1))
+        for cfg in scenario.get("agents", {}).values():
+            if cfg.get("trainable", False) and cfg.get("algorithm") in {"ppo", "mappo"}:
+                cfg.setdefault("params", {})["n_steps"] = horizon * (num_envs if cfg["algorithm"] == "ppo" else 1)
+        scenario.setdefault("training_defaults", {})["rollout_steps_per_env"] = horizon
     return scenario
 
 
@@ -590,7 +603,12 @@ def main() -> None:
         env_seed = env_cfg.get("seed")
         env_seed = exp_cfg["seed"] if env_seed is None else env_seed
         provenance["ppo_collection"] = {
-            "mode": "synchronous_workers_v1", "num_envs": num_envs, "worker_threads": 1,
+            "mode": ("synchronous_grouped_workers_v1" if (int(exp_cfg.get("num_workers", num_envs)) < num_envs
+                       or exp_cfg.get("collector_scheduling") == "ready")
+                     else "synchronous_workers_v1"),
+            "num_envs": num_envs, "worker_threads": 1,
+            "collector_scheduling": exp_cfg.get("collector_scheduling", "synchronous"),
+            "num_workers": min(num_envs, int(exp_cfg.get("num_workers", num_envs))),
             "worker_seeds": [(exp_cfg["seed"] + i) % (2 ** 32) for i in range(num_envs)],
             "environment_seeds": [(env_seed + i) % (2 ** 32) for i in range(num_envs)],
             "max_steps_per_worker_rollout": int(params.get("n_steps", 2048)) // num_envs,
@@ -600,9 +618,11 @@ def main() -> None:
             "mode": "synchronous_grouped_workers_v1", "num_envs": num_envs,
             "num_workers": min(num_envs, int(exp_cfg.get("num_workers", num_envs))),
             "worker_threads": 1,
+            "collector_scheduling": exp_cfg.get("collector_scheduling", "synchronous"),
             "rollout_steps_per_env": scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256),
             "environment_step_unit": "joint_environment_decisions_including_opponent_only_steps",
-            "policy_seeds": "parent RNG; deterministic worker/environment ordering",
+            "policy_seeds": ("parent RNG; arrival ordering" if exp_cfg.get("collector_scheduling") == "ready"
+                             else "parent RNG; deterministic worker/environment ordering"),
             "environment_seeds": [((env_cfg.get("seed") if env_cfg.get("seed") is not None
                                     else exp_cfg["seed"]) + i) % (2 ** 32) for i in range(num_envs)],
         }

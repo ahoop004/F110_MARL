@@ -75,6 +75,11 @@ class OnPolicyTrainer:
         With a transition budget, resets do not flush buffers; only a full rollout
         or the final budget remainder triggers an update.
         """
+        workers = min(num_envs, int(scenario.get("experiment", {}).get("num_workers", num_envs)))
+        if workers < num_envs or scenario.get("experiment", {}).get("collector_scheduling") == "ready":
+            from training.parallel_ppo import train_parallel
+            return train_parallel(self, scenario, scenario_dir, num_envs, n_episodes,
+                                  total_steps=total_steps)
         import multiprocessing as mp
 
         context = mp.get_context("spawn")
@@ -82,6 +87,10 @@ class OnPolicyTrainer:
         process_by_worker = {}
         startup = _worker_startup_settings(scenario)
         completed_normally = False
+        started = time.perf_counter()
+        thread_vars = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                       "NUMEXPR_NUM_THREADS", "NUMBA_NUM_THREADS")
+        previous = {key: os.environ.get(key) for key in thread_vars}
         waiting = {}
         completed = 0
         collected = 0
@@ -120,6 +129,8 @@ class OnPolicyTrainer:
             return kind, payload
 
         try:
+            for key in thread_vars:
+                os.environ[key] = "1"
             batch_size = startup["worker_startup_batch_size"]
             for start in range(0, num_envs, batch_size):
                 batch = range(start, min(start + batch_size, num_envs))
@@ -153,6 +164,8 @@ class OnPolicyTrainer:
             for connection in connections.values():
                 connection.send(("start", None))
 
+            startup_s = time.perf_counter() - started
+            round_start = time.perf_counter()
             while connections:
                 requests = {}
                 value_requests = {}
@@ -203,8 +216,21 @@ class OnPolicyTrainer:
                 if waiting and len(waiting) == len(connections):
                     if total_steps is not None:
                         self._set_training_progress(collected, total_steps)
+                    collection_s = time.perf_counter() - round_start
+                    steps = sum(len(item[0]) for item in waiting.values())
+                    update_start = time.perf_counter()
                     metrics = self.agent.update_rollouts([waiting[i] for i in sorted(waiting)])
+                    update_s = time.perf_counter() - update_start
                     if metrics:
+                        metrics.update({
+                            "perf/startup_seconds": startup_s,
+                            "perf/collection_seconds": collection_s, "perf/update_seconds": update_s,
+                            "perf/collection_env_steps_per_second": steps / max(collection_s, 1e-9),
+                            "perf/round_env_steps_per_second": steps / max(collection_s + update_s, 1e-9),
+                            "perf/elapsed_seconds": time.perf_counter() - started,
+                            "perf/end_to_end_env_steps_per_second": collected / max(time.perf_counter() - started, 1e-9),
+                            "perf/num_workers": num_envs, "perf/num_envs": num_envs,
+                        })
                         metrics["train/environment_steps"] = collected
                         for hook in self.hooks:
                             hook.on_update(metrics)
@@ -218,6 +244,7 @@ class OnPolicyTrainer:
                     for worker_id in waiting:
                         connections[worker_id].send(reply)
                     waiting.clear()
+                    round_start = time.perf_counter()
             if not stopped and total_steps is not None and collected != total_steps:
                 raise RuntimeError(f"PPO collected {collected} of {total_steps} transitions")
             if not stopped and total_steps is None and completed != n_episodes:
@@ -229,6 +256,11 @@ class OnPolicyTrainer:
             completed_normally = True
         finally:
             _close_collectors(connections.values(), processes, failed=not completed_normally)
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def _build_actions(
         self,
@@ -289,6 +321,22 @@ class OnPolicyTrainer:
         )
 
     def train(self, n_episodes: int = 0, *, total_steps: Optional[int] = None) -> None:
+        for _ in self.iter_train(n_episodes, total_steps=total_steps):
+            pass
+
+    def _policy_request(self, kind, observation, parallel):
+        if parallel:
+            response = yield kind, observation
+            if kind == "act":
+                action, log_prob, value, raw = response
+                self.agent.last_raw_actions = np.asarray(raw)[None]
+                return action, log_prob, value
+            return response
+        return getattr(self.agent, kind)(observation)
+
+    def iter_train(self, n_episodes: int = 0, *, total_steps: Optional[int] = None,
+                   parallel: bool = False):
+        """The serial rollout loop, also scheduled by grouped CPU collectors."""
         if total_steps is not None and total_steps <= 0:
             raise ValueError("total_steps must be positive")
         self._set_training_progress(0, total_steps or n_episodes)
@@ -326,7 +374,7 @@ class OnPolicyTrainer:
                     np.asarray(self.env.get_global_state().vector, dtype=np.float32).copy()
                     if self._transition_hooks else None
                 )
-                action_norm, log_prob, value = self.agent.act(obs)
+                action_norm, log_prob, value = yield from self._policy_request("act", obs, parallel)
                 raw_batch = getattr(self.agent, "last_raw_actions", None)
                 raw_action = raw_batch[0].copy() if raw_batch is not None else None
                 action_phys = self.action_composer.process(action_norm)
@@ -430,8 +478,9 @@ class OnPolicyTrainer:
                 collected += 1
                 self.collected_steps = collected
                 budget_done = total_steps is not None and collected >= total_steps
-                final_value = (self.agent.value(next_obs)
-                               if total_steps is not None and rl_trunc and not rl_term else None)
+                final_value = None
+                if total_steps is not None and rl_trunc and not rl_term:
+                    final_value = yield from self._policy_request("value", next_obs, parallel)
                 self.agent.buffer.add(
                     obs,
                     action_norm,
@@ -449,14 +498,20 @@ class OnPolicyTrainer:
                     # should bootstrap. Only true terminal states force V=0.
                     if not rl_term:
                         if total_steps is not None:
-                            next_value = final_value if final_value is not None else self.agent.value(next_obs)
+                            next_value = final_value
+                            if next_value is None:
+                                next_value = yield from self._policy_request("value", next_obs, parallel)
                         else:
-                            _, _, next_value = self.agent.act(next_obs)
+                            _, _, next_value = yield from self._policy_request("act", next_obs, parallel)
                     else:
                         next_value = 0.0
                     if total_steps is not None:
                         self._set_training_progress(collected, total_steps)
-                    update_metrics = self.agent.update(next_value)
+                    if parallel:
+                        reply = yield "rollout", self.agent.pack_rollout(next_value)
+                        update_metrics = self.agent.apply_reply(reply)
+                    else:
+                        update_metrics = self.agent.update(next_value)
                     self.agent.buffer.clear()
                     if update_metrics:
                         update_metrics["train/environment_steps"] = collected
@@ -582,14 +637,19 @@ class _RemotePolicy:
         return float(self.connection.recv())
 
     def update(self, next_value):
+        self.connection.send(("rollout", self.pack_rollout(next_value)))
+        return self.apply_reply(self.connection.recv())
+
+    def pack_rollout(self, next_value):
         buffer = self.buffer
         n = buffer.size()
         advantages, returns = buffer.compute_gae(next_value, self.gamma, self.gae_lambda)
-        self.connection.send(("rollout", tuple(t.numpy() for t in (
+        return tuple(t.numpy() for t in (
             buffer.obs[:n], buffer.actions[:n], buffer.log_probs[:n], advantages, returns,
             buffer.raw_actions[:n],
-        ))))
-        reply = self.connection.recv()
+        ))
+
+    def apply_reply(self, reply):
         if "collector_control" not in reply:
             return reply
         control = reply["collector_control"]

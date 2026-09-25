@@ -172,7 +172,7 @@ reduced friction-circle implementation has been replaced. Legacy physics remains
 available for existing legacy scenarios. Parameters are synthetic and explicitly
 uncalibrated; see [physics details and limitations](docs/PHYSICS_MODEL.md).
 
-The canonical `scenarios/ppo_lap_completion_pretrain.yaml` configures the paper's
+The HPC preset `scenarios/ppo_lap_completion_pretrain_hpc.yaml` configures the paper's
 120-million-transition budget, 400 environments, and 1,024 transitions per worker
 per rollout. It uses 50 vehicle/Frenet/track values with fixed track scales across maps, wheel-reference
 acceleration, 0.05 s decisions, and episode friction randomization (relative
@@ -186,7 +186,12 @@ off-track error. Selection uses eight starts and the final protocol uses 20 inde
 on the same map. `final_model.pt` contains the final update; `best_model.pt` uses
 the documented lap-time selection rule. Duplicate `_frenet` and
 `_combined_slip` pretraining entry points have been removed.
-For a smaller parallel experiment, set pooled `params.n_steps = num_envs * 1024`.
+For local development use `scenarios/ppo_lap_completion_pretrain_local.yaml`.
+For a smaller parallel experiment, pass `--rollout-steps-per-env 1024` to set
+pooled `params.n_steps = num_envs * 1024`. Both PPO and MAPPO accept
+`--num-workers` to group environments into fewer processes. See
+[collector performance](docs/COLLECTOR_PERFORMANCE.md) for the 128-core setup,
+optional readiness-based scheduling, and a fixed-budget benchmark.
 
 Vehicle parameters belong in `configs/vehicle/combined_slip.yaml`, under
 `environment.vehicle_params`. They remain uncalibrated, and observation maxima

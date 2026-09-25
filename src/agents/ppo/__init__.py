@@ -232,13 +232,13 @@ class PPOAgent:
             torch.as_tensor(np.concatenate(parts), dtype=torch.float32, device=self.device)
             for parts in zip(*rollouts)
         ]
-        return self._queue_update(tuple(tensors))
+        return self._queue_update(tuple(tensors), owned=True)
 
-    def _queue_update(self, tensors) -> Dict[str, float]:
+    def _queue_update(self, tensors, *, owned=False) -> Dict[str, float]:
         # Each fragment already has its own terminal/truncation bootstrap.
         # Copy before collectors reuse their buffers; keep the actor frozen
         # until enough decisions have accumulated across episodes/workers.
-        self._pending_rollouts.append(tuple(t.detach().clone() for t in tensors))
+        self._pending_rollouts.append(tuple(t.detach() if owned else t.detach().clone() for t in tensors))
         self._pending_steps += len(tensors[0])
         if self._pending_steps < self.min_rollout_steps:
             return {}
@@ -247,7 +247,8 @@ class PPOAgent:
     def flush_pending_update(self) -> Dict[str, float]:
         if not self._pending_rollouts:
             return {}
-        tensors = tuple(torch.cat(parts) for parts in zip(*self._pending_rollouts))
+        tensors = (self._pending_rollouts[0] if len(self._pending_rollouts) == 1
+                   else tuple(torch.cat(parts) for parts in zip(*self._pending_rollouts)))
         self._pending_rollouts.clear()
         self._pending_steps = 0
         return self._update(*tensors)

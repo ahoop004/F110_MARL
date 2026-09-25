@@ -1,0 +1,74 @@
+{
+  "date": "2026-09-25",
+  "hardware": {
+    "cpu": "AMD Ryzen 5 5600G (6 cores / 12 threads, WSL)",
+    "gpu": "NVIDIA GeForce RTX 5060 Ti 8 GB"
+  },
+  "ppo": {
+    "scenario": "scenarios/ppo_lap_completion_pretrain.yaml",
+    "seed": 42,
+    "map": "L_map",
+    "num_envs": 8,
+    "total_steps": 4096,
+    "rollout_steps_per_env": 128,
+    "repetitions": 2,
+    "first_round_excluded_from_steady_rates": true,
+    "arms": [
+      {
+        "workers": 4,
+        "scheduling": "synchronous",
+        "round_steps_per_second": 683.5692608483225,
+        "process_wall_seconds": 20.125758487993153,
+        "startup_seconds": 4.796900606001145
+      },
+      {
+        "workers": 4,
+        "scheduling": "ready",
+        "round_steps_per_second": 588.5916615928106,
+        "process_wall_seconds": 21.541651721498056,
+        "startup_seconds": 4.918259582998871
+      },
+      {
+        "workers": 8,
+        "scheduling": "synchronous",
+        "round_steps_per_second": 672.0037134317367,
+        "process_wall_seconds": 23.20167309849785,
+        "startup_seconds": 5.992277085999376
+      },
+      {
+        "workers": 8,
+        "scheduling": "ready",
+        "round_steps_per_second": 509.1634015644214,
+        "process_wall_seconds": 26.248641847501858,
+        "startup_seconds": 6.840617650006607
+      }
+    ]
+  },
+  "asymmetric_probe": {
+    "scenario": "scenarios/mappo_2v2_asymmetric.yaml",
+    "seed": 42,
+    "map": "circle_map",
+    "initialization": "scratch",
+    "repetitions": 1,
+    "cprofile_enabled": false,
+    "measurements": {
+      "before": {
+        "environment_steps": 512,
+        "active_learner_decisions": 182,
+        "learner_transitions": 308,
+        "training_call_seconds": 10.455749161003041,
+        "learner_transitions_per_second": 29.457477915475636,
+        "updates": 1
+      },
+      "after": {
+        "environment_steps": 512,
+        "active_learner_decisions": 512,
+        "learner_transitions": 815,
+        "training_call_seconds": 20.291719537999597,
+        "learner_transitions_per_second": 40.164166396730344,
+        "updates": 3
+      }
+    },
+    "limitation": "Resets and update cadence differ; this diagnoses useful sample collection, not fixed-policy simulator speed or learning quality."
+  }
+}

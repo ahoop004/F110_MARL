@@ -125,3 +125,36 @@ def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, 
     assert checkpoint["critic_mode"] == "agent_conditioned"
     assert checkpoint["observation_contract"]["observation"]["frenet_neighbors"]["agent_ids"] == IDS
     assert (tmp_path / "best_model.pt").exists()
+
+
+def test_asymmetric_training_resets_after_learners_and_evaluation_runs_full_race():
+    from core.setup import create_training_setup
+    from env.collision_state import apply_episode_termination_policy
+    scenario = load_and_expand_scenario(SCENARIO)
+    envs = []
+    try:
+        for phase, expected in [('train', 'all_trainable'), ('eval', 'all_agents')]:
+            env, _, _ = create_training_setup(scenario, mode=phase, scenario_dir=Path('scenarios'))
+            envs.append(env)
+            assert env.episode_termination_mode == expected
+            terms = dict(zip(IDS, [True, True, False, False]))
+            _, done = apply_episode_termination_policy(terms, {}, active_agents=IDS,
+                possible_agents=IDS, trainable_agents=IDS[:2], mode=env.episode_termination_mode)
+            assert done == (phase == 'train')
+    finally:
+        for env in envs:
+            env.close()
+
+
+def test_evaluation_duration_is_written_to_history(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from training.hooks import EvaluationCheckpointHook
+    evaluator = SimpleNamespace(evaluate=lambda: {'completion_rate': 1., 'collision_rate': 0.,
+                                                   'mean_progress': 1., 'mean_clean_finish_time_s': 10.})
+    hook = EvaluationCheckpointHook(None, str(tmp_path), evaluator, evaluate_every=1)
+    hook._save = lambda *args, **kwargs: None
+    hook.on_episode_end(0, 0., {}, {})
+    record = json.loads((tmp_path / 'evaluation_history.jsonl').read_text())
+    assert record['evaluation_seconds'] >= 0
+    assert record['evaluation_seconds_total'] == hook.evaluation_seconds

@@ -415,3 +415,11 @@ guard found no matches (normal `rg` exit code 1). The focused suite passed all
 still compares the transfer scenario to Frenet pretraining, while the existing
 user-edited scenario inherits combined-slip pretraining. This failure was already
 observed before the performance implementation and is unrelated to it.
+
+## Grouped PPO and readiness dispatch
+
+See [collector performance](COLLECTOR_PERFORMANCE.md) for the local/HPC PPO
+presets, `num_workers` grouping, optional readiness scheduling for PPO/MAPPO,
+and `scripts/benchmark_collectors.py`. Evaluation durations are recorded in
+evaluation history; cumulative throughput also exposes startup and prior hook
+time that collection/update-only rates omit.

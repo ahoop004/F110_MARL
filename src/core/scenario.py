@@ -364,6 +364,11 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents
             and (len(agents) != 1 or environment.get("terminate_on_collision", True))):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
+    evaluation_mode = scenario.get("evaluation", {}).get("episode_termination_mode")
+    if evaluation_mode is not None and evaluation_mode not in {"any_agent", "all_agents", "all_trainable"}:
+        raise ScenarioError("evaluation.episode_termination_mode must be any_agent, all_agents, or all_trainable")
+    if experiment.get("collector_scheduling", "synchronous") not in {"synchronous", "ready"}:
+        raise ScenarioError("experiment.collector_scheduling must be synchronous or ready")
     num_envs = experiment.get("num_envs", 1)
     for name in ("num_envs", "num_workers", "torch_threads", "worker_startup_batch_size",
                  "worker_startup_timeout_s", "worker_response_timeout_s"):

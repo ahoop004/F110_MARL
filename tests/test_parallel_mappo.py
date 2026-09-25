@@ -95,7 +95,7 @@ def test_parallel_pooled_update_matches_serial_update(mode):
         torch.testing.assert_close(a, b)
 
 
-def setup(workers, horizon):
+def make_setup(workers, horizon):
     from core.scenario import load_and_expand_scenario, resolve_mappo_config
     from core.setup import create_training_setup
     from run import build_obs_composers, build_reward_composers, resolve_training_params
@@ -149,7 +149,7 @@ class Capture(TrainingHook):
 
 @pytest.mark.parametrize("workers,horizon", [(1, 2), (2, 5)])
 def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budgets(workers, horizon):
-    trainer, scenario, directory = setup(workers, horizon)
+    trainer, scenario, directory = make_setup(workers, horizon)
     capture = Capture()
     logs = []
     wandb = WandbHook(SimpleNamespace(log_metrics=logs.append))
@@ -198,7 +198,7 @@ def test_worker_startup_error_is_reported_and_processes_are_reaped():
     import multiprocessing as mp
     import os
 
-    trainer, scenario, directory = setup(2, 2)
+    trainer, scenario, directory = make_setup(2, 2)
     before = {p.pid for p in mp.active_children()}
     threads_before = os.environ.get("OMP_NUM_THREADS")
     scenario["agents"]["car_0"]["observation"] = "/missing/mappo-observation.yaml"
@@ -213,7 +213,7 @@ def test_worker_startup_error_is_reported_and_processes_are_reaped():
 
 @pytest.mark.parametrize("workers,horizon", [(1, 2), (2, 5)])
 def test_step_budget_collects_exact_remainder_across_resets(workers, horizon):
-    trainer, scenario, directory = setup(workers, horizon)
+    trainer, scenario, directory = make_setup(workers, horizon)
     capture = Capture()
     trainer.hooks = trainer._transition_hooks = [capture]
     try:
@@ -235,7 +235,7 @@ def test_step_budget_collects_exact_remainder_across_resets(workers, horizon):
 def test_parallel_selective_recording_keeps_all_cars_and_budget_cut(tmp_path):
     from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
     from src.replay.race_reader import iter_race_frames, load_clips
-    trainer, scenario, directory = setup(2, 2)
+    trainer, scenario, directory = make_setup(2, 2)
     writer = RaceDatasetWriter(tmp_path/'races', config=dict(sample_probability=1., chunk_frames=4))
     hook = RaceDatasetHook(writer)
     trainer.hooks = [hook]
@@ -262,7 +262,7 @@ def test_recording_covers_opponent_only_tail(tmp_path):
     from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
     from src.replay.race_recorder import RaceRecorder
     from src.replay.race_reader import iter_race_frames, load_clips
-    trainer, scenario, directory = setup(1, 4)
+    trainer, scenario, directory = make_setup(1, 4)
     env = trainer.env
     original_step = env.step
     def step(actions):
@@ -296,7 +296,7 @@ def test_recording_covers_opponent_only_tail(tmp_path):
 
 
 def test_serial_step_budget_stops_mid_episode_without_fabricating_outcome():
-    trainer, _, _ = setup(1, 2)
+    trainer, _, _ = make_setup(1, 2)
     capture = Capture()
     trainer.hooks = trainer._transition_hooks = [capture]
     try:
@@ -317,7 +317,7 @@ def test_recording_window_reserves_late_frames_for_fixed_opponents(tmp_path, par
     from src.replay.race_reader import iter_race_frames
     threads = torch.get_num_threads()
     torch.set_num_threads(1)
-    trainer, scenario, directory = setup(2, 2)
+    trainer, scenario, directory = make_setup(2, 2)
     cfg = dict(sample_probability=1., max_frames=5, max_bytes=40000000,
         windows=[dict(start_step=0, end_step=6, max_frames=2, max_bytes=20000000),
                  dict(start_step=6, end_step=20, max_frames=3, max_bytes=20000000)])
@@ -342,3 +342,18 @@ def test_recording_window_reserves_late_frames_for_fixed_opponents(tmp_path, par
     late = [f for f in frames if f['recording_window_index'] == 1]
     assert all(f['recording_progress'] >= 6 for f in late)
     assert all(f['commands']['car_2']['applied'] is not None for f in frames)
+
+
+def test_ready_mappo_dispatch_keeps_exact_budget_and_policy_updates():
+    trainer, scenario, directory = make_setup(2, 2)
+    scenario['experiment']['collector_scheduling'] = 'ready'
+    capture = Capture()
+    trainer.hooks = trainer._transition_hooks = [capture]
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=3, total_steps=17)
+    finally:
+        trainer.env.close()
+    assert trainer._environment_steps == 17
+    assert len(capture.records) == 34
+    assert sum(m['train/rollout_agent_samples'] for m in capture.updates) == 34
+    assert capture.ends == 1

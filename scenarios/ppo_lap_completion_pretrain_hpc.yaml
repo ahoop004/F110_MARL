@@ -1,0 +1,6 @@
+# 400 environments grouped into 100 single-threaded CPU processes.
+includes:
+  - ppo_lap_completion_pretrain.yaml
+experiment:
+  num_envs: 400
+  num_workers: 100

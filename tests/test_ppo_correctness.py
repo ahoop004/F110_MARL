@@ -830,7 +830,7 @@ def test_cli_evaluates_ppo_checkpoint_with_batched_inference_available(tmp_path,
     )
     torch.save(payload, checkpoint)
     checkpoint_hash = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-    monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda *args, **kwargs: scenario)
     monkeypatch.setattr(sys, "argv", [
         "run.py", "--scenario", str(directory / "ppo_lap_completion_pretrain.yaml"),
         "--eval", *([] if protocol == "final" else ["--checkpoint", str(checkpoint)]),
@@ -917,7 +917,7 @@ def test_cli_initializes_ppo_training_from_best_checkpoint(tmp_path, monkeypatch
         return original_train(trainer, *args, **kwargs)
 
     monkeypatch.setattr(OnPolicyTrainer, method_name, verify_initialization)
-    monkeypatch.setattr(run, "load_and_expand_scenario", lambda _: scenario)
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda *args, **kwargs: scenario)
     if checkpoint_source == "yaml":
         import os
         scenario["experiment"]["checkpoint"] = (
@@ -940,7 +940,7 @@ def test_cli_initializes_ppo_training_from_best_checkpoint(tmp_path, monkeypatch
     assert provenance["initial_checkpoint"] == {
         "path": str(checkpoint), "sha256": source_hash,
         "load_scope": "actor_and_critic", "optimizer_restored": False,
-        "training_progress_restored": False,
+        "training_progress_restored": False, "observation_extension": None,
     }
     assert provenance["map_split"] == {"train": ["Budapest_map"], "eval": ["Budapest_map"]}
     saved = torch.load(output / "best_model.pt", weights_only=False)
@@ -971,7 +971,7 @@ def test_transfer_scenario_preserves_pretraining_contract():
     assert contracts[0] == contracts[1]
     assert source['agents']['car_0']['action_constraints'] == transfer['agents']['car_0']['action_constraints']
     assert transfer['experiment']['checkpoint'] is None
-    assert transfer['agents']['car_0']['params']['n_steps'] == transfer['experiment']['num_envs'] * 1024
+    assert transfer['agents']['car_0']['params']['n_steps'] == source['agents']['car_0']['params']['n_steps']
     assert source["experiment"]["name"] != transfer["experiment"]["name"]
     # The transfer track is user-selectable; all three lists must agree.
     maps = transfer["environment"]["map_bundles"]
@@ -1098,7 +1098,7 @@ def test_paper_budget_cut_bootstraps_without_marking_environment_terminal():
 
 def test_paper_configuration_declares_transition_budget_and_continuous_task():
     from core.scenario import load_and_expand_scenario, validate_scenario
-    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml')
+    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_hpc.yaml')
     validate_scenario(scenario)
     assert scenario['experiment']['total_steps'] == 120000000
     assert scenario['experiment']['num_envs'] == 400
@@ -1414,3 +1414,118 @@ def test_curriculum_stop_prevents_further_collection_or_updates(terminal_on_upda
     trainer.train(total_steps=100)
     assert trainer.collected_steps == 2
     assert hook.updates == 1
+
+
+@pytest.mark.parametrize('workers', [1, 2])
+@pytest.mark.parametrize('step_budget', [False, True])
+def test_grouped_ppo_preserves_environment_budgets_raw_actions_and_cleanup(workers, step_budget):
+    import multiprocessing as mp
+    from training.hooks import TrainingHook
+
+    class Capture(TrainingHook):
+        def __init__(self):
+            self.records, self.episodes, self.updates = [], [], []
+        def on_step(self, record):
+            self.records.append(record)
+        def on_episode_end(self, episode, reward, info, metrics):
+            self.episodes.append((episode, info, metrics))
+        def on_update(self, metrics):
+            self.updates.append(dict(metrics))
+
+    trainer, scenario, directory = _parallel_test_setup()
+    scenario['experiment'].update(num_envs=3, num_workers=workers)
+    trainer.agent.n_steps = 12  # four transitions per environment
+    # Capture updates without changing weights, for a probability-ratio check.
+    capture = Capture()
+    trainer.hooks = trainer._transition_hooks = [capture]
+    pools = []
+    trainer.agent._update = lambda *tensors: pools.append(tensors) or {'train/rollout_steps': len(tensors[0])}
+    existing = {child.pid for child in mp.active_children()}
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=3, n_episodes=5,
+                               **({'total_steps': 17} if step_budget else {}))
+    finally:
+        trainer.env.close()
+    expected = 17 if step_budget else 20
+    assert trainer.collected_steps == expected == len(capture.records)
+    assert len(capture.episodes) == (3 if step_budget else 5)
+    assert {r.info['worker_id'] for r in capture.records} == {0, 1, 2}
+    assert all(r.info['worker_seed'] == 42 + r.info['worker_id'] for r in capture.records)
+    assert {child.pid for child in mp.active_children()} == existing
+    assert pools
+    obs, actions, old_lp, advantages, returns, raw = (torch.cat(parts) for parts in zip(*pools))
+    assert len(obs) == expected and torch.isfinite(returns).all()
+    torch.testing.assert_close(actions, raw.tanh())
+    new_lp, _ = trainer.agent.actor.evaluate_actions(obs, actions, raw)
+    torch.testing.assert_close(new_lp, old_lp)
+    perf = [m for m in capture.updates if 'perf/num_workers' in m]
+    assert perf and all(m['perf/num_workers'] == workers for m in perf)
+    assert all(m['perf/collection_seconds'] > 0 and m['perf/update_seconds'] >= 0 for m in perf)
+    assert perf[-1]['train/environment_steps'] == expected
+
+
+def test_grouped_ppo_worker_failure_reaps_children():
+    import multiprocessing as mp
+    trainer, scenario, directory = _parallel_test_setup()
+    scenario['experiment']['num_workers'] = 1
+    scenario['agents']['car_0']['observation'] = 'missing-observation.yaml'
+    existing = {child.pid for child in mp.active_children()}
+    try:
+        with pytest.raises(RuntimeError, match='PPO worker .* failed'):
+            trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=3)
+    finally:
+        trainer.env.close()
+    assert {child.pid for child in mp.active_children()} == existing
+
+
+@pytest.mark.parametrize('algorithm,num_envs,expected', [('ppo', 1, 1024), ('ppo', 400, 409600), ('mappo', 4, 1024)])
+def test_explicit_cli_rollout_horizon_scales_only_ppo_pool(algorithm, num_envs, expected):
+    from argparse import Namespace
+    from run import apply_cli_overrides
+    args = Namespace(seed=None, episodes=None, wandb=False, no_wandb=False,
+                     render=False, no_render=False, num_envs=num_envs, rollout_steps_per_env=1024)
+    config = {'agents': {'car_0': {'algorithm': algorithm, 'trainable': True, 'params': {'n_steps': 7}}}}
+    apply_cli_overrides(config, args)
+    assert config['agents']['car_0']['params']['n_steps'] == expected
+    assert config['training_defaults']['rollout_steps_per_env'] == 1024
+    args.rollout_steps_per_env = 0
+    with pytest.raises(ValueError, match='positive'):
+        apply_cli_overrides(config, args)
+
+
+def test_grouped_ppo_matches_ungrouped_returns_across_resets_and_partial_budget():
+    results = []
+    for workers in (2, 1):
+        trainer, scenario, directory = _parallel_test_setup()
+        scenario['experiment']['num_workers'] = workers
+        pools = []
+        trainer.agent._update = lambda *tensors: pools.append(tuple(t.clone() for t in tensors)) or {'updated': 1}
+        try:
+            trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=0, total_steps=19)
+        finally:
+            trainer.env.close()
+        results.append(pools)
+    assert len(results[0]) == len(results[1]) == 3
+    for original, grouped in zip(*results):
+        for a, b in zip(original, grouped):
+            torch.testing.assert_close(a, b)
+
+
+def test_ready_grouped_ppo_curriculum_stop_preserves_evaluated_weights():
+    from training.hooks import TrainingHook
+    class Stop(TrainingHook):
+        should_stop = False
+        def on_update(self, metrics):
+            self.should_stop = True
+    trainer, scenario, directory = _parallel_test_setup()
+    scenario['experiment'].update(num_workers=1, collector_scheduling='ready')
+    scenario['map_curriculum'] = {}  # exercise scheduler broadcast at an update barrier
+    stop = Stop()
+    trainer.hooks = [stop]
+    trainer._transition_hooks = []
+    try:
+        trainer.train_parallel(scenario, directory, num_envs=2, n_episodes=0, total_steps=32)
+        assert stop.should_stop
+        assert trainer.collected_steps == 8
+    finally:
+        trainer.env.close()

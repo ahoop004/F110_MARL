@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
@@ -532,6 +533,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         self._best_score: Optional[tuple[float, float, float, float]] = None
         self._history_path = self._dir / "evaluation_history.jsonl"
         self._evaluation_count = 0
+        self.evaluation_seconds = 0.0
         self._policy_version = 0
         if console is not None and selection_strategy.startswith("team_"):
             console.print_info("Checkpoint priority: " + self.selection_priority(selection_strategy))
@@ -623,7 +625,11 @@ class EvaluationCheckpointHook(CheckpointHook):
                 policy_version=self._policy_version, checkpoint=str(checkpoint) if checkpoint else None,
                 checkpoint_sha256=digest)
             recording.begin(context)
+        started = time.perf_counter()
         summary = dict(self._evaluator.evaluate())
+        summary["evaluation_seconds"] = time.perf_counter() - started
+        self.evaluation_seconds += summary["evaluation_seconds"]
+        summary["evaluation_seconds_total"] = self.evaluation_seconds
         summary.update(context)
         self._evaluation_count += 1
         run_id = self._provenance.get("run_id", self._dir.name)

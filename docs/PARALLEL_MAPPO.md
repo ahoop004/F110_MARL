@@ -147,3 +147,12 @@ Compare 64, 100, and 128 workers using the same 400 environments, seed, rollout
 horizon, and race limit. MPC opponent solves and simulation remain CPU work;
 400 environments do not imply 400 simultaneously executing CPU cores. The full
 400-environment throughput and memory use must be measured on the HPC.
+
+## Asymmetric training and readiness scheduling
+
+The asymmetric 2v2 scenario resets training when both learners terminate and
+keeps full-race evaluation. Both fixed-opponent MAPPO and PPO can use
+`--collector-scheduling ready` to serve ready workers without a global per-action
+barrier; weights remain frozen until the rollout update barrier. This changes
+stochastic draw ordering. See [collector performance](COLLECTOR_PERFORMANCE.md)
+for settings, timing definitions, and the shared benchmark.

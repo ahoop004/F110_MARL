@@ -375,7 +375,7 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
 
 
 def test_pretraining_entry_points_share_mf61_physics_and_control():
-    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_hpc.yaml")
     assert baseline['experiment']['num_envs'] == 400
     for name in ('transfer', 'transfer_3lap', 'validate'):
         variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_{name}.yaml")
@@ -610,6 +610,8 @@ def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
     env._track_preview_geometry = geometry
     env._track_preview_agents = frozenset({"car_0"})
     env._frenet_neighbor_agents = frozenset({"car_0"})
+    env._terminal_controller = SimpleNamespace(config=SimpleNamespace(remove_after_clearance=False))
+    env._agent_target_index = {}
     env._track_preview_points = 8
     env._track_preview_last_indices = {"car_0": -1, "car_1": -1}
     env.possible_agents = ["car_0", "car_1"]

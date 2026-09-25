@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
+from training.collector_scheduling import CollectorScheduler
 from training.hooks import WandbHook
 from training.on_policy_trainer import (
     _WorkerHook, _close_collectors, _report_worker_error, _worker_startup_settings,
@@ -301,6 +302,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         raise ValueError("Parallel MAPPO needs at least num_envs episodes")
     budget = total_steps if total_steps is not None else n_episodes
     startup = _worker_startup_settings(scenario)
+    scheduler = CollectorScheduler(experiment.get("collector_scheduling", "synchronous"),
+                                   startup["worker_response_timeout_s"])
     agent = trainer.agent
     contract = {name: getattr(agent, name) for name in (
         "agent_ids", "obs_dim", "global_state_dim", "global_state_contract_version",
@@ -318,6 +321,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     physics_collected = 0
     pending_episodes = []
     success = False
+    started_training = time.perf_counter()
     context = mp.get_context("spawn")
     # Set before spawning, so NumPy/BLAS/Numba imports inherit single-thread limits.
     thread_vars = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
@@ -338,7 +342,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             raise RuntimeError(f"MAPPO worker {worker_id} failed:\n{payload}")
         return kind, payload
 
-    def events(items):
+    def process_events(items):
         for kind, payload in items:
             if kind == "transition":
                 for hook in record_hooks:
@@ -372,6 +376,13 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             completed += 1
         pending_episodes.clear()
 
+    def events(items):
+        event_start = time.monotonic()
+        try:
+            process_events(items)
+        finally:
+            scheduler.exclude_parent_time(time.monotonic() - event_start)
+
     try:
         for key in thread_vars:
             os.environ[key] = "1"
@@ -404,13 +415,15 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         for connection in connections.values():
             connection.send(("start", None))
         waiting = {}
+        startup_s = time.perf_counter() - started_training
         round_start = time.perf_counter()
         while connections:
             requests = {}
-            for worker_id in list(connections):
+            for worker_id in scheduler.workers(connections, waiting):
                 if worker_id in waiting:
                     continue
                 kind, payload = receive(worker_id)
+                scheduler.received(worker_id)
                 if kind == "requests":
                     batch, items = payload
                     events(items)
@@ -450,6 +463,10 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     "perf/update_seconds": update_s, "perf/collection_env_steps_per_second": steps / max(collection_s, 1e-9),
                     "perf/round_env_steps_per_second": steps / max(collection_s + update_s, 1e-9),
                     "train/rollout_agent_samples": samples,
+                    "perf/startup_seconds": startup_s,
+                    "perf/elapsed_seconds": time.perf_counter() - started_training,
+                    "perf/end_to_end_env_steps_per_second": collected / max(time.perf_counter() - started_training, 1e-9),
+                    "perf/num_workers": workers, "perf/num_envs": num_envs,
                 })
                 if race_hooks:
                     metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
@@ -460,6 +477,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 for worker_id in waiting:
                     connections[worker_id].send(metrics)
                 waiting.clear()
+                scheduler.reset()
                 round_start = time.perf_counter()
         flush_episodes()
         if total_steps is not None and collected != total_steps:

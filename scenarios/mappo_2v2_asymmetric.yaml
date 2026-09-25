@@ -9,10 +9,13 @@ mappo:
   reward_mode: individual
   critic_mode: agent_conditioned
 environment:
+  # Once both learners terminate, no further per-agent training targets exist.
+  episode_termination: {mode: all_trainable}
   # Supply the exact pretraining boundary reward facts while retaining race
   # collision/finish termination and physical wall contact for all four cars.
   track_limits: {enabled: true, terminate: false}
 evaluation:
+  episode_termination_mode: all_agents
   target_laps: 3
 agents:
   car_0:
