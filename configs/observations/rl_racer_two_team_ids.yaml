@@ -1,0 +1,8 @@
+includes:
+  - rl_racer_two_team.yaml
+observation:
+  frenet_neighbors:
+    agent_ids: [car_0, car_1, car_2, car_3]
+# 192 values: unchanged 158 driving inputs, three 10-value neighbor slots,
+# then four ego-ID values. Each slot: ds, dd, dvs, dvd, present, teammate,
+# and a four-value one-hot vehicle ID in the configured order above.

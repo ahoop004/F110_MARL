@@ -1,0 +1,32 @@
+# Two trainable teammates versus two fixed advanced racing MPC opponents.
+includes:
+  - ../configs/scenarios/mappo_2v2_base.yaml
+experiment:
+  name: mappo_2v2_asymmetric
+training_defaults:
+  team_return_mode: per_agent
+mappo:
+  reward_mode: individual
+  critic_mode: agent_conditioned
+environment:
+  # Supply the exact pretraining boundary reward facts while retaining race
+  # collision/finish termination and physical wall contact for all four cars.
+  track_limits: {enabled: true, terminate: false}
+evaluation:
+  target_laps: 3
+agents:
+  car_0:
+    observation: ../configs/observations/rl_racer_two_team_ids.yaml
+    reward: ../configs/reward/tasks/lap_completion_pretraining.yaml
+  car_1:
+    observation: ../configs/observations/rl_racer_two_team_ids.yaml
+    reward: ../configs/reward/tasks/lap_completion_opponent_crash.yaml
+wandb:
+  group: mappo-2v2-asymmetric
+  tags: [mappo, 2v2, individual-rewards, vehicle-ids, racing-mpc-opponents]
+  notes: >-
+    car_0 learns the lap-pretraining reward; car_1 additionally receives +1
+    per opposing car collision terminal, once per race. Individual returns and
+    an agent-conditioned critic preserve different objectives. A shared actor
+    sees all three other cars with stable one-hot IDs, team flags, and ego ID.
+    192 inputs retain the unchanged 158-input PPO prefix for actor transfer.

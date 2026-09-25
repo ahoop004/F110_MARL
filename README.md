@@ -91,6 +91,7 @@ See [the scenario index](scenarios/README.md) for the retained historical files.
 | MAPPO main team objective | `mappo_2v2_combined.yaml` |
 | MAPPO objective comparisons | `mappo_2v2_first_place.yaml`, `mappo_2v2_sweep.yaml` |
 | MAPPO individual completion baseline | `mappo_2v2_individual.yaml` |
+| MAPPO lap/crash learner roles vs racing MPC | `mappo_2v2_asymmetric.yaml` |
 | MAPPO held-out evaluation | `mappo_2v2_validate.yaml` |
 | Circle convergence ablation | `experiments/ppo_combined_slip_circle_stable.yaml` |
 | Historical experiments / controller calibration | `legacy/*.yaml`, `calibration/*.yaml` |

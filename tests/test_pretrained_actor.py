@@ -16,6 +16,7 @@ ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 
 @pytest.mark.parametrize("scenario_name", [
     "mappo_2v2_completion",
+    "mappo_2v2_asymmetric",
     "mappo_2v2_combined",
     "mappo_2v2_base_scratch",
     "mappo_2v2_base_pretrained",
@@ -57,7 +58,8 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         raw, infos = env.reset(seed=42)
         assert len(env.agents) == 4
         composers = build_obs_composers(scenario["agents"], ids, scenario["environment"], Path("scenarios").resolve())
-        assert [composers[aid].obs_dim for aid in ids] == [176, 176]
+        obs_dim = 192 if scenario_name == "mappo_2v2_asymmetric" else 176
+        assert [composers[aid].obs_dim for aid in ids] == [obs_dim, obs_dim]
         source_composer = build_obs_composers(pretraining['agents'], ['car_0'],
             pretraining['environment'], Path('scenarios').resolve())['car_0']
         assert source_composer.obs_dim == 158
@@ -71,7 +73,12 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
             wrapped = composers[aid].wrap(raw[aid], infos[aid])
             np.testing.assert_allclose(wrapped[:108], np.minimum(raw[aid]['lidar'] / 10., 1.), atol=1e-7)
             assert np.any(wrapped[:108] > 0.)
-            slots = wrapped[158:].reshape(3, 6)
+            slot_dim = 10 if obs_dim == 192 else 6
+            slots = wrapped[158:158 + 3 * slot_dim].reshape(3, slot_dim)
+            if obs_dim == 192:
+                np.testing.assert_array_equal(wrapped[-4:], np.eye(4)[int(aid[-1])])
+                for slot, neighbor in zip(slots, infos[aid]['frenet_neighbors']):
+                    np.testing.assert_array_equal(slot[6:], np.eye(4)[int(neighbor['agent_id'][-1])])
             np.testing.assert_array_equal(slots[:, 4], 1.)
             assert slots[:, 5].sum() == 1.
         space = env.action_spaces["car_0"]
@@ -86,7 +93,7 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         checkpoint = tmp_path / "forward_frenet.pt"
         source.save(str(checkpoint))
         recipient = MAPPOAgent(
-            176, len(env.get_global_state().vector), space.low, space.high, ids,
+            obs_dim, len(env.get_global_state().vector), space.low, space.high, ids,
             {**params, **resolve_mappo_config(scenario), "device": "cpu"},
         )
         critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
@@ -100,7 +107,7 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         for key, value in recipient.critic.state_dict().items():
             torch.testing.assert_close(value, critic_before[key])
         assert not recipient.optimizer.state
-        observations = np.random.default_rng(42).normal(size=(2, 176)).astype(np.float32)
+        observations = np.random.default_rng(42).normal(size=(2, obs_dim)).astype(np.float32)
         actions, _ = recipient.act_batch(ids, observations, deterministic=True)
         for i, aid in enumerate(ids):
             np.testing.assert_allclose(actions[aid], source.predict(observations[i, :158]), atol=1e-7)

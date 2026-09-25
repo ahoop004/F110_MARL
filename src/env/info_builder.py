@@ -10,6 +10,7 @@ from src.env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFac
 
 
 MINIMAL_INFO_KEYS = {
+    "agent_id",
     "target_frenet",
     "target_respawned",
     "lap_start_step", "lap_time_steps",
@@ -39,6 +40,7 @@ MINIMAL_INFO_KEYS = {
 # New keys should be added here only when their semantics are settled.
 STABLE_STEP_INFO_KEYS: frozenset = frozenset(
     {
+        "agent_id",          # str — ego ID when Frenet neighbors are requested
         "lap_start_step", "lap_time_steps",
         "track_limits",      # current center-position boundary test, in metres
         "collision",         # bool — this agent collided this step

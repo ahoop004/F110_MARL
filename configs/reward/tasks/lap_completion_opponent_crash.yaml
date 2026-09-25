@@ -1,0 +1,9 @@
+includes:
+  - lap_completion_pretraining.yaml
+task:
+  name: lap_completion_opponent_crash
+  description: Lap-pretraining reward plus one local bonus per opposing car crash.
+reward:
+  opponent_crash_bonus:
+    enabled: true
+    bonus: 1.0  # Same reward magnitude as one metre of forward progress.

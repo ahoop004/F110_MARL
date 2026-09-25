@@ -359,7 +359,10 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("respawn_on_vehicle_collision must be boolean")
     if environment.get("respawn_on_vehicle_collision", False) and not respawn_agents:
         raise ScenarioError("respawn_on_vehicle_collision requires respawn_agents")
-    if limits.get("enabled") and not respawn_agents and (len(agents) != 1 or environment.get("terminate_on_collision", True)):
+    # Multi-car races can request boundary facts for rewards without enabling
+    # the single-car time-trial boundary-reset protocol.
+    if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents
+            and (len(agents) != 1 or environment.get("terminate_on_collision", True))):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     num_envs = experiment.get("num_envs", 1)
     for name in ("num_envs", "num_workers", "torch_threads", "worker_startup_batch_size",

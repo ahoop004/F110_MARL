@@ -237,7 +237,8 @@ class F110ParallelEnv:
         limits_cfg = merged.get("track_limits", {}) or {}
         self.track_limits_enabled = bool(limits_cfg.get("enabled", False))
         self.terminate_on_track_boundary = bool(limits_cfg.get("terminate", True))
-        if self.track_limits_enabled and self.n_agents != 1 and not merged.get("respawn_agents"):
+        if (self.track_limits_enabled and self.terminate_on_track_boundary
+                and self.n_agents != 1 and not merged.get("respawn_agents")):
             raise ValueError("Track-limit time trials require one vehicle")
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
@@ -1657,6 +1658,7 @@ class F110ParallelEnv:
             if agent_id not in self._frenet_neighbor_agents:
                 continue
             infos.setdefault(agent_id, {})["frenet_neighbors"] = neighbors
+            infos[agent_id]["agent_id"] = agent_id
             target_index = self._agent_target_index.get(agent_id)
             target_id = self.possible_agents[target_index] if target_index is not None else None
             infos[agent_id]["target_frenet"] = next(

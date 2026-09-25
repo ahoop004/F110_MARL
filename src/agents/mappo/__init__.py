@@ -819,7 +819,12 @@ class MAPPOAgent:
         source_dim = 10 + 2 * points
         if "lidar" in enabled:
             source_dim += int(source.get("lidar_beams", 108))
-        added_dim = (6 if neighbors.get("include_team", False) else 5) * int(neighbors.get("max_neighbors", 1))
+        from wrappers.observations.neighbors import FrenetNeighborsComponent
+        added_dim = FrenetNeighborsComponent(
+            max_neighbors=int(neighbors.get("max_neighbors", 1)),
+            include_team=bool(neighbors.get("include_team", False)),
+            agent_ids=neighbors.get("agent_ids"),
+        ).dim
         if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
                 or self.obs_dim != source_dim + added_dim):
             raise ValueError("Neighbor extension observation dimensions do not match the contracts")

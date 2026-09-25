@@ -28,16 +28,57 @@ physics calibration work.
 | `mappo_2v2_first_place.yaml` | First-place objective comparison |
 | `mappo_2v2_sweep.yaml` | First-and-second-place objective comparison |
 | `mappo_2v2_individual.yaml` | Individual-reward completion comparison |
+| `mappo_2v2_asymmetric.yaml` | Two learner roles: lap reward / lap reward plus opponent crashes |
 | `mappo_2v2_validate.yaml` | Held-out Silverstone/Spa evaluation |
 | `mappo_2v2_selfplay.yaml` | Two trainable teams: three-lap completion and opponent crashes |
 
 Both validation scenarios require `--eval --checkpoint PATH`. Training MAPPO
 from a PPO source uses `--pretrained-actor PATH`; omitting it uses the scenario
 default (scratch except for the explicitly pretrained base and penalty arms).
-PPO and MAPPO share 158 observation inputs: 108 normalized LiDAR ranges followed
-by 50 driving values, with no explicit neighbor states or teammate identity. MAPPO's
+PPO and MAPPO share a 158-input driving prefix: 108 normalized LiDAR ranges
+followed by 50 driving values. Fixed-opponent MAPPO adds three neighbor slots
+with teammate flags (176 inputs); the asymmetric scenario also encodes vehicle
+and ego IDs (192 inputs). MAPPO's
 shared settings live in `configs/scenarios/mappo_2v2_base.yaml`; edit that fragment
 when a setting should apply to the fixed-opponent team objectives.
+
+## Two learner roles against racing MPC
+
+```bash
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_2v2_asymmetric.yaml
+```
+
+`car_0` and `car_1` are trainable teammates; `car_2` and `car_3` use the fixed
+advanced `racing_mpc` profile. The default is a three-lap race on circle with
+one environment. Add `--pretrained-actor outputs/PRETRAIN_RUN` to initialize
+from a compatible lap-completion PPO actor; otherwise training starts fresh.
+
+Both learners use the exact `lap_completion_pretraining.yaml` reward: signed
+metre progress, replaced by -1 on a geometric boundary excursion. `car_1` also
+gets +1 for each opposing car's collision terminal, at most +2 per race.
+Change `bonus` in `configs/reward/tasks/lap_completion_opponent_crash.yaml`
+to tune its weight. It counts either opponent, once each, including simultaneous
+ego/opponent collisions. It does not establish collision causation. Finishes,
+timeouts, and teammate crashes give no bonus. The learner collects this local
+reward only while active, including its final transition; later crashes after
+its own termination receive no credit.
+
+Returns remain per agent, with an agent-conditioned centralized critic and a
+shared actor conditioned on ego ID. The crash bonus is not averaged into the
+racer's reward. Geometric boundary sensing supplies the pretraining penalty;
+this race keeps physical wall collisions and collision/finish/time-limit
+termination rather than the single-car pretraining boundary resets. Evaluation
+continues to select checkpoints by team completion.
+
+Each observation has 192 values: the unchanged 158-input PPO driving prefix,
+three nearest-first slots of `[ds, dd, dvs, dvd, present, is_teammate, ID(4)]`,
+and ego `ID(4)`. IDs are one-hot in the fixed order `car_0` through `car_3`.
+All three other vehicles are visible through simulator-provided Frenet state;
+IDs follow vehicles when distance ordering changes. Missing slots are zero.
+The 34 added actor-input columns start at zero when loading PPO weights, so
+initial actions match the pretrained driving policy. Existing 176-input MAPPO
+checkpoints have a different observation contract.
 
 ## Two trainable teams
 

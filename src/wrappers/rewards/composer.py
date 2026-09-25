@@ -23,6 +23,7 @@ from wrappers.rewards.motion import (
 )
 from wrappers.rewards.events import (
     CollisionRewardComponent,
+    OpponentCrashBonusComponent,
     SelfCrashPenaltyComponent,
     TargetFinishComponent,
     TargetCrashBonusComponent,
@@ -70,6 +71,7 @@ COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
     "reverse_progress_penalty": ReverseProgressPenaltyComponent,
     "offtrack_penalty": OfftrackPenaltyComponent,
     "target_crash_bonus": TargetCrashBonusComponent,
+    "opponent_crash_bonus": OpponentCrashBonusComponent,
     "timeout_penalty": TimeoutPenaltyComponent,
     "self_crash_penalty": SelfCrashPenaltyComponent,
 }
