@@ -562,7 +562,7 @@ agents:
       task:
         # Task identifier stored with the reward definition.
         name: progress_and_blocking_support
-        description: Help car_0 progress and gain ground on active opponents following behind this car.
+        description: Help car_0 progress, block active opponents, and earn a bonus for each opposing car crash.
       # Inline RewardComposer configuration; replace/disable components explicitly when changing objectives.
       reward:
         progress_delta_bonus:
@@ -583,6 +583,11 @@ agents:
           max_distance: 6.0
           lateral_distance: 0.6
           max_step_progress: 1.0
+        opponent_crash_bonus:
+          enabled: true
+          # +1 per opponent collision terminal, once per opponent per episode.
+          # Includes mutual crashes; the self-collision penalty still applies.
+          bonus: 1.0
         collision:
           enabled: true
           penalty: -5.0

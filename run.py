@@ -1398,7 +1398,8 @@ def _run_on_policy(
     from agents.ppo import PPOAgent
     from training.on_policy_trainer import OnPolicyTrainer
 
-    n_episodes = int(exp_cfg.get("episodes", 1000))
+    # A step budget takes precedence, including when episodes is explicitly null.
+    n_episodes = 0 if exp_cfg.get("total_steps") is not None else int(exp_cfg.get("episodes", 1000))
 
     action_space = env.action_spaces.get(rl_agent_id)
     evaluator = None
@@ -1941,7 +1942,8 @@ def _run_mappo(
     from training.marl_trainer import MARLTrainer
     from training.hooks import MAPPOConsoleHook
 
-    n_episodes = int(exp_cfg.get("episodes", 1000))
+    # A step budget takes precedence, including when episodes is explicitly null.
+    n_episodes = 0 if exp_cfg.get("total_steps") is not None else int(exp_cfg.get("episodes", 1000))
     if int(exp_cfg.get("num_envs", 1)) > 1:
         if not exp_cfg.get("terminal_episode_detail", False):
             hooks[:] = [hook for hook in hooks if not isinstance(hook, ConsoleHook)]

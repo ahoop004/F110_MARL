@@ -94,9 +94,18 @@ def test_progress_car_keeps_pretraining_reward_and_support_car_has_distinct_obje
     value, parts = rewards["car_1"].compute(context)
     assert value == pytest.approx(.02 + .2)
     assert "opponent_crash/bonus" not in parts
+    context["all_infos"]["car_2"] = {"terminal_reason": "collision"}
+    value, parts = rewards["car_1"].compute(context)
+    assert value == pytest.approx(.02 + .2 + 1.)
+    assert parts['opponent_crash/bonus'] == 1.
+    assert rewards["car_0"].compute(context)[0] == baseline.compute(context)[0]
+    assert rewards["car_1"].compute(context)[0] == pytest.approx(.02 + .2)
     context["info"]["terminal_reason"] = "collision"
-    _, parts = rewards["car_1"].compute(context)
+    context["all_infos"]["car_3"] = {"terminal_reason": "collision"}
+    value, parts = rewards["car_1"].compute(context)
+    assert value == pytest.approx(.02 + 1. - 5.)
     assert parts['collision/penalty'] == -5
+    assert parts['opponent_crash/bonus'] == 1.
     assert 'team_support/progress' not in parts
 
 
@@ -113,7 +122,7 @@ def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, 
     path = Path(SCENARIO if arm == "full" else "scenarios/mappo_2v2_asymmetric_lora.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
     # Exercise a partial rollout budget with matched pretrained initialization.
-    scenario["experiment"].update(total_steps=9, num_envs=num_envs, num_workers=1, torch_threads=1)
+    scenario["experiment"].update(total_steps=9, episodes=None, num_envs=num_envs, num_workers=1, torch_threads=1)
     scenario["environment"].update(info_level="minimal")
     scenario["training_defaults"].update(n_steps=4, rollout_steps_per_env=4, n_epochs=1,
                                           batch_size=4, device="cpu", checkpoint_every_steps=8)

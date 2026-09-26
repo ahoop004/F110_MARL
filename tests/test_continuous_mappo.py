@@ -112,3 +112,25 @@ def test_cli_step_budget_override_and_validation():
     scenario["experiment"]["total_steps"] = 2
     with pytest.raises(ScenarioError, match="at least num_envs"):
         validate_scenario(scenario)
+
+
+@pytest.mark.parametrize("num_envs", [1, 2])
+def test_ppo_step_budget_accepts_null_episode_budget(tmp_path, monkeypatch, num_envs):
+    import sys
+    import run
+    from utils.torch_io import safe_load
+
+    path = "scenarios/ppo_lap_completion_pretrain.yaml"
+    scenario = load_and_expand_scenario(path)
+    scenario["experiment"].update(total_steps=5, episodes=None, num_envs=num_envs,
+                                  num_workers=1, torch_threads=1)
+    scenario["environment"].update(max_steps=3)
+    scenario["evaluation"]["enabled"] = False
+    scenario["agents"]["car_0"]["params"].update(
+        n_steps=4, n_epochs=1, batch_size=4, device="cpu")
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda *_a, **_kw: deepcopy(scenario))
+    monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", path, "--no-wandb", "--quiet",
+                                     "--output-dir", str(tmp_path)])
+    run.main()
+    checkpoint = safe_load(str(tmp_path / "final_model.pt"), map_location="cpu")
+    assert checkpoint["environment_steps"] == 5

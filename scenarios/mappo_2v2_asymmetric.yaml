@@ -561,7 +561,7 @@ agents:
       task:
         # Task identifier stored with the reward definition.
         name: progress_and_blocking_support
-        description: Help car_0 progress and gain ground on active opponents following behind this car.
+        description: Help car_0 progress, block active opponents, and earn a bonus for each opposing car crash.
       # Inline RewardComposer configuration; replace/disable components explicitly when changing objectives.
       reward:
         progress_delta_bonus:
@@ -582,6 +582,11 @@ agents:
           max_distance: 6.0
           lateral_distance: 0.6
           max_step_progress: 1.0
+        opponent_crash_bonus:
+          enabled: true
+          # +1 per opponent collision terminal, once per opponent per episode.
+          # Includes mutual crashes; the self-collision penalty still applies.
+          bonus: 1.0
         collision:
           enabled: true
           penalty: -5.0
@@ -726,7 +731,7 @@ wandb:
   # Human-readable description of this experiment.
   notes: Two independent actors initialized from the same pretrained actor checkpoint, with one
     agent-conditioned centralized critic. car_0 learns progress; car_1 learns reduced own
-    progress plus teammate progress and local blocking advantage, with a self-collision
+    progress plus teammate progress, local blocking advantage and opponent-crash bonuses, with a self-collision
     penalty. Finite three-lap races have a 16000-step horizon. Checkpoints prioritize car_0
     completion and beating opponents, then learner safety and car_0 time/progress.
     Compare against mappo_2v2_asymmetric_lora using identical source, seeds and budget.

@@ -400,8 +400,10 @@ and a local blocking term: the teammate's signed progress advantage over active
 opponents 0.6–6 m behind the blocker, within a 0.6 m lateral corridor, divided by
 the number of opponents. Blocking credit requires a forward-moving teammate and
 non-reversing blocker. Terminated/out-of-bounds cars do not generate support
-bonuses; proximity alone and opponent crashes earn none. The blocker receives
-−5 for its own collision, including mutual crashes. These are configurable
+bonuses; proximity alone earns none. Separately, `car_1` receives +1 for each
+opponent's collision termination, once per opponent per episode, regardless of
+who caused it. Mutual crashes also earn this bonus, while the blocker still
+receives −5 for its own collision. These are configurable
 starting weights; the local advantage term measures an outcome, not causation.
 
 Training uses finite three-lap races with a 16,000-step horizon, resetting when
