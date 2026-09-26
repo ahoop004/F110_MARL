@@ -64,7 +64,7 @@ training_defaults:
   # joint for shared team returns; per_agent for separate learner returns. Match mappo reward/critic modes.
   team_return_mode: per_agent
   # PPO or shared-MAPPO checkpoint/run directory for actor initialization. --pretrained-actor overrides this.
-  pretrained_actor_checkpoint: ../outputs/asym/best_model.pt
+  pretrained_actor_checkpoint: ../outputs/pretrain/best_model.pt
   # Both comparison arms must start from a compatible PPO or plain shared-MAPPO policy.
   require_pretrained_actor: true
   # Observation extension contract for transfer; keep compatible with the inline observation layout.
