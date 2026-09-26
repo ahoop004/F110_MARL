@@ -3,20 +3,30 @@ includes:
   - ../configs/scenarios/mappo_2v2_base.yaml
 experiment:
   name: mappo_2v2_asymmetric
+  terminal_every_updates: 1
+  collector_progress_interval_s: 15
+  total_steps: 120000000  # aggregate joint decisions, matching the PPO pretrain budget
 training_defaults:
   team_return_mode: per_agent
+  progress_unit: environment_steps
+  checkpoint_every_steps: 4096000
 mappo:
   reward_mode: individual
   critic_mode: agent_conditioned
 environment:
-  # Once both learners terminate, no further per-agent training targets exist.
-  episode_termination: {mode: all_trainable}
-  # Supply the exact pretraining boundary reward facts while retaining race
-  # collision/finish termination and physical wall contact for all four cars.
+  # Continuous training like pretraining: laps and rollout boundaries do not reset cars.
+  max_steps: 0
+  episode_termination:
+    mode: all_trainable  # reset once both learners crash; the survivor keeps driving
+    lap_completion: false
+  # Supply the exact pretraining boundary reward facts while retaining
+  # collision termination and physical wall contact for all four cars.
   track_limits: {enabled: true, terminate: false}
 evaluation:
+  every_steps: 4096000  # same cadence as PPO pretraining; checked after updates
   episode_termination_mode: all_agents
   target_laps: 3
+  max_steps: 16000  # finite evaluation races; no training time limit
 agents:
   car_0:
     observation: ../configs/observations/rl_racer_two_team_ids.yaml
@@ -26,10 +36,12 @@ agents:
     reward: ../configs/reward/tasks/lap_completion_opponent_crash.yaml
 wandb:
   group: mappo-2v2-asymmetric
-  tags: [mappo, 2v2, individual-rewards, vehicle-ids, racing-mpc-opponents]
+  tags: [mappo, 2v2, individual-rewards, continuous-training, step-budget, vehicle-ids, racing-mpc-opponents]
   notes: >-
     car_0 learns the lap-pretraining reward; car_1 additionally receives +1
     per opposing car collision terminal, once per race. Individual returns and
     an agent-conditioned critic preserve different objectives. A shared actor
     sees all three other cars with stable one-hot IDs, team flags, and ego ID.
+    Training runs for 120M joint decisions without lap or time limits, resetting
+    when both learners crash. Evaluation retains finite three-lap races.
     192 inputs retain the unchanged 158-input PPO prefix for actor transfer.

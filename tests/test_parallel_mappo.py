@@ -177,6 +177,14 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
     assert {r.info["worker_seed"] for r in capture.records} == {42, 43, 44}
     assert any(not torch.equal(a, b) for a, b in zip(before, trainer.agent._optim_parameters))
     assert len([row for row in logs if "episode/number" in row]) == 5
+    progress = [row for row in logs if "collector/phase" in row]
+    assert progress[0]["collector/phase"] == "startup"
+    assert progress[0]["collector/updates"] == 0
+    assert progress[-1]["collector/updated_environment_steps"] == 15
+    assert progress[-1]["collector/actions_dispatched"] == 15
+    assert {row["collector/phase"] for row in progress} >= {"collecting", "updating"}
+    # Collector telemetry must not masquerade as a learning update.
+    assert len([row for row in logs if "train/update" in row]) == len(capture.updates)
     assert all(np.isfinite(m["train/policy_loss"]) for m in capture.updates
                if m["train/rollout_agent_samples"])
 

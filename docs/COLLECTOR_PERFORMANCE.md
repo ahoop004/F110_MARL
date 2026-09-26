@@ -51,13 +51,18 @@ not part of this change.
 
 ## Asymmetric 2v2
 
-`mappo_2v2_asymmetric.yaml` now ends training races when all trainable cars finish
-or crash (`all_trainable`). A surviving learner continues racing. Once neither
-learner is active, its per-agent terminal returns are already fixed and no new
-learner transitions can be collected. Evaluation explicitly retains `all_agents`
-through `evaluation.episode_termination_mode`, including standalone evaluation.
-Full-race evaluation outcomes remain available; training episode outcomes and
-update cadence change, so start a new experiment when comparing learning curves.
+`mappo_2v2_asymmetric.yaml` trains continuously for **120 million aggregate joint
+environment decisions**, matching the PPO pretraining step budget. Training has
+no lap finish or episode time limit (`lap_completion: false`, `max_steps: 0`).
+A surviving learner keeps driving; the environment resets once both learners
+crash (`all_trainable`). Each joint decision produces up to two learner samples.
+Rollout boundaries trigger learning updates without ending the ongoing episode.
+
+Checkpointing and evaluation run at update boundaries after each 4,096,000-step
+threshold, matching pretraining. Evaluation retains three-lap races, a finite
+16,000-step limit, and `all_agents`, including standalone evaluation. Use
+`--total-steps` for shorter runs. These training termination changes affect
+learning curves, so start a new experiment for comparisons.
 
 Example on the same node:
 
@@ -71,6 +76,35 @@ This retains the asymmetric scenario's optimizer settings. A larger minibatch is
 a separate optimization/learning experiment, not silently coupled to workers.
 The new rollout CLI option sets PPO's pooled `n_steps = num_envs * horizon`;
 for MAPPO it sets the parallel per-environment horizon and serial buffer horizon.
+
+## Distinguishing a slow rollout from a stalled HPC job
+
+Parallel fixed-opponent MAPPO prints a status heartbeat every 15 seconds,
+including during worker startup and policy updates. Configure
+`experiment.collector_progress_interval_s` to change this interval. `--quiet`
+suppresses console status. The asymmetric scenario prints every completed update.
+With 400 environments and horizon 256, a full round collects up to 102,400 joint
+decisions before producing losses; the MPC opponents can make that take time.
+
+The heartbeat reports `phase`, initialized workers, workers at the update
+barrier, worker-message count, time since the last message, actions dispatched,
+and steps incorporated into completed updates. Increasing messages/actions during
+`collecting` show activity; `inference` means the parent is serving policy requests. An increasing last-message age during `updating` or
+`evaluation_checkpoint_logging` is expected because collectors are paused.
+A stuck individual worker still triggers the configured response timeout.
+These heartbeats cannot diagnose a process that the scheduler has suspended or killed.
+
+Separate `collector/*` W&B metrics and `collector_progress.csv` are published by
+the parent during collection and at phase boundaries, starting before workers
+launch. Their x-axis is elapsed time; they do not increment learning updates or
+trigger checkpoint/evaluation hooks. During a blocking operation the console
+heartbeat continues, while W&B/CSV refresh when the parent resumes. Dispatched
+actions are requests sent to environments, not confirmed completed transitions.
+Episode reward/finish metrics still require completed episodes.
+
+Use unbuffered output when submitting a batch job, for example `python3 -u run.py
+...`. Check the scheduler's job state and CPU/GPU utilization alongside the log;
+a flat GPU graph alone can mean CPU simulation is still collecting.
 
 ## Measure before increasing the allocation
 
@@ -125,7 +159,8 @@ many processes and reduced startup/total time in this small sample. Readiness
 scheduling was slower for this light local PPO workload; it remains opt-in.
 These measurements do not establish the best layout on the 128-core node.
 
-A separate 512-decision asymmetric scratch-policy probe changed from 182 to 512
+Before the continuous-training configuration change, a separate 512-decision
+asymmetric scratch-policy probe changed from 182 to 512
 decisions with an active learner. Learner transitions increased from 308 to 815;
 training-call time changed from 10.46 to 20.29 seconds, giving approximately
 29 to 40 useful learner transitions per second. More active-car work, resets,

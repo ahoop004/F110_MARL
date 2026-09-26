@@ -148,6 +148,10 @@ class CSVLogger:
                 key: value for key, value in metrics.items()
                 if isinstance(value, (str, int, float, bool)) or value is None})
 
+    def log_collector_progress(self, metrics: Dict[str, Any]):
+        if self.enabled:
+            self._write_row(self.output_dir / "collector_progress.csv", metrics)
+
     def _write_row(self, path: Path, row: Dict[str, Any]):
         """Retain late fields; expand existing headers atomically with bounded memory."""
         table = self._tables.get(path)

@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
+from training.collector_progress import CollectorProgress
 from training.collector_scheduling import CollectorScheduler
 from training.hooks import WandbHook
 from training.on_policy_trainer import (
@@ -327,6 +328,10 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     thread_vars = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                    "NUMEXPR_NUM_THREADS", "NUMBA_NUM_THREADS")
     previous = {key: os.environ.get(key) for key in thread_vars}
+    progress = CollectorProgress(getattr(trainer, 'console', None), workers=workers,
+        environments=num_envs, horizon=horizon,
+        interval=experiment.get('collector_progress_interval_s', 15.))
+    dispatched = 0
 
     def receive(worker_id, starting=False):
         timeout = startup["worker_startup_timeout_s" if starting else "worker_response_timeout_s"]
@@ -338,6 +343,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             kind, payload = connections[worker_id].recv()
         except (EOFError, ConnectionResetError) as exc:
             raise RuntimeError(f"MAPPO worker {worker_id} disconnected (exitcode={process.exitcode})") from exc
+        progress.received()
         if kind == "error":
             raise RuntimeError(f"MAPPO worker {worker_id} failed:\n{payload}")
         return kind, payload
@@ -383,7 +389,21 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         finally:
             scheduler.exclude_parent_time(time.monotonic() - event_start)
 
+    def publish_progress(*, force=False):
+        # Telemetry I/O is parent work, not an unresponsive worker.
+        started = time.monotonic()
+        try:
+            progress.publish(trainer.hooks, force=force)
+        finally:
+            scheduler.exclude_parent_time(time.monotonic() - started)
+
     try:
+        progress.start()
+        publish_progress(force=True)
+        console = getattr(trainer, 'console', None)
+        if console is not None:
+            console.print_info(f"MAPPO starting {workers} workers / {num_envs} environments; "
+                               f"horizon={horizon}, up to {num_envs * horizon:,} joint decisions per update")
         for key in thread_vars:
             os.environ[key] = "1"
         batch_size = startup["worker_startup_batch_size"]
@@ -409,6 +429,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             for worker_id in batch:
                 if receive(worker_id, starting=True)[0] != "ready":
                     raise RuntimeError("MAPPO worker did not report readiness")
+                progress.set(ready_workers=worker_id + 1)
+                publish_progress()
             if getattr(trainer, "console", None) is not None:
                 trainer.console.print_info(f"MAPPO initialized {min(start + batch_size, workers)}/{workers} workers "
                                            f"for {num_envs} environments")
@@ -417,6 +439,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         waiting = {}
         startup_s = time.perf_counter() - started_training
         round_start = time.perf_counter()
+        progress.set(phase="collecting")
+        publish_progress(force=True)
         while connections:
             requests = {}
             for worker_id in scheduler.workers(connections, waiting):
@@ -432,16 +456,21 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     rollout, steps, physics, items = payload
                     events(items)
                     waiting[worker_id] = (rollout, steps, physics)
+                    progress.set(waiting_workers=len(waiting))
                 elif kind == "done":
                     events(payload)
                     connections.pop(worker_id).close()
                 else:
                     raise RuntimeError(f"Unexpected MAPPO worker message: {kind}")
             if requests:
+                progress.set(phase="inference")
                 responses = infer_requests(agent, requests)
                 for worker_id in sorted({key[0] for key in requests}):
                     connections[worker_id].send({env_id: response for (worker, env_id), response
                                                  in responses.items() if worker == worker_id})
+                dispatched += sum(kind == "act" for kind, _ in requests.values())
+                progress.set(phase="collecting", actions_dispatched=dispatched)
+            publish_progress()
             if waiting and len(waiting) == len(connections):
                 collection_s = time.perf_counter() - round_start
                 steps = sum(item[1] for item in waiting.values())
@@ -451,7 +480,11 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 physics_collected += sum(item[2] for item in waiting.values())
                 actor_samples += samples
                 trainer._environment_steps = collected
+                progress.set(phase="episode_logging")
+                publish_progress(force=True)
                 flush_episodes()
+                progress.set(phase="updating")
+                publish_progress(force=True)
                 started = time.perf_counter()
                 metrics = agent.update_rollouts(rollouts) if samples else {}
                 update_s = time.perf_counter() - started
@@ -471,6 +504,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 if race_hooks:
                     metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
                     metrics['recording/exhausted_windows'] = sorted(set().union(*(h.exhausted_windows for h in race_hooks)))
+                progress.set(phase="evaluation_checkpoint_logging",
+                             updated_environment_steps=collected, updates=updates)
+                publish_progress(force=True)
                 if steps:
                     for hook in trainer.hooks:
                         hook.on_update(metrics)
@@ -479,15 +515,21 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 waiting.clear()
                 scheduler.reset()
                 round_start = time.perf_counter()
+                progress.set(phase="collecting", waiting_workers=0)
+                publish_progress(force=True)
         flush_episodes()
         if total_steps is not None and collected != total_steps:
             raise RuntimeError(f"MAPPO collectors collected {collected} of {total_steps} environment decisions")
         if total_steps is None and completed != n_episodes:
             raise RuntimeError(f"MAPPO collectors completed {completed} of {n_episodes} episodes")
+        progress.set(phase="final_checkpoint")
+        publish_progress(force=True)
         for hook in trainer.hooks:
             hook.on_training_end()
+        progress.set(phase="finished")
         success = True
     finally:
+        progress.close()
         _close_collectors(list(connections.values()), processes, failed=not success)
         for key, value in previous.items():
             if value is None:

@@ -109,6 +109,8 @@ class WandbLogger:
                         # monotonic because callers do not provide a global step.
                         wandb.define_metric("episode/number")
                         wandb.define_metric("episode/*", step_metric="episode/number")
+                        wandb.define_metric("collector/elapsed_seconds")
+                        wandb.define_metric("collector/*", step_metric="collector/elapsed_seconds")
                         wandb.define_metric("train/update")
                         wandb.define_metric("train/*", step_metric="train/update")
                         wandb.define_metric("train/episode")

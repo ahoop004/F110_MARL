@@ -50,6 +50,10 @@ class TrainingHook:
     def on_update(self, metrics: Dict[str, float]) -> None:
         pass
 
+    def on_collector_progress(self, metrics: Dict) -> None:
+        """Liveness telemetry; does not advance the optimizer or episode count."""
+        pass
+
     def on_training_end(self) -> None:
         pass
 
@@ -333,6 +337,9 @@ class WandbHook(TrainingHook):
 
         self._wandb.log_metrics(log)
 
+    def on_collector_progress(self, metrics: Dict) -> None:
+        self._wandb.log_metrics(metrics)
+
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._update += 1
         self._wandb.log_metrics({"train/update": self._update, **metrics})
@@ -349,6 +356,9 @@ class CSVHook(TrainingHook):
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._csv.log_update(metrics)
+
+    def on_collector_progress(self, metrics: Dict) -> None:
+        self._csv.log_collector_progress(metrics)
 
     def on_training_end(self) -> None:
         self._csv.close()

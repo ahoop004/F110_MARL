@@ -110,21 +110,30 @@ def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, 
     from utils.torch_io import safe_load
 
     scenario = load_and_expand_scenario(SCENARIO)
-    scenario["experiment"].update(episodes=2, num_envs=num_envs, num_workers=1, torch_threads=1)
-    scenario["environment"].update(max_steps=4, info_level="minimal")
+    # End at a partial rollout budget while training episodes have no time limit.
+    scenario["experiment"].update(total_steps=9, num_envs=num_envs, num_workers=1, torch_threads=1)
+    scenario["environment"].update(info_level="minimal")
     scenario["training_defaults"].update(n_steps=4, rollout_steps_per_env=4, n_epochs=1,
-                                          batch_size=4, device="cpu")
-    scenario["evaluation"].update(every_episodes=2, episodes=1, max_steps=4)
+                                          batch_size=4, device="cpu", checkpoint_every_steps=8)
+    scenario["evaluation"].update(every_steps=8, episodes=1, max_steps=4)
     monkeypatch.setattr(run, "load_and_expand_scenario", lambda *_args, **_kwargs: scenario)
     monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", SCENARIO, "--no-wandb",
                                      "--quiet", "--output-dir", str(tmp_path)])
     run.main()
     checkpoint = safe_load(str(tmp_path / "final_model.pt"), map_location="cpu")
+    assert checkpoint["environment_steps"] == 9
+    assert (tmp_path / "checkpoint_step000000008.pt").exists()
     assert checkpoint["obs_dim"] == 192
     assert checkpoint["reward_mode"] == "individual"
     assert checkpoint["critic_mode"] == "agent_conditioned"
     assert checkpoint["observation_contract"]["observation"]["frenet_neighbors"]["agent_ids"] == IDS
     assert (tmp_path / "best_model.pt").exists()
+    if num_envs > 1:
+        import csv
+        with (tmp_path / "collector_progress.csv").open() as stream:
+            progress = list(csv.DictReader(stream))
+        assert progress[0]["collector/phase"] == "startup"
+        assert int(progress[-1]["collector/updated_environment_steps"]) == 9
 
 
 def test_asymmetric_training_resets_after_learners_and_evaluation_runs_full_race():
@@ -137,6 +146,12 @@ def test_asymmetric_training_resets_after_learners_and_evaluation_runs_full_race
             env, _, _ = create_training_setup(scenario, mode=phase, scenario_dir=Path('scenarios'))
             envs.append(env)
             assert env.episode_termination_mode == expected
+            assert env.max_steps == (0 if phase == "train" else 16000)
+            assert env.lifecycle.finish_on_laps == (phase == "eval")
+            env.reset(seed=42)
+            for lap in range(env.target_laps):
+                env.lifecycle.record_lap_crossing("car_0", step=lap + 1)
+            assert env.lifecycle.records["car_0"].is_active == (phase == "train")
             terms = dict(zip(IDS, [True, True, False, False]))
             _, done = apply_episode_termination_policy(terms, {}, active_agents=IDS,
                 possible_agents=IDS, trainable_agents=IDS[:2], mode=env.episode_termination_mode)
@@ -158,3 +173,15 @@ def test_evaluation_duration_is_written_to_history(tmp_path):
     record = json.loads((tmp_path / 'evaluation_history.jsonl').read_text())
     assert record['evaluation_seconds'] >= 0
     assert record['evaluation_seconds_total'] == hook.evaluation_seconds
+
+
+def test_asymmetric_continuous_budget_and_cadence_match_pretraining():
+    from core.scenario import validate_scenario
+
+    scenario = load_and_expand_scenario(SCENARIO)
+    pretrain = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
+    validate_scenario(scenario)
+    assert scenario["experiment"]["total_steps"] == pretrain["experiment"]["total_steps"] == 120000000
+    assert scenario["training_defaults"]["progress_unit"] == "environment_steps"
+    assert scenario["training_defaults"]["checkpoint_every_steps"] == pretrain["evaluation"]["every_steps"]
+    assert scenario["evaluation"]["every_steps"] == pretrain["evaluation"]["every_steps"]

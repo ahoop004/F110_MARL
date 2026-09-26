@@ -150,8 +150,10 @@ horizon, and race limit. MPC opponent solves and simulation remain CPU work;
 
 ## Asymmetric training and readiness scheduling
 
-The asymmetric 2v2 scenario resets training when both learners terminate and
-keeps full-race evaluation. Both fixed-opponent MAPPO and PPO can use
+The asymmetric 2v2 scenario trains for 120 million joint environment decisions
+without lap or episode time limits, resetting when both learners crash.
+Checkpointing and evaluation use 4,096,000-step thresholds; evaluation retains
+finite three-lap races. Both fixed-opponent MAPPO and PPO can use
 `--collector-scheduling ready` to serve ready workers without a global per-action
 barrier; weights remain frozen until the rollout update barrier. This changes
 stochastic draw ordering. See [collector performance](COLLECTOR_PERFORMANCE.md)

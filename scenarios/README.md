@@ -50,9 +50,15 @@ PYGLET_HEADLESS=true python3 run.py \
 ```
 
 `car_0` and `car_1` are trainable teammates; `car_2` and `car_3` use the fixed
-advanced `racing_mpc` profile. The default is a three-lap race on circle with
-one environment. Add `--pretrained-actor outputs/PRETRAIN_RUN` to initialize
-from a compatible lap-completion PPO actor; otherwise training starts fresh.
+advanced `racing_mpc` profile. Training defaults to circle with one environment
+and 120 million aggregate joint decisions, matching the PPO pretraining budget.
+There is no training lap or time limit: the surviving learner keeps driving
+until both learners crash. Rollout boundaries update the policy without resetting
+the episode. Checkpoints and evaluation use 4,096,000-step thresholds; evaluation
+retains three-lap races with a 16,000-step cap. Use `--total-steps` for shorter
+runs and `--num-envs` / `--num-workers` for parallel collection.
+Add `--pretrained-actor outputs/PRETRAIN_RUN` to initialize from a compatible
+lap-completion PPO actor; otherwise training starts fresh.
 
 Both learners use the exact `lap_completion_pretraining.yaml` reward: signed
 metre progress, replaced by -1 on a geometric boundary excursion. `car_1` also
