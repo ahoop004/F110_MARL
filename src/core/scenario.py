@@ -199,7 +199,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
     ScenarioError
         On the first validation failure found.
     """
-    from src.core.agent_builder import (
+    from core.agent_builder import (
         HEURISTIC_ALGOS,
         PYTORCH_RL_ALGOS,
         is_trainable_agent,
@@ -232,7 +232,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             "wheel_actuators/combined_slip_vehicle is a component development profile, not a training "
             "configuration; configure environment.vehicle_params explicitly."
         )
-    from src.physics.dynamic_models import validate_vehicle_params
+    from physics.dynamic_models import validate_vehicle_params
     vehicle_params = environment.get("vehicle_params", environment.get("params", {}))
     if vehicle_params is not None:
         try:
@@ -253,7 +253,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             raise ScenarioError("'environment.target_laps' must be a positive integer.")
 
     agents = scenario["agents"]
-    from src.env.friction import validate_friction_protocol
+    from env.friction import validate_friction_protocol
     try:
         validate_friction_protocol(environment.get("friction"),
                                    nonlinear=(vehicle_params or {}).get("model") == "combined_slip_st")

@@ -7,11 +7,11 @@ import re
 
 import numpy as np
 
-from src.core.map_selection import relative_yaml_name
-from src.core.spawn_config import normalize_spawn_config
-from src.env import F110ParallelEnv
-from src.env.spawn import load_spawn_points_from_map
-from src.utils.map_loader import MapLoader
+from core.map_selection import relative_yaml_name
+from core.spawn_config import normalize_spawn_config
+from env import F110ParallelEnv
+from env.spawn import load_spawn_points_from_map
+from utils.map_loader import MapLoader
 
 
 def derive_num_agents(

@@ -8,10 +8,10 @@ import pytest
 import torch
 
 from core.scenario import load_and_expand_scenario
-from src.analysis.run_review import load_run, filter_clips
-from src.analysis.clip_review import load_window, draw_review
-from src.analysis.annotations import source_reference
-from src.replay.race_reader import iter_race_frames, load_clips
+from analysis.run_review import load_run, filter_clips
+from analysis.clip_review import load_window, draw_review
+from analysis.annotations import source_reference
+from replay.race_reader import iter_race_frames, load_clips
 
 
 def small_scenario(algorithm):

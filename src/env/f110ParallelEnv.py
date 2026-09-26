@@ -1,14 +1,14 @@
 from pathlib import Path
 import hashlib
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Tuple, Sequence
 
 
 # base classes
-from src.physics import Simulator, Integrator
-from src.physics.dynamic_models import validate_vehicle_params
+from physics import Simulator, Integrator
+from physics.dynamic_models import validate_vehicle_params
 # Lazy import to avoid pyglet initialization on HPC without display
-# from src.render import EnvRenderer  # Moved to render() method
-from src.env.centerline_state import (
+# from render import EnvRenderer  # Moved to render() method
+from env.centerline_state import (
     CenterlineProgressTracker,
     CenterlineRuntimeState,
     LapTracker,
@@ -18,14 +18,14 @@ from src.env.centerline_state import (
     resolve_finish_line_config,
     validate_finish_line,
 )
-from src.env.collision_state import (
+from env.collision_state import (
     RaceLifecycle,
     apply_episode_termination_policy,
     normalize_episode_termination_mode,
     update_collision_flags,
     validate_target_laps,
 )
-from src.env.info_builder import (
+from env.info_builder import (
     add_episode_metadata,
     add_step_info_fields,
     add_time_limit_info,
@@ -33,36 +33,36 @@ from src.env.info_builder import (
     build_step_facts,
     filter_info_payloads,
 )
-from src.env.map_config import normalize_map_identifier, resolve_map_runtime_config
-from src.env.map_schedule import MapScheduler
-from src.env.obs_assembly import split_joint_obs
-from src.env.render_adapter import (
+from env.map_config import normalize_map_identifier, resolve_map_runtime_config
+from env.map_schedule import MapScheduler
+from env.obs_assembly import split_joint_obs
+from env.render_adapter import (
     build_render_observations,
     compute_relative_snapshot,
     flush_render_state,
 )
-from src.env.spawn_manager import SpawnManager
-from src.env.friction import copy_friction_metadata
-from src.env.spaces_builder import build_action_spaces, build_observation_spaces
-from src.env.state_views import (
+from env.spawn_manager import SpawnManager
+from env.friction import copy_friction_metadata
+from env.spaces_builder import build_action_spaces, build_observation_spaces
+from env.state_views import (
     FrozenSnapshotMapping, build_agent_state, build_global_state, central_state_tensor,
 )
-from src.utils.track_preview import (
+from utils.track_preview import (
     TrackPreviewGeometry,
     TrackPreviewGeometryCache,
     build_track_preview_cache_key,
 )
-from src.env.state_buffer import (
+from env.state_buffer import (
     StateBuffers,
     TerminalAgentConfig,
     TerminalVehicleController,
 )
-from src.env.types import AgentRaceStatus, AgentState, GlobalState
-from src.render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
+from env.types import AgentRaceStatus, AgentState, GlobalState
+from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
 # Type checking only imports (don't execute at runtime)
 if TYPE_CHECKING:
-    from src.render import EnvRenderer
+    from render import EnvRenderer
 
 
 GLOBAL_STATE_VECTOR_VERSION = "2.0"
@@ -103,7 +103,6 @@ def _default_vehicle_params() -> Dict[str, float]:
 import numpy as np
 import os
 import time
-import math
 import logging
 
 # gl - Lazy import for headless system compatibility
@@ -226,7 +225,7 @@ class F110ParallelEnv:
         self.start_poses = np.array(merged.get("start_poses", []),dtype=np.float32)
 
         self.params = self._configure_vehicle_params(merged)
-        from src.env.friction import EpisodeFriction, validate_friction_protocol
+        from env.friction import EpisodeFriction, validate_friction_protocol
         friction = validate_friction_protocol(merged.get("friction"),
                                              nonlinear=self.params.get("model") == "combined_slip_st")
         self._episode_physics = None
@@ -547,7 +546,7 @@ class F110ParallelEnv:
         Parameters
         ----------
         map_data:
-            Populated map-data object from :class:`~src.utils.map_loader.MapLoader`.
+            Populated map-data object from :class:`~utils.map_loader.MapLoader`.
         bundle:
             Bundle name to record as the active bundle (when cycling maps).
         keep_centerline:
@@ -1254,7 +1253,7 @@ class F110ParallelEnv:
 
         if self.renderer is None:
             # Lazy import to avoid pyglet initialization when rendering disabled
-            from src.render import EnvRenderer
+            from render import EnvRenderer
 
             self.renderer = EnvRenderer(WINDOW_W, WINDOW_H,
                                         lidar_fov=4.7,

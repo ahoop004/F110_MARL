@@ -8,11 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.analysis.run_review import (
+from analysis.run_review import (
     load_run, combine, summarize_races, summarize_agents, latest_evaluations,
     aggregate_training_seeds, filter_clips, read_jsonl, discover_runs,
 )
-from src.analysis.plots import (
+from analysis.plots import (
     learning_curves, outcome_plots, finish_time_plots, export_figures,
     evaluation_curves, seed_variation_plots,
 )

@@ -5,7 +5,7 @@ from typing import Dict, Mapping, Sequence, Optional, Tuple
 
 import numpy as np
 
-from src.env.types import AgentLifecycleRecord, AgentRaceStatus, TerminalReason
+from env.types import AgentLifecycleRecord, AgentRaceStatus, TerminalReason
 
 
 def build_terminations(

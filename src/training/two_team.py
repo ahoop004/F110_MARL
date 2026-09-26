@@ -265,7 +265,7 @@ class TwoTeamTrainer:
         if training:
             self.training_episode += 1
         if recorder is not None:
-            from src.replay.race_recorder import capture_state, plain
+            from replay.race_recorder import capture_state, plain
             from metrics.racing_eval import capture_spawn_context
             recorder.start(episode_id=episode_id, episode=episode,
                 map_id=getattr(self.env, '_map_bundle_active', None) or self.env.map_name,

@@ -1,17 +1,90 @@
 """Training setup builder - creates environment and agents from scenario config."""
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from src.env import F110ParallelEnv
-from src.core.agent_builder import (
+from env import F110ParallelEnv
+from core.agent_builder import (
     build_fixed_policy_agents,
     get_fixed_agent_ids,
     get_trainable_agent_ids,
 )
-from src.core.config import register_builtin_agents
-from src.core.env_builder import create_environment
-from src.core.feature_requirements import derive_environment_feature_requirements
-from src.core.map_selection import apply_map_split
+from core.config import register_builtin_agents
+from core.env_builder import create_environment
+from core.feature_requirements import derive_environment_feature_requirements
+from core.map_selection import apply_map_split
+from core.provenance import physics_contract
+from wrappers.actions.composer import ActionComposer
+from wrappers.observations.composer import ObservationComposer
+from wrappers.rewards.composer import RewardComposer
+
+
+def build_obs_composer(
+    agent_cfg: Dict, env_config: Dict, scenario_dir: Path, action_dim: int = 2
+) -> ObservationComposer:
+    """Build one ObservationComposer for a single agent config."""
+    obs_ref = agent_cfg.get("observation")
+    if isinstance(obs_ref, str):
+        obs_path = (scenario_dir / obs_ref).resolve()
+        return ObservationComposer.from_file(str(obs_path), env_config, action_dim=action_dim)
+    elif isinstance(obs_ref, dict):
+        return ObservationComposer.from_config(obs_ref, env_config, action_dim=action_dim)
+    raise ValueError("Agent 'observation' must be a file path or inline config dict.")
+
+
+def build_reward_composer(agent_cfg: Dict, scenario_dir: Path) -> RewardComposer:
+    """Build one RewardComposer for a single agent config."""
+    reward_ref = agent_cfg.get("reward")
+    if isinstance(reward_ref, str):
+        reward_path = (scenario_dir / reward_ref).resolve()
+        return RewardComposer.from_file(str(reward_path))
+    elif isinstance(reward_ref, dict):
+        return RewardComposer.from_config(reward_ref)
+    raise ValueError("Agent 'reward' must be a file path or inline config dict.")
+
+
+def build_obs_composers(
+    agent_configs: Dict,
+    trainable_ids: List[str],
+    env_config: Dict,
+    scenario_dir: Path,
+    action_dim: int = 2,
+) -> Dict[str, ObservationComposer]:
+    """Build one ObservationComposer per trainable agent.
+
+    Returns a dict keyed by agent_id.  Single-agent trainers index into it
+    with their ``rl_agent_id``; MAPPO iterates over all entries.
+    """
+    return {
+        aid: build_obs_composer(agent_configs[aid], env_config, scenario_dir, action_dim)
+        for aid in trainable_ids
+    }
+
+
+def build_reward_composers(
+    agent_configs: Dict,
+    trainable_ids: List[str],
+    scenario_dir: Path,
+) -> Dict[str, RewardComposer]:
+    """Build one RewardComposer per trainable agent.
+
+    Returns a dict keyed by agent_id.
+    """
+    return {
+        aid: build_reward_composer(agent_configs[aid], scenario_dir)
+        for aid in trainable_ids
+    }
+
+
+def resolve_training_params(agent_cfg: Dict, scenario: Dict) -> Dict:
+    """Merge training_defaults with agent params — agent params win."""
+    defaults = scenario.get("training_defaults", {})
+    params = agent_cfg.get("params", {})
+    environment = scenario.get("environment", {})
+    decision_dt = float(environment.get("timestep", 0.01)) * int(environment.get("action_repeat", 1))
+    return {**defaults, **params, "_physics_contract": physics_contract(environment),
+            "_action_contract": ActionComposer.contract_from_config(
+        agent_cfg.get("action_constraints", {}), decision_dt,
+    )}
 
 
 def create_training_setup(

@@ -3,7 +3,6 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import numpy as np
-from numba import njit
 
 from physics.dynamic_models import (
     vehicle_dynamics_st, pid, validate_vehicle_params, first_order_actuator_step,
@@ -12,7 +11,6 @@ from physics.dynamic_models import (
 from physics.integration import Integrator
 from physics.tire_models import MF61_KEYS, validate_mf61_coefficients
 from physics.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
-from physics.collision_models import get_vertices
 
 
 def _calibration_metadata(value: Mapping, name: str):

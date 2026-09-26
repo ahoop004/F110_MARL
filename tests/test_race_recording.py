@@ -5,9 +5,9 @@ import random
 import numpy as np
 import pytest
 
-from src.replay.race_recorder import RaceRecorder, EventDetector, recording_config
-from src.replay.dataset_writer import RaceDatasetWriter, detect_dataset_schema
-from src.replay.race_reader import load_clips, clip_frames, iter_race_frames, render_state
+from replay.race_recorder import RaceRecorder, EventDetector, recording_config
+from replay.dataset_writer import RaceDatasetWriter, detect_dataset_schema
+from replay.race_reader import load_clips, clip_frames, iter_race_frames, render_state
 
 
 def state(s=10., delta=0., *, active=True, terminal=None, outside=False):
@@ -139,8 +139,8 @@ def test_interrupted_writer_preserves_frames_without_claiming_completion(tmp_pat
 
 def test_early_episode_boundary_does_not_invent_opponent_termination():
     from types import SimpleNamespace
-    from src.env.types import AgentLifecycleRecord
-    from src.replay.race_recorder import capture_state
+    from env.types import AgentLifecycleRecord
+    from replay.race_recorder import capture_state
     record = AgentLifecycleRecord(agent_id='opponent', target_laps=3)
     env = SimpleNamespace(agents=[], lifecycle=SimpleNamespace(records={'opponent': record}),
         get_agent_state=lambda aid: SimpleNamespace(pose=np.zeros(3), velocity=np.zeros(2),
@@ -152,7 +152,7 @@ def test_early_episode_boundary_does_not_invent_opponent_termination():
 
 def test_reset_provenance_does_not_require_transition_traffic(tmp_path):
     from training.hooks import PhysicsEpisodeHook, transition_record_hooks
-    from src.replay.dataset_writer import RaceDatasetHook
+    from replay.dataset_writer import RaceDatasetHook
     physics = PhysicsEpisodeHook(tmp_path, transition_records=False)
     writer = RaceDatasetWriter(tmp_path/'races', config={})
     hook = RaceDatasetHook(writer)

@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Polygon
 from matplotlib.transforms import Affine2D
 
-from src.replay.race_reader import iter_race_frames
+from replay.race_reader import iter_race_frames
 
 
 @dataclass

@@ -22,7 +22,7 @@ def physics_contract(environment: Mapping[str, Any]) -> dict | None:
     if params.get("model", "legacy_st") == "legacy_st":
         return None
     from physics.dynamic_models import validate_vehicle_params
-    from src.env.friction import validate_friction_protocol
+    from env.friction import validate_friction_protocol
     friction = validate_friction_protocol(environment.get("friction"), nonlinear=True)
     return {
         "version": 1,

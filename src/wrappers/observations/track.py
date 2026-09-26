@@ -1,7 +1,6 @@
 """Centerline progress, Frenet state, and track-preview observations."""
 from __future__ import annotations
 
-import math
 from typing import Dict, Mapping
 
 import numpy as np

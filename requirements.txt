@@ -1,15 +1,2 @@
-numpy
-pyglet
-Pillow
-PyYAML
-torch
-numba
-pandas
-wandb
-pytest
-scipy
-
-tensorboard
-
-# Optional but recommended
-rich
+# Install runtime and development dependencies from pyproject.toml.
+-e .[dev]

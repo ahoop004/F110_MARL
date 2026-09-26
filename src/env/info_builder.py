@@ -5,8 +5,8 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 
-from src.env.centerline_state import inject_finish_line_info
-from src.env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFacts
+from env.centerline_state import inject_finish_line_info
+from env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFacts
 
 
 MINIMAL_INFO_KEYS = {

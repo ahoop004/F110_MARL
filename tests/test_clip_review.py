@@ -6,10 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.analysis.annotations import AnnotationStore, segment
-from src.analysis.clip_review import ClipWindow, load_window, telemetry, draw_review
-from src.analysis.run_review import filter_clips
-from src.replay.dataset_writer import RaceDatasetWriter
+from analysis.annotations import AnnotationStore, segment
+from analysis.clip_review import ClipWindow, load_window, telemetry, draw_review
+from analysis.run_review import filter_clips
+from replay.dataset_writer import RaceDatasetWriter
 import pandas as pd
 
 
@@ -131,7 +131,7 @@ def test_checkpoint_filter_does_not_invent_final_checkpoint_identity():
 
 
 def test_widget_save_reload_controls_and_playback(window, tmp_path):
-    from src.analysis.review_widget import ClipReviewer
+    from analysis.review_widget import ClipReviewer
     reviewer = ClipReviewer(window, annotation_path=tmp_path/'annotations.json')
     reviewer.end.value = 2
     a = reviewer.save_annotation()

@@ -241,8 +241,8 @@ def test_step_budget_collects_exact_remainder_across_resets(workers, horizon):
 
 
 def test_parallel_selective_recording_keeps_all_cars_and_budget_cut(tmp_path):
-    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
-    from src.replay.race_reader import iter_race_frames, load_clips
+    from replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from replay.race_reader import iter_race_frames, load_clips
     trainer, scenario, directory = make_setup(2, 2)
     writer = RaceDatasetWriter(tmp_path/'races', config=dict(sample_probability=1., chunk_frames=4))
     hook = RaceDatasetHook(writer)
@@ -267,9 +267,9 @@ def test_parallel_selective_recording_keeps_all_cars_and_budget_cut(tmp_path):
 
 
 def test_recording_covers_opponent_only_tail(tmp_path):
-    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
-    from src.replay.race_recorder import RaceRecorder
-    from src.replay.race_reader import iter_race_frames, load_clips
+    from replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from replay.race_recorder import RaceRecorder
+    from replay.race_reader import iter_race_frames, load_clips
     trainer, scenario, directory = make_setup(1, 4)
     env = trainer.env
     original_step = env.step
@@ -320,9 +320,9 @@ def test_serial_step_budget_stops_mid_episode_without_fabricating_outcome():
 
 @pytest.mark.parametrize('parallel', [False, True])
 def test_recording_window_reserves_late_frames_for_fixed_opponents(tmp_path, parallel):
-    from src.replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
-    from src.replay.race_recorder import RaceRecorder
-    from src.replay.race_reader import iter_race_frames
+    from replay.dataset_writer import RaceDatasetWriter, RaceDatasetHook
+    from replay.race_recorder import RaceRecorder
+    from replay.race_reader import iter_race_frames
     threads = torch.get_num_threads()
     torch.set_num_threads(1)
     trainer, scenario, directory = make_setup(2, 2)

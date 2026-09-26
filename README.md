@@ -6,8 +6,10 @@ shared actor and centralized critic, checkpoint evaluation, and offline datasets
 
 ## Run an experiment
 
-Use the project virtual environment when available. Dependencies are listed in
-`requirements.txt`; development checks use pytest. Headless examples:
+Use the project virtual environment when available. Install with
+`python3 -m pip install -r requirements.txt`; this uses the runtime and development
+dependencies declared in `pyproject.toml`. Development checks use pytest. Headless
+examples:
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml --no-wandb --episodes 1
@@ -84,7 +86,7 @@ See [the scenario index](scenarios/README.md) for the retained historical files.
 
 | Experiment | Scenario files under `scenarios/` |
 |---|---|
-| PPO pretraining (400 environments) | `ppo_lap_completion_pretrain.yaml` |
+| PPO pretraining (local / 400-environment HPC) | `ppo_lap_completion_pretrain_local.yaml` / `ppo_lap_completion_pretrain_hpc.yaml` |
 | PPO transfer versus scratch | `ppo_lap_completion_transfer.yaml` |
 | PPO cross-map evaluation | `ppo_lap_completion_validate.yaml` |
 | MAPPO traffic adaptation | `mappo_2v2_completion.yaml` |

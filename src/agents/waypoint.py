@@ -428,7 +428,7 @@ class HybridPPFTGPolicy:
     centerline_fn:
         Callable returning current centerline (N, 2) or (N, 3).
     ftg:
-        A FollowTheGapPolicy instance (from src.agents.ftg).
+        A FollowTheGapPolicy instance (from agents.ftg).
     blend_distance:
         LiDAR range (m) at which FTG starts blending in.
     full_ftg_distance:

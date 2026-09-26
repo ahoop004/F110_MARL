@@ -8,7 +8,7 @@ import torch
 
 from agents.mappo import MAPPORolloutBuffer
 from agents.mappo import MAPPOAgent
-from src.replay.dataset_writer import DatasetHook, DatasetWriter
+from replay.dataset_writer import DatasetHook, DatasetWriter
 from training.marl_trainer import MARLTrainer
 
 

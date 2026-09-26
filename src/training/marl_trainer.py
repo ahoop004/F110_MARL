@@ -381,7 +381,7 @@ class MARLTrainer:
                     recording_active = recorder is not None and recorder.capturing
                     self.env.record_applied_commands = recording_active
                     if recording_active:
-                        from src.replay.race_recorder import capture_state, plain
+                        from replay.race_recorder import capture_state, plain
                         recorded_pre = capture_state(self.env, info_dict, obs_dict, facts.agents)
                     obs_dict, rew_dict, term_dict, trunc_dict, info_dict = self.env.step(
                         all_actions

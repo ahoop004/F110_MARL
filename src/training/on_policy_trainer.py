@@ -10,6 +10,9 @@ import numpy as np
 from agents.ppo import PPOAgent
 from env.types import GlobalState, TransitionRecord
 from metrics.outcomes import determine_outcome
+from training.collector_scheduling import (
+    _close_collectors, _report_worker_error, _worker_startup_settings,
+)
 from training.hooks import TrainingHook, WandbHook, transition_record_hooks
 from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
@@ -567,49 +570,7 @@ class OnPolicyTrainer:
 
 # Spawned CPU collectors reuse the exact single-environment trainer above.
 # Only the parent owns a policy, optimizer, logging hooks, and CUDA context.
-_WORKER_TIMEOUT_SECONDS = 120
 _WORKER_THREADS = 1
-
-
-def _worker_startup_settings(scenario):
-    defaults = {"worker_startup_batch_size": 16, "worker_startup_timeout_s": 600,
-                "worker_response_timeout_s": _WORKER_TIMEOUT_SECONDS}
-    settings = {key: scenario.get("experiment", {}).get(key, default)
-                for key, default in defaults.items()}
-    for key, value in settings.items():
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError(f"experiment.{key} must be a positive integer")
-    return settings
-
-
-def _close_collectors(connections, processes, *, failed):
-    # Signal the entire group before joining: per-process waits multiplied by
-    # hundreds of workers otherwise turn error handling into a long shutdown.
-    if failed:
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-    for connection in connections:
-        connection.close()
-    deadline = time.monotonic() + 5.0
-    for process in processes:
-        process.join(timeout=max(0.0, deadline - time.monotonic()))
-    remaining = [process for process in processes if process.is_alive()]
-    for process in remaining:
-        process.kill()
-    for process in remaining:
-        process.join()
-
-
-def _report_worker_error(connection):
-    import sys
-    import traceback
-    error = traceback.format_exc()
-    try:
-        connection.send(("error", error))
-    except (BrokenPipeError, EOFError, ConnectionResetError):
-        # Retain the original exception if its parent can no longer receive it.
-        print(error, file=sys.stderr, flush=True)
 
 
 class _RemotePolicy:
@@ -709,8 +670,7 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
     try:
         import torch
         torch.set_num_threads(_WORKER_THREADS)
-        from core.setup import create_training_setup
-        from run import build_obs_composer, build_reward_composer
+        from core.setup import build_obs_composer, build_reward_composer, create_training_setup
 
         scenario = copy.deepcopy(scenario)
         base_seed = int(scenario["experiment"]["seed"])

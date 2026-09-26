@@ -56,7 +56,7 @@ def load_dataset(dataset_dir: Path) -> Dict[str, np.ndarray]:
     """Load and concatenate all transition chunks from *dataset_dir*."""
     metadata = dataset_dir / 'metadata.json'
     if metadata.exists() and json.loads(metadata.read_text()).get('schema_version') == '3.0':
-        from src.replay.race_reader import iter_race_frames
+        from replay.race_reader import iter_race_frames
         frames = list(iter_race_frames(dataset_dir))
         return {'race_frame': np.asarray(frames, dtype=object),
                 'episode_id': np.asarray([f['episode_id'] for f in frames], dtype=object),
@@ -281,7 +281,7 @@ def replay(
 
 def replay_races(dataset_dir, *, maps_dir, filter_episode=None, filter_map=None,
                  filter_clip=None, speed=1., list_only=False, window_width=1280, window_height=800):
-    from src.replay.race_reader import load_clips, clip_frames, render_state
+    from replay.race_reader import load_clips, clip_frames, render_state
     if speed <= 0:
         raise ValueError('Playback speed must be positive')
     clips = [c for c in load_clips(dataset_dir)

@@ -421,7 +421,7 @@ def test_trainer_preserves_raw_samples_and_flushes_final_partial_pool():
 
 def test_ppo_dataset_state_precedes_repeated_action(tmp_path):
     from types import SimpleNamespace
-    from src.replay.dataset_writer import DatasetHook, DatasetWriter
+    from replay.dataset_writer import DatasetHook, DatasetWriter
 
     class Env(_OneStepTruncationEnv):
         def reset(self, options=None):
@@ -1337,7 +1337,6 @@ def test_collector_parent_disconnect_does_not_send_secondary_error(monkeypatch, 
     from types import SimpleNamespace
     import training.on_policy_trainer as module
     import core.setup as setup
-    import run
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
     monkeypatch.setenv('PYGLET_HEADLESS', 'true')
     monkeypatch.setattr(torch, 'set_num_threads', lambda *_: None)
@@ -1345,8 +1344,8 @@ def test_collector_parent_disconnect_does_not_send_secondary_error(monkeypatch, 
     space = SimpleNamespace(low=-np.ones(2), high=np.ones(2), n=2)
     env = SimpleNamespace(action_spaces={'car_0': space}, close=lambda: closed.append('env'))
     monkeypatch.setattr(setup, 'create_training_setup', lambda *a, **kw: (env, {}, {}))
-    monkeypatch.setattr(run, 'build_obs_composer', lambda *a: SimpleNamespace(obs_dim=1))
-    monkeypatch.setattr(run, 'build_reward_composer', lambda *a: _RewardComposer())
+    monkeypatch.setattr(setup, 'build_obs_composer', lambda *a: SimpleNamespace(obs_dim=1))
+    monkeypatch.setattr(setup, 'build_reward_composer', lambda *a: _RewardComposer())
     monkeypatch.setattr(module, '_RemotePolicy', lambda *a: None)
     monkeypatch.setattr(module, 'OnPolicyTrainer', lambda *a, **kw: None)
     class Connection:

@@ -13,9 +13,8 @@ experiment:
   total_steps: 120000000  # aggregate policy decisions across all environments
   seed: 42
   num_envs: 1
-  # num_envs: 400
   torch_threads: 1
-  # Limit concurrent initialization; all 400 environments still collect together.
+  # Limit concurrent initialization when using multiple environments.
   worker_startup_batch_size: 16
   worker_startup_timeout_s: 600
   worker_response_timeout_s: 120

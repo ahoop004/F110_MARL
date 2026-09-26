@@ -35,9 +35,9 @@ from core.agent_builder import get_trainable_agent_ids
 from core.map_selection import resolve_bundle_yaml
 from core.provenance import build_run_provenance
 from core.scenario import load_and_expand_scenario, resolve_mappo_config
-from core.setup import create_training_setup
 from env.types import SpawnPlan, SpawnState
-from run import (
+from core.setup import (
+    create_training_setup,
     build_obs_composers,
     build_reward_composers,
     resolve_training_params,

@@ -29,7 +29,6 @@ Author: Hongrui Zheng
 
 import numpy as np
 from numba import njit, float64, int64
-from numba.types import Array
 from scipy.ndimage import distance_transform_edt as edt
 from PIL import Image
 import os

@@ -7,8 +7,8 @@ from typing import Any, Mapping, Optional
 import yaml
 from PIL import Image
 
-from src.env.types import MapRuntimeConfig
-from src.utils.map_loader import parse_surface_metadata
+from env.types import MapRuntimeConfig
+from utils.map_loader import parse_surface_metadata
 
 
 def normalize_map_identifier(identifier: Optional[Any]) -> Optional[str]:

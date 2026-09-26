@@ -3,8 +3,8 @@
 Interactive fixed-controller previews are in [`render/`](render/README.md):
 MPC solo, MPC versus hybrid 2v2, and a passing demo on circle and Budapest.
 
-The active entry points below use the shared MF6.1 vehicle profile. PPO keeps
-400 environments; the explicit MAPPO base and penalty scratch/pretrained pairs
+The active entry points below use the shared MF6.1 vehicle profile. PPO uses
+one environment in the base and local presets, and 400 in the HPC preset; the explicit MAPPO base and penalty scratch/pretrained pairs
 also use 400 environments across 100 workers, with two learners and two fixed
 racing MPC opponents per race. Other MAPPO objectives retain their serial defaults.
 The fixed-opponent `mappo_2v2_*.yaml` scenarios inherit the same opponent profile.

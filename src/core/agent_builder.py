@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Mapping, Tuple
 
-from src.core.config import AgentFactory
+from core.config import AgentFactory
 
 logger = logging.getLogger(__name__)
 

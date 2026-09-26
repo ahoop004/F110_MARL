@@ -17,11 +17,12 @@ import torch
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
 from training.collector_progress import CollectorProgress
-from training.collector_scheduling import CollectorScheduler
-from training.hooks import WandbHook
-from training.on_policy_trainer import (
-    _WorkerHook, _close_collectors, _report_worker_error, _worker_startup_settings,
+from training.collector_scheduling import (
+    CollectorEventSink, CollectorScheduler,
+    _close_collectors, _report_worker_error, _worker_startup_settings,
 )
+from training.hooks import WandbHook
+from training.on_policy_trainer import _WorkerHook
 
 
 class CollectorAgent:
@@ -134,22 +135,9 @@ def infer_requests(agent, requests):
     return result
 
 
-class _EventSink:
-    def __init__(self):
-        self.events = []
-
-    def send(self, event):
-        self.events.append(event)
-
-    def take(self):
-        events, self.events = self.events, []
-        return events
-
-
 def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
                     run_id, sink, record_transitions, aggregate_wandb, total_steps=None):
-    from core.setup import create_training_setup
-    from run import build_obs_composers, build_reward_composers
+    from core.setup import build_obs_composers, build_reward_composers, create_training_setup
     from training.marl_trainer import MARLTrainer
     from wrappers.actions.composer import ActionComposer
 
@@ -191,7 +179,7 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
         recorder = None
         recording = scenario.get('recording', {})
         if recording.get('enabled', False):
-            from src.replay.race_recorder import RaceRecorder
+            from replay.race_recorder import RaceRecorder
             recorder = RaceRecorder(recording, lambda event: sink.send(('race_record', event)),
                                     run_id=run_id, environment_id=env_id,
                                     num_envs=int(scenario['experiment'].get('num_envs', 1)))
@@ -214,7 +202,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
     os.environ["PYGLET_HEADLESS"] = "true"
     torch.set_num_threads(1)
     envs, agents, generators, pending = {}, {}, {}, {}
-    sink = _EventSink()
+    sink = CollectorEventSink()
     try:
         for env_id, quota in assignments:
             envs[env_id], agents[env_id], generators[env_id] = _make_collector(

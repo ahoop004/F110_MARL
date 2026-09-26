@@ -48,8 +48,8 @@ def test_shared_yaml_loader_rejects_invalid_configs(tmp_path, content):
 
 
 def test_builtin_factory_and_training_setup_contract():
-    from src.core.config import AgentFactory, register_builtin_agents
-    from src.core.setup import create_training_setup
+    from core.config import AgentFactory, register_builtin_agents
+    from core.setup import create_training_setup
     register_builtin_agents()
     assert {"ftg", "pure_pursuit", "stanley", "hybrid_pp_ftg"} <= set(AgentFactory.available_agents())
     env, agents, reward_strategies = create_training_setup(load_and_expand_scenario("scenarios/legacy/ppo.yaml"))

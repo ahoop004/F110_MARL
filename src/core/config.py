@@ -20,7 +20,7 @@ class AgentFactory:
     Pure PyTorch RL agents are instantiated directly in ``run.py`` because
     their constructors need dimensions and bounds resolved from the composed
     scenario.  Heuristic agents are registered here and instantiated by
-    :func:`~src.core.agent_builder.build_fixed_policy_agents`.
+    :func:`~core.agent_builder.build_fixed_policy_agents`.
     """
 
     _registry: Dict[str, type] = {}

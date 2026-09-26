@@ -324,7 +324,7 @@ class RaceDatasetWriter(DatasetWriter):
     """
 
     def __init__(self, output_dir, *, config, metadata=None):
-        from src.replay.race_recorder import recording_config
+        from replay.race_recorder import recording_config
         self.config = recording_config(config)
         self.payload_bytes = 0
         self.storage_full = False
@@ -348,7 +348,7 @@ class RaceDatasetWriter(DatasetWriter):
                    and not w['exhausted'] for w in self.window_usage)
 
     def add_event(self, event):
-        from src.replay.race_recorder import plain
+        from replay.race_recorder import plain
         if self._closed:
             raise RuntimeError("RaceDatasetWriter is closed")
         kind, row = event

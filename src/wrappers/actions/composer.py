@@ -199,7 +199,7 @@ class WheelReferenceAdapter:
 
     def set_action_space(self, action_space) -> None:
         # A controller that clips against its action space must still see m/s.
-        from src.env.spaces import SpaceSpec
+        from env.spaces import SpaceSpec
         if hasattr(self.controller, 'set_action_space'):
             low, high = np.array(action_space.low, copy=True), np.array(action_space.high, copy=True)
             low[1] *= self.radius

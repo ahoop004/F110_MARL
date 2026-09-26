@@ -6,7 +6,7 @@ from typing import Any, Dict, Mapping, Sequence
 
 import numpy as np
 
-from src.env.types import AgentRaceStatus
+from env.types import AgentRaceStatus
 
 
 @dataclass(frozen=True)

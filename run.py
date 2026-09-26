@@ -19,15 +19,17 @@ if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario
-from core.setup import create_training_setup
+from core.setup import (
+    build_obs_composer, build_obs_composers,
+    build_reward_composer, build_reward_composers,
+    create_training_setup, resolve_training_params,
+)
 from core.run_id import resolve_run_id, set_run_id_env
-from core.provenance import build_run_provenance, provenance_mismatches, physics_contract
-from src.core.agent_builder import get_trainable_agent_ids
+from core.provenance import build_run_provenance, provenance_mismatches
+from core.agent_builder import get_trainable_agent_ids
 from loggers.console import ConsoleLogger
 from loggers.csv_logger import CSVLogger
 from loggers.wandb_logger import WandbLogger
-from wrappers.observations.composer import ObservationComposer
-from wrappers.rewards.composer import RewardComposer
 from wrappers.actions.composer import ActionComposer
 from training.hooks import (
     CSVHook,
@@ -134,75 +136,6 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
     return scenario
 
 
-def build_obs_composer(
-    agent_cfg: Dict, env_config: Dict, scenario_dir: Path, action_dim: int = 2
-) -> ObservationComposer:
-    """Build one ObservationComposer for a single agent config."""
-    obs_ref = agent_cfg.get("observation")
-    if isinstance(obs_ref, str):
-        obs_path = (scenario_dir / obs_ref).resolve()
-        return ObservationComposer.from_file(str(obs_path), env_config, action_dim=action_dim)
-    elif isinstance(obs_ref, dict):
-        return ObservationComposer.from_config(obs_ref, env_config, action_dim=action_dim)
-    raise ValueError("Agent 'observation' must be a file path or inline config dict.")
-
-
-def build_reward_composer(agent_cfg: Dict, scenario_dir: Path) -> RewardComposer:
-    """Build one RewardComposer for a single agent config."""
-    reward_ref = agent_cfg.get("reward")
-    if isinstance(reward_ref, str):
-        reward_path = (scenario_dir / reward_ref).resolve()
-        return RewardComposer.from_file(str(reward_path))
-    elif isinstance(reward_ref, dict):
-        return RewardComposer.from_config(reward_ref)
-    raise ValueError("Agent 'reward' must be a file path or inline config dict.")
-
-
-def build_obs_composers(
-    agent_configs: Dict,
-    trainable_ids: List[str],
-    env_config: Dict,
-    scenario_dir: Path,
-    action_dim: int = 2,
-) -> Dict[str, ObservationComposer]:
-    """Build one ObservationComposer per trainable agent.
-
-    Returns a dict keyed by agent_id.  Single-agent trainers index into it
-    with their ``rl_agent_id``; MAPPO iterates over all entries.
-    """
-    return {
-        aid: build_obs_composer(agent_configs[aid], env_config, scenario_dir, action_dim)
-        for aid in trainable_ids
-    }
-
-
-def build_reward_composers(
-    agent_configs: Dict,
-    trainable_ids: List[str],
-    scenario_dir: Path,
-) -> Dict[str, RewardComposer]:
-    """Build one RewardComposer per trainable agent.
-
-    Returns a dict keyed by agent_id.
-    """
-    return {
-        aid: build_reward_composer(agent_configs[aid], scenario_dir)
-        for aid in trainable_ids
-    }
-
-
-def resolve_training_params(agent_cfg: Dict, scenario: Dict) -> Dict:
-    """Merge training_defaults with agent params — agent params win."""
-    defaults = scenario.get("training_defaults", {})
-    params = agent_cfg.get("params", {})
-    environment = scenario.get("environment", {})
-    decision_dt = float(environment.get("timestep", 0.01)) * int(environment.get("action_repeat", 1))
-    return {**defaults, **params, "_physics_contract": physics_contract(environment),
-            "_action_contract": ActionComposer.contract_from_config(
-        agent_cfg.get("action_constraints", {}), decision_dt,
-    )}
-
-
 def _resolve_scenario_relative_path(value: str, scenario_dir: Path) -> Path:
     """Resolve checkpoint/config paths relative to the declaring scenario."""
     path = Path(value).expanduser()
@@ -230,7 +163,11 @@ def _run_heuristic(
     Supports the same ``--render``, ``--episodes``, ``--seed``, and ``--wandb``
     flags as the RL path.
     """
-    from core.setup import create_training_setup
+    from core.setup import (
+    build_obs_composer, build_obs_composers,
+    build_reward_composer, build_reward_composers,
+    create_training_setup, resolve_training_params,
+)
 
     agent_configs = scenario.get("agents", {})
     exp_cfg = scenario.get("experiment", {})
@@ -446,7 +383,7 @@ def main() -> None:
     if selective_recording:
         if algorithm != 'mappo':
             raise ValueError("Selective race recording requires MAPPO training")
-        from src.replay.race_recorder import recording_config
+        from replay.race_recorder import recording_config
         scenario['recording'] = recording_config({**scenario.get('recording', {}), 'enabled': True})
 
     agent_cfg = agent_configs[rl_agent_id]
@@ -676,7 +613,7 @@ def main() -> None:
     # Optional dataset recording
     dataset_writer = None
     if args.dataset_dir or selective_recording:
-        from src.replay.dataset_writer import DatasetWriter, DatasetHook, RaceDatasetWriter, RaceDatasetHook
+        from replay.dataset_writer import DatasetWriter, DatasetHook, RaceDatasetWriter, RaceDatasetHook
         writer_class = RaceDatasetWriter if selective_recording else DatasetWriter
         dataset_path = args.dataset_dir or str(Path(output_dir) / 'behavior')
         dataset_writer = writer_class(
@@ -1075,7 +1012,7 @@ def _run_eval(
     recorded_protocol = dict(name=protocol_name or 'custom', seeds=list(range(base_seed, base_seed+eval_episodes)),
         max_steps=env.max_steps, target_laps=getattr(env, 'target_laps', None),
         timestep_s=env.timestep, action_repeat=action_repeat)
-    from src.replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
+    from replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
     recording_cfg = evaluation_recording_config(scenario, requested=bool(
         getattr(args, 'record_races', False) or getattr(args, 'dataset_dir', None)))
     recording = None
@@ -1416,7 +1353,7 @@ def _run_eval(
 
 
 def _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance):
-    from src.replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
+    from replay.evaluation_recorder import EvaluationRecording, evaluation_recording_config
     config = evaluation_recording_config(scenario)
     if config is None:
         return
@@ -1645,7 +1582,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
 
     selective_recording = bool(args.record_races or args.dataset_dir or scenario.get('recording', {}).get('enabled'))
     if selective_recording:
-        from src.replay.race_recorder import recording_config
+        from replay.race_recorder import recording_config
         scenario['recording'] = recording_config({**scenario.get('recording', {}), 'enabled': True})
     if args.pretrained_actor or scenario.get("training_defaults", {}).get("pretrained_actor_checkpoint"):
         raise ValueError("The two-team actor adds team/race observations; this scenario starts from scratch")
@@ -1758,7 +1695,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 logger.log_metrics(row)
 
         def recording_writer(directory, recording, phase):
-            from src.replay.dataset_writer import RaceDatasetWriter
+            from replay.dataset_writer import RaceDatasetWriter
             writer = RaceDatasetWriter(directory, config=recording,
                 metadata=dict(run_id=run_id, algorithm='mappo_two_team', scenario=exp['name'], phase=phase,
                     provenance=provenance, physics_contract=provenance['physics_contract'],
@@ -1779,7 +1716,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
         if selective_recording and not args.eval:
             race_writer = recording_writer(args.dataset_dir or output/'behavior', scenario['recording'], 'training')
         if record_evaluation and (args.eval or scenario.get('evaluation', {}).get('enabled', False)):
-            from src.replay.race_recorder import recording_config
+            from replay.race_recorder import recording_config
             # Small matched evaluations default to whole-race sampling. Their
             # global budget is independent of training's event-heavy stream.
             evaluation_config = recording_config({**scenario.get('recording', {}),
@@ -1792,7 +1729,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
             render=bool(cfg.get("render")), on_update=lambda row: emit("updates.jsonl", row),
             run_id=run_id, race_writer=race_writer)
         if race_writer is not None and num_envs == 1:
-            from src.replay.race_recorder import RaceRecorder
+            from replay.race_recorder import RaceRecorder
             trainer.race_recorder = RaceRecorder(race_writer.config, race_writer.add_event, run_id=run_id)
         eval_trainer = trainer
         if not args.eval and scenario.get("evaluation", {}).get("enabled", False):
@@ -1806,7 +1743,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 actions=copy.deepcopy(actions), event_config=scenario["two_team"].get("events"), run_id=run_id)
 
         if eval_writer is not None:
-            from src.replay.race_recorder import RaceRecorder
+            from replay.race_recorder import RaceRecorder
             eval_trainer.race_writer = eval_writer
             eval_trainer.race_recorder = RaceRecorder(eval_writer.config, eval_writer.add_event, run_id=run_id)
 
@@ -2068,7 +2005,7 @@ def _run_mappo(
     trainer.console = console
     race_hooks = [h for h in hooks if hasattr(h, 'on_race_record')]
     if race_hooks and int(exp_cfg.get('num_envs', 1)) == 1:
-        from src.replay.race_recorder import RaceRecorder
+        from replay.race_recorder import RaceRecorder
         trainer.race_recorder = RaceRecorder(race_hooks[0].recording_config,
                                              race_hooks[0].on_race_record, run_id=run_id)
     env_cfg = (scenario or {}).get("environment", {})

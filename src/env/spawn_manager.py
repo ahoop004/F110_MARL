@@ -8,7 +8,7 @@ every reset.
 
 Spawn precedence (highest → lowest)
 -------------------------------------
-0. Deterministic :class:`~src.env.types.SpawnPlan` (eval / offline replay)
+0. Deterministic :class:`~env.types.SpawnPlan` (eval / offline replay)
 1. Explicit ``options["poses"]``
 2. Centerline-relative policy (``spawn_policy: centerline_relative``)
 3. Random named-point sampling (``random_spawn.enabled: true``)
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from src.env.spawn import (
+from env.spawn import (
     CenterlineSpawnFn,
     SpawnPlan,
     SpawnRequest,
@@ -40,7 +40,7 @@ class SpawnManager:
     Parameters
     ----------
     cfg:
-        Merged environment config (post :func:`~src.core.spawn_config.normalize_spawn_config`).
+        Merged environment config (post :func:`~core.spawn_config.normalize_spawn_config`).
     map_data:
         Preloaded map data object, or ``None``.  Used to extract initial spawn
         points; refreshed via :meth:`update_map_data` when maps cycle.

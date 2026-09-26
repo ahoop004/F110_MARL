@@ -5,7 +5,7 @@ from typing import Dict, Mapping, Sequence, Tuple
 
 import numpy as np
 
-from src.env.spaces import DictSpaceSpec, SpaceSpec
+from env.spaces import DictSpaceSpec, SpaceSpec
 
 
 def build_action_spaces(

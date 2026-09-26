@@ -20,7 +20,7 @@ from metrics.racing_eval import (
     finalize_episode_facts,
     update_agent_step_facts,
 )
-from src.replay.dataset_writer import DatasetWriter, detect_dataset_schema
+from replay.dataset_writer import DatasetWriter, detect_dataset_schema
 from wrappers.rewards.events import (
     CollisionRewardComponent,
     TargetFinishComponent,

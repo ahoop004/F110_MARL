@@ -15,30 +15,19 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from training.collector_scheduling import CollectorScheduler
+from training.collector_scheduling import (
+    CollectorEventSink, CollectorScheduler,
+    _close_collectors, _report_worker_error, _worker_startup_settings,
+)
 from training.hooks import WandbHook
 from training.on_policy_trainer import (
-    OnPolicyTrainer, _RemotePolicy, _WorkerHook, _close_collectors,
-    _report_worker_error, _worker_startup_settings,
+    OnPolicyTrainer, _RemotePolicy, _WorkerHook,
 )
-
-
-class _EventSink:
-    def __init__(self):
-        self.events = []
-
-    def send(self, event):
-        self.events.append(event)
-
-    def take(self):
-        events, self.events = self.events, []
-        return events
 
 
 def _make_collector(scenario, directory, agent_id, env_id, quota, horizon,
                     run_id, gamma, gae_lambda, sink, record, aggregate, step_budget):
-    from core.setup import create_training_setup
-    from run import build_obs_composer, build_reward_composer
+    from core.setup import build_obs_composer, build_reward_composer, create_training_setup
     from wrappers.actions.composer import ActionComposer
 
     scenario = copy.deepcopy(scenario)
@@ -82,7 +71,7 @@ def _collect_worker(connection, scenario, directory, agent_id, assignments,
     os.environ['PYGLET_HEADLESS'] = 'true'
     torch.set_num_threads(1)
     envs, generators, pending = {}, {}, {}
-    sink = _EventSink()
+    sink = CollectorEventSink()
     try:
         contracts = []
         for env_id, quota in assignments:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Set, Tuple
 
-from src.core.scenario import load_yaml_config
+from core.scenario import load_yaml_config
 
 
 _CENTERLINE_OBSERVATIONS = {

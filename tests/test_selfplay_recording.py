@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from core.scenario import load_and_expand_scenario
-from src.replay.race_reader import load_clips, iter_race_frames
+from replay.race_reader import load_clips, iter_race_frames
 
 
 def config(num_envs):
@@ -26,9 +26,9 @@ def config(num_envs):
 @pytest.mark.parametrize('num_envs', [1, 3])
 def test_recorded_selfplay_matches_training_and_replays_both_teams(tmp_path, monkeypatch, num_envs):
     import run
-    from src.analysis.run_review import load_run, filter_clips
-    from src.analysis.clip_review import load_window
-    from src.analysis.annotations import AnnotationStore, segment
+    from analysis.run_review import load_run, filter_clips
+    from analysis.clip_review import load_window
+    from analysis.annotations import AnnotationStore, segment
 
     before_threads = torch.get_num_threads()
     try:
@@ -88,7 +88,7 @@ def test_recorded_selfplay_matches_training_and_replays_both_teams(tmp_path, mon
 
 def test_recording_keeps_inactive_team_rewards_and_clearance_removal(tmp_path, monkeypatch):
     import run
-    from src.analysis.clip_review import load_window, draw_review
+    from analysis.clip_review import load_window, draw_review
     from env.types import AgentRaceStatus
 
     original_setup = run.create_training_setup
@@ -178,9 +178,9 @@ def test_parallel_recording_enforces_one_shared_storage_cap(tmp_path, monkeypatc
 def test_evaluation_recordings_reference_pairs_without_changing_training(tmp_path, monkeypatch, num_envs):
     import hashlib
     import run
-    from src.analysis.run_review import load_run, summarize_selfplay_evaluations, filter_clips
-    from src.analysis.clip_review import load_window
-    from src.analysis.annotations import source_reference
+    from analysis.run_review import load_run, summarize_selfplay_evaluations, filter_clips
+    from analysis.clip_review import load_window
+    from analysis.annotations import source_reference
 
     def launch(output, *, enabled, checkpoint=None):
         scenario = config(num_envs)
@@ -256,9 +256,9 @@ def test_evaluation_recordings_reference_pairs_without_changing_training(tmp_pat
 @pytest.mark.parametrize('num_envs', [1, 3])
 def test_windowed_selfplay_resumes_and_preserves_learning(tmp_path, monkeypatch, num_envs):
     import run
-    from src.analysis.run_review import load_run, filter_clips
-    from src.analysis.clip_review import load_window
-    from src.analysis.annotations import source_reference
+    from analysis.run_review import load_run, filter_clips
+    from analysis.clip_review import load_window
+    from analysis.annotations import source_reference
 
     before_threads = torch.get_num_threads()
     try:

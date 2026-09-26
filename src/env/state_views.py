@@ -8,7 +8,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 
-from src.env.types import AgentLifecycleRecord, AgentRaceStatus, AgentState, GlobalState, ProgressState
+from env.types import AgentLifecycleRecord, AgentRaceStatus, AgentState, GlobalState, ProgressState
 
 
 @dataclass(frozen=True, eq=False)

@@ -19,7 +19,9 @@ import numpy as np
 import torch
 
 from training.parallel_mappo import CollectorAgent, infer_requests
-from training.on_policy_trainer import _close_collectors, _report_worker_error, _worker_startup_settings
+from training.collector_scheduling import (
+    _close_collectors, _report_worker_error, _worker_startup_settings,
+)
 from training.two_team import TwoTeamTrainer, update_inactive_values
 
 
@@ -90,8 +92,7 @@ def infer_team_requests(agents, requests):
 
 
 def _make_collector(scenario, scenario_dir, env_id, horizon, contracts, teams):
-    from core.setup import create_training_setup
-    from run import build_obs_composers, build_reward_composers
+    from core.setup import build_obs_composers, build_reward_composers, create_training_setup
     from wrappers.actions.composer import ActionComposer
 
     scenario = deepcopy(scenario)
@@ -149,7 +150,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon, co
             trainers[env_id] = _make_collector(scenario, scenario_dir, env_id, horizon, contracts, teams)
             trainers[env_id].run_id, trainers[env_id].environment_id = run_id, env_id
             if recording is not None:
-                from src.replay.race_recorder import RaceRecorder
+                from replay.race_recorder import RaceRecorder
                 trainers[env_id].race_recorder = RaceRecorder(recording, race_events.append,
                     run_id=run_id, environment_id=env_id)
             episodes[env_id] = 0

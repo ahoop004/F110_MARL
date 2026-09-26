@@ -8,13 +8,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from src.utils.centerline import (
+from utils.centerline import (
     CenterlineGeometry,
     prepare_centerline_geometry,
     progress_from_spacing,
     project_to_centerline,
 )
-from src.env.collision_state import RaceLifecycle
+from env.collision_state import RaceLifecycle
 
 
 @dataclass

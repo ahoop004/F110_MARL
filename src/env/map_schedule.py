@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
-from src.utils.map_loader import MapData, MapLoader
+from utils.map_loader import MapData, MapLoader
 
 
 class MapScheduler:
@@ -216,7 +216,7 @@ class MapScheduler:
         centerline_render: bool,
         centerline_features: bool,
     ) -> MapData:
-        """Load *bundle* and return a populated :class:`~src.utils.map_loader.MapData`.
+        """Load *bundle* and return a populated :class:`~utils.map_loader.MapData`.
 
         ``MapLoader`` performs the underlying parsed-data caching and source
         mtime validation. Re-enter it on every revisit so changed centerline

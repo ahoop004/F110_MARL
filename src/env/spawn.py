@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from src.env.types import SpawnPlan, SpawnState  # noqa: F401  (re-exported for tests)
-from src.utils.centerline import centerline_arc_length, centerline_pose
+from env.types import SpawnPlan, SpawnState  # noqa: F401  (re-exported for tests)
+from utils.centerline import centerline_arc_length, centerline_pose
 
 
 CenterlineSpawnFn = Callable[[], Optional[Tuple[np.ndarray, Dict[str, float], Dict[str, float]]]]
