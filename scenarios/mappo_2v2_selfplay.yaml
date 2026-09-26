@@ -323,16 +323,40 @@ environment:
   map_pick: round_robin
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
-    - Budapest_map
     - circle_map
+    - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Training maps. Keep intended held-out maps out of this list.
   map_bundles_train:
-    - Budapest_map
     - circle_map
+    - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Evaluation maps; disjointness is a protocol choice, not automatic.
   map_bundles_eval:
     - circle_map
     - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Episode start randomization; fixed starts use enabled: false and explicit spawn settings.
   random_spawn:
     # true enables this component; false disables it.
@@ -364,8 +388,8 @@ evaluation:
   enabled: true
   # Evaluation interval in aggregate training environment decisions.
   every_steps: 1024000
-  # Number of evaluation episodes for this protocol.
-  episodes: 8
+  # One selection episode per map in the round-robin cycle.
+  episodes: 10
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
   seed: 10042
   # Lap finish target; ignored as a termination trigger when lap_completion is false.

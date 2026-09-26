@@ -15,7 +15,7 @@ experiment:
   evaluation_only: true
   checkpoint: null
   # Episode budget. A non-null total_steps takes precedence; --episodes removes total_steps.
-  episodes: 5
+  episodes: 10
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
   seed: 10042
   # 1 for serial/local collection; e.g. 400 for HPC. PPO n_steps must divide evenly across envs.
@@ -307,12 +307,39 @@ environment:
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
     - circle_map
+    - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Training maps. Keep intended held-out maps out of this list.
   map_bundles_train:
     - circle_map
+    - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Evaluation maps; disjointness is a protocol choice, not automatic.
   map_bundles_eval:
     - circle_map
+    - Budapest_map
+    - Hockenheim_map
+    - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Finish-line crossing rules; do not change when comparing lap metrics.
   lap_counting:
     # false requires a full lap after the initial finish-line crossing.
@@ -349,8 +376,8 @@ evaluation:
   # First learner (car_0): completion, beating opponents, learner safety, time/progress.
   selection_strategy: asymmetric_support
   progress_agent_id: car_0
-  # Number of evaluation episodes for this protocol.
-  episodes: 8
+  # One selection episode per map in the round-robin cycle.
+  episodes: 10
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
   seed: 10042
   # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.

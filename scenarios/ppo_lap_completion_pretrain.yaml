@@ -248,12 +248,39 @@ environment:
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
     - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+    - circle_map
   # Training maps. Keep intended held-out maps out of this list.
   map_bundles_train:
     - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+    - circle_map
   # Evaluation maps; disjointness is a protocol choice, not automatic.
   map_bundles_eval:
     - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+    - circle_map
   # Map switching schedule; per_episode changes the map when the environment resets.
   map_cycle: per_episode
   # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.
@@ -320,8 +347,8 @@ evaluation:
   enabled: true
   # Evaluation interval in aggregate training environment decisions.
   every_steps: 4096000
-  # Number of evaluation episodes for this protocol.
-  episodes: 8
+  # One selection episode per map in the round-robin cycle.
+  episodes: 10
   # Lap finish target; ignored as a termination trigger when lap_completion is false.
   target_laps: 20
   # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.

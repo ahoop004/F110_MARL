@@ -26,7 +26,7 @@ experiment:
   # Seconds allowed for a live worker to respond.
   worker_response_timeout_s: 120
   # null for scratch; checkpoint file/run directory for PPO transfer or --eval. Paths are scenario-relative.
-  checkpoint: null
+  checkpoint: ../outputs/pretrain/best_model.pt
 
 # Shared learner defaults. agents.<id>.params overrides these values.
 training_defaults:
@@ -249,12 +249,39 @@ environment:
       RVY6: 0.0
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
+    - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
     - circle_map
   # Training maps. Keep intended held-out maps out of this list.
   map_bundles_train:
+    - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
     - circle_map
   # Evaluation maps; disjointness is a protocol choice, not automatic.
   map_bundles_eval:
+    - L_map
+    - Budapest_map
+    - Hockenheim_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
     - circle_map
   # Map switching schedule; per_episode changes the map when the environment resets.
   map_cycle: per_episode
