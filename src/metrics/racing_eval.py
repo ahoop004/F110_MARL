@@ -370,6 +370,19 @@ def aggregate_eval_episodes(
         aid: _rate(ep.agents[aid].completed for ep in episodes if aid in ep.agents)
         for aid in all_agent_ids
     }
+    # The first learner is the progressing car in asymmetric support races.
+    if focal_agent_id:
+        focal = [ep.agents[focal_agent_id] for ep in episodes]
+        summary["focal_agent_id"] = focal_agent_id
+        summary["focal_completion_rate"] = _rate(f.completed for f in focal)
+        summary["focal_opponent_win_rate"] = _rate(
+            ep.agents[focal_agent_id].completed and all(
+                _agent_beats(ep.agents[focal_agent_id], ep.agents[aid]) for aid in opponent_ids)
+            for ep in episodes)
+        summary["focal_mean_net_progress"] = _mean(f.net_progress for f in focal)
+        times = [f.finish_elapsed_steps * timestep for f in focal
+                 if timestep is not None and f.clean_finish and f.finish_elapsed_steps is not None]
+        summary["focal_mean_clean_finish_time_s"] = _mean(times) if times else None
     summary["per_agent_timeout_rate"] = {
         aid: _rate(ep.agents[aid].timed_out for ep in episodes if aid in ep.agents)
         for aid in all_agent_ids

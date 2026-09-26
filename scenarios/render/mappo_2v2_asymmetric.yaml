@@ -1,7 +1,7 @@
-# Independent full-actor baseline for asymmetric progress/support tasks.
-# Train with --pretrained-actor outputs/YOUR_SOURCE_RUN; use the same source for the LoRA arm.
+# Playback of independent asymmetric progress/support policies.
+# env -u PYGLET_HEADLESS python3 run.py --scenario scenarios/render/mappo_2v2_asymmetric.yaml --eval --checkpoint outputs/YOUR_RUN --allow-provenance-mismatch
 # All active settings are inline. No scenario or config includes are required.
-# Edit values below, or use: python3 run.py --scenario scenarios/mappo_2v2_asymmetric.yaml --set key=value
+# Edit values below, or use --set key=value with the playback command above.
 # Parameter overrides accept YAML scalars/lists/mappings; quote values containing spaces.
 # A mapping replaces that subtree; key=!delete removes an optional setting.
 # Dedicated flags (--seed, --num-envs, --episodes, etc.) take precedence over --set.
@@ -11,11 +11,13 @@
 # Run identity, execution budget and CPU/GPU collection layout.
 experiment:
   # Run/output name; use a distinct name for each parameter comparison.
-  name: mappo_2v2_asymmetric
+  name: render_mappo_2v2_asymmetric
+  evaluation_only: true
+  checkpoint: null
   # Episode budget. A non-null total_steps takes precedence; --episodes removes total_steps.
-  episodes: 5000
+  episodes: 5
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
-  seed: 42
+  seed: 10042
   # 1 for serial/local collection; e.g. 400 for HPC. PPO n_steps must divide evenly across envs.
   num_envs: 1
   # PyTorch threads in the parent learner; collector processes use one thread.
@@ -25,7 +27,6 @@ experiment:
   # Seconds between collector heartbeat updates.
   collector_progress_interval_s: 15
   # Aggregate environment decisions, excluding evaluation; one joint race step counts once.
-  total_steps: 120000000
 
 # Shared learner defaults. agents.<id>.params overrides these values.
 training_defaults:
@@ -64,13 +65,13 @@ training_defaults:
   # joint for shared team returns; per_agent for separate learner returns. Match mappo reward/critic modes.
   team_return_mode: per_agent
   # PPO or shared-MAPPO checkpoint/run directory for actor initialization. --pretrained-actor overrides this.
-  pretrained_actor_checkpoint: ../outputs/asym/best_model.pt
+  pretrained_actor_checkpoint: ../../outputs/asym/best_model.pt
   # Both comparison arms must start from a compatible PPO or plain shared-MAPPO policy.
   require_pretrained_actor: true
   # Observation extension contract for transfer; keep compatible with the inline observation layout.
   pretrained_actor_observation_extension: frenet_neighbors
   # Learner device: cpu, cuda, or an explicit device such as cuda:0.
-  device: cuda
+  device: cpu
   # Checkpoint interval in aggregate environment decisions.
   checkpoint_every_steps: 4096000
 
@@ -94,7 +95,7 @@ environment:
   # Maximum LiDAR range in metres.
   lidar_range: 10.0
   # true opens visualization; false is headless. --render/--no-render overrides this.
-  render: false
+  render: true
   # Load centerline geometry from the selected map bundle.
   centerline_autoload: true
   # Load wall geometry from the selected map bundle.
@@ -108,7 +109,7 @@ environment:
   # Joint reset rule and whether a completed lap target ends a car's episode.
   episode_termination:
     # Options: any_agent, all_agents, all_trainable. Choose whether survivors keep driving.
-    mode: all_trainable
+    mode: all_agents
     # true enables lap finishing; false allows continuous driving.
     lap_completion: true
   # Behavior of cars after their terminal event; clearance affects collisions and sensing.
@@ -647,91 +648,13 @@ agents:
     # rolling_speed_to_wheel_v1 adapts fixed-controller m/s commands for the nonlinear wheel model.
     action_adapter: rolling_speed_to_wheel_v1
 
-# Weights & Biases logging; --no-wandb disables it.
+# Local playback.
 wandb:
-  logging:
-    groups:
-      define_metrics: true
-      train: true
-      eval: true
-      eval_agg: true
-      trainer_hooks: true
-    metrics:
-      train/episode: true
-      train/outcome: true
-      train/success: true
-      train/episode_success: true
-      train/episode_reward: true
-      train/episode_steps: true
-      train/success_rate: true
-      train/reward_mean: true
-      curriculum/phase_idx: true
-      curriculum/eval_success_streak: true
-      curriculum/eval_window_success_rate: true
-      curriculum/eval_window_count: true
-      curriculum/eval_window_size: true
-      curriculum/criteria_eval_success_rate: true
-      curriculum/criteria_eval_required_runs: true
-      eval/episode: true
-      eval/episode_success: true
-      eval/episode_success_rate: true
-      eval/rolling_success_rate: true
-      eval/run: true
-      eval_agg/success_rate: true
-  # true enables this component; false disables it.
-  enabled: true
-  # Logging project name.
-  project: marl-f110-complete
-  # Group related runs for comparison.
-  group: mappo-2v2-asymmetric
-  # Run category in W&B.
-  job_type: mappo-team
-  # Searchable run labels.
-  tags:
-    - mappo
-    - 2v2
-    - individual-rewards
-    - independent-actors
-    - team-support
-    - matched-pretrained
-    - vehicle-ids
-    - racing-mpc-opponents
-  # Human-readable description of this experiment.
-  notes: Two independent actors initialized from the same pretrained actor checkpoint, with one
-    agent-conditioned centralized critic. car_0 learns progress; car_1 learns reduced own
-    progress plus teammate progress and local blocking advantage, with a self-collision
-    penalty. Finite three-lap races have a 16000-step horizon. Checkpoints prioritize car_0
-    completion and beating opponents, then learner safety and car_0 time/progress.
-    Compare against mappo_2v2_asymmetric_lora using identical source, seeds and budget.
+  enabled: false
 
-# environment.friction.train: {mode: fixed, mu: 1.0489}
-# environment.friction.train: {mode: uniform, low: 0.8, high: 1.2}
-# environment.friction.train: {mode: gaussian, relative_std: 0.02}
-# environment.friction.eval: {mode: grid, values: [0.8, 1.0, 1.2]}
-# Friction phases accept exactly the keys shown for the chosen mode.
-# Optional controls (uncomment at the indicated section, or use --set):
-# experiment.collector_scheduling: synchronous  # synchronous | ready; self-play retains its scheduler.
-# experiment.checkpoint: null  # PPO scratch; set a file/run directory for transfer or evaluation.
-# experiment.evaluation_only: false  # true requires --eval.
-# Use mappo_2v2_asymmetric_lora.yaml for the matching per-agent LoRA arm.
-# Keep the same pretrained source, seeds, rollout budget and task settings in both arms.
-# LoRA requires training_defaults.pretrained_actor_checkpoint or --pretrained-actor.
-# LoRA and pretrained initialization are not supported by the two-team self-play path.
-# recording:  # Top-level mapping; add enabled: true or pass --record-races.
-#   enabled: false
-#   sample_probability: 0.01
-#   seed: 42
-#   events: true
-#   pre_steps: 60
-#   post_steps: 100
-#   max_clip_steps: 600
-#   max_clips_per_episode: 16
-#   max_events_per_clip: 128
-#   max_frames: 100000
-#   max_bytes: 2000000000
-#   chunk_frames: 128
-#   encounter_distance_m: 8.0
-#   lateral_distance_m: 3.0
-#   pass_hysteresis_m: 0.3
-#   pass_sustain_steps: 3
-#   windows: []
+# Run with --eval --checkpoint outputs/YOUR_RUN --allow-provenance-mismatch.
+# For a LoRA checkpoint, also pass:
+# --set mappo.actor_mode=shared
+# --set 'training_defaults.lora={mode: per_agent, rank: 4, alpha: 4.0, train_log_std: true, per_agent_log_std: true}'
+# Alternatively render the training LoRA YAML with --eval --render --num-envs 1.
+# car_0 progresses; car_1 supports/blocks; car_2 and car_3 are fixed racing MPC.

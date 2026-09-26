@@ -1,4 +1,9 @@
-# Render the MPC controllers
+# Render scenarios
+
+For trained asymmetric 2v2 playback and the full/LoRA comparison, see the
+[main README](../../README.md#asymmetric-progresssupport-comparison).
+
+## Fixed MPC controllers
 
 Use the standalone [racing_mpc.yaml](racing_mpc.yaml) file from a graphical desktop:
 

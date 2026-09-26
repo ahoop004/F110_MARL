@@ -14,9 +14,12 @@ from metrics.racing_eval import (
 
 class DeterministicMAPPOEvaluator:
     def __init__(self, *, env, trainable_ids, other_agents, obs_composers,
-                 action_composer, episodes, base_seed, action_repeat=1):
+                 action_composer, episodes, base_seed, action_repeat=1, focal_agent_id=None):
         self.env = env
         self.trainable_ids = list(trainable_ids)
+        self.focal_agent_id = focal_agent_id or self.trainable_ids[0]
+        if self.focal_agent_id not in self.trainable_ids:
+            raise ValueError("Evaluation focal agent must be a learner")
         self.other_agents = dict(other_agents)
         self.obs_composers = obs_composers
         self.actions = {aid: deepcopy(action_composer) for aid in trainable_ids}
@@ -116,8 +119,8 @@ class DeterministicMAPPOEvaluator:
             torch.random.set_rng_state(torch_state)
             if cuda_states is not None:
                 torch.cuda.set_rng_state_all(cuda_states)
-        summary = aggregate_eval_episodes(results, timestep=self.env.timestep)
-        summary["per_map"] = {name: aggregate_eval_episodes(rows, timestep=self.env.timestep)
+        summary = aggregate_eval_episodes(results, timestep=self.env.timestep, focal_agent_id=self.focal_agent_id)
+        summary["per_map"] = {name: aggregate_eval_episodes(rows, timestep=self.env.timestep, focal_agent_id=self.focal_agent_id)
                               for name, rows in by_map.items()}
         summary["episode_results"] = episode_records
         summary["evaluation_protocol"] = {

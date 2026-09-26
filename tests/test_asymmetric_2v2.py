@@ -80,43 +80,55 @@ def test_invalid_crash_bonus_is_rejected(bonus):
         OpponentCrashBonusComponent({"bonus": bonus})
 
 
-def test_exact_pretraining_reward_plus_only_attackers_bonus():
+def test_progress_car_keeps_pretraining_reward_and_support_car_has_distinct_objective():
     from run import build_reward_composers
     from wrappers.rewards.composer import RewardComposer
-
     scenario = load_and_expand_scenario(SCENARIO)
-    assert scenario["mappo"]["reward_mode"] == "individual"
-    assert scenario["mappo"]["critic_mode"] == "agent_conditioned"
-    assert scenario["training_defaults"]["team_return_mode"] == "per_agent"
+    assert scenario["mappo"]["actor_mode"] == "independent"
     rewards = build_reward_composers(scenario["agents"], IDS[:2], Path("scenarios"))
     baseline = RewardComposer.from_file("configs/reward/tasks/lap_completion_pretraining.yaml")
-    for delta, outside in [(0.01, False), (-0.01, False), (0.01, True)]:
-        for reward in [*rewards.values(), baseline]:
-            reward.reset()
-            assert not reward.team_contract
-        context = {"track_length": 100., "opponent_agent_ids": IDS[2:],
-                   "info": {"centerline": {"progress_delta": delta}, "track_limits": {"exceeded": outside}},
-                   "all_infos": {"car_2": {"terminal_reason": "collision"}}}
-        expected, _ = baseline.compute(context)
-        assert rewards["car_0"].compute(context)[0] == expected
-        assert rewards["car_1"].compute(context)[0] == expected + 1.
-        assert rewards["car_1"].compute(context)[0] == expected
+    context = {"track_length": 100., "opponent_agent_ids": IDS[2:],
+               "info": {"centerline": {"progress_delta": .001}, "track_limits": {"exceeded": False}},
+               "all_infos": {"car_0": {"centerline": {"progress_delta": .002}}}}
+    assert rewards["car_0"].compute(context)[0] == baseline.compute(context)[0]
+    value, parts = rewards["car_1"].compute(context)
+    assert value == pytest.approx(.02 + .2)
+    assert "opponent_crash/bonus" not in parts
+    context["info"]["terminal_reason"] = "collision"
+    _, parts = rewards["car_1"].compute(context)
+    assert parts['collision/penalty'] == -5
+    assert 'team_support/progress' not in parts
 
 
 @pytest.mark.parametrize("num_envs", [1, 2])
-def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, num_envs):
+@pytest.mark.parametrize("arm", ["full", "lora"])
+def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, num_envs, arm):
     import sys
     import run
     from utils.torch_io import safe_load
 
-    scenario = load_and_expand_scenario(SCENARIO)
-    # End at a partial rollout budget while training episodes have no time limit.
+    from copy import deepcopy
+    from agents.ppo import PPOAgent
+    from env.spaces_builder import build_action_spaces
+    path = Path(SCENARIO if arm == "full" else "scenarios/mappo_2v2_asymmetric_lora.yaml").resolve()
+    scenario = load_and_expand_scenario(str(path))
+    # Exercise a partial rollout budget with matched pretrained initialization.
     scenario["experiment"].update(total_steps=9, num_envs=num_envs, num_workers=1, torch_threads=1)
     scenario["environment"].update(info_level="minimal")
     scenario["training_defaults"].update(n_steps=4, rollout_steps_per_env=4, n_epochs=1,
                                           batch_size=4, device="cpu", checkpoint_every_steps=8)
     scenario["evaluation"].update(every_steps=8, episodes=1, max_steps=4)
-    monkeypatch.setattr(run, "load_and_expand_scenario", lambda *_args, **_kwargs: scenario)
+    config = scenario['agents']['car_0']
+    params = run.resolve_training_params(config, scenario)
+    source_config = {**config, 'observation': '../configs/observations/rl_racer_simulated_wheel.yaml'}
+    obs = run.build_obs_composer(source_config, scenario['environment'], path.parent)
+    params['_observation_contract'] = obs.contract
+    space, _ = build_action_spaces(['car_0'], scenario['environment']['vehicle_params'])
+    source = PPOAgent(obs.obs_dim, space.low, space.high, params)
+    source_path = tmp_path / 'source.pt'
+    source.save(str(source_path))
+    scenario['training_defaults']['pretrained_actor_checkpoint'] = str(source_path)
+    monkeypatch.setattr(run, "load_and_expand_scenario", lambda *_args, **_kwargs: deepcopy(scenario))
     monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", SCENARIO, "--no-wandb",
                                      "--quiet", "--output-dir", str(tmp_path)])
     run.main()
@@ -124,10 +136,22 @@ def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, 
     assert checkpoint["environment_steps"] == 9
     assert (tmp_path / "checkpoint_step000000008.pt").exists()
     assert checkpoint["obs_dim"] == 192
+    assert checkpoint['actor_mode'] == ('independent' if arm == 'full' else 'shared')
+    if arm == 'full':
+        assert set(checkpoint['actors']) == set(IDS[:2])
+    else:
+        assert checkpoint['lora_contract']['per_agent_log_std'] is True
     assert checkpoint["reward_mode"] == "individual"
     assert checkpoint["critic_mode"] == "agent_conditioned"
     assert checkpoint["observation_contract"]["observation"]["frenet_neighbors"]["agent_ids"] == IDS
     assert (tmp_path / "best_model.pt").exists()
+    source_path.unlink()  # Playback must be self-contained.
+    scenario['environment']['max_steps'] = 4
+    monkeypatch.setattr(sys, "argv", ["run.py", "--scenario", str(path), "--eval", "--checkpoint",
+        str(tmp_path / "best_model.pt"), "--eval-episodes", "1", "--allow-provenance-mismatch",
+        "--no-wandb", "--quiet", "--output-dir", str(tmp_path / "playback")])
+    run.main()
+    assert (tmp_path / 'playback' / 'evaluation_report.json').exists()
     if num_envs > 1:
         import csv
         with (tmp_path / "collector_progress.csv").open() as stream:
@@ -146,12 +170,12 @@ def test_asymmetric_training_resets_after_learners_and_evaluation_runs_full_race
             env, _, _ = create_training_setup(scenario, mode=phase, scenario_dir=Path('scenarios'))
             envs.append(env)
             assert env.episode_termination_mode == expected
-            assert env.max_steps == (0 if phase == "train" else 16000)
-            assert env.lifecycle.finish_on_laps == (phase == "eval")
+            assert env.max_steps == 16000
+            assert env.lifecycle.finish_on_laps
             env.reset(seed=42)
             for lap in range(env.target_laps):
                 env.lifecycle.record_lap_crossing("car_0", step=lap + 1)
-            assert env.lifecycle.records["car_0"].is_active == (phase == "train")
+            assert not env.lifecycle.records["car_0"].is_active
             terms = dict(zip(IDS, [True, True, False, False]))
             _, done = apply_episode_termination_policy(terms, {}, active_agents=IDS,
                 possible_agents=IDS, trainable_agents=IDS[:2], mode=env.episode_termination_mode)
@@ -175,7 +199,7 @@ def test_evaluation_duration_is_written_to_history(tmp_path):
     assert record['evaluation_seconds_total'] == hook.evaluation_seconds
 
 
-def test_asymmetric_continuous_budget_and_cadence_match_pretraining():
+def test_asymmetric_budget_and_cadence_match_pretraining():
     from core.scenario import validate_scenario
 
     scenario = load_and_expand_scenario(SCENARIO)

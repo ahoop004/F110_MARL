@@ -15,7 +15,7 @@ def resolve_lora_config(value):
     """None preserves ordinary full fine-tuning; reject misspelled adapter options."""
     if value is None:
         return None
-    allowed = {"mode", "rank", "alpha", "train_log_std"}
+    allowed = {"mode", "rank", "alpha", "train_log_std", "per_agent_log_std"}
     if not isinstance(value, Mapping) or set(value) - allowed:
         raise ValueError(f"lora must be a mapping with fields {sorted(allowed)}")
     mode = value.get("mode", "shared")
@@ -31,7 +31,13 @@ def resolve_lora_config(value):
     train_log_std = value.get("train_log_std", True)
     if not isinstance(train_log_std, bool):
         raise ValueError("lora.train_log_std must be a boolean")
-    return dict(mode=mode, rank=rank, alpha=float(alpha), train_log_std=train_log_std)
+    per_agent_log_std = value.get("per_agent_log_std", False)
+    if not isinstance(per_agent_log_std, bool) or (per_agent_log_std and mode != "per_agent"):
+        raise ValueError("lora.per_agent_log_std requires boolean true with mode=per_agent")
+    config = dict(mode=mode, rank=rank, alpha=float(alpha), train_log_std=train_log_std)
+    if per_agent_log_std:
+        config["per_agent_log_std"] = True
+    return config
 
 
 class LowRankResidual(nn.Module):
@@ -56,7 +62,8 @@ class LoRAActor(Actor):
     """Reuse Actor's squashed-Gaussian likelihood with explicit adapter routing.
 
     Every hidden linear layer has a residual; the output head and all original
-    biases stay frozen. Exploration is one shared vector in both routing modes.
+    biases stay frozen. Exploration is shared by default; per_agent_log_std
+    gives each specialist a separate exploration vector.
     No dropout or automatic weight merging changes the rollout/update policy.
     """
 
@@ -79,11 +86,16 @@ class LoRAActor(Actor):
             ) for i in self.target_layers}) for _ in range(count)
         ])
         self.net.requires_grad_(False)
-        self.log_std.requires_grad_(self.config["train_log_std"])
+        self.log_std.requires_grad_(self.config["train_log_std"] and not self.config.get("per_agent_log_std"))
+        if self.config.get("per_agent_log_std"):
+            self.log_stds = nn.ParameterList([
+                nn.Parameter(self.log_std.detach().clone(), requires_grad=self.config["train_log_std"])
+                for _ in range(count)
+            ])
 
     def base_state_dict(self):
         return {key: value for key, value in self.state_dict().items()
-                if not key.startswith("adapters.")}
+                if not key.startswith(("adapters.", "log_stds."))}
 
     def reset_adapters(self):
         for bank in self.adapters:
@@ -114,4 +126,12 @@ class LoRAActor(Actor):
                 rows = torch.nonzero(adapter_indices == index, as_tuple=True)[0]
                 if rows.numel():
                     mean = mean.index_copy(0, rows, self._mean(obs.index_select(0, rows), bank))
+        if self.config.get("per_agent_log_std"):
+            std = obs.new_zeros(mean.shape)
+            for index, log_std in enumerate(self.log_stds):
+                rows = torch.nonzero(adapter_indices == index, as_tuple=True)[0]
+                if rows.numel():
+                    values = log_std.clamp(self.LOG_STD_MIN, self.LOG_STD_MAX).exp()
+                    std = std.index_copy(0, rows, values.expand(len(rows), -1))
+            return mean, std
         return mean, self.log_std.clamp(self.LOG_STD_MIN, self.LOG_STD_MAX).exp()

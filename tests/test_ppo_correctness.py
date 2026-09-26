@@ -982,7 +982,7 @@ def test_transfer_scenario_preserves_pretraining_contract():
         assert transfer["environment"][key] == source["environment"][key]
 
 
-@pytest.mark.parametrize("scenario_name", ["legacy/mappo_gaplock", "calibration/hybrid_pp_ftg_1lap"])
+@pytest.mark.parametrize("scenario_name", ["legacy/mappo_gaplock", "calibration/controller"])
 def test_training_checkpoint_rejects_unsupported_roles(monkeypatch, scenario_name):
     import sys
     import run

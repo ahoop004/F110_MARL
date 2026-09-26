@@ -14,9 +14,11 @@ configs remain available for library consumers and focused component checks.
 | [ppo_1v1_racing_mpc_circle.yaml](ppo_1v1_racing_mpc_circle.yaml) | PPO pursuit versus MPC; optional extra traffic |
 | [mappo_2v2_continuous.yaml](mappo_2v2_continuous.yaml) | Continuous two-learner driving; scratch/pretrained/LoRA |
 | [mappo_2v2_race.yaml](mappo_2v2_race.yaml) | Finite team racing; combined/completion/first-place/sweep/penalty or individual rewards |
-| [mappo_2v2_asymmetric.yaml](mappo_2v2_asymmetric.yaml) | Different racing/crash-pressure rewards for the two learners |
+| [mappo_2v2_asymmetric.yaml](mappo_2v2_asymmetric.yaml) | Independent progress/support actors with a centralized critic |
+| [mappo_2v2_asymmetric_lora.yaml](mappo_2v2_asymmetric_lora.yaml) | Matched progress/support tasks with a frozen driving base and per-agent LoRA |
 | [mappo_2v2_selfplay.yaml](mappo_2v2_selfplay.yaml) | Two trainable teams; optional selective/windowed recording |
 | [experiments/ppo_combined_slip_circle_stable.yaml](experiments/ppo_combined_slip_circle_stable.yaml) | Circle convergence ablation with distinct reward/optimization settings |
+| [render/mappo_2v2_asymmetric.yaml](render/mappo_2v2_asymmetric.yaml) | One-environment, evaluation-only playback of the best asymmetric MAPPO checkpoint |
 | [render/racing_mpc.yaml](render/racing_mpc.yaml) | Fixed MPC solo, 2v2 or passing visualization |
 | [calibration/controller.yaml](calibration/controller.yaml) | Legacy controller calibration; hybrid/pure-pursuit and lap choices |
 | [legacy/ppo.yaml](legacy/ppo.yaml) | Historical attacker/defender PPO |
@@ -100,6 +102,6 @@ Their former observation, opponent and reward variants are parameter recipes in
 the corresponding file. The complete-four benchmark selects observation arms
 with `--observation baseline|frenet|frenet_neighbors` on one scenario.
 
-[Render instructions](render/README.md) cover the fixed-controller options.
+[Render instructions](render/README.md) cover trained asymmetric 2v2 playback and fixed-controller options.
 Historical benchmark summaries retain their original scenario identifiers;
 those identifiers describe the measured configuration, not current file paths.

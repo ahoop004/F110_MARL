@@ -18,6 +18,7 @@ class ScenarioError(Exception):
 
 
 MAPPO_DEFAULTS: Dict[str, str] = {
+    "actor_mode": "shared",
     "reward_mode": "individual",
     "critic_mode": "agent_conditioned",
     "team_reward_reduction": "mean",
@@ -172,8 +173,13 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
+    if evaluation.get("selection_strategy") == "asymmetric_support":
+        progress_id = evaluation.get("progress_agent_id")
+        config = scenario.get("agents", {}).get(progress_id, {})
+        if not config.get("trainable", False) or config.get("algorithm") != "mappo":
+            raise ScenarioError("asymmetric_support requires evaluation.progress_agent_id naming a MAPPO learner")
     for key in ("terminate_on_track_limit", "terminate_on_collision", "lap_completion"):
         if key in evaluation and not isinstance(evaluation[key], bool):
             raise ScenarioError(f"evaluation.{key} must be boolean")
@@ -457,10 +463,16 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         if scenario.get("curriculum"):
             raise ScenarioError("MAPPO does not yet support scenario curriculum; use PPO curriculum experiments.")
         mappo = resolve_mappo_config(scenario)
+        if mappo["actor_mode"] not in {"shared", "independent"}:
+            raise ScenarioError("mappo.actor_mode must be shared or independent")
         reward_mode = mappo["reward_mode"]
         critic_mode = mappo["critic_mode"]
         reduction = mappo["team_reward_reduction"]
         params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
+        if not isinstance(params.get("require_pretrained_actor", False), bool):
+            raise ScenarioError("require_pretrained_actor must be boolean")
+        if mappo["actor_mode"] == "independent" and params.get("lora") is not None:
+            raise ScenarioError("Independent actors use full training; per-agent LoRA requires actor_mode=shared")
         team_return_mode = params.get("team_return_mode", "per_agent")
         if team_return_mode not in {"per_agent", "joint"}:
             raise ScenarioError("team_return_mode must be per_agent or joint")

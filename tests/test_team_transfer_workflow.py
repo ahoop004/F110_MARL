@@ -110,7 +110,7 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
     assert 'circle_map' in record['per_map']
     checkpoint = safe_load(str(tmp_path / 'best_model.pt'), map_location='cpu')
     assert checkpoint['checkpoint_selection'] == record
-    assert checkpoint['obs_dim'] == 158
+    assert checkpoint['obs_dim'] == 176  # 158 driving inputs plus three 6-value neighbors.
     assert (tmp_path / 'final_model.pt').exists()
 
 

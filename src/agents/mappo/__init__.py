@@ -2,9 +2,10 @@
 
 Architecture
 ------------
-Shared actor
-    All trainable agents share one :class:`~agents.common.networks.Actor`.
-    Each agent uses its own local observation to select actions.
+Actors
+    Shared, independent full actors, or a frozen base with routed LoRA adapters.
+    Each agent uses its own local observation; routed policies retain learner
+    identity through inference and PPO minibatches.
 
 Centralized critic
     A single :class:`~agents.common.networks.Critic` takes the **global state**
@@ -22,7 +23,7 @@ Per-agent rollout buffers
 Update
     Advantages and returns are computed per-agent using centralized value
     estimates.  All agents' data is then pooled into a single minibatch set
-    and the shared actor + centralized critic are updated jointly via PPO.
+    and the selected actors plus the centralized critic are updated via PPO.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ import torch.optim as optim
 
 from agents.common import Actor, Critic, compute_gae, ppo_minibatch_step, mean_update_metrics
 from agents.common.lora import LoRAActor, resolve_lora_config
+from agents.common.independent import IndependentActors
 from utils.torch_io import resolve_device
 
 
@@ -151,7 +153,7 @@ class MAPPORolloutBuffer:
 # ---------------------------------------------------------------------------
 
 class MAPPOAgent:
-    """Multi-Agent PPO with a shared driving network and centralized critic.
+    """Multi-Agent PPO with shared or independent actors and one centralized critic.
 
     Optional LoRA residuals are shared or selected by trainable agent identity.
 
@@ -199,7 +201,12 @@ class MAPPOAgent:
             raise ValueError("pretrained_actor_observation_extension must be null or frenet_neighbors")
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
+        self.actor_mode = str(params.get("actor_mode", "shared"))
+        if self.actor_mode not in {"shared", "independent"}:
+            raise ValueError("actor_mode must be shared or independent")
         self.lora_config = resolve_lora_config(params.get("lora"))
+        if self.actor_mode == "independent" and self.lora_config is not None:
+            raise ValueError("Independent actors cannot also use LoRA; use shared with per_agent adapters")
         self.pretrained_actor_source = None
         self._lora_ready = self.lora_config is None
         self.last_raw_actions: Dict[str, np.ndarray] = {}
@@ -280,6 +287,8 @@ class MAPPOAgent:
 
         # Build adapters after the critic so its initialization matches the
         # full-fine-tuning control under the same seed.
+        if self.actor_mode == "independent":
+            self.actor = IndependentActors(self.actor, self.agent_ids).to(self.device)
         self.lora_contract = None
         if self.lora_config is not None:
             self.actor = LoRAActor(self.actor, self.lora_config, len(self.agent_ids)).to(self.device)
@@ -323,6 +332,10 @@ class MAPPOAgent:
     def per_agent_adapters(self) -> bool:
         return self.lora_config is not None and self.lora_config["mode"] == "per_agent"
 
+    @property
+    def routed_actor(self) -> bool:
+        return self.actor_mode == "independent" or self.per_agent_adapters
+
     def _require_lora_source(self):
         if not self._lora_ready:
             raise ValueError("LoRA requires a pretrained PPO actor or a matching MAPPO checkpoint before use")
@@ -333,7 +346,7 @@ class MAPPOAgent:
         if len(agent_ids) != len(observations) or any(aid not in self._agent_index for aid in agent_ids):
             raise ValueError("Actor rows require matching, known agent IDs")
         kwargs = {}
-        if self.per_agent_adapters:
+        if self.routed_actor:
             kwargs["adapter_indices"] = torch.tensor(
                 [self._agent_index[aid] for aid in agent_ids], device=self.device, dtype=torch.long)
         return self.actor.get_action(observations, deterministic=deterministic,
@@ -343,7 +356,7 @@ class MAPPOAgent:
     def act(
         self, obs: np.ndarray, deterministic: bool = False, *, agent_id: Optional[str] = None
     ) -> Tuple[np.ndarray, float]:
-        """Sample a local action; per-agent LoRA also requires the agent ID.
+        """Sample a local action; routed policies require the agent ID.
 
         Returns
         -------
@@ -353,8 +366,8 @@ class MAPPOAgent:
             Log probability of the sampled action.
         """
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        if self.per_agent_adapters and agent_id is None:
-            raise ValueError("Per-agent LoRA act requires agent_id")
+        if self.routed_actor and agent_id is None:
+            raise ValueError("Routed actor act requires agent_id")
         action_t, log_prob_t = self.actor_actions(
             obs_t, [agent_id if agent_id is not None else self.agent_ids[0]], deterministic=deterministic)
         return (
@@ -655,7 +668,7 @@ class MAPPOAgent:
             indices.clear()
 
     # ------------------------------------------------------------------
-    # PPO update — all agents' data pooled into shared actor + critic update
+    # PPO update — pooled data with explicit actor routing and centralized values
     # ------------------------------------------------------------------
 
     def update(
@@ -726,7 +739,7 @@ class MAPPOAgent:
             row_start += n
 
         agent_indices = None
-        if self.per_agent_adapters:
+        if self.routed_actor:
             agent_indices = torch.cat([torch.full(
                 (self.buffers[aid].size(),), self._agent_index[aid], dtype=torch.long, device=self.device)
                 for aid in rollout_agent_ids])
@@ -742,31 +755,36 @@ class MAPPOAgent:
         raw = torch.as_tensor(np.concatenate([r[1] for r in rollouts]),
                               dtype=torch.float32, device=self.device)
         agent_indices = None
-        if self.per_agent_adapters:
+        if self.routed_actor:
             if any(len(r) != 3 for r in rollouts):
-                raise ValueError("Per-agent LoRA rollouts require actor identity")
+                raise ValueError("Routed actor rollouts require actor identity")
             indices = np.concatenate([r[2] for r in rollouts])
             if (indices.shape != (len(pool),) or not np.issubdtype(indices.dtype, np.integer)
                     or np.any(indices < 0) or np.any(indices >= len(self.agent_ids))):
-                raise ValueError("Invalid LoRA rollout actor identity")
+                raise ValueError("Invalid rollout actor identity")
             agent_indices = torch.as_tensor(indices, dtype=torch.long, device=self.device)
         return self._update_pool(pool, raw, agent_indices)
 
     def _update_pool(self, update_pool, raw_pool, agent_indices=None) -> Dict[str, float]:
         self._require_lora_source()
-        if self.per_agent_adapters and (agent_indices is None or agent_indices.shape != (len(update_pool),)):
-            raise ValueError("Per-agent LoRA update requires actor identity")
+        if self.routed_actor and (agent_indices is None or agent_indices.shape != (len(update_pool),)):
+            raise ValueError("Routed actor update requires actor identity")
         n_pool = len(update_pool)
         obs_end = self.obs_dim
         gs_end = obs_end + self.critic_input_dim
         acts_end = gs_end + self.action_dim
         old_lp_index, adv_index, ret_index = acts_end, acts_end + 1, acts_end + 2
-        # Normalize advantages over the pooled set
+        # Specialists normalize their own advantages; shared/team policies pool them.
         adv_pool = update_pool[:, adv_index]
-        adv_std = adv_pool.std(correction=0)
-        update_pool[:, adv_index] = (
-            adv_pool - adv_pool.mean()
-        ) / (adv_std + 1e-8)
+        if self.routed_actor and self.team_return_mode == "per_agent":
+            for index in range(len(self.agent_ids)):
+                rows = agent_indices == index
+                if rows.any():
+                    values = adv_pool[rows]
+                    update_pool[rows, adv_index] = (values - values.mean()) / (values.std(correction=0) + 1e-8)
+        else:
+            adv_std = adv_pool.std(correction=0)
+            update_pool[:, adv_index] = (adv_pool - adv_pool.mean()) / (adv_std + 1e-8)
 
         metric_rows: List[torch.Tensor] = []
 
@@ -785,7 +803,7 @@ class MAPPOAgent:
                 metric_rows.append(ppo_minibatch_step(
                     self, obs_b, gs_b, acts_b, old_lp_b, adv_b, ret_b,
                     raw_actions=raw_pool[idx],
-                    adapter_indices=agent_indices[idx] if self.per_agent_adapters else None,
+                    adapter_indices=agent_indices[idx] if self.routed_actor else None,
                 ))
 
         return mean_update_metrics(metric_rows)
@@ -831,7 +849,7 @@ class MAPPOAgent:
         return source_dim
 
     def load_pretrained_actor(self, path: str) -> None:
-        """Initialize only the shared actor from a PPO checkpoint.
+        """Initialize actors from a PPO or plain shared-MAPPO policy.
 
         MAPPO's centralized critic and fresh optimizer state are intentionally
         retained. Physical contracts must match. An explicitly configured
@@ -841,7 +859,7 @@ class MAPPOAgent:
 
         ckpt = safe_load(path, map_location=self.device)
         if not isinstance(ckpt, dict) or "actor" not in ckpt:
-            raise ValueError(f"Pretrained PPO checkpoint has no actor state: {path}")
+            raise ValueError(f"Pretrained checkpoint has no single shared actor state: {path}")
         if ckpt.get("physics_contract") != self.physics_contract:
             raise ValueError("Incompatible checkpoint physics_contract; physics semantics differ")
         source_obs_dim = self._pretrained_observation_dim(ckpt)
@@ -853,11 +871,13 @@ class MAPPOAgent:
                 "Match the MAPPO action_constraints and decision interval to the PPO "
                 "training configuration, or select a compatible checkpoint."
             )
-        if "algorithm" in ckpt and str(ckpt["algorithm"]).lower() != "ppo":
-            raise ValueError(
-                "Pretrained actor checkpoint must come from PPO; "
-                f"found algorithm={ckpt['algorithm']!r}."
-            )
+        source_algorithm = str(ckpt.get("algorithm", "ppo")).lower()
+        if source_algorithm not in {"ppo", "mappo"}:
+            raise ValueError("Pretrained actor checkpoint must come from PPO or shared MAPPO")
+        if source_algorithm == "mappo" and (
+            ckpt.get("actor_mode", "shared") != "shared" or ckpt.get("lora_contract") is not None
+        ):
+            raise ValueError("MAPPO initialization requires a plain shared actor, without adapters")
 
         checks = {
             "obs_dim": source_obs_dim,
@@ -881,10 +901,12 @@ class MAPPOAgent:
                 raise ValueError(
                     f"Incompatible pretrained PPO actor {key}: physical action bounds differ."
                 )
+        recipient = (self.actor.actors[self.agent_ids[0]]
+                     if self.actor_mode == "independent" else self.actor)
         actor_state = dict(ckpt["actor"])
         if source_obs_dim != self.obs_dim:
             old_weight = actor_state.get("net.0.weight")
-            expected = self.actor.state_dict()["net.0.weight"]
+            expected = recipient.state_dict()["net.0.weight"]
             if old_weight is None or old_weight.shape != (expected.shape[0], source_obs_dim):
                 raise ValueError("Incompatible pretrained actor first layer for neighbor extension")
             expanded = torch.zeros_like(expected)
@@ -893,7 +915,7 @@ class MAPPOAgent:
         # Validate all tensors before modifying the recipient, including failures
         # after the first layer (load_state_dict itself can partially mutate).
         expected_state = (self.actor.base_state_dict() if self.lora_config is not None
-                          else self.actor.state_dict())
+                          else recipient.state_dict())
         if (actor_state.keys() != expected_state.keys()
                 or any(actor_state[key].shape != value.shape for key, value in expected_state.items())):
             raise ValueError("Incompatible pretrained PPO actor network architecture")
@@ -902,8 +924,15 @@ class MAPPOAgent:
                 if self.optimizer.state:
                     raise ValueError("Initialize a pretrained LoRA base on a fresh agent")
                 self.actor.reset_adapters()
+                if self.lora_config.get("per_agent_log_std"):
+                    actor_state.update({f"log_stds.{i}": actor_state["log_std"].clone()
+                                        for i in range(len(self.agent_ids))})
                 actor_state = {**self.actor.state_dict(), **actor_state}
-            self.actor.load_state_dict(actor_state, strict=True)
+            if self.actor_mode == "independent":
+                for actor in self.actor.actors.values():
+                    actor.load_state_dict(actor_state, strict=True)
+            else:
+                self.actor.load_state_dict(actor_state, strict=True)
         except RuntimeError as exc:
             raise ValueError(
                 "Incompatible pretrained PPO actor network architecture: " + str(exc)
@@ -911,6 +940,7 @@ class MAPPOAgent:
         import hashlib
         self.pretrained_actor_source = {
             "path": str(Path(path).resolve()),
+            "algorithm": source_algorithm,
             "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
         }
         self._lora_ready = True
@@ -920,7 +950,11 @@ class MAPPOAgent:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
-                "actor": self.actor.state_dict(),
+                **({"actors": {aid: actor.state_dict() for aid, actor in self.actor.actors.items()}}
+                   if self.actor_mode == "independent" else {"actor": self.actor.state_dict()}),
+                "actor_mode": self.actor_mode,
+                "actor_routing": dict(self._agent_index),
+                "advantage_normalization": ("per_agent" if self.routed_actor and self.team_return_mode == "per_agent" else "pooled"),
                 "critic": self.critic.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "algorithm": "mappo",
@@ -951,6 +985,16 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if ckpt.get("actor_mode", "shared") != self.actor_mode:
+            raise ValueError("Incompatible MAPPO actor_mode; shared and independent checkpoints are distinct")
+        if ckpt.get("actor_routing", self._agent_index) != self._agent_index:
+            raise ValueError("Incompatible MAPPO actor routing contract")
+        if self.actor_mode == "independent":
+            actors = ckpt.get("actors", {})
+            if set(actors) != set(self.agent_ids):
+                raise ValueError("Independent checkpoint must contain every learner actor")
+            ckpt["actor"] = {f"actors.{aid}.{key}": value for aid, state in actors.items()
+                             for key, value in state.items()}
         if ckpt.get("lora_contract") != self.lora_contract:
             raise ValueError("Incompatible MAPPO LoRA contract; mode, rank, alpha, layers and routing must match")
         if self.lora_config is not None and not isinstance(ckpt.get("pretrained_actor_source"), dict):

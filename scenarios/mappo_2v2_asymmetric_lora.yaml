@@ -1,7 +1,7 @@
-# Independent full-actor baseline for asymmetric progress/support tasks.
-# Train with --pretrained-actor outputs/YOUR_SOURCE_RUN; use the same source for the LoRA arm.
+# Per-agent LoRA baseline for asymmetric progress/support tasks.
+# Train with --pretrained-actor outputs/YOUR_SOURCE_RUN; use the same source for the full-training arm.
 # All active settings are inline. No scenario or config includes are required.
-# Edit values below, or use: python3 run.py --scenario scenarios/mappo_2v2_asymmetric.yaml --set key=value
+# Edit values below, or use: python3 run.py --scenario scenarios/mappo_2v2_asymmetric_lora.yaml --set key=value
 # Parameter overrides accept YAML scalars/lists/mappings; quote values containing spaces.
 # A mapping replaces that subtree; key=!delete removes an optional setting.
 # Dedicated flags (--seed, --num-envs, --episodes, etc.) take precedence over --set.
@@ -11,7 +11,7 @@
 # Run identity, execution budget and CPU/GPU collection layout.
 experiment:
   # Run/output name; use a distinct name for each parameter comparison.
-  name: mappo_2v2_asymmetric
+  name: mappo_2v2_asymmetric_lora
   # Episode budget. A non-null total_steps takes precedence; --episodes removes total_steps.
   episodes: 5000
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
@@ -67,6 +67,12 @@ training_defaults:
   pretrained_actor_checkpoint: ../outputs/asym/best_model.pt
   # Both comparison arms must start from a compatible PPO or plain shared-MAPPO policy.
   require_pretrained_actor: true
+  lora:
+    mode: per_agent
+    rank: 4
+    alpha: 4.0
+    train_log_std: true
+    per_agent_log_std: true
   # Observation extension contract for transfer; keep compatible with the inline observation layout.
   pretrained_actor_observation_extension: frenet_neighbors
   # Learner device: cpu, cuda, or an explicit device such as cuda:0.
@@ -76,8 +82,8 @@ training_defaults:
 
 # Choose reward aggregation and critic conditioning together.
 mappo:
-  # One complete actor per learner; one shared agent-conditioned critic.
-  actor_mode: independent
+  # Frozen common base with a separate adapter and exploration vector per learner.
+  actor_mode: shared
   # Options: individual or team_shared.
   reward_mode: individual
   # Options: agent_conditioned for individual rewards, shared_team for team rewards.
@@ -683,7 +689,7 @@ wandb:
   # Logging project name.
   project: marl-f110-complete
   # Group related runs for comparison.
-  group: mappo-2v2-asymmetric
+  group: mappo-2v2-asymmetric-lora
   # Run category in W&B.
   job_type: mappo-team
   # Searchable run labels.
@@ -691,18 +697,18 @@ wandb:
     - mappo
     - 2v2
     - individual-rewards
-    - independent-actors
+    - per-agent-lora
     - team-support
     - matched-pretrained
     - vehicle-ids
     - racing-mpc-opponents
   # Human-readable description of this experiment.
-  notes: Two independent actors initialized from the same pretrained actor checkpoint, with one
+  notes: Frozen pretrained driving base with separate per-agent LoRA adapters and exploration, with one
     agent-conditioned centralized critic. car_0 learns progress; car_1 learns reduced own
     progress plus teammate progress and local blocking advantage, with a self-collision
     penalty. Finite three-lap races have a 16000-step horizon. Checkpoints prioritize car_0
     completion and beating opponents, then learner safety and car_0 time/progress.
-    Compare against mappo_2v2_asymmetric_lora using identical source, seeds and budget.
+    Compare against mappo_2v2_asymmetric using identical source, seeds and budget.
 
 # environment.friction.train: {mode: fixed, mu: 1.0489}
 # environment.friction.train: {mode: uniform, low: 0.8, high: 1.2}
@@ -713,7 +719,7 @@ wandb:
 # experiment.collector_scheduling: synchronous  # synchronous | ready; self-play retains its scheduler.
 # experiment.checkpoint: null  # PPO scratch; set a file/run directory for transfer or evaluation.
 # experiment.evaluation_only: false  # true requires --eval.
-# Use mappo_2v2_asymmetric_lora.yaml for the matching per-agent LoRA arm.
+# Use mappo_2v2_asymmetric.yaml for the matching independent full-actor arm.
 # Keep the same pretrained source, seeds, rollout budget and task settings in both arms.
 # LoRA requires training_defaults.pretrained_actor_checkpoint or --pretrained-actor.
 # LoRA and pretrained initialization are not supported by the two-team self-play path.

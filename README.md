@@ -5,7 +5,7 @@ file or use `--set KEY=YAML`; there are no scenario inheritance files in `config
 
 Pure PyTorch PPO and MAPPO experiments for F1TENTH racing. The repository supports
 single-agent learning against fixed controllers, multi-agent learning with a
-shared actor and centralized critic, checkpoint evaluation, and offline datasets.
+shared or independent actors and a centralized critic, checkpoint evaluation, and offline datasets.
 
 ## Run an experiment
 
@@ -95,7 +95,7 @@ See [the scenario index](scenarios/README.md) for the retained historical files.
 | PPO pursuit with optional traffic | `ppo_1v1_racing_mpc_circle.yaml` |
 | Continuous MAPPO driving; scratch/pretrained/LoRA | `mappo_2v2_continuous.yaml` |
 | Finite MAPPO races; reward, critic, penalty and initialization choices | `mappo_2v2_race.yaml` |
-| MAPPO asymmetric learner roles | `mappo_2v2_asymmetric.yaml` |
+| MAPPO asymmetric progress/support; independent full actors or per-agent LoRA | `mappo_2v2_asymmetric.yaml`, `mappo_2v2_asymmetric_lora.yaml` |
 | Two-team self-play and optional recording | `mappo_2v2_selfplay.yaml` |
 | Circle convergence ablation | `experiments/ppo_combined_slip_circle_stable.yaml` |
 | Historical workflows and fixed-controller calibration | `legacy/`, `calibration/`, `render/` |
@@ -369,3 +369,68 @@ under the corrected behavior. These fixes can change trajectories, baseline
 scores, and selected checkpoints, so regenerate matched baseline/evaluation runs
 before comparing new results with historical experiments. Observation dimensions,
 action bounds, reward definitions, and decentralized actor inputs are unchanged.
+
+## Asymmetric progress/support comparison
+
+`scenarios/mappo_2v2_asymmetric.yaml` trains independent full actors for `car_0`
+(progress) and `car_1` (support/blocking), with one agent-conditioned centralized
+critic. `scenarios/mappo_2v2_asymmetric_lora.yaml` freezes the common pretrained base and
+trains separate rank-4 adapters and exploration parameters for those same roles.
+Both opponents, `car_2` and `car_3`, use fixed racing MPC controllers.
+
+Use the **same compatible pretrained actor checkpoint** for both arms; both require
+it. The configured source is `outputs/asym/best_model.pt`, the earlier shared
+MAPPO actor. Its weights seed both independent actors or the frozen LoRA base;
+the critic and optimizer start fresh. A compatible PPO checkpoint also works.
+This is matched fine-tuning from that source, not a from-scratch comparison.
+Physics, action processing, observation prefix and actor architecture must match. The existing 158-input PPO driving policy is extended to 192 inputs with
+zero-initialized neighbor/identity columns. Keep seeds, environment/worker counts,
+rollout sizes, training budget and evaluation protocol identical across arms.
+
+```bash
+python3 run.py --scenario scenarios/mappo_2v2_asymmetric.yaml \
+  --pretrained-actor outputs/YOUR_SOURCE_RUN
+python3 run.py --scenario scenarios/mappo_2v2_asymmetric_lora.yaml \
+  --pretrained-actor outputs/YOUR_SOURCE_RUN
+```
+
+`car_0` retains its signed metre-progress/boundary reward. `car_1` receives 0.2×
+its own metre progress (boundary penalty remains −1), 1× teammate metre progress,
+and a local blocking term: the teammate's signed progress advantage over active
+opponents 0.6–6 m behind the blocker, within a 0.6 m lateral corridor, divided by
+the number of opponents. Blocking credit requires a forward-moving teammate and
+non-reversing blocker. Terminated/out-of-bounds cars do not generate support
+bonuses; proximity alone and opponent crashes earn none. The blocker receives
+−5 for its own collision, including mutual crashes. These are configurable
+starting weights; the local advantage term measures an outcome, not causation.
+
+Training uses finite three-lap races with a 16,000-step horizon, resetting when
+both learners terminate; evaluation waits for all cars or the timeout. Returns
+and advantage normalization remain separate per learner. Checkpoint selection
+prioritizes `car_0` completion, then finishing ahead of both opponents, then fewer
+learner collisions, then `car_0` finish time (if all races completed) or net progress.
+It does not require the blocker to finish before recognizing the racer's success.
+
+Each full-training checkpoint contains `actors.car_0`, `actors.car_1`, `critic`,
+optimizer state and routing metadata. LoRA checkpoints contain the complete frozen
+base, both adapters/exploration vectors, critic and optimizer, so evaluation does
+not need the original source file. Historical shared-actor asymmetric checkpoints
+are a different baseline: they can initialize both arms through `--pretrained-actor`,
+but cannot be loaded directly as independent actors with `--eval --checkpoint`.
+
+To watch either trained arm, use its matching scenario on a graphical desktop:
+
+```bash
+env -u PYGLET_HEADLESS python3 run.py \
+  --scenario scenarios/mappo_2v2_asymmetric.yaml \
+  --eval --checkpoint outputs/YOUR_FULL_RUN --render --num-envs 1 \
+  --eval-episodes 5 --allow-provenance-mismatch --no-wandb
+```
+
+For LoRA, substitute `scenarios/mappo_2v2_asymmetric_lora.yaml` and its run path.
+A run directory selects `best_model.pt`. `scenarios/render/mappo_2v2_asymmetric.yaml`
+is also available for independent-actor playback with CPU inference and rendering
+on by default. The provenance override permits intentional playback changes;
+physics, observation, action and actor-routing checks still apply. Use the matching
+training scenario with `--eval-protocol final` for final reporting. Match rank,
+alpha and other overrides when evaluating a non-default LoRA run.

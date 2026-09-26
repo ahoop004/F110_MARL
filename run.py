@@ -15,7 +15,11 @@ import numpy as np
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
-if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+# Prefer source packages over same-named CLI scripts (notably replay.py),
+# including when an editable install already added src later in sys.path.
+if SRC_DIR.is_dir():
+    if str(SRC_DIR) in sys.path:
+        sys.path.remove(str(SRC_DIR))
     sys.path.insert(0, str(SRC_DIR))
 
 from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario, apply_parameter_overrides
@@ -74,7 +78,7 @@ def parse_args() -> argparse.Namespace:
                         "or initialize PPO training weights with a fresh optimizer; "
                         "overrides experiment.checkpoint in the scenario")
     p.add_argument("--pretrained-actor", type=str, default=None,
-                   help="PPO checkpoint file or run directory to initialize a MAPPO actor; fresh critic and optimizer")
+                   help="PPO or plain shared-MAPPO checkpoint/run directory to initialize actors; fresh critic and optimizer")
     p.add_argument(
         "--allow-provenance-mismatch",
         action="store_true",
@@ -485,11 +489,16 @@ def main() -> None:
         pretrained_actor_path = _resolve_scenario_relative_path(
             str(pretrained_actor_value), scenario_dir
         )
+        if pretrained_actor_path.is_dir():
+            pretrained_actor_path = pretrained_actor_path / "best_model.pt"
         if not pretrained_actor_path.is_file():
             raise FileNotFoundError(
-                f"Pretrained PPO actor checkpoint not found: {pretrained_actor_path}"
+                f"Pretrained actor checkpoint not found: {pretrained_actor_path}"
             )
         params["_resolved_pretrained_actor_checkpoint"] = str(pretrained_actor_path)
+
+    if params.get("require_pretrained_actor", False) and pretrained_actor_path is None:
+        raise ValueError("This comparison requires --pretrained-actor or pretrained_actor_checkpoint for both training arms")
 
     if params.get("lora") is not None:
         if algorithm != "mappo":
@@ -855,7 +864,7 @@ def _run_eval(
         )
         sys.exit(1)
 
-    focal_agent_id = trainable_ids[0]
+    focal_agent_id = scenario.get("evaluation", {}).get("progress_agent_id", trainable_ids[0])
     focal_cfg = agent_configs[focal_agent_id]
     provenance_scenario = scenario
     protocol_name = getattr(args, "eval_protocol", None)
@@ -1973,7 +1982,7 @@ def _run_mappo(
     if pretrained_actor:
         agent.load_pretrained_actor(str(pretrained_actor))
         console.print_info(
-            f"Initialized MAPPO actor from PPO checkpoint: {pretrained_actor}"
+            f"Initialized MAPPO actors from checkpoint: {pretrained_actor}"
         )
     if agent.lora_config is not None:
         trainable = sum(p.numel() for p in agent.actor.parameters() if p.requires_grad)
@@ -2026,6 +2035,7 @@ def _run_mappo(
     )
     console.print_info(
         "MAPPO contract: "
+        f"actor_mode={agent.actor_mode}  "
         f"reward_mode={params.get('reward_mode')}  "
         f"critic_mode={params.get('critic_mode')}  "
         f"team_reward_reduction={params.get('team_reward_reduction')}"
@@ -2071,6 +2081,7 @@ def _run_mappo(
                 obs_composers=eval_obs, action_composer=action_composer,
                 episodes=protocol["episodes"], base_seed=protocol["seed"],
                 action_repeat=action_repeat,
+                focal_agent_id=eval_cfg.get("progress_agent_id"),
             ).bind_agent(agent)
             _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance)
             trainer.hooks.append(EvaluationCheckpointHook(

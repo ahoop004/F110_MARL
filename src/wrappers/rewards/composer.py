@@ -29,7 +29,7 @@ from wrappers.rewards.events import (
     TargetCrashBonusComponent,
     TimeoutPenaltyComponent,
 )
-from wrappers.rewards.interaction import TargetProximityComponent, TargetEdgePressureComponent, RacePursuitComponent
+from wrappers.rewards.interaction import TargetProximityComponent, TargetEdgePressureComponent, RacePursuitComponent, TeamSupportComponent
 from wrappers.rewards.completion import (
     LapCompletionComponent,
     PerLapBonusComponent,
@@ -72,6 +72,7 @@ COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
     "offtrack_penalty": OfftrackPenaltyComponent,
     "target_crash_bonus": TargetCrashBonusComponent,
     "opponent_crash_bonus": OpponentCrashBonusComponent,
+    "team_support": TeamSupportComponent,
     "timeout_penalty": TimeoutPenaltyComponent,
     "self_crash_penalty": SelfCrashPenaltyComponent,
 }

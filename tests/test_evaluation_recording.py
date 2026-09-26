@@ -70,7 +70,8 @@ def test_selection_and_standalone_recordings_preserve_results(tmp_path, monkeypa
             assert a['selection_score'] == b['selection_score']
             assert a['is_best'] == b['is_best']
             for key, value in a.items():
-                if isinstance(value, (float, int)):
+                # Recording overhead changes elapsed time, not race outcomes.
+                if isinstance(value, (float, int)) and key not in {'evaluation_seconds', 'evaluation_seconds_total'}:
                     assert value == b[key]
         assert not (tmp_path/'off'/'evaluation_behavior').exists()
         dataset = tmp_path/'on'/'evaluation_behavior'

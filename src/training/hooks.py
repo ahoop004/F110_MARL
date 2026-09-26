@@ -521,7 +521,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+        if selection_strategy not in {"asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -545,11 +545,13 @@ class EvaluationCheckpointHook(CheckpointHook):
         self._evaluation_count = 0
         self.evaluation_seconds = 0.0
         self._policy_version = 0
-        if console is not None and selection_strategy.startswith("team_"):
+        if console is not None and (selection_strategy.startswith("team_") or selection_strategy == "asymmetric_support"):
             console.print_info("Checkpoint priority: " + self.selection_priority(selection_strategy))
 
     @staticmethod
     def selection_priority(strategy):
+        if strategy == "asymmetric_support":
+            return "progress car completion > progress car beats opponents > fewer learner collisions > progress car finish time/net progress"
         objective = {"team_completion": "at-least-one-finished rate",
                      "team_combined": "rank score", "team_combined_penalties": "rank plus penalty score",
                      "team_first_place": "first-place rate", "team_sweep": "sweep rate"}.get(strategy, strategy)
@@ -558,6 +560,12 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+        if strategy == "asymmetric_support":
+            complete = float(summary["focal_completion_rate"])
+            finish = summary.get("focal_mean_clean_finish_time_s")
+            tie = (-float(finish) if finish is not None else float("-inf")) if complete == 1.0 else float(summary["focal_mean_net_progress"])
+            return (complete, float(summary["focal_opponent_win_rate"]),
+                    -float(summary["team_collision_rate"]), tie)
         if strategy == "map_curriculum":
             return tuple(summary["curriculum_selection_score"])
         if strategy.startswith("team_"):
@@ -657,7 +665,7 @@ class EvaluationCheckpointHook(CheckpointHook):
             "environment_steps": self._environment_steps,
             "selection_strategy": self._selection_strategy,
             "selection_priority": (self.selection_priority(self._selection_strategy)
-                                   if self._selection_strategy.startswith("team_") else None),
+                                   if self._selection_strategy.startswith("team_") or self._selection_strategy == "asymmetric_support" else None),
             "selection_score": [
                 value if np.isfinite(value) else None for value in score
             ],
@@ -678,7 +686,14 @@ class EvaluationCheckpointHook(CheckpointHook):
             scalar_metrics["eval/environment_steps"] = self._environment_steps
             self._wandb.log_metrics(scalar_metrics)
 
-        if self._console is not None and self._selection_strategy.startswith("team_"):
+        if self._console is not None and self._selection_strategy == "asymmetric_support":
+            self._console.print_info(
+                f"asymmetric eval steps={self._environment_steps} "
+                f"racer_completion={summary['focal_completion_rate']:.1%} "
+                f"racer_beats_opponents={summary['focal_opponent_win_rate']:.1%} "
+                f"learner_collision={summary['team_collision_rate']:.1%} "
+                f"checkpoint={'saved best' if is_best else 'kept previous'}")
+        elif self._console is not None and self._selection_strategy.startswith("team_"):
             finish = summary.get("mean_clean_finish_time_s")
             finish_text = "n/a" if finish is None else f"{finish:.2f}s"
             self._console.print_info(

@@ -180,12 +180,15 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         )
         critic_before = {key: value.clone() for key, value in recipient.critic.state_dict().items()}
         recipient.load_pretrained_actor(str(checkpoint))
-        for key, value in recipient.actor.state_dict().items():
-            if key == "net.0.weight":
-                torch.testing.assert_close(value[:, :158], source.actor.state_dict()[key])
-                assert value[:, 158:].count_nonzero() == 0
-            else:
-                torch.testing.assert_close(value, source.actor.state_dict()[key])
+        actors = (list(recipient.actor.actors.values())
+                  if recipient.actor_mode == "independent" else [recipient.actor])
+        for actor in actors:
+            for key, value in actor.state_dict().items():
+                if key == "net.0.weight":
+                    torch.testing.assert_close(value[:, :158], source.actor.state_dict()[key])
+                    assert value[:, 158:].count_nonzero() == 0
+                else:
+                    torch.testing.assert_close(value, source.actor.state_dict()[key])
         for key, value in recipient.critic.state_dict().items():
             torch.testing.assert_close(value, critic_before[key])
         assert not recipient.optimizer.state
@@ -193,9 +196,10 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
         actions, _ = recipient.act_batch(ids, observations, deterministic=True)
         for i, aid in enumerate(ids):
             np.testing.assert_allclose(actions[aid], source.predict(observations[i, :158]), atol=1e-7)
-        recipient.actor.net(torch.from_numpy(observations)).sum().backward()
-        assert recipient.actor.net[0].weight.grad[:, :108].count_nonzero() > 0
-        assert recipient.actor.net[0].weight.grad[:, 158:].count_nonzero() > 0
+        for actor in actors:
+            actor.net(torch.from_numpy(observations)).sum().backward()
+            assert actor.net[0].weight.grad[:, :108].count_nonzero() > 0
+            assert actor.net[0].weight.grad[:, 158:].count_nonzero() > 0
         controls = [ActionComposer.from_config(
             space.low, space.high, scenario["agents"][aid]["action_constraints"], decision_dt=0.05,
         ) for aid in ids]
