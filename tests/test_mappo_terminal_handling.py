@@ -128,8 +128,25 @@ def test_delayed_sweep_reward_reaches_early_finisher_without_dummy_decisions(tmp
     import run
     from core.scenario import load_and_expand_scenario
 
-    scenario_path = Path("scenarios/mappo_2v2_sweep.yaml").resolve()
-    scenario = load_and_expand_scenario(str(scenario_path))
+    scenario_path = Path("scenarios/mappo_2v2_race.yaml").resolve()
+    scenario = load_and_expand_scenario(str(scenario_path), overrides=['wandb.group="mappo-2v2-sweep"',
+         'wandb.notes="Shared completion shaping plus first-and-second-place team objective"',
+         'experiment.name="mappo_2v2_sweep"',
+         'evaluation.selection_strategy="team_sweep"',
+         'agents.car_0.reward.task.name="race_team_2v2_sweep"',
+         'agents.car_0.reward.task.description="Mean completion shaping plus a shared bonus for clean '
+         'first and second places."',
+         'agents.car_0.reward.reward.team_race_result.objective="sweep"',
+         'agents.car_0.reward.reward.team_race_result.rank_bonus=!delete',
+         'agents.car_0.reward.reward.team_race_result.both_finish_bonus=!delete',
+         'agents.car_0.reward.reward.team_race_result.win_bonus=2.0',
+         'agents.car_1.reward.task.name="race_team_2v2_sweep"',
+         'agents.car_1.reward.task.description="Mean completion shaping plus a shared bonus for clean '
+         'first and second places."',
+         'agents.car_1.reward.reward.team_race_result.objective="sweep"',
+         'agents.car_1.reward.reward.team_race_result.rank_bonus=!delete',
+         'agents.car_1.reward.reward.team_race_result.both_finish_bonus=!delete',
+         'agents.car_1.reward.reward.team_race_result.win_bonus=2.0'])
     # This one-value mock environment exercises reward timing, not MF6.1.
     scenario['environment']['vehicle_params'] = {}
     scenario['environment'].pop('friction', None)

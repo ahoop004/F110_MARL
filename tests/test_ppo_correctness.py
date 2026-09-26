@@ -196,7 +196,7 @@ def test_circle_stability_scenario_preserves_physics_and_rewards_slow_progress()
     assert stable["experiment"]["total_steps"] is None
     assert stable["agents"]["car_0"]["action_constraints"] == baseline["agents"]["car_0"]["action_constraints"]
     dirs = [Path("scenarios"), Path("scenarios/experiments")]
-    assert (dirs[0] / baseline["agents"]["car_0"]["observation"]).resolve() == (dirs[1] / stable["agents"]["car_0"]["observation"]).resolve()
+    assert baseline["agents"]["car_0"]["observation"] == stable["agents"]["car_0"]["observation"]
     rewards = [build_reward_composer(s["agents"]["car_0"], directory)
                for s, directory in zip((baseline, stable), dirs)]
     # A 0.25 m/s forward decision on a ~350 m circle becomes worth exploring.
@@ -1098,7 +1098,7 @@ def test_paper_budget_cut_bootstraps_without_marking_environment_terminal():
 
 def test_paper_configuration_declares_transition_budget_and_continuous_task():
     from core.scenario import load_and_expand_scenario, validate_scenario
-    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain_hpc.yaml')
+    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml', overrides=['experiment.num_envs=400', 'experiment.num_workers=100'])
     validate_scenario(scenario)
     assert scenario['experiment']['total_steps'] == 120000000
     assert scenario['experiment']['num_envs'] == 400
@@ -1113,8 +1113,10 @@ def test_evaluation_can_enforce_downstream_track_limits(safety, monkeypatch):
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
     from core.setup import create_training_setup
-    filename = 'ppo_lap_completion_validate.yaml' if safety else 'ppo_lap_completion_pretrain.yaml'
-    scenario = load_and_expand_scenario(str(Path('scenarios') / filename))
+    scenario = load_and_expand_scenario('scenarios/ppo_lap_completion_pretrain.yaml', overrides=[
+        f'evaluation.terminate_on_track_limit={str(safety).lower()}',
+        f'evaluation.terminate_on_collision={str(safety).lower()}',
+    ])
     env, _, _ = create_training_setup(scenario, mode='eval', scenario_dir=Path('scenarios'))
     try:
         env.reset(seed=42)

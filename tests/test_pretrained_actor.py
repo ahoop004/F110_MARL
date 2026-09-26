@@ -14,16 +14,98 @@ ACTION_LOW = np.array([-0.4, -5.0], dtype=np.float32)
 ACTION_HIGH = np.array([0.4, 20.0], dtype=np.float32)
 
 
-@pytest.mark.parametrize("scenario_name", [
-    "mappo_2v2_completion",
-    "mappo_2v2_asymmetric",
-    "mappo_2v2_combined",
-    "mappo_2v2_base_scratch",
-    "mappo_2v2_base_pretrained",
-    "mappo_2v2_penalties_scratch",
-    "mappo_2v2_penalties_pretrained",
-])
-def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario_name):
+@pytest.mark.parametrize('scenario_name,scenario_path,overrides', [('mappo_2v2_completion',
+  'scenarios/mappo_2v2_race.yaml',
+  ['wandb.group="mappo-2v2-completion"',
+   'wandb.notes="MAPPO uses 176 inputs: the PPO 158-input LiDAR/driving prefix plus three '
+   'simulator-provided neighbor slots with teammate flags. Transfer preserves the PPO actor with '
+   'zero new input columns. Critic and optimizer start fresh. Both fixed racing MPC opponents '
+   'retain the 3.5 m/s rolling-speed cap."',
+   'experiment.name="mappo_2v2_completion"',
+   'evaluation.selection_strategy="team_completion"',
+   'agents.car_0.reward.task.name="race_team_completion"',
+   'agents.car_0.reward.task.description="Lap-normalized progress, clean finish bonus, and time '
+   'cost in seconds."',
+   'agents.car_0.reward.reward.team_race_result=!delete',
+   'agents.car_1.reward.task.name="race_team_completion"',
+   'agents.car_1.reward.task.description="Lap-normalized progress, clean finish bonus, and time '
+   'cost in seconds."',
+   'agents.car_1.reward.reward.team_race_result=!delete']),
+ ('mappo_2v2_asymmetric', 'scenarios/mappo_2v2_asymmetric.yaml', []),
+ ('mappo_2v2_combined', 'scenarios/mappo_2v2_race.yaml', []),
+ ('mappo_2v2_base_scratch', 'scenarios/mappo_2v2_continuous.yaml', []),
+ ('mappo_2v2_base_pretrained',
+  'scenarios/mappo_2v2_continuous.yaml',
+  ['training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"',
+   'experiment.name="mappo_2v2_base_pretrained"']),
+ ('mappo_2v2_penalties_scratch',
+  'scenarios/mappo_2v2_race.yaml',
+  ['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+   'training_defaults.batch_size=2048',
+   'training_defaults.rollout_steps_per_env=256',
+   'training_defaults.checkpoint_every_steps=1024000',
+   'wandb.group="mappo-2v2-penalties-current-physics"',
+   'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+   'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+   'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks '
+   'successful ties."',
+   'experiment.name="mappo_2v2_penalties_scratch"',
+   'experiment.num_envs=400',
+   'experiment.num_workers=100',
+   'experiment.worker_startup_batch_size=8',
+   'experiment.worker_startup_timeout_s=600',
+   'experiment.worker_response_timeout_s=120',
+   'experiment.terminal_recent_episodes=100',
+   'experiment.terminal_every_updates=10',
+   'experiment.terminal_diagnostic_every_updates=100',
+   'experiment.terminal_episode_detail=false',
+   'evaluation.selection_strategy="team_combined_penalties"',
+   'evaluation.every_steps=1024000',
+   'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_0.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_0.reward.reward.collision.enabled=false',
+   'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+   'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_1.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_1.reward.reward.collision.enabled=false',
+   'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}']),
+ ('mappo_2v2_penalties_pretrained',
+  'scenarios/mappo_2v2_race.yaml',
+  ['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+   'training_defaults.batch_size=2048',
+   'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"',
+   'training_defaults.rollout_steps_per_env=256',
+   'training_defaults.checkpoint_every_steps=1024000',
+   'wandb.group="mappo-2v2-penalties-current-physics"',
+   'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+   'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+   'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks '
+   'successful ties."',
+   'experiment.name="mappo_2v2_penalties_pretrained"',
+   'experiment.num_envs=400',
+   'experiment.num_workers=100',
+   'experiment.worker_startup_batch_size=8',
+   'experiment.worker_startup_timeout_s=600',
+   'experiment.worker_response_timeout_s=120',
+   'experiment.terminal_recent_episodes=100',
+   'experiment.terminal_every_updates=10',
+   'experiment.terminal_diagnostic_every_updates=100',
+   'experiment.terminal_episode_detail=false',
+   'evaluation.selection_strategy="team_combined_penalties"',
+   'evaluation.every_steps=1024000',
+   'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_0.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_0.reward.reward.collision.enabled=false',
+   'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+   'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_1.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_1.reward.reward.collision.enabled=false',
+   'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])])
+def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario_name, scenario_path, overrides):
     from pathlib import Path
     from core.agent_builder import get_trainable_agent_ids
     from core.scenario import load_and_expand_scenario, resolve_mappo_config
@@ -31,7 +113,7 @@ def test_mf61_2v2_scenario_shares_lidar_actor_and_keeps_roles(tmp_path, scenario
     from run import build_obs_composers, resolve_training_params
     from wrappers.actions.composer import ActionComposer
 
-    scenario = load_and_expand_scenario(f"scenarios/{scenario_name}.yaml")
+    scenario = load_and_expand_scenario(scenario_path, overrides=overrides)
     from core.provenance import physics_contract
     pretraining = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
     assert physics_contract(pretraining['environment']) == physics_contract(scenario['environment'])

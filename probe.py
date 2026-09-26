@@ -5,8 +5,8 @@ Discovers all valid map bundles, creates one env per map, runs N episodes each,
 and prints a per-map summary: avg steps, collision rate, timeout rate.
 
 Usage:
-    python3 probe.py --scenario scenarios/calibration/pure_pursuit_3lap.yaml
-    python3 probe.py --scenario scenarios/render/racing_mpc_2v2.yaml --episodes 20 --render
+    python3 probe.py --scenario scenarios/calibration/controller.yaml
+    python3 probe.py --scenario scenarios/render/racing_mpc.yaml --episodes 20 --render
 """
 
 from __future__ import annotations

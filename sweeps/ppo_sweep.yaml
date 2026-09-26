@@ -1,3 +1,4 @@
+# One scenario; the set parameter is a YAML/JSON list of coordinated KEY=YAML choices.
 program: run.py
 method: grid
 project: marl-f110
@@ -5,15 +6,23 @@ entity: ahoop004-old-dominion-university
 name: PPO_opponent_seeds
 parameters:
   scenario:
-    values:
-      - scenarios/legacy/ppo_vs_pure_pursuit.yaml
-      - scenarios/legacy/ppo_vs_stanley.yaml
-      - scenarios/legacy/ppo_vs_hybrid_pp_ftg.yaml
+    value: scenarios/legacy/ppo_racing.yaml
   seed:
-    values: [42, 23452, 8675309, 32456]
+    values:
+    - 42
+    - 23452
+    - 8675309
+    - 32456
+  set:
+    values:
+    - '[]'
+    - '["wandb.job_type=\"ppo_vs_stanley\"","wandb.tags=[\"ppo\",\"racing\",\"stanley\",\"head_to_head\"]","wandb.notes=\"PPO
+      1v1 racing against fixed Stanley on line2\"","experiment.name=\"ppo_vs_stanley\"","agents.car_1.algorithm=\"stanley\"","agents.car_1.params.lookahead=!delete","agents.car_1.params.wheelbase=!delete","agents.car_1.params.k=1.0","agents.car_1.params.k_s=0.5"]'
+    - '["wandb.job_type=\"ppo_vs_hybrid_pp_ftg\"","wandb.tags=[\"ppo\",\"racing\",\"hybrid_pp_ftg\",\"head_to_head\"]","wandb.notes=\"PPO
+      1v1 racing against fixed Hybrid PP+FTG on line2\"","experiment.name=\"ppo_vs_hybrid_pp_ftg\"","agents.car_1.algorithm=\"hybrid_pp_ftg\"","agents.car_1.params.blend_distance=3.0","agents.car_1.params.full_ftg_distance=1.5","agents.car_1.params.ftg={\"max_distance\":10.0,\"window_size\":4,\"bubble_radius\":2.5,\"max_steer\":0.42,\"min_speed\":0.5,\"max_speed\":3.0,\"steering_gain\":0.3,\"fov\":4.71238898,\"normalized\":false,\"steer_smooth\":0.5,\"mode\":\"lidar\",\"gap_min_range\":0.5,\"target_mode\":\"center\",\"wall_avoid_kick\":0.02,\"use_disparity_extender\":true,\"disparity_threshold\":0.35,\"vehicle_width\":0.225,\"safety_margin\":0.1}"]'
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --wandb
-  - ${args}
+- ${env}
+- python3
+- ${program}
+- --wandb
+- ${args}

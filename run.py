@@ -18,7 +18,7 @@ SRC_DIR = ROOT_DIR / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario
+from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario, apply_parameter_overrides
 from core.setup import (
     build_obs_composer, build_obs_composers,
     build_reward_composer, build_reward_composers,
@@ -44,6 +44,9 @@ from training.hooks import (
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="F110 RL training")
     p.add_argument("--scenario", required=True, help="Path to scenario YAML file")
+    p.add_argument("--set", dest="parameter_overrides", action="append", default=[], metavar="KEY=YAML",
+                   help="Repeatable scenario parameter override, e.g. training_defaults.lora={mode: shared, rank: 4}; "
+                        "use !delete to remove an optional key. Dedicated CLI flags take precedence.")
     p.add_argument("--wandb", action="store_true")
     p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--render", action="store_true")
@@ -98,6 +101,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
+    if getattr(args, "parameter_overrides", None):
+        scenario = apply_parameter_overrides(scenario, args.parameter_overrides)
     if args.seed is not None:
         scenario.setdefault("experiment", {})["seed"] = args.seed
     if args.episodes is not None:

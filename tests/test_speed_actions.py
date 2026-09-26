@@ -83,7 +83,7 @@ def test_frenet_environment_observes_applied_reference_rate(mode, repeat):
     scenario["environment"]["action_repeat"] = repeat
     cfg = scenario["agents"]["car_0"]
     dt = scenario['environment']['timestep'] * repeat
-    observations = ObservationComposer.from_file(str(path.parent / cfg["observation"]), scenario["environment"])
+    observations = ObservationComposer.from_config(cfg["observation"], scenario["environment"])
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     space = env.action_spaces['car_0']
     actions = ActionComposer.from_config(space.low, space.high, cfg["action_constraints"], decision_dt=dt)

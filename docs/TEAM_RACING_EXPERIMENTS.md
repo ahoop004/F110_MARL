@@ -1,5 +1,8 @@
 # 2v2 experiment sequence: base, penalties, then LoRA
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 Run the base scratch/pretrained comparison first, then the penalty pair, then
 shared and per-teammate LoRA comparisons. All four current arms use
 the same 176-input LiDAR/driving/traffic observation, vehicle physics, MPC opponents, seed, and 400
@@ -14,10 +17,10 @@ steps and evaluates at 20 laps. The penalty pair retains the finite three-lap,
 
 | Stage | Scenario | Initialization | Objective |
 |---|---|---|---|
-| 1 | `scenarios/mappo_2v2_base_scratch.yaml` | Random actor and critic | Signed metre progress; exclusive collision cost |
-| 1 | `scenarios/mappo_2v2_base_pretrained.yaml` | PPO actor; random critic | Signed metre progress; exclusive collision cost |
-| 2 | `scenarios/mappo_2v2_penalties_scratch.yaml` | Random actor and critic | Completion, placement, incident penalties |
-| 2 | `scenarios/mappo_2v2_penalties_pretrained.yaml` | PPO actor; random critic | Completion, placement, incident penalties |
+| 1 | `scenarios/mappo_2v2_continuous.yaml` | Random actor and critic | Signed metre progress; exclusive collision cost |
+| 1 | `scenarios/mappo_2v2_continuous.yaml` | PPO actor; random critic | Signed metre progress; exclusive collision cost |
+| 2 | `scenarios/mappo_2v2_race.yaml` | Random actor and critic | Completion, placement, incident penalties |
+| 2 | `scenarios/mappo_2v2_race.yaml` | PPO actor; random critic | Completion, placement, incident penalties |
 | 3 | Shared/per-agent LoRA, plus shared rank-8 control | Frozen PPO actor; trainable adapters and fresh critic | Matched base and penalty tasks |
 
 The base task uses `race_team_continuous_progress.yaml`: signed metre progress
@@ -28,7 +31,7 @@ progress clipping, completion bonus, time cost, or timeout penalty. Training
 resets when both learners crash; a surviving learner keeps driving. Lap count
 does not end training, and there is no artificial training time limit.
 
-The base pair inherits `configs/scenarios/mappo_2v2_continuous_base.yaml`. Its
+The base pair uses the same standalone `scenarios/mappo_2v2_continuous.yaml` file. Its
 20-lap evaluation restores lap-based finishing with a 120,000-step safety cap
 (6,000 simulated seconds) and `team_completion` selection. The larger cap allows
 more time than the former three-lap races. Selection still uses eight starts;
@@ -47,7 +50,7 @@ PYGLET_HEADLESS=true venv/bin/python run.py \
   --output-dir outputs/ppo_current_pretrain_s42
 ```
 
-Both pretrained arms default to `outputs/L_map_pretrain/L_map_best_model.pt`.
+The commented pretrained choices select `outputs/L_map_pretrain/L_map_best_model.pt`.
 They fail if this file is missing. For a different run, pass
 `--pretrained-actor outputs/YOUR_RUN/best_model.pt`. Validate the source using
 the [pretraining workflow](PPO_TO_MAPPO_PRETRAINING.md#select-and-validate-a-model)
@@ -58,20 +61,69 @@ different updates of a still-running source job.
 ```bash
 # Stage 1: continuous metre-progress driving.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_base_scratch.yaml
+  --scenario scenarios/mappo_2v2_continuous.yaml
 
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_base_pretrained.yaml
+  --scenario scenarios/mappo_2v2_continuous.yaml --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' --set 'experiment.name="mappo_2v2_base_pretrained"'
 
 # Stage 2: placement and incident penalties.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_penalties_scratch.yaml
+  --scenario scenarios/mappo_2v2_race.yaml \
+  --set 'training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"' \
+  --set training_defaults.batch_size=2048 \
+  --set training_defaults.rollout_steps_per_env=256 \
+  --set training_defaults.checkpoint_every_steps=1024000 \
+  --set 'experiment.name="mappo_2v2_penalties_scratch"' \
+  --set experiment.num_envs=400 \
+  --set experiment.num_workers=100 \
+  --set experiment.worker_startup_batch_size=8 \
+  --set experiment.worker_startup_timeout_s=600 \
+  --set experiment.worker_response_timeout_s=120 \
+  --set experiment.terminal_recent_episodes=100 \
+  --set experiment.terminal_every_updates=10 \
+  --set experiment.terminal_diagnostic_every_updates=100 \
+  --set experiment.terminal_episode_detail=false \
+  --set 'evaluation.selection_strategy="team_combined_penalties"' \
+  --set evaluation.every_steps=1024000 \
+  --set 'agents.car_0.reward.task.name="race_team_2v2_penalties"' \
+  --set 'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal race penalties."' \
+  --set agents.car_0.reward.reward.collision.enabled=false \
+  --set 'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}' \
+  --set 'agents.car_1.reward.task.name="race_team_2v2_penalties"' \
+  --set 'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal race penalties."' \
+  --set agents.car_1.reward.reward.collision.enabled=false \
+  --set 'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'
 
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_penalties_pretrained.yaml
+  --scenario scenarios/mappo_2v2_race.yaml \
+  --set 'training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"' \
+  --set training_defaults.batch_size=2048 \
+  --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' \
+  --set training_defaults.rollout_steps_per_env=256 \
+  --set training_defaults.checkpoint_every_steps=1024000 \
+  --set 'experiment.name="mappo_2v2_penalties_pretrained"' \
+  --set experiment.num_envs=400 \
+  --set experiment.num_workers=100 \
+  --set experiment.worker_startup_batch_size=8 \
+  --set experiment.worker_startup_timeout_s=600 \
+  --set experiment.worker_response_timeout_s=120 \
+  --set experiment.terminal_recent_episodes=100 \
+  --set experiment.terminal_every_updates=10 \
+  --set experiment.terminal_diagnostic_every_updates=100 \
+  --set experiment.terminal_episode_detail=false \
+  --set 'evaluation.selection_strategy="team_combined_penalties"' \
+  --set evaluation.every_steps=1024000 \
+  --set 'agents.car_0.reward.task.name="race_team_2v2_penalties"' \
+  --set 'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal race penalties."' \
+  --set agents.car_0.reward.reward.collision.enabled=false \
+  --set 'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}' \
+  --set 'agents.car_1.reward.task.name="race_team_2v2_penalties"' \
+  --set 'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal race penalties."' \
+  --set agents.car_1.reward.reward.collision.enabled=false \
+  --set 'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'
 ```
 
-These scenarios inherit the current shared vehicle profile and fixed track
+These scenarios contain the current vehicle profile and fixed track
 observation scaling. PPO and MAPPO share 108 normalized LiDAR ranges followed
 by 50 driving inputs. MAPPO appends three six-value neighbor slots:
 `[delta_s/20, delta_d/5, delta_vs/20, delta_vd/10, present, is_teammate]`.

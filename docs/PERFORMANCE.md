@@ -1,5 +1,8 @@
 # Performance Benchmarking
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 Use the fixed-work MAPPO benchmark before and after optimization changes. It
 runs each repetition in a fresh process with one scenario, map, deterministic
 spawn plan, seed, device, and deterministic shared-policy action sequence.
@@ -16,13 +19,15 @@ PYGLET_HEADLESS=true python3 scripts/benchmark_complete4.py \
   --output /tmp/f110_complete4_benchmark.json
 ```
 
-Run the same command for these scenario arms:
+Use the same scenario and select the observation arm explicitly:
 
 ```text
-scenarios/legacy/complete_4.yaml
-scenarios/legacy/complete_4_frenet.yaml
-scenarios/legacy/complete_4_frenet_neighbors.yaml
+--observation baseline
+--observation frenet
+--observation frenet_neighbors
 ```
+
+The selected arm is recorded in the benchmark result.
 
 On a CUDA host, use `--device cuda`. The benchmark synchronizes CUDA around
 each measured stage and reports peak allocated CUDA bytes. This synchronization

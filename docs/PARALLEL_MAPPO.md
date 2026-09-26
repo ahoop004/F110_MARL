@@ -1,5 +1,8 @@
 # Parallel MAPPO on the HPC
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 The matched `mappo_2v2_base_{scratch,pretrained}.yaml` and
 `mappo_2v2_penalties_{scratch,pretrained}.yaml` pairs default to 400 independent races
 across 100 spawned CPU workers. Each race has two trainable teammates and two
@@ -38,7 +41,7 @@ Activate the project's Python environment and run from the repository root,
 inside the existing Slurm GPU allocation. Do not launch one trainer per CPU.
 
 ```bash
-python run.py --scenario scenarios/mappo_2v2_base_scratch.yaml \
+python run.py --scenario scenarios/mappo_2v2_continuous.yaml \
   --no-render --run-id mappo_400_base_scratch_s42
 ```
 
@@ -46,7 +49,7 @@ For PPO actor transfer, use the matching pretrained scenario and supply the
 checkpoint location on the HPC:
 
 ```bash
-python run.py --scenario scenarios/mappo_2v2_base_pretrained.yaml \
+python run.py --scenario scenarios/mappo_2v2_continuous.yaml --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' --set 'experiment.name="mappo_2v2_base_pretrained"' \
   --pretrained-actor /path/to/ppo/best_model.pt \
   --no-render --run-id mappo_400_base_pretrained_s42
 ```
@@ -65,11 +68,11 @@ environments with a short aggregate step budget. These commands test collection
 and shutdown without changing the continuous race termination rules.
 
 ```bash
-python run.py --scenario scenarios/mappo_2v2_base_scratch.yaml \
+python run.py --scenario scenarios/mappo_2v2_continuous.yaml \
   --num-envs 4 --num-workers 2 --total-steps 256 \
   --no-wandb --no-render --run-id mappo_parallel_smoke
 
-python run.py --scenario scenarios/mappo_2v2_base_scratch.yaml \
+python run.py --scenario scenarios/mappo_2v2_continuous.yaml \
   --total-steps 204800 --no-wandb --no-render \
   --run-id mappo_400_smoke
 ```

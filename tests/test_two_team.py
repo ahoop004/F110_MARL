@@ -28,7 +28,7 @@ def test_selfplay_matches_continuous_step_budget_and_cli_can_override(monkeypatc
     import run
 
     scenario = serial_selfplay_scenario()
-    continuous = load_and_expand_scenario("scenarios/mappo_2v2_base_scratch.yaml")
+    continuous = load_and_expand_scenario("scenarios/mappo_2v2_continuous.yaml")
     assert scenario["experiment"]["total_steps"] == continuous["experiment"]["total_steps"] == 120_000_000
     assert scenario["evaluation"]["every_steps"] == continuous["evaluation"]["every_steps"] == 1_024_000
     assert scenario["training_defaults"]["checkpoint_every_steps"] == 1_024_000

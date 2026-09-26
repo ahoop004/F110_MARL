@@ -26,8 +26,9 @@ def test_continuous_reward_matches_ppo_metres_with_exclusive_collision_cost():
 
 
 def test_base_pair_is_matched_and_penalty_task_keeps_finite_races():
-    scratch = load_and_expand_scenario("scenarios/mappo_2v2_base_scratch.yaml")
-    pretrained = load_and_expand_scenario("scenarios/mappo_2v2_base_pretrained.yaml")
+    scratch = load_and_expand_scenario("scenarios/mappo_2v2_continuous.yaml")
+    pretrained = load_and_expand_scenario("scenarios/mappo_2v2_continuous.yaml", overrides=['training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"',
+         'experiment.name="mappo_2v2_base_pretrained"'])
     for s in (scratch, pretrained):
         assert s["experiment"]["total_steps"] == 120000000
         assert s["experiment"]["num_envs"] == 400
@@ -36,18 +37,48 @@ def test_base_pair_is_matched_and_penalty_task_keeps_finite_races():
             "mode": "all_trainable", "lap_completion": False}
         assert s["evaluation"]["target_laps"] == 20
         assert s["evaluation"]["max_steps"] == 120000
-        assert s["agents"]["car_0"]["reward"].endswith("race_team_continuous_progress.yaml")
+        assert s["agents"]["car_0"]["reward"]["task"]["name"] == "race_team_continuous_progress"
         s["experiment"].pop("name")
         s["training_defaults"].pop("pretrained_actor_checkpoint")
     assert scratch == pretrained
-    penalties = load_and_expand_scenario("scenarios/mappo_2v2_penalties_scratch.yaml")
+    penalties = load_and_expand_scenario("scenarios/mappo_2v2_race.yaml", overrides=['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+         'training_defaults.batch_size=2048',
+         'training_defaults.rollout_steps_per_env=256',
+         'training_defaults.checkpoint_every_steps=1024000',
+         'wandb.group="mappo-2v2-penalties-current-physics"',
+         'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+         'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+         'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful '
+         'ties."',
+         'experiment.name="mappo_2v2_penalties_scratch"',
+         'experiment.num_envs=400',
+         'experiment.num_workers=100',
+         'experiment.worker_startup_batch_size=8',
+         'experiment.worker_startup_timeout_s=600',
+         'experiment.worker_response_timeout_s=120',
+         'experiment.terminal_recent_episodes=100',
+         'experiment.terminal_every_updates=10',
+         'experiment.terminal_diagnostic_every_updates=100',
+         'experiment.terminal_episode_detail=false',
+         'evaluation.selection_strategy="team_combined_penalties"',
+         'evaluation.every_steps=1024000',
+         'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_0.reward.reward.collision.enabled=false',
+         'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+         'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_1.reward.reward.collision.enabled=false',
+         'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])
     assert penalties["experiment"].get("total_steps") is None
     assert penalties["environment"]["target_laps"] == 3
     assert penalties["environment"]["max_steps"] == 16000
 
 
 def test_evaluation_restores_lap_termination_for_continuous_team_training():
-    scenario = load_and_expand_scenario("scenarios/mappo_2v2_base_scratch.yaml")
+    scenario = load_and_expand_scenario("scenarios/mappo_2v2_continuous.yaml")
     # Make the override observable independently of the training metadata.
     scenario["environment"]["target_laps"] = 3
     before = deepcopy(scenario)
@@ -72,7 +103,7 @@ def test_cli_step_budget_override_and_validation():
     from types import SimpleNamespace
     from run import apply_cli_overrides
     from core.scenario import ScenarioError
-    scenario = load_and_expand_scenario("scenarios/mappo_2v2_base_scratch.yaml")
+    scenario = load_and_expand_scenario("scenarios/mappo_2v2_continuous.yaml")
     args = SimpleNamespace(seed=None, episodes=None, total_steps=17, wandb=False,
         no_wandb=False, render=False, no_render=False, num_envs=3, num_workers=2)
     apply_cli_overrides(scenario, args)

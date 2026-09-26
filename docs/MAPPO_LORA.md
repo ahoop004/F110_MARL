@@ -1,23 +1,26 @@
 # MAPPO LoRA experiments
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 LoRA adapts a frozen LiDAR-enabled PPO driving actor with small trainable
 residuals. The actor observation stays `[108 LiDAR, 50 driving]`; rewards,
-termination, collection, and evaluation are inherited from the corresponding
-pretrained base or penalty scenario. The centralized critic starts fresh and
+termination, collection, and evaluation stay with the chosen continuous or
+finite-race parameter configuration. The centralized critic starts fresh and
 trains normally.
 
 ## Experiment matrix
 
 Each task has the existing scratch and full-fine-tuning controls plus:
 
-| Scenario suffix | Adapter routing | Rank | Trainable actor parameters |
+| Parameter choice | Adapter routing | Rank | Trainable actor parameters |
 |---|---|---|---:|
 | `lora_shared` | One adapter used by both teammates | 4 | 3,706 |
 | `lora_per_agent` | One adapter for each teammate | 4 each | 7,410 |
 | `lora_shared_r8` | One shared adapter; total-capacity control | 8 | 7,410 |
 
-Use either `scenarios/mappo_2v2_base_<suffix>.yaml` or
-`scenarios/mappo_2v2_penalties_<suffix>.yaml`. Counts include the two shared
+Use `scenarios/mappo_2v2_continuous.yaml` or the penalty recipe in
+`scenarios/mappo_2v2_race.yaml`, and set `training_defaults.lora` inline or with `--set`. Counts include the two shared
 trainable `log_std` parameters and exclude the critic. The original
 158→256→256→2 actor has 107,012 parameters.
 
@@ -52,22 +55,22 @@ policies; attacker/defender objectives or dynamic role switching are not enabled
 ## Run
 
 First train a compatible 158-input PPO source. Older 50-input PPO checkpoints
-cannot initialize these scenarios. The inherited default source is
+cannot initialize these configurations. The commented pretrained recipes use
 `outputs/L_map_pretrain/L_map_best_model.pt`; a missing source fails explicitly.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_base_lora_shared.yaml \
+  --scenario scenarios/mappo_2v2_continuous.yaml --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' --set 'training_defaults.lora={"mode":"shared","rank":4,"alpha":4.0,"train_log_std":true}' --set 'experiment.name="mappo_2v2_base_lora_shared"' \
   --pretrained-actor outputs/YOUR_PPO_RUN/best_model.pt \
   --output-dir outputs/base_lora_shared_s42
 
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_base_lora_per_agent.yaml \
+  --scenario scenarios/mappo_2v2_continuous.yaml --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' --set 'training_defaults.lora={"mode":"per_agent","rank":4,"alpha":4.0,"train_log_std":true}' --set 'experiment.name="mappo_2v2_base_lora_per_agent"' \
   --pretrained-actor outputs/YOUR_PPO_RUN/best_model.pt \
   --output-dir outputs/base_lora_per_agent_s42
 
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_base_lora_shared.yaml \
+  --scenario scenarios/mappo_2v2_continuous.yaml --set 'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"' --set 'training_defaults.lora={"mode":"shared","rank":4,"alpha":4.0,"train_log_std":true}' --set 'experiment.name="mappo_2v2_base_lora_shared"' \
   --eval --checkpoint outputs/base_lora_shared_s42/best_model.pt \
   --eval-protocol final --output-dir outputs/base_lora_shared_eval
 ```

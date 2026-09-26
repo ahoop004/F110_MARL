@@ -1,48 +1,24 @@
 # Render the MPC controllers
 
-Run these commands from the repository root in a graphical desktop session
-(local desktop or the HPC remote desktop). They open a window; an ordinary
-headless SSH/Jupyter terminal cannot display it. `env -u PYGLET_HEADLESS` removes
-the headless setting used in training commands.
-
-| Scenario | Cars | Duration |
-|---|---|---|
-| `racing_mpc_solo.yaml` | One blue MPC car | Three laps per map |
-| `racing_mpc_2v2.yaml` | Blue/cyan MPC team vs orange/red hybrid PP+FTG team | Three laps per car; joint episode ends when all cars terminate |
-| `racing_mpc_passing.yaml` | Blue MPC starts about 3 m behind an orange hybrid capped at 1.2 m/s | 60 simulated seconds per map |
+Use the standalone [racing_mpc.yaml](racing_mpc.yaml) file from a graphical desktop:
 
 ```bash
-env -u PYGLET_HEADLESS venv/bin/python run.py \
-  --scenario scenarios/render/racing_mpc_solo.yaml --render
-
-env -u PYGLET_HEADLESS venv/bin/python run.py \
-  --scenario scenarios/render/racing_mpc_2v2.yaml --render
-
-env -u PYGLET_HEADLESS venv/bin/python run.py \
-  --scenario scenarios/render/racing_mpc_passing.yaml --render
+env -u PYGLET_HEADLESS python3 run.py --scenario scenarios/render/racing_mpc.yaml --render
 ```
 
-Each scenario defaults to two episodes: **circle first, Budapest second**.
-Use `--episodes 1` for circle only, or edit all three `map_bundles*` lists in
-`configs/scenarios/racing_mpc_render_base.yaml` to choose different maps.
-Use `--max-steps 400` for a shorter, 20-second simulated preview and `--seed 10042`
-to change the named starting positions in solo/2v2. The passing demo uses a
-deterministic centerline-relative spawn on each map instead of named starts;
-it is a visual example, not the exact benchmark passing spawn.
+The active configuration runs one MPC car for three laps, first on circle and
+then Budapest. The commented `racing_mpc_2v2` and `racing_mpc_passing` recipes in
+that file add the other cars, team assignments, colors and spawn settings.
+Apply each recipe to the active solo configuration. The passing recipe uses a
+60-second horizon and a slower hybrid car ahead of the MPC.
 
-Scroll to zoom, drag to pan, and press **F** to toggle camera follow. **T** cycles
-telemetry; **1–4** select an agent's telemetry and **0** shows all agents.
-Stop a run with Ctrl+C in the terminal.
+All controller parameters, vehicle settings and map lists are inline. Edit the
+three `map_bundles*` lists together to change tracks. Use `--episodes 1` for one
+map, `--max-steps 400` for a 20-second preview, and `--seed 10042` for a different
+random start where random spawning is enabled. These fixed controllers need no
+checkpoint or evaluation flag.
 
-All vehicles use fixed controllers. No checkpoint, neural-network training, or
-`--eval` flag is needed. W&B is disabled. Nominal grip matches the initial
-controller checks. Collision termination remains enabled; cars that crash stay
-as obstacles, while finishers coast briefly and stop. A `TIMEOUT` is expected for
-the short passing demo, and a joint `COLLISION` can describe a hybrid crash even
-when both MPC cars finished. Per-agent outcomes are in the run's CSV outputs.
-
-The render base's MPC settings and the second MPC car's settings in the 2v2 file
-mirror `configs/controllers/racing_mpc.yaml`; keep these together when tuning.
-See [controller details and benchmark results](../../docs/RACING_MPC_OPPONENTS.md).
-These visual comparisons retain hybrid traffic; active MAPPO training scenarios
-use two MPC opponents.
+Scroll to zoom, drag to pan, **F** toggles follow, **T** cycles telemetry, and
+**1–4** select a car (**0** shows all). Ctrl+C stops the process. Collisions and
+finish clearance retain the selected scenario's physical behavior.
+See [MPC details](../../docs/RACING_MPC_OPPONENTS.md) for sensing and solver limits.

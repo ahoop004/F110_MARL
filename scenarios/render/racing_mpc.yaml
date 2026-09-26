@@ -1,0 +1,337 @@
+# Standalone workflow: render/racing_mpc.
+# All active settings are inline. No scenario or config includes are required.
+# Edit values below, or use: python3 run.py --scenario scenarios/render/racing_mpc.yaml --set key=value
+# Parameter overrides accept YAML scalars/lists/mappings; quote values containing spaces.
+# A mapping replaces that subtree; key=!delete removes an optional setting.
+# Dedicated flags (--seed, --num-envs, --episodes, etc.) take precedence over --set.
+# Agent params override training_defaults. Keep physics, actions and observation layout
+# matched to the checkpoint. The commented recipes at the end list coordinated choices.
+
+# Run identity, execution budget and CPU/GPU collection layout.
+experiment:
+  # Run/output name; use a distinct name for each parameter comparison.
+  name: render_racing_mpc_solo
+  # Episode budget. A non-null total_steps takes precedence; --episodes removes total_steps.
+  episodes: 2
+  # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
+  seed: 10043
+  # 1 for serial/local collection; e.g. 400 for HPC. PPO n_steps must divide evenly across envs.
+  num_envs: 1
+  # PyTorch threads in the parent learner; collector processes use one thread.
+  torch_threads: 1
+
+# Simulation, map selection, race lifecycle and sensing parameters.
+environment:
+  # Physics seconds per step; decision duration is timestep * action_repeat.
+  timestep: 0.05
+  # Number of LiDAR beams; affects policy input width when LiDAR is enabled.
+  lidar_beams: 108
+  # Maximum LiDAR range in metres.
+  lidar_range: 10.0
+  # true opens visualization; false is headless. --render/--no-render overrides this.
+  render: true
+  # Load centerline geometry from the selected map bundle.
+  centerline_autoload: true
+  # Load wall geometry from the selected map bundle.
+  walls_autoload: true
+  # Track lookahead geometry used by observations/controllers.
+  track_preview:
+    # Number of preview samples; changing this changes observation dimensions.
+    points: 20
+    # Distance in metres between track-preview samples.
+    spacing: 0.3
+  # Joint reset rule and whether a completed lap target ends a car's episode.
+  episode_termination:
+    # Options: any_agent, all_agents, all_trainable. Choose whether survivors keep driving.
+    mode: all_agents
+    # true enables lap finishing; false allows continuous driving.
+    lap_completion: true
+  # Behavior of cars after their terminal event; clearance affects collisions and sensing.
+  terminal_agents:
+    # Whether terminal cars remain physical obstacles before any configured removal.
+    remain_collidable: true
+    # Terminal crash behavior: stationary.
+    crashed_behavior: stationary
+    # Terminal finish behavior: coast_then_stop.
+    finished_behavior: coast_then_stop
+    # Physics steps allowed for finished-car clearance.
+    finish_clearance_steps: 40
+  # Physical model contract. Keep values matched for checkpoint transfer; synthetic values are uncalibrated.
+  vehicle_params:
+    # Options: legacy_st or combined_slip_st; the latter requires the complete MF6.1 and wheel-actuator blocks.
+    model: combined_slip_st
+    # Version of the physical state/action contract.
+    model_version: 2
+    tire_model: mf61_planar
+    tire_id: synthetic-mf61-planar-v2
+    drivetrain: shared_speed_awd
+    # Parameter provenance; synthetic coefficients are not a calibrated vehicle model.
+    calibration:
+      id: f1tenth-gym-chassis-mf61-v1
+      status: uncalibrated
+      source: 'Chassis, footprint and nominal mu from F1TENTH Gym defaults: https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+        MF6.1 effective-axle tire coefficients remain synthetic, not hardware fitted.'
+    # Vehicle mass in kilograms.
+    m: 3.74
+    # Yaw inertia in kg m².
+    I: 0.04712
+    # Centre-of-mass to front axle distance in metres.
+    lf: 0.15875
+    # Centre-of-mass to rear axle distance in metres.
+    lr: 0.17145
+    # Centre-of-mass height in metres.
+    h: 0.074
+    # Road friction coefficient.
+    mu: 1.0489
+    # Speed floor in m/s used to regularize tire slip calculations.
+    slip_speed_floor: 0.5
+    # Maximum internal integration substep in seconds.
+    max_integration_step: 0.001
+    # Vehicle body length in metres.
+    length: 0.58
+    # Vehicle body width in metres.
+    width: 0.31
+    # Steering and wheel reference limits/dynamics; these define the nonlinear action contract.
+    wheel_actuators:
+      version: 1
+      # Parameter provenance; synthetic coefficients are not a calibrated vehicle model.
+      calibration:
+        id: f1tenth-gym-steering-wheel-v1
+        status: uncalibrated
+        source: 'Steering angle/rate bounds from F1TENTH Gym defaults: https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+          Radius, time constants and wheel speed/rate bounds remain provisional.'
+      # Wheel radius in metres.
+      wheel_radius: 0.05
+      # First-order steering response time constant in seconds.
+      steering_time_constant: 0.5
+      # First-order wheel-speed response time constant in seconds.
+      wheel_speed_time_constant: 0.15
+      steering_min: -0.4189
+      steering_max: 0.4189
+      steering_rate_min: -3.2
+      steering_rate_max: 3.2
+      wheel_speed_min: -400.0
+      wheel_speed_max: 400.0
+      wheel_rate_min: -10000.0
+      wheel_rate_max: 10000.0
+    # Front-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
+    front_tire:
+      # Nominal axle normal load in newtons.
+      FNOMIN: 19.050265385
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0
+    # Rear-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
+    rear_tire:
+      # Nominal axle normal load in newtons.
+      FNOMIN: 17.639134615
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0
+  # Available map bundles under maps/. Choose matching training/evaluation lists below.
+  map_bundles:
+    - circle_map
+    - Budapest_map
+  # Training maps. Keep intended held-out maps out of this list.
+  map_bundles_train:
+    - circle_map
+    - Budapest_map
+  # Evaluation maps; disjointness is a protocol choice, not automatic.
+  map_bundles_eval:
+    - circle_map
+    - Budapest_map
+  # Map switching schedule; per_episode changes the map when the environment resets.
+  map_cycle: per_episode
+  # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.
+  map_pick: round_robin
+  # Physics steps per policy decision; use 1 with joint team-return contracts.
+  action_repeat: 1
+  # Enable centerline progress/state facts required by observations and rewards.
+  centerline_features: true
+  # Render centerline diagnostic overlays when visualization is enabled.
+  centerline_render: true
+  # Lap finish target; ignored as a termination trigger when lap_completion is false.
+  target_laps: 3
+  # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
+  max_steps: 16000
+  # Finish-line crossing rules; do not change when comparing lap metrics.
+  lap_counting:
+    # true rejects maps without valid finish-line metadata.
+    require_finish_line: true
+    # false requires a full lap after the initial finish-line crossing.
+    count_initial_crossing_as_lap: false
+  # Episode start randomization; fixed starts use enabled: false and explicit spawn settings.
+  random_spawn:
+    # true enables this component; false disables it.
+    enabled: true
+    # Whether multiple spawn selections may reuse available slots.
+    allow_reuse: false
+  # true terminates a colliding car; false leaves collision sensing active without that terminal.
+  terminate_on_collision: true
+  # Episode friction protocol; train randomization and evaluation friction are configured separately.
+  friction:
+    version: 1
+    scope: shared
+    train:
+      # Training: fixed, uniform, grid or gaussian. Evaluation: fixed or grid only; replace the whole phase mapping.
+      mode: fixed
+      # Road friction coefficient.
+      mu: 1.0489
+    eval:
+      # Training: fixed, uniform, grid or gaussian. Evaluation: fixed or grid only; replace the whole phase mapping.
+      mode: fixed
+      # Road friction coefficient.
+      mu: 1.0489
+  rendering:
+    vehicle_colors:
+      car_0: '#3288ff'
+
+# Per-car policy, inline observation/reward definitions and action processing.
+agents:
+  car_0:
+    # Trainable: ppo/mappo. Fixed: ftg, pure_pursuit, stanley, hybrid_pp_ftg, racing_mpc or another registered MPC controller.
+    algorithm: racing_mpc
+    # true creates a learner; false creates a fixed controller.
+    trainable: false
+    # rolling_speed_to_wheel_v1 adapts fixed-controller m/s commands for the nonlinear wheel model.
+    action_adapter: rolling_speed_to_wheel_v1
+    # Policy/controller parameters. Learner values here override training_defaults.
+    params:
+      # Fixed-controller target-speed cap in m/s, before the wheel adapter.
+      max_speed: 3.5
+      # Fixed-controller acceleration limit in m/s².
+      max_acceleration: 5.0
+      # MPC prediction horizon.
+      horizon: 30
+      # MPC control knots.
+      knots: 6
+      # MPC solver iteration budget.
+      iterations: 18
+      # MPC objective-evaluation budget.
+      max_evaluations: 260
+      # Obstacle/track safety margin in metres.
+      margin: 0.1
+      # Opponent sensing range in metres.
+      sensing_range: 10.0
+
+# Weights & Biases logging; --no-wandb disables it.
+wandb:
+  # true enables this component; false disables it.
+  enabled: false
+
+# environment.friction.train: {mode: fixed, mu: 1.0489}
+# environment.friction.train: {mode: uniform, low: 0.8, high: 1.2}
+# environment.friction.train: {mode: gaussian, relative_std: 0.02}
+# environment.friction.eval: {mode: grid, values: [0.8, 1.0, 1.2]}
+# Friction phases accept exactly the keys shown for the chosen mode.
+# Optional controls (uncomment at the indicated section, or use --set):
+# experiment.collector_scheduling: synchronous  # synchronous | ready; self-play retains its scheduler.
+# experiment.checkpoint: null  # PPO scratch; set a file/run directory for transfer or evaluation.
+# experiment.evaluation_only: false  # true requires --eval.
+
+# Parameter choice: racing_mpc_2v2
+# Apply these assignments together to reproduce the previous settings:
+# --set 'environment.rendering.vehicle_colors.car_1="#32c5ff"'
+# --set 'environment.rendering.vehicle_colors.car_2="#ff9d32"'
+# --set 'environment.rendering.vehicle_colors.car_3="#ef5350"'
+# --set 'environment.agent_teams={"car_0":"mpc_team","car_1":"mpc_team","car_2":"hybrid_team","car_3":"hybrid_team"}'
+# --set 'experiment.name="render_racing_mpc_2v2"'
+# --set 'agents.car_1={"algorithm":"racing_mpc","trainable":false,"action_adapter":"rolling_speed_to_wheel_v1","params":{"max_speed":3.5,"max_acceleration":5.0,"horizon":30,"knots":6,"iterations":18,"max_evaluations":260,"margin":0.1,"sensing_range":10.0}}'
+# --set 'agents.car_2={"algorithm":"hybrid_pp_ftg","trainable":false,"role":"opponent","params":{"lookahead":2.0,"min_speed":0.8,"max_speed":2.5,"max_steer":0.35,"wheelbase":0.3302,"curvature_slowdown_threshold":0.2,"speed_horizon":3.0,"blend_distance":2.0,"full_ftg_distance":0.75,"ftg":{"max_distance":10.0,"window_size":6,"bubble_radius":2.5,"max_steer":0.3,"min_speed":0.8,"max_speed":2.5,"steering_gain":0.2,"fov":4.71238898,"normalized":false,"steer_smooth":0.7,"mode":"lidar","gap_min_range":0.5,"target_mode":"center","wall_avoid_kick":0.01,"use_disparity_extender":true,"disparity_threshold":0.35,"vehicle_width":0.31,"safety_margin":0.1}},"action_adapter":"rolling_speed_to_wheel_v1"}'
+# --set 'agents.car_3={"algorithm":"hybrid_pp_ftg","trainable":false,"role":"opponent","params":{"lookahead":2.0,"min_speed":0.8,"max_speed":2.5,"max_steer":0.35,"wheelbase":0.3302,"curvature_slowdown_threshold":0.2,"speed_horizon":3.0,"blend_distance":2.0,"full_ftg_distance":0.75,"ftg":{"max_distance":10.0,"window_size":6,"bubble_radius":2.5,"max_steer":0.3,"min_speed":0.8,"max_speed":2.5,"steering_gain":0.2,"fov":4.71238898,"normalized":false,"steer_smooth":0.7,"mode":"lidar","gap_min_range":0.5,"target_mode":"center","wall_avoid_kick":0.01,"use_disparity_extender":true,"disparity_threshold":0.35,"vehicle_width":0.31,"safety_margin":0.1}},"action_adapter":"rolling_speed_to_wheel_v1"}'
+
+# Parameter choice: racing_mpc_passing
+# Apply these assignments together to reproduce the previous settings:
+# --set environment.max_steps=1200
+# --set environment.random_spawn.enabled=false
+# --set 'environment.rendering.vehicle_colors.car_1="#ff9d32"'
+# --set 'environment.agent_teams={"car_0":"mpc_team","car_1":"slower_car"}'
+# --set 'environment.spawn={"policy":"centerline_relative","centerline":{"mode":"round_robin","min_progress":0.1,"max_progress":0.11,"avoid_finish":false},"offsets":{"s_offset":-3.0,"d_offset":0.0},"target":{"enabled":true,"speed":0.0},"ego":{"speed":0.0}}'
+# --set 'experiment.name="render_racing_mpc_passing"'
+# --set 'agents.car_1={"algorithm":"hybrid_pp_ftg","trainable":false,"role":"opponent","params":{"lookahead":2.0,"min_speed":0.8,"max_speed":1.2,"max_steer":0.35,"wheelbase":0.3302,"curvature_slowdown_threshold":0.2,"speed_horizon":3.0,"blend_distance":2.0,"full_ftg_distance":0.75,"ftg":{"max_distance":10.0,"window_size":6,"bubble_radius":2.5,"max_steer":0.3,"min_speed":0.8,"max_speed":1.2,"steering_gain":0.2,"fov":4.71238898,"normalized":false,"steer_smooth":0.7,"mode":"lidar","gap_min_range":0.5,"target_mode":"center","wall_avoid_kick":0.01,"use_disparity_extender":true,"disparity_threshold":0.35,"vehicle_width":0.31,"safety_margin":0.1}},"action_adapter":"rolling_speed_to_wheel_v1"}'

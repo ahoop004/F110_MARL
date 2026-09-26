@@ -34,7 +34,7 @@ from agents.mappo import MAPPOAgent
 from core.agent_builder import get_trainable_agent_ids
 from core.map_selection import resolve_bundle_yaml
 from core.provenance import build_run_provenance
-from core.scenario import load_and_expand_scenario, resolve_mappo_config
+from core.scenario import load_and_expand_scenario, load_yaml_config, resolve_mappo_config
 from env.types import SpawnPlan, SpawnState
 from core.setup import (
     create_training_setup,
@@ -47,11 +47,12 @@ from training.marl_trainer import MARLTrainer
 from wrappers.actions.composer import ActionComposer
 
 
-SUPPORTED_SCENARIOS = (
-    "scenarios/legacy/complete_4.yaml",
-    "scenarios/legacy/complete_4_frenet.yaml",
-    "scenarios/legacy/complete_4_frenet_neighbors.yaml",
-)
+SUPPORTED_SCENARIOS = ("scenarios/legacy/complete_4.yaml",)
+OBSERVATION_ARMS = {
+    "baseline": None,
+    "frenet": "configs/observations/rl_racer_vehicle_track_frenet.yaml",
+    "frenet_neighbors": "configs/observations/rl_racer_vehicle_track_frenet_neighbors.yaml",
+}
 RESULT_PREFIX = "F110_BENCHMARK_JSON="
 
 
@@ -190,6 +191,11 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
     scenario_path = _scenario_path(args.scenario)
     setup_started = time.perf_counter()
     scenario = load_and_expand_scenario(str(scenario_path))
+    observation_arm = getattr(args, "observation", "baseline")
+    observation_path = OBSERVATION_ARMS[observation_arm]
+    if observation_path is not None:
+        for config in scenario["agents"].values():
+            config["observation"] = load_yaml_config(ROOT / observation_path)
     _configure_fixed_work(
         scenario,
         map_name=args.map,
@@ -353,6 +359,7 @@ def run_worker(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "repetition": args.repetition,
         "scenario": str(scenario_path.relative_to(ROOT)),
+        "observation": observation_arm,
         "map": args.map,
         "spawn_plan": {
             state.agent_id: state.spawn_id for state in spawn_plan.states
@@ -443,6 +450,8 @@ def _worker_command(args: argparse.Namespace, repetition: int, profile: str | No
         "--worker",
         "--scenario",
         args.scenario,
+        "--observation",
+        getattr(args, "observation", "baseline"),
         "--map",
         args.map,
         "--seed",
@@ -522,6 +531,7 @@ def run_coordinator(args: argparse.Namespace) -> Dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", default=SUPPORTED_SCENARIOS[0], choices=SUPPORTED_SCENARIOS)
+    parser.add_argument("--observation", choices=tuple(OBSERVATION_ARMS), default="baseline")
     parser.add_argument("--map", default="Budapest_map")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--physics-substeps", type=int, default=256)

@@ -51,7 +51,7 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
     from core.scenario import load_and_expand_scenario
     from utils.torch_io import safe_load
 
-    scenario = load_and_expand_scenario('scenarios/mappo_2v2_combined.yaml')
+    scenario = load_and_expand_scenario('scenarios/mappo_2v2_race.yaml')
     scenario['experiment'].update(episodes=1, torch_threads=1)
     scenario['environment'].update(max_steps=4, map_bundles_eval=['circle_map'])
     scenario['evaluation'].update(every_episodes=1, episodes=2, max_steps=4)
@@ -72,7 +72,7 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
         actor.save(str(checkpoint))
         extra_args = ['--pretrained-actor', str(checkpoint)]
     monkeypatch.setattr(run, 'load_and_expand_scenario', lambda *_args, **_kw: scenario)
-    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', 'scenarios/mappo_2v2_combined.yaml',
+    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', 'scenarios/mappo_2v2_race.yaml',
                                     '--no-wandb', '--quiet', '--output-dir', str(tmp_path), *extra_args])
     # Evaluation must not alter training RNG streams, actor weights, or mode.
     import random
@@ -114,10 +114,10 @@ def test_mappo_training_writes_evaluated_checkpoint(tmp_path, monkeypatch, pretr
     assert (tmp_path / 'final_model.pt').exists()
 
 
-@pytest.mark.parametrize('name', ['ppo_lap_completion_validate', 'mappo_2v2_validate'])
+@pytest.mark.parametrize('name', ['ppo_lap_completion_pretrain', 'mappo_2v2_race'])
 def test_validation_entry_points_cannot_train(name, monkeypatch):
     import sys
     import run
-    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', f'scenarios/{name}.yaml', '--quiet'])
+    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', f'scenarios/{name}.yaml', '--set', 'experiment.evaluation_only=true', '--quiet'])
     with pytest.raises(ValueError, match='evaluation-only'):
         run.main()

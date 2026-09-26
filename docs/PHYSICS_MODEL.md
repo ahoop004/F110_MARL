@@ -1,5 +1,8 @@
 # Planar MF6.1 physics and pretraining tests
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 The existing `combined_slip_st` implementation now uses `model_version: 2` and
 `tire_model: mf61_planar`. It replaces the former smooth friction-circle tire
 law in the same vehicle, simulator, and training interfaces. Version 1 of that
@@ -248,7 +251,7 @@ and normalization maxima, and unspecified PPO settings are still required for an
 exact reproduction. The L-map has the reported 17 m length and 1 m width but its
 corner geometry is an approximation, not the authors' original track.
 
-The migrated `mappo_2v2_completion.yaml` receives a compatible
+The migrated `mappo_2v2_race.yaml` receives a compatible
 158-value PPO actor directly: 108 normalized LiDAR ranges followed by 50
 vehicle/Frenet/track values. Explicit neighbor/team slots are no longer used.
 Older 50-input PPO and 68-input MAPPO checkpoints are incompatible.

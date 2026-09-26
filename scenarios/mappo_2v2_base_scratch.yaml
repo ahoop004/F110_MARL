@@ -1,7 +1,0 @@
-# Stage 1 control: continuous team driving, with random actor and critic.
-includes:
-  - ../configs/scenarios/mappo_2v2_continuous_base.yaml
-experiment:
-  name: mappo_2v2_base_scratch
-training_defaults:
-  pretrained_actor_checkpoint: null

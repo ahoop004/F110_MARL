@@ -16,7 +16,7 @@ from replay.race_reader import iter_race_frames, load_clips
 
 def small_scenario(algorithm):
     source = ('scenarios/ppo_lap_completion_pretrain.yaml' if algorithm == 'ppo'
-              else 'scenarios/mappo_2v2_combined.yaml')
+              else 'scenarios/mappo_2v2_race.yaml')
     scenario = load_and_expand_scenario(source)
     scenario['experiment'].update(num_envs=1, total_steps=4, seed=42, torch_threads=1)
     scenario['environment'].update(max_steps=5, action_repeat=2 if algorithm == 'ppo' else 1,

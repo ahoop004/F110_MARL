@@ -65,8 +65,8 @@ def test_pretraining_yaw_rate_and_vehicle_contract_in_environment(mode):
     scenario = load_and_expand_scenario(str(path))
     assert "vehicle_params" not in scenario
     scenario["environment"]["max_steps"] = 32
-    composer = ObservationComposer.from_file(
-        str(path.parent / scenario["agents"]["car_0"]["observation"]), scenario["environment"])
+    composer = ObservationComposer.from_config(
+        scenario["agents"]["car_0"]["observation"], scenario["environment"])
     assert composer.obs_dim == 158
     env, _, _ = create_training_setup(scenario, mode=mode, scenario_dir=path.parent)
     try:
@@ -346,21 +346,35 @@ def test_latest_speed_reference_rate_survives_repeated_physics_actions() -> None
 
 
 def test_complete_4_frenet_scenario_is_opt_in() -> None:
-    scenario = load_and_expand_scenario("scenarios/legacy/complete_4_frenet.yaml")
+    scenario = load_and_expand_scenario("scenarios/legacy/complete_4.yaml", overrides=['wandb.group="complete4-vehicle-track-frenet-v1"',
+         'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview"]',
+         'wandb.notes="LiDAR plus normalized vehicle/Frenet state and 0.3 m curvature/width preview"',
+         'experiment.name="complete_4_frenet"',
+         'agents.car_0.observation.observation.ego_state=!delete',
+         'agents.car_0.observation.observation.progress=!delete',
+         'agents.car_0.observation.observation.prev_action=!delete',
+         'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_1.observation.observation.ego_state=!delete',
+         'agents.car_1.observation.observation.progress=!delete',
+         'agents.car_1.observation.observation.prev_action=!delete',
+         'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_2.observation.observation.ego_state=!delete',
+         'agents.car_2.observation.observation.progress=!delete',
+         'agents.car_2.observation.observation.prev_action=!delete',
+         'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_3.observation.observation.ego_state=!delete',
+         'agents.car_3.observation.observation.progress=!delete',
+         'agents.car_3.observation.observation.prev_action=!delete',
+         'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}'])
     assert scenario["experiment"]["name"] == "complete_4_frenet"
     assert scenario["environment"]["track_preview"] == {
         "points": 20,
         "spacing": 0.3,
     }
     for config in scenario["agents"].values():
-        assert config["observation"].endswith(
-            "configs/observations/rl_racer_vehicle_track_frenet.yaml"
-        )
-    composer = ObservationComposer.from_file(
-        str(
-            (Path("scenarios/legacy") / scenario["agents"]["car_0"]["observation"])
-            .resolve()
-        ),
+        assert config["observation"]["observation"]["frenet_vehicle_track"]["enabled"]
+    composer = ObservationComposer.from_config(
+        scenario["agents"]["car_0"]["observation"],
         scenario["environment"],
     )
     assert composer.obs_dim == 108 + 10 + 2 * 20
@@ -375,10 +389,42 @@ def test_complete_4_frenet_scenario_is_opt_in() -> None:
 
 
 def test_pretraining_entry_points_share_mf61_physics_and_control():
-    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain_hpc.yaml")
+    baseline = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml", overrides=['experiment.num_envs=400', 'experiment.num_workers=100'])
     assert baseline['experiment']['num_envs'] == 400
-    for name in ('transfer', 'transfer_3lap', 'validate'):
-        variant = load_and_expand_scenario(f"scenarios/ppo_lap_completion_{name}.yaml")
+    for scenario_path, overrides in [('scenarios/ppo_lap_completion_transfer.yaml', []),
+ ('scenarios/ppo_lap_completion_transfer.yaml',
+  ['environment.episode_termination.lap_completion=true',
+   'environment.map_bundles=["Budapest_map","circle_map","Melbourne_map","Montreal_map","Shanghai_map","Silverstone_map","Spa_map","Spielberg_map"]',
+   'environment.map_bundles_train=["Budapest_map","circle_map","Melbourne_map","Montreal_map","Shanghai_map","Silverstone_map","Spa_map","Spielberg_map"]',
+   'environment.map_bundles_eval=["Budapest_map","circle_map","Melbourne_map","Montreal_map","Shanghai_map","Silverstone_map","Spa_map","Spielberg_map"]',
+   'environment.target_laps=3',
+   'environment.max_steps=16000',
+   'wandb.group="ppo-lap-completion-transfer-3lap"',
+   'wandb.tags=["ppo","single-agent","three-lap","track-transfer","current-pretrain-physics"]',
+   'wandb.notes="Three-lap Budapest transfer from the current L-map pretraining run; shared '
+   'physics and fixed track scaling. Actor and critic loaded with a fresh optimizer."',
+   'experiment.name="ppo_lap_completion_transfer_budapest_3lap"',
+   'experiment.checkpoint="../outputs/L_map_pretrain/best_model.pt"',
+   'evaluation.target_laps=3',
+   'evaluation.selection_strategy="completion_progress"',
+   'evaluation.terminate_on_track_limit=true',
+   'evaluation.terminate_on_collision=true']),
+ ('scenarios/ppo_lap_completion_pretrain.yaml',
+  ['environment.map_bundles=["L_map","circle_map","Budapest_map"]',
+   'environment.map_bundles_eval=["L_map","circle_map","Budapest_map"]',
+   'wandb.job_type="transfer-validation"',
+   'experiment.name="ppo_lap_completion_validate"',
+   'experiment.evaluation_only=true',
+   'experiment.checkpoint=null',
+   'evaluation.enabled=false',
+   'evaluation.episodes=12',
+   'evaluation.target_laps=3',
+   'evaluation.seed=30042',
+   'evaluation.final_test.episodes=30',
+   'evaluation.final_test.seed=40042',
+   'evaluation.terminate_on_track_limit=true',
+   'evaluation.terminate_on_collision=true'])]:
+        variant = load_and_expand_scenario(scenario_path, overrides=overrides)
         assert variant['environment']['vehicle_params'] == baseline['environment']['vehicle_params']
         actor = variant['agents']['car_0']
         for key in ('observation', 'reward', 'action_constraints'):
@@ -390,8 +436,8 @@ def test_pretraining_entry_points_share_mf61_physics_and_control():
 def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
     path = Path("scenarios/ppo_lap_completion_pretrain.yaml").resolve()
     scenario = load_and_expand_scenario(str(path))
-    composer = ObservationComposer.from_file(
-        str(path.parent / scenario["agents"]["car_0"]["observation"]),
+    composer = ObservationComposer.from_config(
+        scenario["agents"]["car_0"]["observation"],
         scenario["environment"],
     )
     assert composer.obs_dim == 158
@@ -425,42 +471,98 @@ def test_ppo_frenet_pretraining_receives_real_track_preview(mode):
 
 def test_complete_4_frenet_neighbors_is_a_separate_privileged_arm() -> None:
     scenario = load_and_expand_scenario(
-        "scenarios/legacy/complete_4_frenet_neighbors.yaml"
-    )
+        "scenarios/legacy/complete_4.yaml"
+    , overrides=['wandb.group="complete4-frenet-neighbors-v1"',
+         'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview","privileged-neighbors"]',
+         'wandb.notes="Frenet baseline plus normalized relative Frenet states for the three other racers"',
+         'experiment.name="complete_4_frenet_neighbors"',
+         'agents.car_0.observation.observation.ego_state=!delete',
+         'agents.car_0.observation.observation.progress=!delete',
+         'agents.car_0.observation.observation.prev_action=!delete',
+         'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_0.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+         'agents.car_1.observation.observation.ego_state=!delete',
+         'agents.car_1.observation.observation.progress=!delete',
+         'agents.car_1.observation.observation.prev_action=!delete',
+         'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_1.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+         'agents.car_2.observation.observation.ego_state=!delete',
+         'agents.car_2.observation.observation.progress=!delete',
+         'agents.car_2.observation.observation.prev_action=!delete',
+         'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_2.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+         'agents.car_3.observation.observation.ego_state=!delete',
+         'agents.car_3.observation.observation.progress=!delete',
+         'agents.car_3.observation.observation.prev_action=!delete',
+         'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+         'agents.car_3.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}'])
     assert scenario["experiment"]["name"] == "complete_4_frenet_neighbors"
     assert "privileged-neighbors" in scenario["wandb"]["tags"]
-    observation_path = str(
-        (Path("scenarios/legacy") / scenario["agents"]["car_0"]["observation"]).resolve()
-    )
-    composer = ObservationComposer.from_file(
-        observation_path,
+    composer = ObservationComposer.from_config(
+        scenario["agents"]["car_0"]["observation"],
         scenario["environment"],
     )
     assert composer.obs_dim == 108 + 10 + 2 * 20 + 5 * 3
 
 
-@pytest.mark.parametrize(
-    ("scenario_path", "preview", "neighbors"),
-    [
-        ("scenarios/legacy/complete_4.yaml", (), ()),
-        (
-            "scenarios/legacy/complete_4_frenet.yaml",
-            ("car_0", "car_1", "car_2", "car_3"),
-            (),
-        ),
-        (
-            "scenarios/legacy/complete_4_frenet_neighbors.yaml",
-            ("car_0", "car_1", "car_2", "car_3"),
-            ("car_0", "car_1", "car_2", "car_3"),
-        ),
-    ],
-)
+@pytest.mark.parametrize('scenario_path,preview,neighbors,overrides', [('scenarios/legacy/complete_4.yaml', (), (), []),
+ ('scenarios/legacy/complete_4.yaml',
+  ('car_0', 'car_1', 'car_2', 'car_3'),
+  (),
+  ['wandb.group="complete4-vehicle-track-frenet-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview"]',
+   'wandb.notes="LiDAR plus normalized vehicle/Frenet state and 0.3 m curvature/width preview"',
+   'experiment.name="complete_4_frenet"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}']),
+ ('scenarios/legacy/complete_4.yaml',
+  ('car_0', 'car_1', 'car_2', 'car_3'),
+  ('car_0', 'car_1', 'car_2', 'car_3'),
+  ['wandb.group="complete4-frenet-neighbors-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview","privileged-neighbors"]',
+   'wandb.notes="Frenet baseline plus normalized relative Frenet states for the three other '
+   'racers"',
+   'experiment.name="complete_4_frenet_neighbors"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_0.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}'])])
 def test_complete_4_feature_requirements_match_observation_arms(
     scenario_path: str,
     preview: tuple[str, ...],
-    neighbors: tuple[str, ...],
+    neighbors: tuple[str, ...], overrides,
 ) -> None:
-    scenario = load_and_expand_scenario(scenario_path)
+    scenario = load_and_expand_scenario(scenario_path, overrides=overrides)
     requirements = derive_environment_feature_requirements(
         scenario["agents"],
         scenario_dir=Path(scenario_path).resolve().parent,
@@ -654,20 +756,64 @@ def test_gated_frenet_payloads_match_direct_geometry_computation() -> None:
     assert "frenet_neighbors" not in infos["car_1"]
 
 
-@pytest.mark.parametrize(
-    ("scenario_path", "has_preview", "has_neighbors"),
-    [
-        ("scenarios/legacy/complete_4.yaml", False, False),
-        ("scenarios/legacy/complete_4_frenet.yaml", True, False),
-        ("scenarios/legacy/complete_4_frenet_neighbors.yaml", True, True),
-    ],
-)
+@pytest.mark.parametrize('scenario_path,has_preview,has_neighbors,overrides', [('scenarios/legacy/complete_4.yaml', False, False, []),
+ ('scenarios/legacy/complete_4.yaml',
+  True,
+  False,
+  ['wandb.group="complete4-vehicle-track-frenet-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview"]',
+   'wandb.notes="LiDAR plus normalized vehicle/Frenet state and 0.3 m curvature/width preview"',
+   'experiment.name="complete_4_frenet"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}']),
+ ('scenarios/legacy/complete_4.yaml',
+  True,
+  True,
+  ['wandb.group="complete4-frenet-neighbors-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview","privileged-neighbors"]',
+   'wandb.notes="Frenet baseline plus normalized relative Frenet states for the three other '
+   'racers"',
+   'experiment.name="complete_4_frenet_neighbors"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_0.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}'])])
 def test_complete_4_reset_emits_only_required_frenet_payloads(
     scenario_path: str,
     has_preview: bool,
-    has_neighbors: bool,
+    has_neighbors: bool, overrides,
 ) -> None:
-    scenario = load_and_expand_scenario(scenario_path)
+    scenario = load_and_expand_scenario(scenario_path, overrides=overrides)
     scenario_dir = Path(scenario_path).resolve().parent
     env, _, _ = create_training_setup(
         scenario,
@@ -686,20 +832,60 @@ def test_complete_4_reset_emits_only_required_frenet_payloads(
         env.close()
 
 
-@pytest.mark.parametrize(
-    "scenario_path",
-    [
-        "scenarios/legacy/complete_4.yaml",
-        "scenarios/legacy/complete_4_frenet.yaml",
-        "scenarios/legacy/complete_4_frenet_neighbors.yaml",
-    ],
-)
+@pytest.mark.parametrize('scenario_path,overrides', [('scenarios/legacy/complete_4.yaml', []),
+ ('scenarios/legacy/complete_4.yaml',
+  ['wandb.group="complete4-vehicle-track-frenet-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview"]',
+   'wandb.notes="LiDAR plus normalized vehicle/Frenet state and 0.3 m curvature/width preview"',
+   'experiment.name="complete_4_frenet"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}']),
+ ('scenarios/legacy/complete_4.yaml',
+  ['wandb.group="complete4-frenet-neighbors-v1"',
+   'wandb.tags=["mappo","racing","completion","4car","lidar","frenet","track-preview","privileged-neighbors"]',
+   'wandb.notes="Frenet baseline plus normalized relative Frenet states for the three other '
+   'racers"',
+   'experiment.name="complete_4_frenet_neighbors"',
+   'agents.car_0.observation.observation.ego_state=!delete',
+   'agents.car_0.observation.observation.progress=!delete',
+   'agents.car_0.observation.observation.prev_action=!delete',
+   'agents.car_0.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_0.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_1.observation.observation.ego_state=!delete',
+   'agents.car_1.observation.observation.progress=!delete',
+   'agents.car_1.observation.observation.prev_action=!delete',
+   'agents.car_1.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_1.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_2.observation.observation.ego_state=!delete',
+   'agents.car_2.observation.observation.progress=!delete',
+   'agents.car_2.observation.observation.prev_action=!delete',
+   'agents.car_2.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_2.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}',
+   'agents.car_3.observation.observation.ego_state=!delete',
+   'agents.car_3.observation.observation.progress=!delete',
+   'agents.car_3.observation.observation.prev_action=!delete',
+   'agents.car_3.observation.observation.frenet_vehicle_track={"enabled":true,"points":20,"wheel_radius":0.05,"clip":true,"maxima":{"vx":20.0,"vy":20.0,"u":3.141592653589793,"n":5.0,"r":10.0,"delta":0.46,"delta_ref":0.46,"omega_ref_dot":20000.0,"omega_ref":400.0,"omega":400.0}}',
+   'agents.car_3.observation.observation.frenet_neighbors={"enabled":true,"max_neighbors":3,"clip":true,"maxima":{"delta_s":20.0,"delta_d":5.0,"delta_vs":20.0,"delta_vd":10.0}}'])])
 def test_complete_4_feature_gating_preserves_fixed_trajectory(
-    scenario_path: str,
+    scenario_path: str, overrides,
 ) -> None:
     """Compare gated payload work with the legacy all-payload execution path."""
 
-    scenario = load_and_expand_scenario(scenario_path)
+    scenario = load_and_expand_scenario(scenario_path, overrides=overrides)
     scenario_dir = Path(scenario_path).resolve().parent
     scenario["environment"]["max_steps"] = 5
     scenario["environment"]["target_laps"] = 1_000_000
@@ -724,15 +910,15 @@ def test_complete_4_feature_gating_preserves_fixed_trajectory(
         dict[str, ObservationComposer], dict[str, RewardComposer]
     ]:
         observations = {
-            agent_id: ObservationComposer.from_file(
-                str((scenario_dir / scenario["agents"][agent_id]["observation"]).resolve()),
+            agent_id: ObservationComposer.from_config(
+                scenario["agents"][agent_id]["observation"],
                 scenario["environment"],
             )
             for agent_id in agent_ids
         }
         rewards = {
-            agent_id: RewardComposer.from_file(
-                str((scenario_dir / scenario["agents"][agent_id]["reward"]).resolve())
+            agent_id: RewardComposer.from_config(
+                scenario["agents"][agent_id]["reward"]
             )
             for agent_id in agent_ids
         }

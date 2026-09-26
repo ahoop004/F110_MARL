@@ -1,49 +1,554 @@
-# Start from scratch on L; advance using five clean laps on fixed evaluation starts.
-includes:
-  - ppo_lap_completion_pretrain.yaml
+# Standalone workflow: ppo_lap_completion_curriculum.
+# All active settings are inline. No scenario or config includes are required.
+# Edit values below, or use: python3 run.py --scenario scenarios/ppo_lap_completion_curriculum.yaml --set key=value
+# Parameter overrides accept YAML scalars/lists/mappings; quote values containing spaces.
+# A mapping replaces that subtree; key=!delete removes an optional setting.
+# Dedicated flags (--seed, --num-envs, --episodes, etc.) take precedence over --set.
+# Agent params override training_defaults. Keep physics, actions and observation layout
+# matched to the checkpoint. The commented recipes at the end list coordinated choices.
 
+# Run identity, execution budget and CPU/GPU collection layout.
 experiment:
+  # Run/output name; use a distinct name for each parameter comparison.
   name: ppo_lap_completion_curriculum
-  num_envs: 400  # 400 CPU collectors; batched policy inference/updates in the parent.
+  # Aggregate environment decisions, excluding evaluation; one joint race step counts once.
+  total_steps: 120000000
+  # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
+  seed: 42
+  # 1 for serial/local collection; e.g. 400 for HPC. PPO n_steps must divide evenly across envs.
+  num_envs: 400
+  # PyTorch threads in the parent learner; collector processes use one thread.
+  torch_threads: 1
+  # Maximum concurrent worker starts; lower this if initialization exhausts RAM.
+  worker_startup_batch_size: 16
+  # Seconds allowed for a worker to initialize.
+  worker_startup_timeout_s: 600
+  # Seconds allowed for a live worker to respond.
+  worker_response_timeout_s: 120
 
+# Shared learner defaults. agents.<id>.params overrides these values.
+training_defaults:
+  # Options used here: episodes or environment_steps; match the chosen run budget.
+  progress_unit: episodes
+  # PPO: pooled rollout transitions. MAPPO: per-agent serial buffer size.
+  n_steps: 2048
+  # Optimizer passes over each collected rollout.
+  n_epochs: 10
+  # Generalized-advantage bias/variance tradeoff, normally between 0 and 1.
+  gae_lambda: 0.95
+  # PPO probability-ratio clipping threshold.
+  clip_range: 0.2
+  # Exploration entropy coefficient; 0 disables the bonus.
+  ent_coef: 0.01
+  # Critic-loss multiplier.
+  vf_coef: 0.5
+  # Gradient norm clipping threshold.
+  max_grad_norm: 0.5
+  # Learner samples per optimizer minibatch.
+  batch_size: 64
+  # Initial optimizer learning rate.
+  learning_rate: 0.0003
+  # Reward discount per policy decision; changing action_repeat changes its physical time horizon.
+  gamma: 0.99
+
+# Optional progression through maps based on deterministic evaluation success.
 map_curriculum:
+  # Required evaluation completion/success fraction for a map.
   success_threshold: 0.9
+  # Consecutive successful evaluations required before promotion.
   required_evaluations: 2
+  # Fixed evaluation starts per map.
   episodes_per_map: 10
 
+# Simulation, map selection, race lifecycle and sensing parameters.
 environment:
-  map_bundles: [L_map, circle_map, Budapest_map, Melbourne_map, Montreal_map, Shanghai_map, Silverstone_map, Spa_map, Spielberg_map]
-  map_bundles_train: [L_map]
-  map_bundles_eval: [L_map, circle_map, Budapest_map, Melbourne_map, Montreal_map, Shanghai_map, Silverstone_map, Spa_map, Spielberg_map]
+  # Physics seconds per step; decision duration is timestep * action_repeat.
+  timestep: 0.05
+  # Number of LiDAR beams; affects policy input width when LiDAR is enabled.
+  lidar_beams: 108
+  # Maximum LiDAR range in metres.
+  lidar_range: 10.0
+  # true opens visualization; false is headless. --render/--no-render overrides this.
+  render: false
+  # Load centerline geometry from the selected map bundle.
+  centerline_autoload: true
+  # Load wall geometry from the selected map bundle.
+  walls_autoload: true
+  # Track lookahead geometry used by observations/controllers.
+  track_preview:
+    # Number of preview samples; changing this changes observation dimensions.
+    points: 20
+    # Distance in metres between track-preview samples.
+    spacing: 0.3
+  # Joint reset rule and whether a completed lap target ends a car's episode.
+  episode_termination:
+    # Options: any_agent, all_agents, all_trainable. Choose whether survivors keep driving.
+    mode: any_agent
+    # true enables lap finishing; false allows continuous driving.
+    lap_completion: true
+  # Behavior of cars after their terminal event; clearance affects collisions and sensing.
+  terminal_agents:
+    # Whether terminal cars remain physical obstacles before any configured removal.
+    remain_collidable: true
+    # Terminal crash behavior: stationary.
+    crashed_behavior: stationary
+    # Terminal finish behavior: coast_then_stop.
+    finished_behavior: coast_then_stop
+    # Physics steps allowed for finished-car clearance.
+    finish_clearance_steps: 200
+  # Physical model contract. Keep values matched for checkpoint transfer; synthetic values are uncalibrated.
+  vehicle_params:
+    # Options: legacy_st or combined_slip_st; the latter requires the complete MF6.1 and wheel-actuator blocks.
+    model: combined_slip_st
+    # Version of the physical state/action contract.
+    model_version: 2
+    tire_model: mf61_planar
+    tire_id: synthetic-mf61-planar-v2
+    drivetrain: shared_speed_awd
+    # Parameter provenance; synthetic coefficients are not a calibrated vehicle model.
+    calibration:
+      id: f1tenth-gym-chassis-mf61-v1
+      status: uncalibrated
+      source: 'Chassis, footprint and nominal mu from F1TENTH Gym defaults: https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+        MF6.1 effective-axle tire coefficients remain synthetic, not hardware fitted.'
+    # Vehicle mass in kilograms.
+    m: 3.74
+    # Yaw inertia in kg m².
+    I: 0.04712
+    # Centre-of-mass to front axle distance in metres.
+    lf: 0.15875
+    # Centre-of-mass to rear axle distance in metres.
+    lr: 0.17145
+    # Centre-of-mass height in metres.
+    h: 0.074
+    # Road friction coefficient.
+    mu: 1.0489
+    # Speed floor in m/s used to regularize tire slip calculations.
+    slip_speed_floor: 0.5
+    # Maximum internal integration substep in seconds.
+    max_integration_step: 0.001
+    # Vehicle body length in metres.
+    length: 0.58
+    # Vehicle body width in metres.
+    width: 0.31
+    # Steering and wheel reference limits/dynamics; these define the nonlinear action contract.
+    wheel_actuators:
+      version: 1
+      # Parameter provenance; synthetic coefficients are not a calibrated vehicle model.
+      calibration:
+        id: f1tenth-gym-steering-wheel-v1
+        status: uncalibrated
+        source: 'Steering angle/rate bounds from F1TENTH Gym defaults: https://github.com/f1tenth/f1tenth_gym/blob/4fdb9c7e6fb7c701290f4dc18377d07c1681724f/gym/f110_gym/envs/f110_env.py
+          Radius, time constants and wheel speed/rate bounds remain provisional.'
+      # Wheel radius in metres.
+      wheel_radius: 0.05
+      # First-order steering response time constant in seconds.
+      steering_time_constant: 0.5
+      # First-order wheel-speed response time constant in seconds.
+      wheel_speed_time_constant: 0.15
+      steering_min: -0.4189
+      steering_max: 0.4189
+      steering_rate_min: -3.2
+      steering_rate_max: 3.2
+      wheel_speed_min: -400.0
+      wheel_speed_max: 400.0
+      wheel_rate_min: -10000.0
+      wheel_rate_max: 10000.0
+    # Front-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
+    front_tire:
+      # Nominal axle normal load in newtons.
+      FNOMIN: 19.050265385
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0
+    # Rear-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
+    rear_tire:
+      # Nominal axle normal load in newtons.
+      FNOMIN: 17.639134615
+      PCX1: 1.65
+      PDX1: 1.0
+      PDX2: -0.08
+      PEX1: 0.5
+      PEX2: 0.0
+      PEX3: 0.0
+      PEX4: 0.0
+      PKX1: 12.0
+      PKX2: 0.0
+      PKX3: 0.0
+      PHX1: 0.0
+      PHX2: 0.0
+      PVX1: 0.0
+      PVX2: 0.0
+      PCY1: 1.3
+      PDY1: 1.0
+      PDY2: -0.08
+      PEY1: -0.5
+      PEY2: 0.0
+      PEY3: 0.0
+      PKY1: -10.0
+      PKY2: 1.5
+      PKY4: 2.0
+      PHY1: 0.0
+      PHY2: 0.0
+      PVY1: 0.0
+      PVY2: 0.0
+      RBX1: 10.0
+      RBX2: 0.0
+      RCX1: 1.0
+      REX1: 0.0
+      REX2: 0.0
+      RHX1: 0.0
+      RBY1: 10.0
+      RBY2: 0.0
+      RBY3: 0.0
+      RCY1: 1.0
+      REY1: 0.0
+      REY2: 0.0
+      RHY1: 0.0
+      RHY2: 0.0
+      RVY1: 0.0
+      RVY2: 0.0
+      RVY4: 0.0
+      RVY5: 0.0
+      RVY6: 0.0
+  # Available map bundles under maps/. Choose matching training/evaluation lists below.
+  map_bundles:
+    - L_map
+    - circle_map
+    - Budapest_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  # Training maps. Keep intended held-out maps out of this list.
+  map_bundles_train:
+    - L_map
+  # Evaluation maps; disjointness is a protocol choice, not automatic.
+  map_bundles_eval:
+    - L_map
+    - circle_map
+    - Budapest_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
+  # Map switching schedule; per_episode changes the map when the environment resets.
   map_cycle: per_episode
+  # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.
   map_pick: round_robin
+  # Lap finish target; ignored as a termination trigger when lap_completion is false.
   target_laps: 5
+  # Finish-line crossing rules; do not change when comparing lap metrics.
+  lap_counting:
+    # true rejects maps without valid finish-line metadata.
+    require_finish_line: true
+    # false requires a full lap after the initial finish-line crossing.
+    count_initial_crossing_as_lap: false
+  # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
   max_steps: 16000
-  episode_termination: {mode: any_agent, lap_completion: true}
+  # Physics steps per policy decision; use 1 with joint team-return contracts.
+  action_repeat: 1
+  # Enable centerline progress/state facts required by observations and rewards.
+  centerline_features: true
+  # Render centerline diagnostic overlays when visualization is enabled.
+  centerline_render: true
+  # Geometric boundary detection and optional boundary termination.
+  track_limits:
+    # true enables this component; false disables it.
+    enabled: true
+    terminate: true
+  # true terminates a colliding car; false leaves collision sensing active without that terminal.
+  terminate_on_collision: false
+  # Episode start randomization; fixed starts use enabled: false and explicit spawn settings.
+  random_spawn:
+    # true enables this component; false disables it.
+    enabled: true
+    # Whether multiple spawn selections may reuse available slots.
+    allow_reuse: true
+  spawn:
+    policy: centerline_relative
+    centerline:
+      mode: random
+      min_progress: 0.0
+      max_progress: 1.0
+      avoid_finish: false
+    offsets:
+      s_offset: 0.0
+      d_offset: 0.0
+    ego:
+      speed: 0.0
+  # Episode friction protocol; train randomization and evaluation friction are configured separately.
+  friction:
+    version: 1
+    scope: shared
+    train:
+      # Training: fixed, uniform, grid or gaussian. Evaluation: fixed or grid only; replace the whole phase mapping.
+      mode: gaussian
+      # Gaussian standard deviation as a fraction of nominal friction.
+      relative_std: 0.02
+    eval:
+      # Training: fixed, uniform, grid or gaussian. Evaluation: fixed or grid only; replace the whole phase mapping.
+      mode: fixed
+      # Road friction coefficient.
+      mu: 1.0489
 
-# Ninety episodes = ten starts on each of nine maps, every PPO collection/update.
+# Deterministic checkpoint-selection evaluation; final_test uses separate fixed seeds.
 evaluation:
+  # true enables this component; false disables it.
+  enabled: true
+  # Evaluation interval in aggregate training environment decisions.
   every_steps: 409600
+  # Number of evaluation episodes for this protocol.
   episodes: 90
+  # Lap finish target; ignored as a termination trigger when lap_completion is false.
   target_laps: 5
+  # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
   max_steps: 16000
-  terminate_on_track_limit: true
-  terminate_on_collision: true
+  # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
+  seed: 10042
+  # Match the objective: lap_time, completion_progress, team_completion, team_combined, team_first_place, team_sweep, team_combined_penalties, map_curriculum, or two_team_completion.
   selection_strategy: map_curriculum
+  # Final evaluation after the policy/configuration is frozen; never use it for checkpoint selection.
   final_test:
+    # Number of evaluation episodes for this protocol.
     episodes: 180
+    # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
     seed: 20042
+    # Lap finish target; ignored as a termination trigger when lap_completion is false.
     target_laps: 20
+    # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
     max_steps: 64000
+  terminate_on_track_limit: true
+  # true terminates a colliding car; false leaves collision sensing active without that terminal.
+  terminate_on_collision: true
 
+# Per-car policy, inline observation/reward definitions and action processing.
 agents:
   car_0:
+    # Trainable: ppo/mappo. Fixed: ftg, pure_pursuit, stanley, hybrid_pp_ftg, racing_mpc or another registered MPC controller.
+    algorithm: ppo
+    # true creates a learner; false creates a fixed controller.
+    trainable: true
+    # racer, attacker, defender or opponent; attacker/defender roles may resolve target_id automatically.
+    role: racer
+    # Inline ObservationComposer configuration; ordering/dimensions are part of checkpoint compatibility.
+    observation:
+      # Inline ObservationComposer configuration; ordering/dimensions are part of checkpoint compatibility.
+      observation:
+        lidar:
+          # true enables this component; false disables it.
+          enabled: true
+          # Normalize observation values using the configured scales.
+          normalize: true
+        frenet_vehicle_track:
+          # true enables this component; false disables it.
+          enabled: true
+          # Number of preview samples; changing this changes observation dimensions.
+          points: 20
+          # Wheel radius in metres.
+          wheel_radius: 0.05
+          # Whether to clip normalized observation values to their configured range.
+          clip: false
+          # Normalization scales; keep them unchanged when transferring a trained actor.
+          maxima:
+            vx: 20.0
+            vy: 20.0
+            u: 3.141592653589793
+            n: 5.0
+            r: 10.0
+            delta: 0.5
+            delta_ref: 0.5
+            omega_ref_dot: 100.0
+            omega_ref: 400.0
+            omega: 400.0
+          # simulated_v1 reads actual simulated wheel speed; keep matched to the source actor.
+          wheel_speed_source: simulated_v1
+          # Fixed track scales used across maps; omitting them uses the component's per-map scaling.
+          track_maxima:
+            curvature: 1.0
+            # Vehicle body width in metres.
+            width: 1.0
+    # Inline RewardComposer configuration; replace/disable components explicitly when changing objectives.
+    reward:
+      task:
+        # Task identifier stored with the reward definition.
+        name: lap_completion_pretraining
+        description: Paper Eq. (3), signed distance progress or exclusive boundary penalty.
+      # Inline RewardComposer configuration; replace/disable components explicitly when changing objectives.
+      reward:
+        progress_delta_bonus:
+          # true enables this component; false disables it.
+          enabled: true
+          weight: 1.0
+          units: metres
+          positive_only: false
+          boundary_penalty: -1.0
+    # Policy/controller parameters. Learner values here override training_defaults.
     params:
-      n_steps: 409600  # pooled: 400 environments x 1,024 decisions
+      # Initial optimizer learning rate.
+      learning_rate: 0.001
+      # Options: constant or linear. Keep transfer and scratch comparison schedules matched.
+      lr_schedule: linear
+      # Final learning rate for a scheduled PPO run.
+      learning_rate_end: 0.0001
+      # Learner samples per optimizer minibatch.
+      batch_size: 1024
+      # Actor hidden-layer widths; must match the source checkpoint when transferring.
+      pi_hidden_dims:
+        - 256
+        - 256
+      # Centralized/value-network hidden-layer widths.
+      vf_hidden_dims:
+        - 512
+        - 512
+      # Available network activations: tanh, relu, silu, swish, leaky_relu (see agents/common/networks.py).
+      activation: leaky_relu
+      # PPO: pooled rollout transitions. MAPPO: per-agent serial buffer size.
+      n_steps: 409600
+      # Reward discount per policy decision; changing action_repeat changes its physical time horizon.
+      gamma: 0.99
+      # Optimizer passes over each collected rollout.
+      n_epochs: 10
+      # Generalized-advantage bias/variance tradeoff, normally between 0 and 1.
+      gae_lambda: 0.95
+      # PPO probability-ratio clipping threshold.
+      clip_range: 0.2
+      # Exploration entropy coefficient; 0 disables the bonus.
+      ent_coef: 0.01
+      # Critic-loss multiplier.
+      vf_coef: 0.5
+      # Gradient norm clipping threshold.
+      max_grad_norm: 0.5
+      log_std_init: 0.0
+      target_kl: null
+      # Checkpoint interval in aggregate environment decisions.
       checkpoint_every_steps: 409600
+      # Learner device: cpu, cuda, or an explicit device such as cuda:0.
+      device: cuda
+    # Convert normalized learner actions into physical reference commands.
+    action_constraints:
+      # Options: direct, acceleration, wheel_speed, wheel_acceleration. Keep units matched to the vehicle model.
+      speed_control: wheel_acceleration
+      # Positive wheel-reference acceleration limit in rad/s².
+      max_wheel_acceleration: 100.0
+      # Wheel-reference deceleration magnitude in rad/s².
+      max_wheel_deceleration: 100.0
+      # true clamps reverse commands.
+      prevent_reverse: true
+      # Index of the speed/wheel-reference action, normally 1.
+      speed_index: 1
 
+# Weights & Biases logging; --no-wandb disables it.
 wandb:
+  logging:
+    groups:
+      define_metrics: true
+      train: true
+      eval: true
+      eval_agg: true
+      trainer_hooks: true
+    metrics:
+      train/episode: true
+      train/outcome: true
+      train/success: true
+      train/episode_success: true
+      train/episode_reward: true
+      train/episode_steps: true
+      train/success_rate: true
+      train/reward_mean: true
+      curriculum/phase_idx: true
+      curriculum/eval_success_streak: true
+      curriculum/eval_window_success_rate: true
+      curriculum/eval_window_count: true
+      curriculum/eval_window_size: true
+      curriculum/criteria_eval_success_rate: true
+      curriculum/criteria_eval_required_runs: true
+      eval/episode: true
+      eval/episode_success: true
+      eval/episode_success_rate: true
+      eval/rolling_success_rate: true
+      eval/run: true
+      eval_agg/success_rate: true
+  # true enables this component; false disables it.
+  enabled: true
+  # Logging project name.
+  project: marl-f110-complete
+  # Logging account/team; null uses the client default.
+  entity: ahoop004-old-dominion-university
+  # Run/output name; use a distinct name for each parameter comparison.
+  name: null
+  # Group related runs for comparison.
   group: ppo-lap-completion-curriculum
+  # Run category in W&B.
   job_type: map-curriculum
-  tags: [ppo, single-agent, map-curriculum, five-clean-laps]
-  notes: "L-first growing map curriculum; 9/10 clean five-lap starts per map twice; retain previous maps; stop and test frozen policy on fresh twenty-lap starts."
+  # Searchable run labels.
+  tags:
+    - ppo
+    - single-agent
+    - map-curriculum
+    - five-clean-laps
+  # Human-readable description of this experiment.
+  notes: L-first growing map curriculum; 9/10 clean five-lap starts per map twice; retain previous maps;
+    stop and test frozen policy on fresh twenty-lap starts.
+  # Options: online, offline or disabled.
+  mode: online
+
+# agents.car_0.params.target_kl: null  # Positive threshold enables PPO early stopping.
+# agents.car_0.params.min_rollout_steps: 1  # Minimum pooled samples before a PPO update.
+# agents.car_0.params.log_std_init: 0.0  # Initial Gaussian log standard deviation.
+# environment.friction.train: {mode: fixed, mu: 1.0489}
+# environment.friction.train: {mode: uniform, low: 0.8, high: 1.2}
+# environment.friction.train: {mode: gaussian, relative_std: 0.02}
+# environment.friction.eval: {mode: grid, values: [0.8, 1.0, 1.2]}
+# Friction phases accept exactly the keys shown for the chosen mode.
+# Optional controls (uncomment at the indicated section, or use --set):
+# experiment.collector_scheduling: synchronous  # synchronous | ready; self-play retains its scheduler.
+# experiment.checkpoint: null  # PPO scratch; set a file/run directory for transfer or evaluation.
+# experiment.evaluation_only: false  # true requires --eval.

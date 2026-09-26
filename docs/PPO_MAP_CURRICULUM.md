@@ -6,7 +6,7 @@ Run the L-first curriculum with:
 PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_completion_curriculum.yaml
 ```
 
-This scenario inherits the pretraining physics, observations, action contract,
+This standalone scenario contains the pretraining physics, observations, action contract,
 reward and learning-rate schedule. It starts fresh unless `--checkpoint` is
 provided. It defaults to **400 parallel environments**, each collecting 1,024
 policy decisions per PPO update (409,600 transitions pooled). CPU workers collect
@@ -25,7 +25,7 @@ For fewer workers, override `--num-envs` and set `agents.car_0.params.n_steps` t
 `evaluation.every_steps` and `checkpoint_every_steps` equal to that pooled size
 for evaluation/checkpointing after every update. The pooled size must divide
 evenly across workers. Single-environment training remains supported.
-Startup batches/timeouts inherit the pretrain configuration.
+Startup batches/timeouts are explicitly configured in this scenario.
 
 Training begins on L_map. After every 409,600 collected transitions and PPO
 update, deterministic evaluation runs ten fixed-seed starts on each of the nine

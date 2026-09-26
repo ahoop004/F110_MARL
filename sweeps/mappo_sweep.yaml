@@ -1,3 +1,4 @@
+# One scenario; the set parameter is a YAML/JSON list of coordinated KEY=YAML choices.
 program: run.py
 method: grid
 project: marl-f110-complete
@@ -5,14 +6,29 @@ entity: ahoop004-old-dominion-university
 name: MAPPO_reward_critic_seeds
 parameters:
   scenario:
-    values:
-      - scenarios/mappo_2v2_individual.yaml
-      - scenarios/mappo_2v2_completion.yaml
+    value: scenarios/mappo_2v2_race.yaml
   seed:
-    values: [42, 123, 789]
+    values:
+    - 42
+    - 123
+    - 789
+  set:
+    values:
+    - '["mappo.reward_mode=\"individual\"","mappo.critic_mode=\"agent_conditioned\"","training_defaults.team_return_mode=\"per_agent\"","wandb.group=\"mappo-2v2-individual\"","wandb.notes=\"MAPPO
+      uses 176 inputs: the PPO 158-input LiDAR/driving prefix plus three simulator-provided neighbor slots with
+      teammate flags. Transfer preserves the PPO actor with zero new input columns. Critic and optimizer start fresh.
+      Both fixed racing MPC opponents retain the 3.5 m/s rolling-speed cap.\"","experiment.name=\"mappo_2v2_individual\"","evaluation.selection_strategy=\"team_completion\"","agents.car_0.reward.task.name=\"race_team_completion\"","agents.car_0.reward.task.description=\"Lap-normalized
+      progress, clean finish bonus, and time cost in seconds.\"","agents.car_0.reward.reward.team_race_result=!delete","agents.car_1.reward.task.name=\"race_team_completion\"","agents.car_1.reward.task.description=\"Lap-normalized
+      progress, clean finish bonus, and time cost in seconds.\"","agents.car_1.reward.reward.team_race_result=!delete"]'
+    - '["wandb.group=\"mappo-2v2-completion\"","wandb.notes=\"MAPPO uses 176 inputs: the PPO 158-input LiDAR/driving
+      prefix plus three simulator-provided neighbor slots with teammate flags. Transfer preserves the PPO actor
+      with zero new input columns. Critic and optimizer start fresh. Both fixed racing MPC opponents retain the
+      3.5 m/s rolling-speed cap.\"","experiment.name=\"mappo_2v2_completion\"","evaluation.selection_strategy=\"team_completion\"","agents.car_0.reward.task.name=\"race_team_completion\"","agents.car_0.reward.task.description=\"Lap-normalized
+      progress, clean finish bonus, and time cost in seconds.\"","agents.car_0.reward.reward.team_race_result=!delete","agents.car_1.reward.task.name=\"race_team_completion\"","agents.car_1.reward.task.description=\"Lap-normalized
+      progress, clean finish bonus, and time cost in seconds.\"","agents.car_1.reward.reward.team_race_result=!delete"]'
 command:
-  - ${env}
-  - python3
-  - ${program}
-  - --wandb
-  - ${args}
+- ${env}
+- python3
+- ${program}
+- --wandb
+- ${args}

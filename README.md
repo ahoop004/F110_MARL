@@ -1,5 +1,8 @@
 # F110_MARL
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 Pure PyTorch PPO and MAPPO experiments for F1TENTH racing. The repository supports
 single-agent learning against fixed controllers, multi-agent learning with a
 shared actor and centralized critic, checkpoint evaluation, and offline datasets.
@@ -57,7 +60,7 @@ YAML paths are relative to the scenario directory; absolute paths and run
 directories also work. `--checkpoint` overrides this field and remains relative
 to the working directory. Leave `checkpoint: null` to disable YAML loading.
 
-`scenarios/ppo_lap_completion_transfer.yaml` inherits the pretraining observation,
+`scenarios/ppo_lap_completion_transfer.yaml` contains the pretraining observation,
 reward, action, and network settings and selects circle_map. It uses a constant
 1e-4 learning rate and a matched 4,096,000-transition destination budget. To use another track,
 copy it, change its experiment name, and update all three map bundle lists.
@@ -84,23 +87,21 @@ keep observation component meanings/order compatible as well as their dimensions
 The active scenarios share the current MF6.1 physics and driving observation.
 See [the scenario index](scenarios/README.md) for the retained historical files.
 
-| Experiment | Scenario files under `scenarios/` |
+| Workflow | Scenario under `scenarios/` |
 |---|---|
-| PPO pretraining (local / 400-environment HPC) | `ppo_lap_completion_pretrain_local.yaml` / `ppo_lap_completion_pretrain_hpc.yaml` |
-| PPO transfer versus scratch | `ppo_lap_completion_transfer.yaml` |
-| PPO cross-map evaluation | `ppo_lap_completion_validate.yaml` |
-| MAPPO traffic adaptation | `mappo_2v2_completion.yaml` |
-| MAPPO main team objective | `mappo_2v2_combined.yaml` |
-| MAPPO objective comparisons | `mappo_2v2_first_place.yaml`, `mappo_2v2_sweep.yaml` |
-| MAPPO individual completion baseline | `mappo_2v2_individual.yaml` |
-| MAPPO lap/crash learner roles vs racing MPC | `mappo_2v2_asymmetric.yaml` |
-| MAPPO held-out evaluation | `mappo_2v2_validate.yaml` |
+| PPO local/HPC pretraining and cross-map evaluation | `ppo_lap_completion_pretrain.yaml` |
+| PPO transfer or matched scratch | `ppo_lap_completion_transfer.yaml` |
+| PPO map curriculum | `ppo_lap_completion_curriculum.yaml` |
+| PPO pursuit with optional traffic | `ppo_1v1_racing_mpc_circle.yaml` |
+| Continuous MAPPO driving; scratch/pretrained/LoRA | `mappo_2v2_continuous.yaml` |
+| Finite MAPPO races; reward, critic, penalty and initialization choices | `mappo_2v2_race.yaml` |
+| MAPPO asymmetric learner roles | `mappo_2v2_asymmetric.yaml` |
+| Two-team self-play and optional recording | `mappo_2v2_selfplay.yaml` |
 | Circle convergence ablation | `experiments/ppo_combined_slip_circle_stable.yaml` |
-| Historical experiments / controller calibration | `legacy/*.yaml`, `calibration/*.yaml` |
+| Historical workflows and fixed-controller calibration | `legacy/`, `calibration/`, `render/` |
 
 Use `--pretrained-actor outputs/PRETRAIN_RUN` for PPO-to-MAPPO initialization;
-omit it for scratch. Active team scenarios select checkpoints with deterministic
-evaluation every 100 episodes. The `*_validate.yaml` entry points require `--eval`.
+omit it for scratch. Evaluation cadence is configured inline in each workflow. Set `experiment.evaluation_only: true` for the commented held-out evaluation choices; these require `--eval`.
 
 MAPPO's individual arm uses per-agent rewards and an agent-conditioned critic,
 `V_i(s)`. The team arm uses a configured team reward reduction and shared team
@@ -174,7 +175,7 @@ reduced friction-circle implementation has been replaced. Legacy physics remains
 available for existing legacy scenarios. Parameters are synthetic and explicitly
 uncalibrated; see [physics details and limitations](docs/PHYSICS_MODEL.md).
 
-The HPC preset `scenarios/ppo_lap_completion_pretrain_hpc.yaml` configures the paper's
+The HPC parameter choice in `scenarios/ppo_lap_completion_pretrain.yaml` configures the paper's
 120-million-transition budget, 400 environments, and 1,024 transitions per worker
 per rollout. It uses 50 vehicle/Frenet/track values with fixed track scales across maps, wheel-reference
 acceleration, 0.05 s decisions, and episode friction randomization (relative
@@ -188,20 +189,21 @@ off-track error. Selection uses eight starts and the final protocol uses 20 inde
 on the same map. `final_model.pt` contains the final update; `best_model.pt` uses
 the documented lap-time selection rule. Duplicate `_frenet` and
 `_combined_slip` pretraining entry points have been removed.
-For local development use `scenarios/ppo_lap_completion_pretrain_local.yaml`.
+For local development use `scenarios/ppo_lap_completion_pretrain.yaml` with `--num-envs 1 --num-workers 1 --rollout-steps-per-env 1024`.
 For a smaller parallel experiment, pass `--rollout-steps-per-env 1024` to set
 pooled `params.n_steps = num_envs * 1024`. Both PPO and MAPPO accept
 `--num-workers` to group environments into fewer processes. See
 [collector performance](docs/COLLECTOR_PERFORMANCE.md) for the 128-core setup,
 optional readiness-based scheduling, and a fixed-budget benchmark.
 
-Vehicle parameters belong in `configs/vehicle/combined_slip.yaml`, under
-`environment.vehicle_params`. They remain uncalibrated, and observation maxima
+Edit vehicle parameters in the scenario's inline `environment.vehicle_params` block.
+The component reference in `configs/vehicle/combined_slip.yaml` does not override
+a standalone scenario. They remain uncalibrated, and observation maxima
 and N=20 remain provisional. `L_map` matches the reported dimensions but is an
 approximation. See [physics and protocol details](docs/PHYSICS_MODEL.md) for the
 remaining reproduction limits. No result on this map establishes sim-to-real
 performance. Configure all three map bundle lists when changing tracks.
-The separate `ppo_lap_completion_validate.yaml` tests collision and boundary
+The separate `ppo_lap_completion_pretrain.yaml` tests collision and boundary
 termination on L_map, circle_map, and Budapest_map; evaluation reports contain
 per-map summaries. Fixed track scaling changes observation semantics and requires
 fresh pretraining. See [the current workflow](docs/PPO_TO_MAPPO_PRETRAINING.md)
@@ -219,7 +221,7 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/ppo_lap_complet
 
 Replace the run directory with one produced by the same scenario and physics
 contract. Final seeds use the configured evaluation track and do not establish
-sim-to-real performance. The migrated `mappo_2v2_completion.yaml` supports the new actor
+sim-to-real performance. The migrated `mappo_2v2_race.yaml` supports the new actor
 with 18 appended neighbor/team inputs initialized to zero weight. Other legacy MAPPO
 scenarios still need compatible physics/observation/action configurations.
 
@@ -288,15 +290,15 @@ Related wrapper classes share modules: rewards use `motion.py`, `completion.py`,
 keeping each component's configuration key, observation slice, and reset behavior
 explicit. Reward and observation composers retain their existing import paths.
 
-Reward settings live in complete presets under `configs/reward/` and task
-definitions under `configs/reward/tasks/`. Task files may include one complete
+Scenario reward settings live inline under `agents.<id>.reward`. Component
+references remain under `configs/reward/` and `configs/reward/tasks/`. Task files may include one complete
 shared preset; task-specific settings are written directly in their `reward:`
-block. Avoid separate files for individual penalty or bonus values. Existing
-scenario and reward-task paths remain stable. The 30 former component fragments
+block. Avoid separate files for individual penalty or bonus values. Canonical
+scenario paths are listed above; former scenario variants are commented parameter choices. The 30 former component fragments
 and the previous Python module layout are available in Git history; external
 scripts importing moved component classes must use the grouped modules above.
 
-Scenario, reward, and environment-feature configuration use the same recursive
+Reusable component configuration still supports the recursive
 YAML loader, `core.scenario.load_yaml_config`, with later includes and local
 settings taking precedence. `load_and_expand_scenario` remains the entry point;
 it validates the configuration and resolves targets without obsolete preset

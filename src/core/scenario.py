@@ -98,6 +98,50 @@ def load_yaml_config(path_obj: Path, visited: Optional[set] = None) -> Dict[str,
     return merged
 
 
+def apply_parameter_overrides(scenario: Dict[str, Any], overrides) -> Dict[str, Any]:
+    """Apply explicit dotted KEY=YAML choices; !delete removes an optional key.
+
+    A YAML list can group assignment strings for sweeps. Mapping values replace
+    the selected subtree. No scenario files are loaded.
+    The caller validates the resulting configuration after other CLI overrides.
+    """
+    result = copy.deepcopy(scenario)
+    assignments = []
+    for item in overrides or ():
+        if not isinstance(item, str):
+            raise ScenarioError("Parameter overrides must be KEY=YAML strings")
+        if item.lstrip().startswith("["):
+            try:
+                group = yaml.safe_load(item)
+            except yaml.YAMLError as exc:
+                raise ScenarioError("Invalid YAML override list") from exc
+            if not isinstance(group, list) or any(not isinstance(value, str) for value in group):
+                raise ScenarioError("An override list must contain KEY=YAML strings")
+            assignments.extend(group)
+        else:
+            assignments.append(item)
+    for item in assignments:
+        key, separator, raw = item.partition("=")
+        parts = key.split(".")
+        if not separator or any(not part or not part.replace("_", "").isalnum() for part in parts):
+            raise ScenarioError(f"Expected --set KEY=YAML with a dotted parameter name: {item!r}")
+        target = result
+        for part in parts[:-1]:
+            if part not in target:
+                target[part] = {}
+            if not isinstance(target[part], dict):
+                raise ScenarioError(f"Cannot set {key!r}: {part!r} is not a mapping")
+            target = target[part]
+        if raw.strip() == "!delete":
+            target.pop(parts[-1], None)
+        else:
+            try:
+                target[parts[-1]] = yaml.safe_load(raw)
+            except yaml.YAMLError as exc:
+                raise ScenarioError(f"Invalid YAML value for {key!r}: {raw!r}") from exc
+    return result
+
+
 def load_scenario(path: str) -> Dict[str, Any]:
     """Load scenario from YAML file.
 
@@ -524,7 +568,7 @@ def resolve_target_ids(scenario: Dict[str, Any]) -> Dict[str, Any]:
     return scenario
 
 
-def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]:
+def load_and_expand_scenario(path: str, validate: bool = True, *, overrides=None) -> Dict[str, Any]:
     """Load and validate a scenario, then resolve agent targets.
 
     The historical entry-point name is retained for callers.
@@ -532,6 +576,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
     Args:
         path: Path to scenario YAML file
         validate: Whether to validate the scenario (default: True)
+        overrides: Optional dotted KEY=YAML parameter choices, applied before validation.
 
     Returns:
         Fully expanded and validated scenario
@@ -544,7 +589,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
         >>> # Ready to use for training
     """
     # Load raw scenario
-    scenario = load_scenario(path)
+    scenario = apply_parameter_overrides(load_scenario(path), overrides)
 
     # Validate before resolving targets
     if validate:
@@ -559,6 +604,7 @@ def load_and_expand_scenario(path: str, validate: bool = True) -> Dict[str, Any]
 __all__ = [
     'ScenarioError',
     'load_scenario',
+    'apply_parameter_overrides',
     'load_yaml_config',
     'validate_scenario',
     'resolve_mappo_config',

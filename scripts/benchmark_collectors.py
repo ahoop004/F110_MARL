@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument('--scenario', default='scenarios/ppo_lap_completion_pretrain.yaml')
+    parser.add_argument('--set', dest='parameter_overrides', action='append', default=[], metavar='KEY=YAML')
     parser.add_argument('--num-envs', type=int, default=12)
     parser.add_argument('--workers', nargs='+', type=int, default=[4, 12])
     parser.add_argument('--scheduling', nargs='+', choices=['synchronous', 'ready'], default=['synchronous', 'ready'])
@@ -49,6 +50,8 @@ def main():
                            '--total-steps', str(args.total_steps), '--seed', str(args.seed),
                            '--torch-threads', '1', '--no-render', '--no-wandb', '--quiet',
                            '--output-dir', str(run_dir.resolve())]
+                for override in args.parameter_overrides:
+                    command.extend(('--set', override))
                 started = time.perf_counter()
                 with (run_dir / 'console.log').open('w') as log:
                     subprocess.run(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)

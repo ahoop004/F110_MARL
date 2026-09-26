@@ -84,11 +84,11 @@ def test_active_team_scenarios_use_one_fixed_mpc_opponent_profile():
     from core.scenario import load_and_expand_scenario, load_yaml_config
     profile = load_yaml_config(Path('configs/controllers/racing_mpc.yaml'))
     paths = sorted(Path('scenarios').glob('mappo_2v2_*.yaml'))
-    assert {f'mappo_2v2_{task}_{initialization}'
-            for task in ('base', 'penalties')
-            for initialization in ('scratch', 'pretrained')} <= {path.stem for path in paths}
+    assert {'mappo_2v2_continuous', 'mappo_2v2_race', 'mappo_2v2_asymmetric'} <= {path.stem for path in paths}
     for path in paths:
         scenario = load_and_expand_scenario(str(path))
+        if scenario.get('two_team', {}).get('enabled', False):
+            continue
         for aid, target in [('car_2', 'car_0'), ('car_3', 'car_1')]:
             assert scenario['agents'][aid] == {**profile, 'role': 'opponent', 'target_id': target}
         assert [aid for aid, cfg in scenario['agents'].items() if cfg['trainable']] == ['car_0', 'car_1']
@@ -107,8 +107,38 @@ def test_mpc_opponents_act_in_actual_training_setup_on_both_maps():
     from pathlib import Path
     from core.scenario import load_and_expand_scenario
     from core.setup import create_training_setup
-    path = Path('scenarios/mappo_2v2_penalties_scratch.yaml').resolve()
-    scenario = load_and_expand_scenario(str(path))
+    path = Path('scenarios/mappo_2v2_race.yaml').resolve()
+    scenario = load_and_expand_scenario(str(path), overrides=['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+         'training_defaults.batch_size=2048',
+         'training_defaults.rollout_steps_per_env=256',
+         'training_defaults.checkpoint_every_steps=1024000',
+         'wandb.group="mappo-2v2-penalties-current-physics"',
+         'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+         'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+         'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful '
+         'ties."',
+         'experiment.name="mappo_2v2_penalties_scratch"',
+         'experiment.num_envs=400',
+         'experiment.num_workers=100',
+         'experiment.worker_startup_batch_size=8',
+         'experiment.worker_startup_timeout_s=600',
+         'experiment.worker_response_timeout_s=120',
+         'experiment.terminal_recent_episodes=100',
+         'experiment.terminal_every_updates=10',
+         'experiment.terminal_diagnostic_every_updates=100',
+         'experiment.terminal_episode_detail=false',
+         'evaluation.selection_strategy="team_combined_penalties"',
+         'evaluation.every_steps=1024000',
+         'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_0.reward.reward.collision.enabled=false',
+         'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+         'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_1.reward.reward.collision.enabled=false',
+         'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])
     env, opponents, _ = create_training_setup(scenario, mode='train', scenario_dir=path.parent)
     try:
         for agent in opponents.values():

@@ -1,8 +1,11 @@
 # Racing MPC opponents
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 `racing_mpc` is a non-neural controller registered with `AgentFactory`.
-All eight active MAPPO 2v2 scenarios inherit two identical fixed MPC opponents
-from `configs/scenarios/mappo_2v2_base.yaml`. Their settings match
+The active fixed-opponent MAPPO workflows configure two identical MPC opponents
+inline in each scenario. `scenarios/mappo_2v2_race.yaml` is the finite-race workflow. Their settings match
 `configs/controllers/racing_mpc.yaml`, including the 3.5 m/s speed cap, in both
 scratch and pretrained arms.
 

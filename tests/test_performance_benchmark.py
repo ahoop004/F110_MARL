@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.benchmark_complete4 import SUPPORTED_SCENARIOS, summarize_results
+from scripts.benchmark_complete4 import OBSERVATION_ARMS, SUPPORTED_SCENARIOS, summarize_results
 
 
 def _result(decisions_per_second: float, rss: int = 100) -> dict:
@@ -57,8 +57,5 @@ def test_benchmark_summary_requires_results() -> None:
 
 
 def test_benchmark_supports_all_complete_4_observation_arms() -> None:
-    assert SUPPORTED_SCENARIOS == (
-        "scenarios/legacy/complete_4.yaml",
-        "scenarios/legacy/complete_4_frenet.yaml",
-        "scenarios/legacy/complete_4_frenet_neighbors.yaml",
-    )
+    assert SUPPORTED_SCENARIOS == ("scenarios/legacy/complete_4.yaml",)
+    assert tuple(OBSERVATION_ARMS) == ("baseline", "frenet", "frenet_neighbors")

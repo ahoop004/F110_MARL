@@ -1,9 +1,0 @@
-# Short local PPO collection rounds; a different batch size from the HPC protocol.
-includes:
-  - ppo_lap_completion_pretrain.yaml
-experiment:
-  num_envs: 1
-agents:
-  car_0:
-    params:
-      n_steps: 1024

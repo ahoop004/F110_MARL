@@ -23,7 +23,37 @@ from utils.track_preview import _resample_uniform
 
 
 def scenario_for(controller, map_name, mode, seed, max_steps, laps):
-    scenario = load_and_expand_scenario(str(ROOT/'scenarios/mappo_2v2_penalties_scratch.yaml'))
+    scenario = load_and_expand_scenario(str(ROOT/'scenarios/mappo_2v2_race.yaml'), overrides=['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+         'training_defaults.batch_size=2048',
+         'training_defaults.rollout_steps_per_env=256',
+         'training_defaults.checkpoint_every_steps=1024000',
+         'wandb.group="mappo-2v2-penalties-current-physics"',
+         'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+         'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+         'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful '
+         'ties."',
+         'experiment.name="mappo_2v2_penalties_scratch"',
+         'experiment.num_envs=400',
+         'experiment.num_workers=100',
+         'experiment.worker_startup_batch_size=8',
+         'experiment.worker_startup_timeout_s=600',
+         'experiment.worker_response_timeout_s=120',
+         'experiment.terminal_recent_episodes=100',
+         'experiment.terminal_every_updates=10',
+         'experiment.terminal_diagnostic_every_updates=100',
+         'experiment.terminal_episode_detail=false',
+         'evaluation.selection_strategy="team_combined_penalties"',
+         'evaluation.every_steps=1024000',
+         'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_0.reward.reward.collision.enabled=false',
+         'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+         'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_1.reward.reward.collision.enabled=false',
+         'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])
     # The experiment opponents may change; keep the named hybrid comparison
     # independent so it can never silently become a mislabeled MPC baseline.
     hybrid = yaml.safe_load((ROOT/'configs/controllers/hybrid_pp_ftg.yaml').read_text())

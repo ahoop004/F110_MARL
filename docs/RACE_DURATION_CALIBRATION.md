@@ -1,5 +1,8 @@
 # Race-duration calibration
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 Calibration date: 2026-08-26. All runs were headless, used seeds 11, 22, and
 33, and cycled the eight configured maps once per seed. Each output directory
 contains `config_snapshot.json`, `episode_metrics.csv`, and `agent_metrics.csv`.
@@ -8,11 +11,19 @@ contains `config_snapshot.json`, `episode_metrics.csv`, and `agent_metrics.csv`.
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/calibration/hybrid_pp_ftg_1lap.yaml \
+  --scenario scenarios/calibration/controller.yaml --set environment.target_laps=1 --set 'experiment.name="calibration_hybrid_pp_ftg_1lap"' \
   --no-wandb --seed <11|22|33> --output-dir outputs/calibration/1lap_seed<seed>
 
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/calibration/pure_pursuit_3lap.yaml \
+  --scenario scenarios/calibration/controller.yaml \
+  --set environment.max_steps=150000 \
+  --set 'experiment.name="calibration_pure_pursuit_3lap"' \
+  --set 'agents.car_0.algorithm="pure_pursuit"' \
+  --set agents.car_0.params.lookahead=0.75 \
+  --set agents.car_0.params.min_speed=0.5 \
+  --set agents.car_0.params.max_speed=2.0 \
+  --set agents.car_0.params.max_steer=0.42 \
+  --set agents.car_0.params.curvature_slowdown_threshold=0.3 \
   --no-wandb --seed <11|22|33> \
   --output-dir outputs/calibration/pure_pursuit_3lap_final_seed<seed>
 ```

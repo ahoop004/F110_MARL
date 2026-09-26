@@ -163,9 +163,13 @@ def capture(output: Path, decisions: int) -> None:
         trainable = get_trainable_agent_ids(scenario["agents"])
         case = {
             "scenario": scenario, "seed": 42, "commands": commands.tolist(),
-            "observations": {aid: load_yaml_config(path.parent / scenario["agents"][aid]["observation"])
+            "observations": {aid: (load_yaml_config(path.parent / scenario["agents"][aid]["observation"])
+                if isinstance(scenario["agents"][aid]["observation"], str)
+                else scenario["agents"][aid]["observation"])
                              for aid in trainable},
-            "rewards": {aid: load_yaml_config(path.parent / scenario["agents"][aid]["reward"])
+            "rewards": {aid: (load_yaml_config(path.parent / scenario["agents"][aid]["reward"])
+                if isinstance(scenario["agents"][aid]["reward"], str)
+                else scenario["agents"][aid]["reward"])
                         for aid in trainable},
             "provenance": build_run_provenance(
                 scenario, scenario_path=path, run_id="physics_baseline",

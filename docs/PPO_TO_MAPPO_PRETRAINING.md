@@ -1,5 +1,8 @@
 # PPO pretraining and transfer
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 The current pipeline uses F1TENTH Gym chassis/steering defaults with synthetic
 planar MF6.1 tires, 0.05 s decisions,
 wheel-reference acceleration, and a 158-value LiDAR/driving observation. It follows the
@@ -107,7 +110,7 @@ Use the source training seed for provenance matching. Avoid using final results
 to choose checkpoints or tune hyperparameters. Same-map final seeds establish
 repeatability across starts, not map generalization.
 
-`ppo_lap_completion_validate.yaml` provides a separate three-lap downstream test
+`ppo_lap_completion_pretrain.yaml` provides a separate three-lap downstream test
 on L_map, circle_map, and Budapest_map. It enables collision termination and
 `evaluation.terminate_on_track_limit: true`. Its selection protocol uses four
 starts per map and its final protocol uses ten. It never selects training
@@ -115,7 +118,20 @@ checkpoints (`evaluation.enabled: false`).
 
 ```bash
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/ppo_lap_completion_validate.yaml \
+  --scenario scenarios/ppo_lap_completion_pretrain.yaml \
+  --set 'environment.map_bundles=["L_map","circle_map","Budapest_map"]' \
+  --set 'environment.map_bundles_eval=["L_map","circle_map","Budapest_map"]' \
+  --set 'experiment.name="ppo_lap_completion_validate"' \
+  --set experiment.evaluation_only=true \
+  --set experiment.checkpoint=null \
+  --set evaluation.enabled=false \
+  --set evaluation.episodes=12 \
+  --set evaluation.target_laps=3 \
+  --set evaluation.seed=30042 \
+  --set evaluation.final_test.episodes=30 \
+  --set evaluation.final_test.seed=40042 \
+  --set evaluation.terminate_on_track_limit=true \
+  --set evaluation.terminate_on_collision=true \
   --eval --checkpoint outputs/PRETRAIN_RUN --allow-provenance-mismatch \
   --eval-protocol selection --output-dir outputs/transfer_validation --no-wandb
 ```
@@ -144,7 +160,7 @@ held-out maps; keep the single-L-map reference for comparison.
 ## PPO transfer against a scratch baseline
 
 `ppo_lap_completion_transfer.yaml` now targets **circle_map**, starts with
-`experiment.checkpoint: null`, and inherits the same 400 workers and observation,
+`experiment.checkpoint: null`, and contains the same observation,
 physics, and action contracts. Both arms use 4,096,000 destination transitions,
 a constant learning rate of 1e-4, and evaluation every 409,600 transitions.
 This initial budget gives ten pooled updates; extend both arms equally if needed.
@@ -175,7 +191,7 @@ resume. Older reduced-physics checkpoints are incompatible.
 ## Transfer the driving actor into MAPPO
 
 The MAPPO-versus-MPC training scenarios share
-`configs/scenarios/mappo_2v2_base.yaml`: the same MF6.1 dynamics, friction
+`scenarios/mappo_2v2_race.yaml`: the same MF6.1 dynamics, friction
 protocol, 0.05 s decisions, wheel-acceleration actions, and two fixed racing MPC
 opponents. The explicit base and penalty scratch/pretrained pairs use 400
 environments across 100 workers. Other MAPPO objectives retain their serial
@@ -200,12 +216,12 @@ Existing 158-input MAPPO checkpoints cannot resume in the expanded layout.
 
 | Scenario | Purpose |
 |---|---|
-| `mappo_2v2_completion.yaml` | Learn to finish together in traffic; shared completion reward |
-| `mappo_2v2_combined.yaml` | Main team-racing experiment; combined finishing-position objective |
-| `mappo_2v2_first_place.yaml` | First-place objective comparison |
-| `mappo_2v2_sweep.yaml` | First-and-second-place objective comparison |
-| `mappo_2v2_individual.yaml` | Matched completion baseline with individual rewards and agent-conditioned critic |
-| `mappo_2v2_validate.yaml` | Evaluation only on held-out Silverstone and Spa |
+| `mappo_2v2_race.yaml` | Learn to finish together in traffic; shared completion reward |
+| `mappo_2v2_race.yaml` | Main team-racing experiment; combined finishing-position objective |
+| `mappo_2v2_race.yaml` | First-place objective comparison |
+| `mappo_2v2_race.yaml` | First-and-second-place objective comparison |
+| `mappo_2v2_race.yaml` | Matched completion baseline with individual rewards and agent-conditioned critic |
+| `mappo_2v2_race.yaml` | Evaluation only on held-out Silverstone and Spa |
 
 Run the explicit base scratch/pretrained pair first, the penalty pair second,
 then [shared/per-teammate LoRA](MAPPO_LORA.md); see the
@@ -222,22 +238,29 @@ equal episode counts are not equal sample budgets.
 ```bash
 # Actor transfer into the main team objective.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_combined.yaml \
+  --scenario scenarios/mappo_2v2_race.yaml \
   --pretrained-actor outputs/PRETRAIN_RUN --output-dir outputs/team_transfer
 
 # Matched scratch configuration.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_combined.yaml --output-dir outputs/team_scratch
+  --scenario scenarios/mappo_2v2_race.yaml --output-dir outputs/team_scratch
 
 # Final starts on the development maps after checkpoint selection.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_combined.yaml --eval \
+  --scenario scenarios/mappo_2v2_race.yaml --eval \
   --checkpoint outputs/team_transfer --eval-protocol final \
   --output-dir outputs/team_final --no-wandb
 
 # Held-out maps, once the model and settings are frozen.
 PYGLET_HEADLESS=true venv/bin/python run.py \
-  --scenario scenarios/mappo_2v2_validate.yaml --eval \
+  --scenario scenarios/mappo_2v2_race.yaml \
+  --set 'environment.map_bundles=["Silverstone_map","Spa_map"]' \
+  --set 'environment.map_bundles_eval=["Silverstone_map","Spa_map"]' \
+  --set 'experiment.name="mappo_2v2_validate"' \
+  --set experiment.evaluation_only=true \
+  --set evaluation.enabled=false \
+  --set evaluation.seed=30042 \
+  --set evaluation.final_test.seed=40042 --eval \
   --checkpoint outputs/team_transfer --allow-provenance-mismatch \
   --eval-protocol final --output-dir outputs/team_heldout --no-wandb
 ```
@@ -269,7 +292,7 @@ maximum over 800 s at 0.05 s steps.
 The active entry points live directly under `scenarios/`. The two duplicate
 PPO pretraining aliases were removed; use `ppo_lap_completion_pretrain.yaml`.
 The former `mappo_2v2_frenet_ppo_pretrained*` names became the four completion/team
-objective names above. Fifteen older experiments remain under `scenarios/legacy/`
+objective names above. Six historical workflows remain under `scenarios/legacy/`
 for historical comparisons, including the old individual/team-shared pair.
 Their physics and checkpoint contracts have not been migrated.
 

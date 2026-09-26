@@ -181,11 +181,25 @@ def test_complete_4_has_consistent_full_circuit_contract_and_held_out_maps() -> 
 
 def test_duration_calibration_scenarios_cover_all_maps() -> None:
     one_lap = load_and_expand_scenario(
-        "scenarios/calibration/hybrid_pp_ftg_1lap.yaml"
-    )
+        "scenarios/calibration/controller.yaml"
+    , overrides=['environment.target_laps=1',
+         'wandb.job_type="fixed_controller_1lap"',
+         'wandb.tags=["calibration","hybrid_pp_ftg","1lap"]',
+         'wandb.notes="One-lap fixed-controller duration calibration across all race maps"',
+         'experiment.name="calibration_hybrid_pp_ftg_1lap"'])
     three_lap = load_and_expand_scenario(
-        "scenarios/calibration/pure_pursuit_3lap.yaml"
-    )
+        "scenarios/calibration/controller.yaml"
+    , overrides=['environment.max_steps=150000',
+         'wandb.job_type="pure_pursuit_3lap"',
+         'wandb.tags=["calibration","pure_pursuit","3lap"]',
+         'wandb.notes="Three-lap waypoint-controller lifecycle and duration validation"',
+         'experiment.name="calibration_pure_pursuit_3lap"',
+         'agents.car_0.algorithm="pure_pursuit"',
+         'agents.car_0.params.lookahead=0.75',
+         'agents.car_0.params.min_speed=0.5',
+         'agents.car_0.params.max_speed=2.0',
+         'agents.car_0.params.max_steer=0.42',
+         'agents.car_0.params.curvature_slowdown_threshold=0.3'])
 
     assert one_lap["environment"]["target_laps"] == 1
     assert three_lap["environment"]["target_laps"] == 3
@@ -263,7 +277,7 @@ def test_signed_progress_delta_clamps_projection_jumps_symmetrically() -> None:
 
 def test_ppo_pretraining_uses_paper_distance_and_boundary_reward() -> None:
     scenario = load_and_expand_scenario("scenarios/ppo_lap_completion_pretrain.yaml")
-    assert scenario["agents"]["car_0"]["reward"].endswith("configs/reward/tasks/lap_completion_pretraining.yaml")
+    assert scenario["agents"]["car_0"]["reward"]["task"]["name"] == "lap_completion_pretraining"
     composer = RewardComposer.from_file("configs/reward/tasks/lap_completion_pretraining.yaml")
     assert len(composer._components) == 1
     for delta, outside, expected in ((.01, False, .17), (-.01, False, -.17), (.01, True, -1)):
@@ -274,8 +288,22 @@ def test_ppo_pretraining_uses_paper_distance_and_boundary_reward() -> None:
 
 def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
     scenario = load_and_expand_scenario(
-        "scenarios/mappo_2v2_completion.yaml"
-    )
+        "scenarios/mappo_2v2_race.yaml"
+    , overrides=['wandb.group="mappo-2v2-completion"',
+         'wandb.notes="MAPPO uses 176 inputs: the PPO 158-input LiDAR/driving prefix plus three '
+         'simulator-provided neighbor slots with teammate flags. Transfer preserves the PPO actor with '
+         'zero new input columns. Critic and optimizer start fresh. Both fixed racing MPC opponents retain '
+         'the 3.5 m/s rolling-speed cap."',
+         'experiment.name="mappo_2v2_completion"',
+         'evaluation.selection_strategy="team_completion"',
+         'agents.car_0.reward.task.name="race_team_completion"',
+         'agents.car_0.reward.task.description="Lap-normalized progress, clean finish bonus, and time cost '
+         'in seconds."',
+         'agents.car_0.reward.reward.team_race_result=!delete',
+         'agents.car_1.reward.task.name="race_team_completion"',
+         'agents.car_1.reward.task.description="Lap-normalized progress, clean finish bonus, and time cost '
+         'in seconds."',
+         'agents.car_1.reward.reward.team_race_result=!delete'])
     environment = scenario["environment"]
 
     assert environment["map_bundles"] == ["circle_map"]
@@ -298,16 +326,70 @@ def test_current_mappo_transfer_scenario_uses_shared_team_contract() -> None:
     assert scenario["training_defaults"]["pretrained_actor_observation_extension"] == "frenet_neighbors"
 
 
-@pytest.mark.parametrize("objective", ["combined", "first_place", "sweep"])
-def test_frenet_team_variants_only_change_reward_and_experiment_labels(objective):
-    baseline = load_and_expand_scenario("scenarios/mappo_2v2_completion.yaml")
-    variant = load_and_expand_scenario(f"scenarios/mappo_2v2_{objective}.yaml")
+@pytest.mark.parametrize('objective,scenario_path,overrides', [('combined', 'scenarios/mappo_2v2_race.yaml', []),
+ ('first_place',
+  'scenarios/mappo_2v2_race.yaml',
+  ['wandb.group="mappo-2v2-first-place"',
+   'wandb.notes="Shared completion shaping plus first-place team objective"',
+   'experiment.name="mappo_2v2_first_place"',
+   'evaluation.selection_strategy="team_first_place"',
+   'agents.car_0.reward.task.name="race_team_2v2_first_place"',
+   'agents.car_0.reward.task.description="Mean completion shaping plus a shared bonus when a '
+   'teammate finishes first."',
+   'agents.car_0.reward.reward.team_race_result.objective="first_place"',
+   'agents.car_0.reward.reward.team_race_result.rank_bonus=!delete',
+   'agents.car_0.reward.reward.team_race_result.both_finish_bonus=!delete',
+   'agents.car_0.reward.reward.team_race_result.win_bonus=2.0',
+   'agents.car_1.reward.task.name="race_team_2v2_first_place"',
+   'agents.car_1.reward.task.description="Mean completion shaping plus a shared bonus when a '
+   'teammate finishes first."',
+   'agents.car_1.reward.reward.team_race_result.objective="first_place"',
+   'agents.car_1.reward.reward.team_race_result.rank_bonus=!delete',
+   'agents.car_1.reward.reward.team_race_result.both_finish_bonus=!delete',
+   'agents.car_1.reward.reward.team_race_result.win_bonus=2.0']),
+ ('sweep',
+  'scenarios/mappo_2v2_race.yaml',
+  ['wandb.group="mappo-2v2-sweep"',
+   'wandb.notes="Shared completion shaping plus first-and-second-place team objective"',
+   'experiment.name="mappo_2v2_sweep"',
+   'evaluation.selection_strategy="team_sweep"',
+   'agents.car_0.reward.task.name="race_team_2v2_sweep"',
+   'agents.car_0.reward.task.description="Mean completion shaping plus a shared bonus for clean '
+   'first and second places."',
+   'agents.car_0.reward.reward.team_race_result.objective="sweep"',
+   'agents.car_0.reward.reward.team_race_result.rank_bonus=!delete',
+   'agents.car_0.reward.reward.team_race_result.both_finish_bonus=!delete',
+   'agents.car_0.reward.reward.team_race_result.win_bonus=2.0',
+   'agents.car_1.reward.task.name="race_team_2v2_sweep"',
+   'agents.car_1.reward.task.description="Mean completion shaping plus a shared bonus for clean '
+   'first and second places."',
+   'agents.car_1.reward.reward.team_race_result.objective="sweep"',
+   'agents.car_1.reward.reward.team_race_result.rank_bonus=!delete',
+   'agents.car_1.reward.reward.team_race_result.both_finish_bonus=!delete',
+   'agents.car_1.reward.reward.team_race_result.win_bonus=2.0'])])
+def test_frenet_team_variants_only_change_reward_and_experiment_labels(objective, scenario_path, overrides):
+    baseline = load_and_expand_scenario("scenarios/mappo_2v2_race.yaml", overrides=['wandb.group="mappo-2v2-completion"',
+         'wandb.notes="MAPPO uses 176 inputs: the PPO 158-input LiDAR/driving prefix plus three '
+         'simulator-provided neighbor slots with teammate flags. Transfer preserves the PPO actor with '
+         'zero new input columns. Critic and optimizer start fresh. Both fixed racing MPC opponents retain '
+         'the 3.5 m/s rolling-speed cap."',
+         'experiment.name="mappo_2v2_completion"',
+         'evaluation.selection_strategy="team_completion"',
+         'agents.car_0.reward.task.name="race_team_completion"',
+         'agents.car_0.reward.task.description="Lap-normalized progress, clean finish bonus, and time cost '
+         'in seconds."',
+         'agents.car_0.reward.reward.team_race_result=!delete',
+         'agents.car_1.reward.task.name="race_team_completion"',
+         'agents.car_1.reward.task.description="Lap-normalized progress, clean finish bonus, and time cost '
+         'in seconds."',
+         'agents.car_1.reward.reward.team_race_result=!delete'])
+    variant = load_and_expand_scenario(scenario_path, overrides=overrides)
     assert variant["experiment"]["name"] != baseline["experiment"]["name"]
     assert variant["environment"] == baseline["environment"]
     assert variant["training_defaults"] == baseline["training_defaults"]
     assert variant["training_defaults"]["team_return_mode"] == "joint"
     for aid in ("car_0", "car_1"):
-        assert variant["agents"][aid]["reward"].endswith(f"race_team_2v2_{objective}.yaml")
+        assert variant["agents"][aid]["reward"]["task"]["name"] == f"race_team_2v2_{objective}"
         variant["agents"][aid]["reward"] = baseline["agents"][aid]["reward"]
     variant["experiment"]["name"] = baseline["experiment"]["name"]
     variant["wandb"] = baseline["wandb"]

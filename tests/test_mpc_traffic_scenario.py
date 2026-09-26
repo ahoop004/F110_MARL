@@ -10,7 +10,22 @@ from wrappers.rewards.composer import RewardComposer
 
 @pytest.fixture
 def traffic():
-    scenario = load_and_expand_scenario('scenarios/ppo_1v1_mpc_traffic_circle.yaml')
+    scenario = load_and_expand_scenario('scenarios/ppo_1v1_racing_mpc_circle.yaml', overrides=['environment.spawn.policy="centerline_random"',
+         'environment.spawn.centerline.min_distance=2.0',
+         'environment.respawn_agents=["car_1","car_2","car_3","car_4","car_5","car_6"]',
+         'environment.respawn_on_vehicle_collision=true',
+         'environment.rendering={"vehicle_colors":{"car_0":"#3288ff","car_1":"#ff2020","car_2":"#a0a0a0","car_3":"#a0a0a0","car_4":"#a0a0a0","car_5":"#a0a0a0","car_6":"#a0a0a0"}}',
+         'wandb.group="ppo-1v1-mpc-traffic-circle"',
+         'wandb.tags=["ppo","1v1","circle","randomized-traffic","fixed-mpc","pretrained"]',
+         'wandb.notes="Same pursuit reward, no lap limit, against red car_1; five mixed fixed MPC traffic '
+         'cars, independently randomized track spawns with 2 m clearance. Only target respawns earn a '
+         'bonus."',
+         'experiment.name="ppo_1v1_mpc_traffic_circle"',
+         'agents.car_2={"algorithm":"kinematic_mpc","trainable":false,"role":"traffic","target_id":"car_0","action_adapter":"rolling_speed_to_wheel_v1","params":{"dt":0.05,"target_speed":1.5,"min_speed":0.5,"max_speed":2.0}}',
+         'agents.car_3={"algorithm":"obstacle_aware_mpc","trainable":false,"role":"traffic","target_id":"car_0","action_adapter":"rolling_speed_to_wheel_v1","params":{"dt":0.05,"target_speed":2.0,"min_speed":0.5,"max_speed":2.5}}',
+         'agents.car_4={"algorithm":"defensive_mpc","trainable":false,"role":"traffic","target_id":"car_0","action_adapter":"rolling_speed_to_wheel_v1","params":{"dt":0.05,"target_speed":2.0,"min_speed":0.5,"max_speed":2.5}}',
+         'agents.car_5={"algorithm":"cbf_mpc","trainable":false,"role":"traffic","target_id":"car_0","action_adapter":"rolling_speed_to_wheel_v1","params":{"dt":0.05,"target_speed":2.5,"min_speed":0.5,"max_speed":3.0}}',
+         'agents.car_6={"algorithm":"mpcc","trainable":false,"role":"traffic","target_id":"car_0","action_adapter":"rolling_speed_to_wheel_v1","params":{"dt":0.05,"target_speed":2.5,"min_speed":0.5,"max_speed":3.0}}'])
     env, agents, _ = create_training_setup(scenario, scenario_dir=Path('scenarios').resolve())
     env.reset(seed=42)
     yield env, agents, scenario

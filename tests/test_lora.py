@@ -240,13 +240,52 @@ def test_random_frozen_actor_cannot_train_or_save(tmp_path):
         agent.save(str(tmp_path / 'bad.pt'))
 
 
-@pytest.mark.parametrize('task', ['base', 'penalties'])
+@pytest.mark.parametrize('task,scenario_path,overrides', [('base',
+  'scenarios/mappo_2v2_continuous.yaml',
+  ['training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"',
+   'experiment.name="mappo_2v2_base_pretrained"']),
+ ('penalties',
+  'scenarios/mappo_2v2_race.yaml',
+  ['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+   'training_defaults.batch_size=2048',
+   'training_defaults.pretrained_actor_checkpoint="../outputs/L_map_pretrain/L_map_best_model.pt"',
+   'training_defaults.rollout_steps_per_env=256',
+   'training_defaults.checkpoint_every_steps=1024000',
+   'wandb.group="mappo-2v2-penalties-current-physics"',
+   'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+   'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+   'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks '
+   'successful ties."',
+   'experiment.name="mappo_2v2_penalties_pretrained"',
+   'experiment.num_envs=400',
+   'experiment.num_workers=100',
+   'experiment.worker_startup_batch_size=8',
+   'experiment.worker_startup_timeout_s=600',
+   'experiment.worker_response_timeout_s=120',
+   'experiment.terminal_recent_episodes=100',
+   'experiment.terminal_every_updates=10',
+   'experiment.terminal_diagnostic_every_updates=100',
+   'experiment.terminal_episode_detail=false',
+   'evaluation.selection_strategy="team_combined_penalties"',
+   'evaluation.every_steps=1024000',
+   'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_0.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_0.reward.reward.collision.enabled=false',
+   'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+   'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+   'agents.car_1.reward.task.description="Shared completion/placement reward with recorded '
+   'terminal race penalties."',
+   'agents.car_1.reward.reward.collision.enabled=false',
+   'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])])
 @pytest.mark.parametrize('variant,mode,rank', [('shared', 'shared', 4), ('per_agent', 'per_agent', 4),
                                              ('shared_r8', 'shared', 8)])
-def test_lora_scenarios_preserve_task_protocol(task, variant, mode, rank):
+def test_lora_scenarios_preserve_task_protocol(task, variant, mode, rank, scenario_path, overrides):
     from core.scenario import load_and_expand_scenario
-    source = load_and_expand_scenario(f'scenarios/mappo_2v2_{task}_pretrained.yaml')
-    adapted = load_and_expand_scenario(f'scenarios/mappo_2v2_{task}_lora_{variant}.yaml')
+    source = load_and_expand_scenario(scenario_path, overrides=overrides)
+    import json
+    adapted = load_and_expand_scenario(scenario_path, overrides=[*overrides,
+        'training_defaults.lora=' + json.dumps(dict(mode=mode, rank=rank, alpha=float(rank), train_log_std=True))])
     config = adapted['training_defaults'].pop('lora')
     assert config == dict(mode=mode, rank=rank, alpha=float(rank), train_log_std=True)
     for key in ('experiment', 'wandb'):
@@ -265,8 +304,38 @@ def test_lora_cli_parallel_training_and_checkpoint_evaluation(tmp_path, monkeypa
     from env.spaces_builder import build_action_spaces
     from utils.torch_io import safe_load
 
-    path = Path(f'scenarios/mappo_2v2_penalties_lora_{mode}.yaml').resolve()
-    scenario = load_and_expand_scenario(str(path))
+    path = Path('scenarios/mappo_2v2_race.yaml').resolve()
+    scenario = load_and_expand_scenario(str(path), overrides=['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
+         'training_defaults.batch_size=2048',
+         'training_defaults.rollout_steps_per_env=256',
+         'training_defaults.checkpoint_every_steps=1024000',
+         'wandb.group="mappo-2v2-penalties-current-physics"',
+         'wandb.tags=["mappo","2v2","terminal-incidents-v1","current-pretrain-physics","racing-mpc-opponents"]',
+         'wandb.notes="Matched physics, observations, racing MPC opponents and rewards. Both-finished '
+         'rate, then rank plus recorded penalties select checkpoints; clean finish time breaks successful '
+         'ties."',
+         'experiment.name="mappo_2v2_penalties_scratch"',
+         'experiment.num_envs=400',
+         'experiment.num_workers=100',
+         'experiment.worker_startup_batch_size=8',
+         'experiment.worker_startup_timeout_s=600',
+         'experiment.worker_response_timeout_s=120',
+         'experiment.terminal_recent_episodes=100',
+         'experiment.terminal_every_updates=10',
+         'experiment.terminal_diagnostic_every_updates=100',
+         'experiment.terminal_episode_detail=false',
+         'evaluation.selection_strategy="team_combined_penalties"',
+         'evaluation.every_steps=1024000',
+         'agents.car_0.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_0.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_0.reward.reward.collision.enabled=false',
+         'agents.car_0.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}',
+         'agents.car_1.reward.task.name="race_team_2v2_penalties"',
+         'agents.car_1.reward.task.description="Shared completion/placement reward with recorded terminal '
+         'race penalties."',
+         'agents.car_1.reward.reward.collision.enabled=false',
+         'agents.car_1.reward.reward.team_race_penalties={"enabled":true,"policy":"terminal_incidents_v1"}'])
     scenario['experiment'].update(num_envs=2, num_workers=1, episodes=2, torch_threads=1)
     scenario['environment'].update(max_steps=3, terminate_on_collision=False,
                                    map_bundles=['circle_map'], map_bundles_train=['circle_map'],

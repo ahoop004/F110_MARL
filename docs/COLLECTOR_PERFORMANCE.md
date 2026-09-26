@@ -1,10 +1,13 @@
 # PPO and asymmetric MAPPO collector performance
 
+Scenario settings are now inline. Select parameter choices in the canonical YAML
+file or use `--set KEY=YAML`; there are no scenario inheritance files in `configs`.
+
 Use the local preset for single-car development. Its 1,024-step rollout avoids
 waiting for the historical 409,600-transition pooled batch on one environment:
 
 ```bash
-python3 run.py --scenario scenarios/ppo_lap_completion_pretrain_local.yaml --no-render
+python3 run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --set agents.car_0.params.n_steps=1024 --no-render
 ```
 
 The original `ppo_lap_completion_pretrain.yaml` retains its existing configuration
@@ -17,7 +20,7 @@ On a 128-core node, the HPC preset starts **400 environments in 100 CPU worker
 processes**, with four environments per worker and one parent GPU learner:
 
 ```bash
-python3 run.py --scenario scenarios/ppo_lap_completion_pretrain_hpc.yaml --no-render
+python3 run.py --scenario scenarios/ppo_lap_completion_pretrain.yaml --set experiment.num_envs=400 --set experiment.num_workers=100 --no-render
 ```
 
 It preserves 1,024 transitions per environment, a 409,600-transition PPO update,
@@ -112,7 +115,7 @@ Run this with the GPU and CPUs reserved exclusively for the benchmark:
 
 ```bash
 python3 scripts/benchmark_collectors.py \
-  --scenario scenarios/ppo_lap_completion_pretrain_hpc.yaml \
+  --scenario scenarios/ppo_lap_completion_pretrain.yaml --set experiment.num_envs=400 --set experiment.num_workers=100 \
   --num-envs 400 --workers 64 80 100 112 \
   --scheduling synchronous ready --rollout-steps-per-env 1024 \
   --total-steps 1228800 --repetitions 3 --output-dir /tmp/ppo_collector_benchmark
