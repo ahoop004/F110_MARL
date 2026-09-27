@@ -1035,8 +1035,7 @@ class F110ParallelEnv:
                             if self.lifecycle.records[aid].is_active}
         respawn.update(recovery_reasons)
         if respawn:
-            ahead = {aid for aid, reason in recovery_reasons.items() if reason == "collision"}
-            obs_joint = self._respawn_on_centerline(respawn, ahead_of_leader=ahead)
+            obs_joint = self._respawn_on_centerline(respawn)
             obs = self._split_obs(obs_joint)
             previous_velocities = [getattr(self.state_buffers, name).copy() for name in
                                    ("linear_vels_x_prev", "linear_vels_y_prev", "angular_vels_prev")]
@@ -1147,41 +1146,19 @@ class F110ParallelEnv:
 
         return obs, rewards, terminations, truncations, infos
 
-    def _respawn_on_centerline(self, agent_ids, *, ahead_of_leader=()):
-        """Relocate selected active cars without awarding teleport progress/laps."""
+    def _respawn_on_centerline(self, agent_ids):
+        """Reset any recovering car at its nearest unoccupied centerline point.
+
+        Learner boundary recovery and MPC recovery share placement and state
+        cleanup. Race position never influences where a car is put back.
+        """
         points = np.asarray(self.centerline_points)[:, :2]
         poses = self.sim.agent_poses.copy()
-        target = None
-        if ahead_of_leader:
-            geometry = self._centerline_progress_tracker._geometry
-            if not geometry.closed:
-                raise ValueError("Half-lap respawn requires a closed centerline")
-            candidates = [aid for aid in self.possible_agents
-                          if self.lifecycle.records[aid].is_active]
-            projections = {aid: project_to_centerline(
-                geometry, poses[self._agent_id_to_index[aid], :2], 0.0)
-                for aid in candidates}
-            finish = 0.0
-            if self._lap_tracker is not None:
-                segment = np.asarray(self._lap_tracker.finish_line["segment"])
-                finish = project_to_centerline(geometry, np.asarray(self._lap_tracker.finish_line["start"]) + segment / 2, 0.0).progress
-            leader = max(candidates, key=lambda aid: (
-                self.lifecycle.records[aid].lap_count,
-                (projections[aid].progress - finish) % 1.0))
-            target_s = (projections[leader].arc_length + geometry.total_length / 2) % geometry.total_length
-            k = min(int(np.searchsorted(geometry.arc_lengths, target_s, side="right") - 1),
-                    len(geometry.segment_lengths) - 1)
-            fraction = (target_s - geometry.arc_lengths[k]) / geometry.segment_lengths[k]
-            target = geometry.segment_starts[k] + fraction * geometry.segment_vectors[k]
         indices = []
         for aid in sorted(agent_ids):
             idx = self._agent_id_to_index[aid]
-            if aid in ahead_of_leader:
-                candidates = np.vstack([target, geometry.segment_starts])
-                order = np.r_[0, 1 + np.argsort((geometry.arc_lengths[:-1] - target_s) % geometry.total_length)]
-            else:
-                candidates = points
-                order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
+            candidates = points
+            order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
             others = np.delete(poses[:, :2], idx, axis=0)
             clearance = 2.0 * float(self.sim.params["length"])
             valid = order[np.all(np.linalg.norm(candidates[order, None] - others[None], axis=2)

@@ -8,7 +8,6 @@ from core.scenario import load_and_expand_scenario, validate_scenario, ScenarioE
 from core.setup import create_training_setup, build_reward_composers
 from env.respawn import reset_respawned
 from metrics.racing_eval import create_episode_facts, update_agent_step_facts, episode_race_record
-from utils.centerline import project_to_centerline
 from wrappers.rewards.events import OpponentCrashBonusComponent
 
 IDS = ['car_0', 'car_1', 'car_2', 'car_3']
@@ -65,23 +64,32 @@ def test_every_car_recovers_boundary_once_without_terminal_or_teleport_reward(re
     assert abs(next_infos[aid]['centerline']['progress_delta']) < 1e-5
 
 
-def test_mpc_collision_recovers_half_lap_ahead_even_when_learner_crashes(recovery):
+@pytest.mark.parametrize('leader_laps', [0, 2])
+def test_mpc_collision_uses_nearest_clear_point_even_when_learner_crashes(recovery, leader_laps):
     env, _, _ = recovery
-    # car_1 leads by a completed lap, irrespective of track coordinate.
-    env.lifecycle.record_lap_crossing('car_1', step=0)
-    geometry = env._centerline_progress_tracker._geometry
-    leader_s = project_to_centerline(geometry, env.sim.agent_poses[1, :2], 0.).arc_length
-    expected = (leader_s + geometry.total_length / 2) % geometry.total_length
-    env.sim.agents[2].reset(env.sim.agent_poses[0].copy())
-    _, _, terms, _, infos = env.step({})
+    # Changing who leads must not influence the recovered car's placement.
+    for lap in range(leader_laps):
+        env.lifecycle.record_lap_crossing('car_1', step=lap)
+    crash_pose = env.sim.agent_poses[0].copy()
+    points = np.asarray(env.centerline_points)[:, :2]
+    others = env.sim.agent_poses[[0, 1, 3], :2]
+    clear = np.all(np.linalg.norm(points[:, None]-others[None], axis=2)
+                   > 2*env.sim.params['length'], axis=1)
+    expected = points[clear][np.argmin(np.sum((points[clear]-crash_pose[:2])**2, axis=1))]
+    env.sim.agents[2].reset(crash_pose)
+    obs, _, terms, _, infos = env.step({})
     assert terms['car_0'] and infos['car_0']['terminal_reason'] == 'collision'
     assert not terms['car_2'] and infos['car_2']['respawn_reason'] == 'collision'
     assert env.lifecycle.records['car_2'].is_active
     assert env.lifecycle.records['car_2'].lap_count == 0
     assert infos['car_2']['centerline']['progress_delta'] == 0.
-    actual = project_to_centerline(geometry, env.sim.agent_poses[2, :2], 0.).arc_length
-    error = abs((actual - expected + geometry.total_length / 2) % geometry.total_length - geometry.total_length / 2)
-    assert error <= max(geometry.segment_lengths) * 1.1
+    np.testing.assert_allclose(env.sim.agent_poses[2, :2], expected, atol=1e-6)
+    assert np.linalg.norm(expected-crash_pose[:2]) < 5.
+    np.testing.assert_array_equal(obs['car_2']['velocity'], [0., 0.])
+    assert obs['car_2']['steering_angle'] == 0.
+    assert obs['car_2']['steering_reference'] == 0.
+    assert obs['car_2']['wheel_speed'] == 0.
+    assert obs['car_2']['wheel_speed_reference'] == 0.
     reward = OpponentCrashBonusComponent({'bonus': 1.})
     context = {'all_infos': infos, 'opponent_agent_ids': IDS[2:]}
     assert reward.compute(context) == {'opponent_crash/bonus': 1.}
@@ -126,9 +134,64 @@ def test_recovery_restarts_speed_reference_and_mpc_plan(recovery):
 @pytest.mark.parametrize('config', [
     {'boundary_agents': ['unknown']}, {'boundary_agents': 'car_0'},
     {'collision_agents': ['car_0']}, {'collision_placement': 'random'},
+    {'collision_placement': 'leader_half_lap'},
 ])
 def test_invalid_recovery_configuration_is_rejected(config):
     scenario = load_and_expand_scenario('scenarios/mappo_2v2_asymmetric.yaml')
     scenario['environment']['respawn'] = config
     with pytest.raises(ScenarioError, match='respawn'):
         validate_scenario(scenario)
+
+
+def test_learner_and_mpc_use_identical_respawn_placement(recovery):
+    env, _, _ = recovery
+    poses = env.sim.agent_poses.copy()
+    # Recreate the same physical situation with learner and MPC identities swapped.
+    crash_pose = poses[0].copy()
+    crash_pose[:2] += 2.
+    poses[0] = crash_pose
+    env.sim.reset(poses)
+    env._respawn_on_centerline({'car_0'})
+    learner_pose = env.sim.agent_poses[0].copy()
+    swapped = poses.copy()
+    swapped[[0, 2]] = swapped[[2, 0]]
+    env.sim.reset(swapped)
+    env._respawn_on_centerline({'car_2'})
+    np.testing.assert_allclose(env.sim.agent_poses[2], learner_pose, atol=1e-6)
+    np.testing.assert_array_equal(env.sim.agents[2].physics_state[3:], 0.)
+
+
+@pytest.mark.parametrize('path', [
+    'scenarios/mappo_2v2_asymmetric.yaml',
+    'scenarios/mappo_2v2_asymmetric_lora.yaml',
+    'scenarios/render/mappo_2v2_asymmetric.yaml',
+])
+def test_training_and_render_use_the_same_local_recovery(path):
+    scenario = load_and_expand_scenario(path)
+    assert scenario['environment']['respawn']['collision_placement'] == 'nearest_centerline'
+
+
+@pytest.mark.parametrize('reason', ['track_boundary', 'collision'])
+def test_mpc_replans_from_rest_after_real_recovery(recovery, reason):
+    env, _, controllers = recovery
+    controller = controllers['car_2']
+    controller.set_env(env)
+    controller.controller._warm = np.full((controller.knots, 2), [.3, 5.])
+    controller.controller._decisions = 99
+    pose = env.sim.agent_poses[2].copy()
+    if reason == 'collision':
+        pose = env.sim.agent_poses[0].copy()
+    else:
+        pose[:2] += 1000.
+    env.sim.agents[2].reset(pose)
+    obs, _, _, _, infos = env.step({})
+    assert infos['car_2']['respawn_reason'] == reason
+    reset_respawned(infos, controllers=controllers, actions={}, observations={})
+    assert controller.controller._warm is None
+    assert controller.controller._decisions == 0
+    action = controller.act(obs['car_2'])
+    assert np.isfinite(action).all()
+    assert 0 <= action[1] <= 5.00001  # restart at 0.25 m/s reference, not the old 5 m/s
+    assert abs(action[0]) <= controller.steering_reference_rate*env.timestep+1e-7
+    assert controller.last_plan['friction_mu'] == infos['car_2']['physics']['mu']
+    assert np.linalg.norm(controller.last_plan['trajectory'][0, :2]-obs['car_2']['pose'][:2]) < .1

@@ -1,11 +1,11 @@
-# Validated MPC profile used by active MAPPO 2v2 opponents and render previews.
+# Shared MPC profile used by active MAPPO 2v2 opponents and render previews.
 # Perfect range-limited traffic state; no occlusion model. Reduced prediction
-# physics, validated against the actual MF6.1 simulator by the benchmark script.
+# physics; validate revisions against the actual simulator with the benchmark script.
 algorithm: racing_mpc
 trainable: false
 action_adapter: rolling_speed_to_wheel_v1
 params:
-  max_speed: 3.5
+  max_speed: 5.0
   max_acceleration: 5.0
   horizon: 30
   knots: 6
@@ -13,3 +13,5 @@ params:
   max_evaluations: 260  # SciPy can finish the current finite-difference gradient past this budget
   margin: 0.10
   sensing_range: 10.0
+# Stability defaults (also apply to inline scenario profiles):
+# max_steering_reference_rate: 1.5 rad/s; grip_utilization: 0.8.

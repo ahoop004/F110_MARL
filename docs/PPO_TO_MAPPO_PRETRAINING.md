@@ -277,10 +277,13 @@ are reserved for final evaluation. Held-out validation uses separate seeds and
 never participates in checkpoint selection. Neither validation entry point can
 start training accidentally: both require `--eval`.
 
-Fixed MPC opponents use `rolling_speed_to_wheel_v1`, a 3.5 m/s speed cap, and
+Fixed MPC opponents use `rolling_speed_to_wheel_v1`, a shared 5 m/s speed cap, and
 vehicle dimensions from the environment. See the
 [controller contract and initial completion results](RACING_MPC_OPPONENTS.md),
-including its privileged traffic sensing. Broader starts, randomized grip, and
+including its privileged traffic and grip sensing. Active PPO pretraining and
+MAPPO scenarios both cap forward wheel references at 100 rad/s (0.05 m radius).
+Existing 400 rad/s checkpoints do not match this new contract and require
+retraining or explicit migration. Broader starts, randomized grip, and
 learned traffic still need qualification before interpreting team wins; keep
 earlier hybrid-opponent results separate. The 800 s race
 horizon is 16,000 steps and finish clearance remains 2 s. Team reward presets now

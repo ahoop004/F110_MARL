@@ -176,7 +176,7 @@ environment:
       steering_rate_min: -3.2
       steering_rate_max: 3.2
       wheel_speed_min: -400.0
-      wheel_speed_max: 400.0
+      wheel_speed_max: 100.0  # shared 5 m/s forward rolling-speed cap (radius 0.05 m)
       wheel_rate_min: -10000.0
       wheel_rate_max: 10000.0
     # Front-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
@@ -360,11 +360,11 @@ environment:
   # true terminates a colliding car; false leaves collision sensing active without that terminal.
   terminate_on_collision: true
   # Geometric boundary detection and optional boundary termination.
-  # Boundary recovery applies to every car; MPC collisions relocate half a lap ahead.
+  # Every recovering car uses its nearest unoccupied centerline point.
   respawn:
     boundary_agents: [car_0, car_1, car_2, car_3]
     collision_agents: [car_2, car_3]
-    collision_placement: leader_half_lap
+    collision_placement: nearest_centerline
   track_limits:
     # true enables this component; false disables it.
     enabled: true
@@ -637,7 +637,7 @@ agents:
     # Policy/controller parameters. Learner values here override training_defaults.
     params:
       # Fixed-controller target-speed cap in m/s, before the wheel adapter.
-      max_speed: 20
+      max_speed: 20.0
       # Fixed-controller acceleration limit in m/s².
       max_acceleration: 5.0
       # MPC prediction horizon.
@@ -666,7 +666,7 @@ agents:
     # Policy/controller parameters. Learner values here override training_defaults.
     params:
       # Fixed-controller target-speed cap in m/s, before the wheel adapter.
-      max_speed: 20
+      max_speed: 20.0
       # Fixed-controller acceleration limit in m/s².
       max_acceleration: 5.0
       # MPC prediction horizon.

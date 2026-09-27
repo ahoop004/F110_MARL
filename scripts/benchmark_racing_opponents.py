@@ -22,7 +22,7 @@ from scipy.spatial import cKDTree
 from utils.track_preview import _resample_uniform
 
 
-def scenario_for(controller, map_name, mode, seed, max_steps, laps):
+def scenario_for(controller, map_name, mode, seed, max_steps, laps, friction_mu=None):
     scenario = load_and_expand_scenario(str(ROOT/'scenarios/mappo_2v2_race.yaml'), overrides=['training_defaults.update_version="parallel-mappo-grouped256-batch2048-v1"',
          'training_defaults.batch_size=2048',
          'training_defaults.rollout_steps_per_env=256',
@@ -76,12 +76,16 @@ def scenario_for(controller, map_name, mode, seed, max_steps, laps):
                random_spawn={'enabled': True, 'allow_reuse': False},
                episode_termination={'mode': 'all_agents', 'lap_completion': True})
     env['lap_counting']['require_finish_line'] = True
+    if friction_mu is not None:
+        if not np.isfinite(friction_mu) or friction_mu < 0:
+            raise ValueError('friction_mu must be finite and nonnegative')
+        env['friction']['eval'] = {'mode': 'fixed', 'mu': float(friction_mu)}
     scenario['evaluation'].update(max_steps=max_steps, target_laps=laps)
     return scenario
 
 
-def run_race(controller, map_name, mode, seed, max_steps, laps):
-    scenario = scenario_for(controller, map_name, mode, seed, max_steps, laps)
+def run_race(controller, map_name, mode, seed, max_steps, laps, friction_mu=None):
+    scenario = scenario_for(controller, map_name, mode, seed, max_steps, laps, friction_mu)
     env, agents, _ = create_training_setup(scenario, mode='eval', scenario_dir=ROOT/'scenarios')
     try:
         obs, info = env.reset(seed=seed)
@@ -146,6 +150,7 @@ def run_race(controller, map_name, mode, seed, max_steps, laps):
                       f'{step+1} steps, laps={previous_laps}', file=sys.stderr, flush=True)
         result = {
             'controller': controller, 'map': map_name, 'mode': mode, 'seed': seed,
+            'friction_mu': env.get_global_state().metadata['physics']['mu'],
             'steps': step+1, 'simulation_s': (step+1)*env.timestep,
             'wall_s': time.perf_counter()-start, 'laps': int(final.get('lap_count', 0)),
             'outcome': final.get('terminal_reason') or ('timeout' if step+1 == max_steps else 'unknown'),
@@ -180,10 +185,13 @@ def main():
     parser.add_argument('--seeds', nargs='+', type=int, default=[10042, 10043, 10044])
     parser.add_argument('--max-steps', type=int, default=16000)
     parser.add_argument('--laps', type=int, default=3)
+    parser.add_argument('--friction-mu', type=float, help='Override fixed evaluation grip for every car')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.max_steps < 1 or args.laps < 1:
         parser.error('max-steps and laps must be positive')
+    if args.friction_mu is not None and (not np.isfinite(args.friction_mu) or args.friction_mu < 0):
+        parser.error('--friction-mu must be finite and nonnegative')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Refuse to overwrite evidence from earlier runs.
     with args.output.open('x') as handle:
@@ -191,7 +199,7 @@ def main():
             for mode in args.modes:
                 for seed in args.seeds:
                     for controller in args.controllers:
-                        result = run_race(controller, map_name, mode, seed, args.max_steps, args.laps)
+                        result = run_race(controller, map_name, mode, seed, args.max_steps, args.laps, args.friction_mu)
                         line = json.dumps(result, allow_nan=False)
                         handle.write(line+'\n')
                         handle.flush()

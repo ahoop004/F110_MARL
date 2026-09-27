@@ -1,0 +1,395 @@
+{
+  "description": "Bounded validation of slip-aware MPC, steering continuity, enforced wall margins, episode grip and adaptive prediction integration.",
+  "base_commit": "2f7d630fba7e00013f1c3cb87d01cdc266817189",
+  "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94",
+  "commands": [
+    "PYGLET_HEADLESS=true OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python3 scripts/benchmark_racing_opponents.py --controllers racing_mpc --maps circle_map Budapest_map --modes solo pair --seeds 10043 --max-steps 5000 --laps 1 --output outputs/mpc_stability_final_nominal.jsonl",
+    "PYGLET_HEADLESS=true OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python3 scripts/benchmark_racing_opponents.py --controllers racing_mpc --maps circle_map Budapest_map --modes solo --seeds 10044 --friction-mu 0.8 --max-steps 5000 --laps 1 --output outputs/mpc_stability_final_low_grip.jsonl",
+    "PYGLET_HEADLESS=true OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python3 scripts/benchmark_racing_opponents.py --controllers racing_mpc --maps circle_map Budapest_map --modes passing --seeds 10044 --max-steps 1200 --laps 1 --output outputs/mpc_stability_final_passing.jsonl"
+  ],
+  "tests": {
+    "command": "PYGLET_HEADLESS=true OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python3 -m pytest tests/test_racing_mpc.py tests/test_mpc_traffic_scenario.py tests/test_ppo_mpc_pursuit.py tests/test_friction_protocol.py tests/test_speed_actions.py tests/test_combined_slip_physics.py tests/test_combined_slip_environment.py tests/test_wheel_actuators.py -q",
+    "passed": 181,
+    "failed": 4,
+    "baseline_failures": "All four parameterizations of tests/test_speed_actions.py::test_frenet_environment_observes_applied_reference_rate fail identically in an untouched HEAD snapshot. The assertion assumes reference rate is observation index 7.",
+    "mpc_focused_passed": 45
+  },
+  "limitations": [
+    "One seed per map/mode/grip configuration; one lap for completion checks.",
+    "Perfect traffic state and exact episode friction are privileged controller inputs.",
+    "Prediction uses static axle loads and sampled clearance; collision avoidance is not guaranteed.",
+    "Passing checks stop at 60 simulated seconds; they are not lap-completion checks. The Budapest slower hybrid crashed after being passed; fault was not determined.",
+    "Latency measured locally with some benchmark/test processes running concurrently; not a real-time deadline guarantee.",
+    "These use the benchmark spawn protocol, not broad qualification against learned opponents or randomized training starts.",
+    "Both hybrid traffic cars also crashed in the Budapest paired check; both MPC cars finished without collision. These records do not establish fault."
+  ],
+  "results": [
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "solo",
+      "seed": 10043,
+      "friction_mu": 1.0489,
+      "steps": 2029,
+      "simulation_s": 101.45,
+      "wall_s": 28.437344566998945,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        99.85000000000001
+      ],
+      "decision_ms_mean": 12.875104427342151,
+      "decision_ms_p95": 16.20878899848321,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "ef66196978d5244682361d7305514d7f15ea8b4792f19f6219367500b1040a87",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {},
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "pair",
+      "seed": 10043,
+      "friction_mu": 1.0489,
+      "steps": 2062,
+      "simulation_s": 103.10000000000001,
+      "wall_s": 81.02981643900421,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        99.85000000000001
+      ],
+      "decision_ms_mean": 15.834057436132246,
+      "decision_ms_p95": 26.289143999747466,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": true,
+      "scenario_sha256": "d07154b3cbae30683ad29b52ca1831cb0e90aee65bf74089c541a5203b49ebfc",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 1,
+          "collision": false,
+          "finished": true
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      },
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "solo",
+      "seed": 10043,
+      "friction_mu": 1.0489,
+      "steps": 2305,
+      "simulation_s": 115.25,
+      "wall_s": 43.845320480002556,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        112.7
+      ],
+      "decision_ms_mean": 17.830308964047322,
+      "decision_ms_p95": 39.66062979889095,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "d502ef63853f235dddca72033c8a576c1a7d15ab195f80d984d53c7789fa40ed",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {},
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "pair",
+      "seed": 10043,
+      "friction_mu": 1.0489,
+      "steps": 2364,
+      "simulation_s": 118.2,
+      "wall_s": 103.64213423099864,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        115.05000000000001
+      ],
+      "decision_ms_mean": 23.002931631219262,
+      "decision_ms_p95": 53.34733934505492,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_2",
+        "car_3"
+      ],
+      "pair_both_finished": true,
+      "scenario_sha256": "653a7404b7737355ffc02abf0ee6c2b7099444b5450ae73b5e0a6915e04a4e68",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 1,
+          "collision": false,
+          "finished": true
+        },
+        "car_2": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        },
+        "car_3": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      },
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "solo",
+      "seed": 10044,
+      "friction_mu": 0.8,
+      "steps": 2061,
+      "simulation_s": 103.05000000000001,
+      "wall_s": 31.582308519005892,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        100.0
+      ],
+      "decision_ms_mean": 14.088369823851407,
+      "decision_ms_p95": 25.040949003596324,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "b4afa49bca1b1ecae27dc72c364b078f8603f9c25da4bca2d2f459ec9c136205",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {},
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "solo",
+      "seed": 10044,
+      "friction_mu": 0.8,
+      "steps": 2284,
+      "simulation_s": 114.2,
+      "wall_s": 49.50961763699888,
+      "laps": 1,
+      "outcome": "race_complete",
+      "completed": true,
+      "collision": false,
+      "lap_times_s": [
+        113.10000000000001
+      ],
+      "decision_ms_mean": 20.27280719397784,
+      "decision_ms_p95": 42.53563310012396,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [],
+      "pair_both_finished": null,
+      "scenario_sha256": "f0b9fd9c8a4398980780bb4455f3047a2836e2658d06298eabc6364281112e4b",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {},
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "circle_map",
+      "mode": "passing",
+      "seed": 10044,
+      "friction_mu": 1.0489,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 25.35722968000482,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 18.142655544919155,
+      "decision_ms_p95": 28.78727509923919,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_1"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "4a2692614545ee20fec00f22e3e82ef3a35e4a3b89e56d6526afef82e001cb6e",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": false,
+          "finished": false
+        }
+      },
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    },
+    {
+      "controller": "racing_mpc",
+      "map": "Budapest_map",
+      "mode": "passing",
+      "seed": 10044,
+      "friction_mu": 1.0489,
+      "steps": 1200,
+      "simulation_s": 60.0,
+      "wall_s": 29.251363411000057,
+      "laps": 0,
+      "outcome": "time_limit",
+      "completed": false,
+      "collision": false,
+      "lap_times_s": [],
+      "decision_ms_mean": 22.590266266737064,
+      "decision_ms_p95": 52.30381394831056,
+      "brake_fallbacks": 0,
+      "active_cars_passed": [
+        "car_1"
+      ],
+      "pair_both_finished": null,
+      "scenario_sha256": "8ce6bfc0eb7bbff7e79a42c756010ff3e291acf05bf8704ab8c6f2776b4ce792",
+      "controller_config": {
+        "algorithm": "racing_mpc",
+        "trainable": false,
+        "action_adapter": "rolling_speed_to_wheel_v1",
+        "params": {
+          "max_speed": 3.5,
+          "max_acceleration": 5.0,
+          "horizon": 30,
+          "knots": 6,
+          "iterations": 18,
+          "max_evaluations": 260,
+          "margin": 0.1,
+          "sensing_range": 10.0
+        }
+      },
+      "other_agents_at_stop": {
+        "car_1": {
+          "laps": 0,
+          "collision": true,
+          "finished": false
+        }
+      },
+      "controller_source_sha256": "6b3a6c8efd7a23e042858215ac0bd4a7e4dd366b665bca3e3dfa6d9315d73f94"
+    }
+  ]
+}

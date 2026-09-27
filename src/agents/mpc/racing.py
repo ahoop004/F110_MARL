@@ -1,7 +1,7 @@
-"""Actuator-aware shooting MPC for benchmarking, not an experiment default.
+"""Actuator-aware shooting MPC for fixed racing opponents.
 
-The prediction model is a reduced bicycle with steering/wheel lag, bounded
-longitudinal acceleration and a friction-limited yaw rate, NOT the MF6.1 plant.
+The prediction model retains planar velocity and yaw momentum, with MF6.1
+tire forces at static axle loads. It omits the plant's dynamic load transfer.
 Track clearance uses the occupancy map and the entire rectangular footprint.
 Traffic uses range-limited, perfect simulator states with constant world velocity
 (including stationary wrecks). This privileged sensing contract is intentional.
@@ -14,6 +14,8 @@ from PIL import Image
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import minimize
 from utils.track_preview import _resample_uniform
+from physics.dynamic_models import first_order_actuator_step
+from physics.tire_models import MF61_KEYS, mf61_tire_force
 
 
 @njit(cache=True)
@@ -35,38 +37,103 @@ def _distance(field, x, y, origin, resolution):
 
 
 @njit(cache=True)
+def _chassis_rhs(state, delta, wheel, p):
+    """MF6.1 forces with static axle loads; no algebraic yaw-rate clipping."""
+    x, y, yaw, vx, _, _, vy, rate = state
+    length, lr, mass, inertia = p[0], p[1], p[10], p[11]
+    lf = length-lr
+    co, si = np.cos(delta), np.sin(delta)
+    front_v = vy+lf*rate
+    front_load = mass*9.81*lr/length
+    rear_load = mass*9.81*lf/length
+    n = len(MF61_KEYS)
+    fx_f, fy_f, _, _ = mf61_tire_force(
+        vx*co+front_v*si, -vx*si+front_v*co, wheel,
+        front_load, p[7], p[13:13+n], p[12])
+    fx_r, fy_r, _, _ = mf61_tire_force(
+        vx, vy-lr*rate, wheel, rear_load, p[7], p[13+n:], p[12])
+    front_y = fx_f*si+fy_f*co
+    return np.array([vx*np.cos(yaw)-vy*np.sin(yaw),
+                     vx*np.sin(yaw)+vy*np.cos(yaw), rate,
+                     (fx_f*co-fy_f*si+fx_r)/mass+rate*vy,
+                     0., 0., (front_y+fy_r)/mass-rate*vx,
+                     (lf*front_y-lr*fy_r)/inertia])
+
+
+@njit(cache=True)
 def predict_step(state, control, p, dt):
-    """State x,y,yaw,v,delta,rolling-wheel-speed; commands rad,m/s."""
-    x, y, yaw, v, delta, wheel = state
-    # Two substeps keep the reduced model stable at the configured decision dt.
-    for _ in range(2):
-        h = dt / 2
-        delta += _clip((control[0] - delta) / p[2], -p[3], p[3]) * h
-        wheel += _clip((control[1] - wheel) / p[4], -p[5], p[5]) * h
-        v += _clip((wheel-v) / .10, -p[6], p[6]) * h
-        beta = np.arctan(p[1] / p[0] * np.tan(delta))
-        yaw_rate = v * np.cos(beta) / p[0] * np.tan(delta)
-        yaw_rate = _clip(yaw_rate, -p[7]*9.81/max(abs(v), .5), p[7]*9.81/max(abs(v), .5))
-        x += v * np.cos(yaw + beta) * h
-        y += v * np.sin(yaw + beta) * h
-        yaw += yaw_rate * h
-    return np.array([x, y, yaw, v, delta, wheel])
+    """State x,y,yaw,vx,delta,rolling-wheel-speed,vy,yaw-rate; rad,m/s commands.
+
+    Midpoint integration uses smaller steps for stiff low-speed tire response.
+    Actuators use the same exact held-reference solution as the simulator.
+    """
+    state = state.copy()
+    front_speed = state[3]*np.cos(state[4])+(state[6]+(p[0]-p[1])*state[7])*np.sin(state[4])
+    contact_speed = min(abs(state[3]), abs(front_speed))
+    # Reserve the possible speed drop over this decision when choosing the
+    # stiffness bound. Cap at 20 ms even at high speed; use 4 ms near rest.
+    contact_speed -= dt*(p[7]*9.81+abs(state[7]*state[6]))
+    max_step = min(.02, .004*max(.5, contact_speed)/.5)
+    steps = max(1, int(np.ceil(dt/max_step)))
+    h = dt/steps
+    for _ in range(steps):
+        delta, wheel = state[4], state[5]
+        mid = state + .5*h*_chassis_rhs(state, delta, wheel, p)
+        mid_delta = first_order_actuator_step(delta, control[0], h/2, p[2], -p[3], p[3])
+        mid_wheel = first_order_actuator_step(wheel, control[1], h/2, p[4], -p[5], p[5])
+        state += h*_chassis_rhs(mid, mid_delta, mid_wheel, p)
+        state[4] = first_order_actuator_step(delta, control[0], h, p[2], -p[3], p[3])
+        state[5] = first_order_actuator_step(wheel, control[1], h, p[4], -p[5], p[5])
+    return state
+
+
+def _speed_profile(points, max_speed, mu, utilization, deceleration):
+    """Curvature limits with a backward braking pass, in rolling-speed units."""
+    indices = np.arange(len(points))
+    before = points-points[np.maximum(indices-3, 0)]
+    after = points[np.minimum(indices+3, len(points)-1)]-points
+    lengths = .5*(np.linalg.norm(before, axis=1)+np.linalg.norm(after, axis=1))
+    turns = np.arctan2(before[:, 0]*after[:, 1]-before[:, 1]*after[:, 0],
+                      np.sum(before*after, axis=1))
+    curvature = np.abs(turns)/np.maximum(lengths, 1e-6)
+    grip = utilization*mu*9.81
+    speeds = np.minimum(max_speed, np.sqrt(grip/np.maximum(curvature, 1e-6)))
+    braking = min(deceleration, .5*grip)
+    for i in range(len(points)-2, -1, -1):
+        distance = np.linalg.norm(points[i+1]-points[i])
+        speeds[i] = min(speeds[i], np.sqrt(speeds[i+1]**2+2*braking*distance))
+    return speeds
+
+
+@njit(cache=True)
+def _limit_command(command, previous, dt, speed_rate, steering_rate):
+    return np.array([_clip(command[0], previous[0]-steering_rate*dt,
+                           previous[0]+steering_rate*dt),
+                     _clip(command[1], previous[1]-speed_rate*dt,
+                           previous[1]+speed_rate*dt)])
 
 
 @njit(cache=True)
 def _shoot(controls, initial, path, field, origin, resolution, footprint,
-           traffic, p, dt, repeat, speed_limit, margin, reference_rate):
-    state = initial.copy()
-    previous_speed = initial[6]
+           traffic, p, dt, repeat, speed_limit, margin, reference_rate,
+           steering_rate=1.5, grip_utilization=.8):
+    state = initial[:8].copy()
+    previous = np.array([initial[9], initial[8]])
     cost, min_clearance = 0.0, 1e6
-    trajectory = np.empty((len(controls)*repeat, 6))
+    trajectory = np.empty((len(controls)*repeat, 8))
     last_index = 0
     previous_s = 0.0
     for k in range(len(controls)*repeat):
         command = controls[k // repeat].copy()
-        command[1] = _clip(command[1], previous_speed-reference_rate*dt, previous_speed+reference_rate*dt)
-        previous_speed = command[1]
-        state = predict_step(state[:6], command, p, dt)
+        command = _limit_command(command, previous, dt, reference_rate, steering_rate)
+        # Penalize every executed change, including the first command and ramps
+        # inside a knot. Compare against the applied reference, not raw knots.
+        cost += 1.0*(command[0]-previous[0])**2/dt
+        cost += .005*(command[1]-previous[1])**2
+        previous = command
+        state = predict_step(state, command, p, dt)
+        if not np.isfinite(state).all():
+            return np.inf, -np.inf, trajectory
         trajectory[k] = state
         # Local ordered centerline, extended across the finish seam by the caller.
         best, idx = 1e20, last_index
@@ -87,14 +154,22 @@ def _shoot(controls, initial, path, field, origin, resolution, footprint,
         cost += 3.0*contour*contour*dt - 4.0*(s-previous_s)
         previous_s = s
         heading_error = np.arctan2(np.sin(state[2]-np.arctan2(ty, tx)), np.cos(state[2]-np.arctan2(ty, tx)))
-        cost += .3*heading_error**2*dt + .1*(state[3]-speed_limit)**2*dt
+        target_speed = min(speed_limit, path[idx, 3])
+        cost += .3*heading_error**2*dt + .1*(state[3]-target_speed)**2*dt
+        cost += 8.*max(0., state[3]-target_speed)**2*dt
+        slip = np.arctan2(state[6], max(abs(state[3]), .5))
+        cost += 30.*max(0., abs(slip)-.12)**2*dt
+        lateral_demand = abs(state[3]*state[7])
+        cost += 2.*max(0., lateral_demand-grip_utilization*p[7]*9.81)**2*dt
         co, si = np.cos(state[2]), np.sin(state[2])
         for point in footprint:
             x = state[0]+co*point[0]-si*point[1]
             y = state[1]+si*point[0]+co*point[1]
             clearance = _distance(field, x, y, origin, resolution)
-            min_clearance = min(min_clearance, clearance)
-            cost += 2000.*max(0., margin-clearance)**2*dt
+            # Slack is relative to the required wall margin. Traffic below
+            # already includes margin in the enclosing ellipse dimensions.
+            min_clearance = min(min_clearance, clearance-margin)
+            cost += 2000.*max(0., margin+.05-clearance)**2*dt
         # Oriented ellipse enclosing both vehicle rectangles: conservative during passes.
         t = (k+1)*dt
         for other in traffic:
@@ -109,9 +184,6 @@ def _shoot(controls, initial, path, field, origin, resolution, footprint,
             separation = np.sqrt((along/a)**2+(across/b)**2)
             cost += 3000.*max(0., np.sqrt(2.)-separation)**2*dt
             min_clearance = min(min_clearance, (separation/np.sqrt(2.)-1)*min(a, b))
-        if k > 0:
-            prev = controls[(k-1)//repeat]
-            cost += .08*(command[0]-prev[0])**2 + .005*(command[1]-prev[1])**2
     return cost, min_clearance, trajectory
 
 
@@ -121,7 +193,7 @@ class RacingMPCAgent:
     def __init__(self, config):
         cfg = config.get('params', config)
         self.agent_id = cfg.get('agent_id')
-        self.max_speed = float(cfg.get('max_speed', 3.5))
+        self.max_speed = float(cfg.get('max_speed', 5.0))
         self.horizon = int(cfg.get('horizon', 30))
         self.knots = int(cfg.get('knots', 6))
         self.iterations = int(cfg.get('iterations', 18))
@@ -129,10 +201,14 @@ class RacingMPCAgent:
         self.margin = float(cfg.get('margin', .10))
         self.sensing_range = float(cfg.get('sensing_range', 10.))
         self.acceleration = float(cfg.get('max_acceleration', 5.))
+        self.steering_reference_rate = float(cfg.get('max_steering_reference_rate', 1.5))
+        self.grip_utilization = float(cfg.get('grip_utilization', .8))
         if (self.horizon < 2 or self.knots < 2 or self.horizon % self.knots or
                 self.iterations < 1 or self.max_evaluations < 1 or not np.isfinite([self.max_speed, self.margin,
-                self.sensing_range, self.acceleration]).all() or self.max_speed <= 0
-                or self.margin < 0 or self.sensing_range <= 0 or self.acceleration <= 0):
+                self.sensing_range, self.acceleration, self.steering_reference_rate,
+                self.grip_utilization]).all() or self.max_speed <= 0
+                or self.margin < 0 or self.sensing_range <= 0 or self.acceleration <= 0
+                or self.steering_reference_rate <= 0 or not 0 < self.grip_utilization <= 1):
             raise ValueError('Invalid racing_mpc horizon, optimization, or physical limits')
         self.env = None
         self.reset()
@@ -150,7 +226,10 @@ class RacingMPCAgent:
                           min(-a['steering_rate_min'], a['steering_rate_max']),
                           a['wheel_speed_time_constant'],
                           min(-a['wheel_rate_min'], a['wheel_rate_max'])*self.radius,
-                          self.acceleration, v['mu'], v['length'], v['width']])
+                          self.acceleration, v['mu'], v['length'], v['width'],
+                          v['m'], v['I'], v['slip_speed_floor'],
+                          *[v['front_tire'][key] for key in MF61_KEYS],
+                          *[v['rear_tire'][key] for key in MF61_KEYS]])
         self._map_key = None
         self.reset()
 
@@ -204,22 +283,33 @@ class RacingMPCAgent:
         if self.env is None:
             raise ValueError('Call set_env before using racing_mpc')
         self._map()
+        agent_id = aid if aid is not None else self.agent_id
+        ego = self.env.get_agent_state(agent_id)
+        physics = self.env.get_global_state().metadata.get('physics', {})
+        self.p[7] = float(physics.get('mu', self.env.params['mu']))
+        if not np.isfinite(self.p[7]) or self.p[7] < 0:
+            raise ValueError('Invalid racing_mpc episode friction')
         pose = np.asarray(obs['pose'], dtype=np.float64)
         initial = np.array([*pose, float(obs['velocity'][0]), float(obs['steering_angle']),
                             float(obs['wheel_speed'])*self.radius,
-                            float(obs['wheel_speed_reference'])*self.radius])
+                            float(ego.velocity[1]), float(ego.angular_velocity),
+                            float(obs['wheel_speed_reference'])*self.radius,
+                            float(obs['steering_reference'])])
         if not np.isfinite(initial).all():
             raise ValueError('Nonfinite racing_mpc observation')
         nearest = int(np.argmin(np.sum((self.path-pose[:2])**2, axis=1)))
         count = int(np.ceil((self.max_speed*self.horizon*self.dt+4.)/.10))+10
         points = self.path[(np.arange(-5, count)+nearest) % len(self.path)]
         arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
-        local = np.column_stack((points, arc))
+        speeds = _speed_profile(points, self.max_speed, self.p[7],
+                                self.grip_utilization, self.acceleration)
+        local = np.column_stack((points, arc, speeds))
         traffic = self._traffic(pose, aid if aid is not None else self.agent_id)
         repeat = self.horizon//self.knots
         args = (initial, local, self.field, self.origin, self.resolution,
                 self.footprint, traffic, self.p, self.dt, repeat, self.max_speed,
-                self.margin, self.acceleration)
+                self.margin, self.acceleration, self.steering_reference_rate,
+                self.grip_utilization)
         def objective(flat):
             return _shoot(flat.reshape(self.knots, 2), *args)[0]
         # Curvature-based seed gives the optimizer useful steering from rest.
@@ -229,6 +319,7 @@ class RacingMPCAgent:
             idx = min(len(points)-3, 5+int((k+.5)*repeat*self.dt*max(1., initial[3])/.10))
             u, v = points[idx]-points[idx-1], points[idx+1]-points[idx]
             turn = np.arctan2(u[0]*v[1]-u[1]*v[0], np.dot(u, v))/.10
+            seed[k, 1] = speeds[idx]
             seed[k, 0] = np.clip(np.arctan(self.p[0]*turn), self.steer_min, self.steer_max)
         if self._warm is not None:
             seed = self._warm.copy()
@@ -257,12 +348,17 @@ class RacingMPCAgent:
                     cost, clearance, traj = _shoot(controls, *args)
                     if np.isfinite(cost):
                         candidates.append((cost, clearance, controls.copy(), traj))
-        brake = seed.copy()
-        brake[:, 1] = 0.
-        cost, clearance, traj = _shoot(brake, *args)
-        candidates.append((cost, clearance, brake, traj))
+        # Evaluate braking while following the plan, holding steering, and
+        # straightening. Select the safest braking trajectory if none is feasible.
+        braking_candidates = []
+        for steering in (seed[:, 0], np.full(self.knots, initial[9]), np.zeros(self.knots)):
+            brake = np.column_stack((steering, np.zeros(self.knots)))
+            cost, clearance, traj = _shoot(brake, *args)
+            braking_candidates.append((cost, clearance, brake, traj))
+        candidates.extend(braking_candidates)
         feasible = [c for c in candidates if c[1] >= 0.]
-        selected = min(feasible, key=lambda c: c[0]) if feasible else candidates[-1]
+        selected = (min(feasible, key=lambda c: c[0]) if feasible else
+                    max(braking_candidates, key=lambda c: (c[1], -c[0])))
         self._warm = selected[2].copy()
         # Shift the piecewise controls by one decision, interpolating knot values.
         self._warm[:-1] += (self._warm[1:]-self._warm[:-1])/repeat
@@ -271,9 +367,11 @@ class RacingMPCAgent:
         if fallback:
             action[1] = 0.
             self._warm = None
-        action[1] = np.clip(action[1], max(0., initial[6]-self.acceleration*self.dt),
-                            min(self.max_speed, initial[6]+self.acceleration*self.dt))
-        self.last_plan = {'predicted_clearance_m': float(selected[1]),
+        action = _limit_command(action, np.array([initial[9], initial[8]]), self.dt,
+                                self.acceleration, self.steering_reference_rate)
+        self.last_plan = {'predicted_safety_slack_m': float(selected[1]),
+                          'friction_mu': float(self.p[7]),
+                          'target_speed_mps': float(speeds[5]),
                           'brake_fallback': fallback, 'traffic_count': len(traffic),
                           'optimization_starts': len(starts),
                           'trajectory': selected[3]}

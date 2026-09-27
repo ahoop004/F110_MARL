@@ -151,7 +151,7 @@ environment:
       steering_rate_min: -3.2
       steering_rate_max: 3.2
       wheel_speed_min: -400.0
-      wheel_speed_max: 400.0
+      wheel_speed_max: 100.0  # shared 5 m/s forward rolling-speed cap (radius 0.05 m)
       wheel_rate_min: -10000.0
       wheel_rate_max: 10000.0
     # Front-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.

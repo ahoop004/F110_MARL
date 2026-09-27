@@ -10,7 +10,10 @@ The learner loads actor and critic from `outputs/L_map_pretrain/best_model.pt`,
 preserves the original 158 driving inputs and appends five target-opponent inputs
 (163 total). The actor and critic receive five zero-initialized input columns,
 preserving their initial outputs, and training starts with a fresh optimizer.
-The fixed racing MPC uses the validated 3.5 m/s profile. The learner starts
+The fixed racing MPC and learner share a 5 m/s forward rolling-speed cap
+(100 rad/s at the 0.05 m wheel radius). The initialization checkpoint must use
+this vehicle/action-bound contract; old 400 rad/s checkpoints require retraining
+or an explicit migration. The learner starts
 approximately 3 m behind it. Training uses one environment, 1024-step PPO
 rollouts, a constant 0.0001 learning rate and a 120M-transition budget.
 

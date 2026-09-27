@@ -137,8 +137,10 @@ with nonzero traffic inputs. Full tuning learns all columns; LoRA freezes the
 expanded base and learns traffic responses through its first-layer adapters.
 Scratch uses the same 176 inputs. Existing 158-input MAPPO checkpoints cannot
 resume into this layout; start new matched runs. Solo PPO stays at 158 inputs.
-Both fixed racing MPC opponents use the same 3.5 m/s speed cap
-and the environment's 0.58 m by 0.31 m vehicle geometry. Their traffic sensing
+The learner cars and both fixed racing MPC opponents share a 5 m/s speed cap
+and the environment's 0.58 m by 0.31 m vehicle geometry. The 100 rad/s forward
+wheel-reference ceiling also applies to new PPO pretraining. Old 400 rad/s
+checkpoints require retraining or explicit migration. MPC traffic sensing
 uses perfect current simulator states within 10 m; this is privileged sensing.
 The downloaded `outputs/L_map_best_model.pt` is a historical artifact and is not
 used by this matrix. Results from the previous older-physics A/B pair should be
@@ -224,3 +226,15 @@ controls. Role-conditioned offensive/defensive observations and reward/value
 targets, a common weighted race score, and richer incident attribution remain
 separate planned changes. Compare each new reward under scratch and full pretrained
 fine-tuning before comparing that same reward with LoRA.
+
+
+## Asymmetric recovery placement
+
+Boundary recovery for learners and MPC cars, and collision recovery for MPC cars,
+all use the same nearest unoccupied centerline placement. Recovery no longer moves
+an MPC half a lap ahead of the leader. The car restarts stationary, aligned with
+the centerline, with steering/wheel references and controller memory reset. Lap
+counts are preserved and relocation earns no progress. Simultaneous recoveries
+reserve separate clear positions. Learner collision termination rules are unchanged.
+Training, LoRA and asymmetric render scenarios select
+`respawn.collision_placement: nearest_centerline`.

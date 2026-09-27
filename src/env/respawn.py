@@ -14,8 +14,8 @@ def validate_respawn(config, agent_ids):
         if (not isinstance(ids, list) or any(not isinstance(a, str) for a in ids)
                 or len(ids) != len(set(ids)) or not set(ids) <= set(agent_ids)):
             raise ValueError(f"respawn.{key} must list unique known agent IDs")
-    if config.get("collision_placement", "leader_half_lap") != "leader_half_lap":
-        raise ValueError("respawn.collision_placement must be leader_half_lap")
+    if config.get("collision_placement", "nearest_centerline") != "nearest_centerline":
+        raise ValueError("respawn.collision_placement must be nearest_centerline")
     return dict(config)
 
 
