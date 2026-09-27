@@ -308,7 +308,7 @@ environment:
     - circle_map
     - Budapest_map
     - Hockenheim_map
-    - L_map
+    # - L_map
     - Melbourne_map
     - Montreal_map
     - Shanghai_map
@@ -320,7 +320,7 @@ environment:
     - circle_map
     - Budapest_map
     - Hockenheim_map
-    - L_map
+    # - L_map
     - Melbourne_map
     - Montreal_map
     - Shanghai_map
@@ -332,7 +332,7 @@ environment:
     - circle_map
     - Budapest_map
     - Hockenheim_map
-    - L_map
+    # - L_map
     - Melbourne_map
     - Montreal_map
     - Shanghai_map
@@ -632,7 +632,7 @@ agents:
     # Policy/controller parameters. Learner values here override training_defaults.
     params:
       # Fixed-controller target-speed cap in m/s, before the wheel adapter.
-      max_speed: 3.5
+      max_speed: 20
       # Fixed-controller acceleration limit in m/s².
       max_acceleration: 5.0
       # MPC prediction horizon.
@@ -661,7 +661,7 @@ agents:
     # Policy/controller parameters. Learner values here override training_defaults.
     params:
       # Fixed-controller target-speed cap in m/s, before the wheel adapter.
-      max_speed: 3.5
+      max_speed: 20
       # Fixed-controller acceleration limit in m/s².
       max_acceleration: 5.0
       # MPC prediction horizon.

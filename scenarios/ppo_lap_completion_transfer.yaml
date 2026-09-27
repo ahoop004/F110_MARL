@@ -78,7 +78,7 @@ environment:
     # Options: any_agent, all_agents, all_trainable. Choose whether survivors keep driving.
     mode: any_agent
     # true enables lap finishing; false allows continuous driving.
-    lap_completion: false
+    lap_completion: true
   # Behavior of cars after their terminal event; clearance affects collisions and sensing.
   terminal_agents:
     # Whether terminal cars remain physical obstacles before any configured removal.
@@ -288,7 +288,7 @@ environment:
   # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.
   map_pick: round_robin
   # Lap finish target; ignored as a termination trigger when lap_completion is false.
-  target_laps: 20
+  target_laps: 5
   # Finish-line crossing rules; do not change when comparing lap metrics.
   lap_counting:
     # true rejects maps without valid finish-line metadata.
