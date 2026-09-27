@@ -58,6 +58,8 @@ from env.state_buffer import (
     TerminalVehicleController,
 )
 from env.types import AgentRaceStatus, AgentState, GlobalState
+from env.respawn import validate_respawn
+from utils.centerline import project_to_centerline
 from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
 # Type checking only imports (don't execute at runtime)
@@ -237,7 +239,7 @@ class F110ParallelEnv:
         self.track_limits_enabled = bool(limits_cfg.get("enabled", False))
         self.terminate_on_track_boundary = bool(limits_cfg.get("terminate", True))
         if (self.track_limits_enabled and self.terminate_on_track_boundary
-                and self.n_agents != 1 and not merged.get("respawn_agents")):
+                and self.n_agents != 1 and not merged.get("respawn_agents") and not merged.get("respawn")):
             raise ValueError("Track-limit time trials require one vehicle")
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
@@ -306,6 +308,9 @@ class F110ParallelEnv:
         self.lifecycle = RaceLifecycle(self.possible_agents, self.target_laps,
                                        finish_on_laps=bool(episode_termination.get("lap_completion", True)),
                                        lap_finish_agents=episode_termination.get("lap_finish_agents"))
+        recovery = validate_respawn(merged.get("respawn"), self.possible_agents)
+        self.boundary_respawn_agents = set(recovery.get("boundary_agents", []))
+        self.collision_respawn_agents = set(recovery.get("collision_agents", []))
         self.respawn_agents = set(merged.get("respawn_agents", []))
         self.respawn_on_vehicle_collision = bool(merged.get("respawn_on_vehicle_collision", False))
         if not self.respawn_agents <= set(self.possible_agents):
@@ -958,13 +963,20 @@ class F110ParallelEnv:
         obs = self._split_obs(obs_joint)
         self._update_state(obs_joint)
         self.current_time += self.timestep
+        infos = {aid: {} for aid in self.possible_agents}
+        self._update_centerline_observation_facts(infos)
+        skip_laps = {aid for aid in active_before_step
+                     if (aid in self.boundary_respawn_agents
+                         and infos[aid].get("track_limits", {}).get("exceeded"))
+                     or (aid in self.collision_respawn_agents
+                         and obs_joint["collisions"][agent_index[aid]])}
         if self._lap_tracker is not None:
             lap_crossings = self._lap_tracker.update(
                 self.poses_x,
                 self.poses_y,
                 self.linear_vels_x_curr,
                 self.linear_vels_y_curr,
-                step=self._elapsed_steps,
+                step=self._elapsed_steps, skip_agents=skip_laps,
             )
         else:
             self.lifecycle.begin_step()
@@ -973,14 +985,18 @@ class F110ParallelEnv:
         # simple per-step reward (customize as needed)
         rewards = {aid: float(self.timestep * 0.0) for aid in self.agents}
 
-        # Compute progress and geometric boundary facts once, before lifecycle
-        # decisions, so reward and termination consume exactly the same test.
-        infos = {aid: {} for aid in self.possible_agents}
-        self._update_centerline_observation_facts(infos)
+        # Boundary facts above describe the physical step before any relocation.
         respawn = set()
+        recovery_reasons = {}
+        boundary_events = {aid for aid in active_before_step
+                           if infos[aid].get("track_limits", {}).get("exceeded")}
+        for aid in boundary_events & self.boundary_respawn_agents:
+            recovery_reasons[aid] = "track_boundary"
         if self.track_limits_enabled and self.terminate_on_track_boundary:
             for aid in active_before_step:
                 if infos[aid]["track_limits"]["exceeded"]:
+                    if aid in self.boundary_respawn_agents:
+                        continue
                     if aid in self.respawn_agents:
                         respawn.add(aid)
                     else:
@@ -1002,17 +1018,25 @@ class F110ParallelEnv:
                 continue
             collision_event = idx < collision_array.size and bool(collision_array[idx])
             if collision_event and self.terminate_on_collision.get(agent_id, True):
-                if agent_id in self.respawn_agents and (
+                if agent_id in self.collision_respawn_agents:
+                    recovery_reasons[agent_id] = "collision"
+                elif agent_id in self.respawn_agents and (
                     self.sim.collision_idx[idx] < 0 or self.respawn_on_vehicle_collision
                 ):
                     respawn.add(agent_id)
                 else:
                     self.lifecycle.record_collision(agent_id, step=self._elapsed_steps)
 
-        # Never reward/reset fixed cars when ego also crashes. Traffic scenarios
-        # can recover collisions between fixed cars without ending ego's race.
-        if respawn and all(self.lifecycle.records[a].is_active for a in active_before_step):
-            obs_joint = self._respawn_on_centerline(respawn)
+        # Preserve the legacy pursuit protocol. Explicit per-event recovery also
+        # runs when another car terminates on this step.
+        if not all(self.lifecycle.records[a].is_active for a in active_before_step):
+            respawn.clear()
+        recovery_reasons = {aid: reason for aid, reason in recovery_reasons.items()
+                            if self.lifecycle.records[aid].is_active}
+        respawn.update(recovery_reasons)
+        if respawn:
+            ahead = {aid for aid, reason in recovery_reasons.items() if reason == "collision"}
+            obs_joint = self._respawn_on_centerline(respawn, ahead_of_leader=ahead)
             obs = self._split_obs(obs_joint)
             previous_velocities = [getattr(self.state_buffers, name).copy() for name in
                                    ("linear_vels_x_prev", "linear_vels_y_prev", "angular_vels_prev")]
@@ -1029,6 +1053,11 @@ class F110ParallelEnv:
                 target = self._agent_target_index.get(aid)
                 infos[aid]["target_respawned"] = (target is not None and
                     self.possible_agents[target] in respawn)
+
+        for aid, reason in recovery_reasons.items():
+            infos[aid].update(respawned=True, respawn_reason=reason)
+        for aid in boundary_events:
+            infos[aid]["boundary_event"] = True
 
         trunc_flag = self.max_steps > 0 and self._elapsed_steps + 1 >= self.max_steps
         if trunc_flag:
@@ -1118,26 +1147,56 @@ class F110ParallelEnv:
 
         return obs, rewards, terminations, truncations, infos
 
-    def _respawn_on_centerline(self, agent_ids):
-        """Reset only crashed opponents at the nearest unoccupied centerline point."""
+    def _respawn_on_centerline(self, agent_ids, *, ahead_of_leader=()):
+        """Relocate selected active cars without awarding teleport progress/laps."""
         points = np.asarray(self.centerline_points)[:, :2]
         poses = self.sim.agent_poses.copy()
+        target = None
+        if ahead_of_leader:
+            geometry = self._centerline_progress_tracker._geometry
+            if not geometry.closed:
+                raise ValueError("Half-lap respawn requires a closed centerline")
+            candidates = [aid for aid in self.possible_agents
+                          if self.lifecycle.records[aid].is_active]
+            projections = {aid: project_to_centerline(
+                geometry, poses[self._agent_id_to_index[aid], :2], 0.0)
+                for aid in candidates}
+            finish = 0.0
+            if self._lap_tracker is not None:
+                segment = np.asarray(self._lap_tracker.finish_line["segment"])
+                finish = project_to_centerline(geometry, np.asarray(self._lap_tracker.finish_line["start"]) + segment / 2, 0.0).progress
+            leader = max(candidates, key=lambda aid: (
+                self.lifecycle.records[aid].lap_count,
+                (projections[aid].progress - finish) % 1.0))
+            target_s = (projections[leader].arc_length + geometry.total_length / 2) % geometry.total_length
+            k = min(int(np.searchsorted(geometry.arc_lengths, target_s, side="right") - 1),
+                    len(geometry.segment_lengths) - 1)
+            fraction = (target_s - geometry.arc_lengths[k]) / geometry.segment_lengths[k]
+            target = geometry.segment_starts[k] + fraction * geometry.segment_vectors[k]
         indices = []
         for aid in sorted(agent_ids):
             idx = self._agent_id_to_index[aid]
-            order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
+            if aid in ahead_of_leader:
+                candidates = np.vstack([target, geometry.segment_starts])
+                order = np.r_[0, 1 + np.argsort((geometry.arc_lengths[:-1] - target_s) % geometry.total_length)]
+            else:
+                candidates = points
+                order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
             others = np.delete(poses[:, :2], idx, axis=0)
             clearance = 2.0 * float(self.sim.params["length"])
-            valid = order[np.all(np.linalg.norm(points[order, None] - others[None], axis=2)
+            valid = order[np.all(np.linalg.norm(candidates[order, None] - others[None], axis=2)
                                  > clearance, axis=1)]
             if not len(valid):
                 raise RuntimeError("No unoccupied centerline respawn point")
             k = int(valid[0])
-            tangent = points[(k + 1) % len(points)] - points[k]
-            poses[idx] = [*points[k], np.arctan2(tangent[1], tangent[0])]
+            position = candidates[k]
+            projection = project_to_centerline(self._centerline_progress_tracker._geometry, position, 0.0)
+            poses[idx] = [*position, projection.tangent_heading]
             indices.append(idx)
             self._collision_flags[idx] = False
             self._collision_steps[idx] = -1
+            self._last_control_commands[idx] = 0.0
+            self._last_speed_reference_rates[idx] = 0.0
             self._centerline_progress_tracker._last_indices[aid] = -1
             self._centerline_progress_tracker._prev_progress[aid] = -1.0
             self._track_preview_last_indices.pop(aid, None)

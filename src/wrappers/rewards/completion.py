@@ -106,7 +106,7 @@ class ProgressDeltaBonusComponent(RewardComponent):
             boundary = (step_info.get("info") or {}).get("track_limits")
             if boundary is None:
                 raise ValueError("Boundary progress reward requires track_limits facts")
-            if boundary["exceeded"]:
+            if boundary["exceeded"] or (step_info.get("info") or {}).get("boundary_event", False):
                 return {"progress_delta/boundary": float(self.boundary_penalty)}
         centerline = _centerline_info(step_info)
         progress_delta = _float_or_none(centerline.get("progress_delta"))

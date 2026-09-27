@@ -397,6 +397,18 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("track_limits accepts enabled and terminate booleans")
     if any(not isinstance(v, bool) for v in limits.values()):
         raise ScenarioError("track_limits values must be booleans")
+    from env.respawn import validate_respawn
+    try:
+        recovery = validate_respawn(environment.get("respawn"), agents)
+    except ValueError as exc:
+        raise ScenarioError(str(exc)) from exc
+    if recovery:
+        if environment.get("respawn_agents"):
+            raise ScenarioError("Use either respawn or legacy respawn_agents")
+        if not limits.get("enabled"):
+            raise ScenarioError("respawn requires track_limits.enabled")
+        if set(recovery.get("collision_agents", [])) & set(trainable_ids):
+            raise ScenarioError("respawn.collision_agents must be fixed-policy agents")
     respawn_agents = environment.get("respawn_agents", [])
     if (not isinstance(respawn_agents, list) or
             any(aid not in agents or aid in trainable_ids for aid in respawn_agents)):
@@ -411,7 +423,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("respawn_on_vehicle_collision requires respawn_agents")
     # Multi-car races can request boundary facts for rewards without enabling
     # the single-car time-trial boundary-reset protocol.
-    if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents
+    if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents and not recovery
             and (len(agents) != 1 or environment.get("terminate_on_collision", True))):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     evaluation_mode = scenario.get("evaluation", {}).get("episode_termination_mode")

@@ -115,6 +115,7 @@ def build_env_kwargs(
         "target_laps",
         "lap_counting",
         "terminal_agents",
+        "respawn",
         "respawn_agents",
         "respawn_on_vehicle_collision",
         "agent_teams",

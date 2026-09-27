@@ -13,6 +13,7 @@ MINIMAL_INFO_KEYS = {
     "agent_id",
     "target_frenet",
     "target_respawned",
+    "respawned", "respawn_reason", "boundary_event",
     "lap_start_step", "lap_time_steps",
     "track_limits",
     "collision",

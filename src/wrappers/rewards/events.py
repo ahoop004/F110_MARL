@@ -113,7 +113,8 @@ class OpponentCrashBonusComponent(RewardComponent):
         opponents = set(step_info.get("opponent_agent_ids") or ())
         newly_crashed = {
             aid for aid in opponents - self._awarded
-            if (infos.get(aid) or {}).get("terminal_reason") == "collision"
+            if ((infos.get(aid) or {}).get("terminal_reason") == "collision"
+                or (infos.get(aid) or {}).get("respawn_reason") == "collision")
         }
         self._awarded.update(newly_crashed)
         if not newly_crashed:

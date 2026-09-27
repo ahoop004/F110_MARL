@@ -360,6 +360,11 @@ environment:
   # true terminates a colliding car; false leaves collision sensing active without that terminal.
   terminate_on_collision: true
   # Geometric boundary detection and optional boundary termination.
+  # Boundary recovery applies to every car; MPC collisions relocate half a lap ahead.
+  respawn:
+    boundary_agents: [car_0, car_1, car_2, car_3]
+    collision_agents: [car_2, car_3]
+    collision_placement: leader_half_lap
   track_limits:
     # true enables this component; false disables it.
     enabled: true
@@ -584,7 +589,7 @@ agents:
           max_step_progress: 1.0
         opponent_crash_bonus:
           enabled: true
-          # +1 per opponent collision terminal, once per opponent per episode.
+          # +1 per opponent collision (including recovery), once per opponent per episode.
           # Includes mutual crashes; the self-collision penalty still applies.
           bonus: 1.0
         collision:

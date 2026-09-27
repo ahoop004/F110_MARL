@@ -60,6 +60,8 @@ class AgentEpisodeFacts:
     reward_total: float = 0.0
     individual_reward_total: float = 0.0
     reward_components: Dict[str, float] = field(default_factory=dict)
+    boundary_respawns: int = 0
+    collision_respawns: int = 0
     active_steps: int = 0
     done_step: Optional[int] = None
     finish_step: Optional[int] = None
@@ -93,7 +95,7 @@ class AgentEpisodeFacts:
 
     @property
     def clean_finish(self) -> bool:
-        if self.finish_step is None:
+        if self.finish_step is None or self.boundary_respawns or self.collision_respawns:
             return False
         return self.collision_step is None or self.collision_step > self.finish_step
 
@@ -164,6 +166,10 @@ def update_agent_step_facts(
         if facts.done_step is not None:
             continue
         facts.active_steps += 1
+        if info.get("respawned"):
+            facts.boundary_respawns += info.get("respawn_reason") == "track_boundary"
+            facts.collision_respawns += info.get("respawn_reason") == "collision"
+            facts._lap_exceeded = True
         limits = info.get("track_limits")
         if isinstance(limits, Mapping):
             if facts._lap_started:
@@ -280,6 +286,8 @@ def episode_race_record(episode: EvalEpisodeFacts, *, timestep: float,
             "terminal_reason": f.terminal_reason, "outcome": f.outcome,
             "collision_dnf": f.terminal_reason == "collision",
             "boundary_dnf": f.terminal_reason == "track_boundary",
+            "boundary_respawns": f.boundary_respawns,
+            "collision_respawns": f.collision_respawns,
             "timeout": f.timed_out, "laps": f.final_lap_count,
             "net_progress_laps": f.net_progress if f.progress_delta_samples else None,
             "active_time_s": f.active_steps * timestep,
@@ -311,6 +319,8 @@ def episode_race_record(episode: EvalEpisodeFacts, *, timestep: float,
         "agents": agents,
     }
     for prefix, rows in (("own", own), ("opponent", others)):
+        for kind in ("boundary_respawns", "collision_respawns"):
+            record[f"{prefix}_{kind}"] = sum(a[kind] for a in rows)
         for kind in ("collision_dnf", "boundary_dnf", "timeout"):
             record[f"{prefix}_{kind}_count"] = sum(a[kind] for a in rows)
     if len(own) == len(others) == 2:
@@ -510,12 +520,16 @@ def aggregate_eval_episodes(
             "race_count": len(facts), "finished_count": sum(f.completed for f in facts),
             "collision_dnf_count": sum(f.terminal_reason == "collision" for f in facts),
             "boundary_dnf_count": sum(f.terminal_reason == "track_boundary" for f in facts),
+            "boundary_respawns": sum(f.boundary_respawns for f in facts),
+            "collision_respawns": sum(f.collision_respawns for f in facts),
             "timeout_count": sum(f.timed_out for f in facts),
             "clean_finish_count": sum(f.clean_finish for f in facts),
             "finish_time_sample_count": len(times),
             "mean_clean_finish_time_s": float(np.mean(times)) if times else None,
         }
     for prefix, ids in (("own", trainable_ids), ("opponent", opponent_ids)):
+        for kind in ("boundary_respawns", "collision_respawns"):
+            summary[f"{prefix}_{kind}"] = sum(summary["per_car"][aid][kind] for aid in ids)
         for kind in ("collision_dnf", "boundary_dnf", "timeout"):
             summary[f"{prefix}_{kind}_count"] = sum(summary["per_car"][aid][f"{kind}_count"] for aid in ids)
 

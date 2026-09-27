@@ -96,7 +96,8 @@ class TeamSupportComponent(RewardComponent):
         ego = step_info.get('info') or {}
         mate = infos.get(self.teammate_id, {})
         # No bonus for a mutual crash or for continuing after the racer is gone.
-        if (ego.get('terminal_reason') or mate.get('terminal_reason')
+        if (ego.get('respawned') or mate.get('respawned')
+                or ego.get('terminal_reason') or mate.get('terminal_reason')
                 or (ego.get('track_limits') or {}).get('exceeded')
                 or (mate.get('track_limits') or {}).get('exceeded')):
             return {}
@@ -117,7 +118,7 @@ class TeamSupportComponent(RewardComponent):
                 aid = neighbor['agent_id']
                 other = infos.get(aid, {})
                 if (aid not in opponents or not other.get('centerline')
-                        or other.get('terminal_reason')
+                        or other.get('terminal_reason') or other.get('respawned')
                         or (other.get('track_limits') or {}).get('exceeded')):
                     continue
                 if (-self.max_distance <= neighbor['delta_s'] <= -self.min_distance

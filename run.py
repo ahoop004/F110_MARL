@@ -1226,14 +1226,18 @@ def _run_eval(
                             team_components=team_components)
 
                     active_after_step = set(getattr(env, "agents", []))
-                    if not active_after_step or not set(actions).issubset(active_after_step):
+                    if (not active_after_step or not set(actions).issubset(active_after_step)
+                            or any(info.get("respawned") for info in info_dict.values())):
                         break
 
+                from env.respawn import reset_respawned
+                respawned = reset_respawned(info_dict, controllers=other_agents,
+                    actions=action_composers, observations=obs_composers)
                 decision_index += 1
                 for aid in trainable_ids:
                     if aid not in getattr(env, "agents", []):
                         continue
-                    if aid in actions_norm:
+                    if aid in actions_norm and aid not in respawned:
                         obs_composers[aid].update_prev_action(actions_norm[aid])
                     wrapped_obs[aid] = obs_composers[aid].wrap(
                         obs_dict.get(aid, {}),

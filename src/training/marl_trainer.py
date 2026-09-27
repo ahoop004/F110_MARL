@@ -20,6 +20,7 @@ import copy
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from env.respawn import reset_respawned
 
 from agents.mappo import MAPPOAgent
 from env.types import GlobalState, TransitionRecord
@@ -495,6 +496,7 @@ class MARLTrainer:
                     repeat_boundary = (
                         bool(getattr(self.env, "episode_done", False))
                         or not set(all_actions).issubset(active_after_substep)
+                        or any(info.get("respawned") for info in info_dict.values())
                     )
                     if repeat_boundary:
                         break
@@ -508,6 +510,9 @@ class MARLTrainer:
                 if post_step_global_snapshot is None:
                     post_step_global_snapshot = self.env.get_global_state()
                 next_global_state = post_step_global_snapshot.vector
+
+                respawned = reset_respawned(info_dict, controllers=self.other_agents,
+                    actions=self.action_composers, observations=self.obs_composers)
 
                 # --- Store transitions with accumulated rewards ---
                 step_reward = 0.0
@@ -532,7 +537,8 @@ class MARLTrainer:
                     # The next observation must expose the action that produced
                     # the next environment state. Updating after composition
                     # leaves PrevActionComponent one decision behind.
-                    self.obs_composers[aid].update_prev_action(actions_norm[aid])
+                    if aid not in respawned:
+                        self.obs_composers[aid].update_prev_action(actions_norm[aid])
                     next_obs = self.obs_composers[aid].wrap(
                         obs_dict.get(aid, {}), agent_info
                     )

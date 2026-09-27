@@ -3,6 +3,7 @@ from copy import deepcopy
 import random
 
 import numpy as np
+from env.respawn import reset_respawned
 import torch
 
 from metrics.racing_eval import (
@@ -86,11 +87,15 @@ class DeterministicMAPPOEvaluator:
                                 self.recording.step(infos=infos, obs=obs, physical=physical, normalized=normalized,
                                     wrapped=wrapped_rows, physics_index=steps-1, decision_index=decision, substep=substep,
                                     terminated=terms, truncated=truncs)
-                            if not set(physical).issubset(self.env.agents):
+                            if (not set(physical).issubset(self.env.agents)
+                                    or any(info.get("respawned") for info in infos.values())):
                                 break
+                        respawned = reset_respawned(infos, controllers=self.other_agents,
+                            actions=self.actions, observations=self.obs_composers)
                         decision += 1
                         for aid in ids:
-                            self.obs_composers[aid].update_prev_action(normalized[aid])
+                            if aid not in respawned:
+                                self.obs_composers[aid].update_prev_action(normalized[aid])
                     if self.recording:
                         self.recording.end()
                     result = finalize_episode_facts(facts)

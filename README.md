@@ -401,10 +401,19 @@ opponents 0.6–6 m behind the blocker, within a 0.6 m lateral corridor, divided
 the number of opponents. Blocking credit requires a forward-moving teammate and
 non-reversing blocker. Terminated/out-of-bounds cars do not generate support
 bonuses; proximity alone earns none. Separately, `car_1` receives +1 for each
-opponent's collision termination, once per opponent per episode, regardless of
+opponent's collision (including a respawn), once per opponent per episode, regardless of
 who caused it. Mutual crashes also earn this bonus, while the blocker still
 receives −5 for its own collision. These are configurable
 starting weights; the local advantage term measures an outcome, not causation.
+
+In both asymmetric training arms and playback, every car respawns from rest at
+its nearest clear centerline position after a boundary violation. The learner
+boundary cost is charged once on that step. MPC collisions respawn the opponent
+half a lap ahead of the active race leader (completed laps, then position from
+the finish line), with clearance from other cars. Learner collisions still end
+that learner's race. Respawns preserve completed laps, award no teleport progress,
+and reset action/controller memory. Recovery counts are separate from terminal
+DNFs; the crash bonus remains capped at once per opponent per episode.
 
 Training uses finite three-lap races with a 16,000-step horizon, resetting when
 both learners terminate; evaluation waits for all cars or the timeout. Returns

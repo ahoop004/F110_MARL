@@ -536,8 +536,9 @@ class LapTracker:
         linear_vels_y: np.ndarray,
         *,
         step: int,
+        skip_agents=(),
     ) -> Dict[str, bool]:
-        """Return per-agent crossing events for this simulator step."""
+        """Return crossings, excluding discontinuous recovery steps."""
         self.lifecycle.begin_step()
         crossings = {agent_id: False for agent_id in self.agent_ids}
         hysteresis = float(self.finish_line["hysteresis"])
@@ -549,7 +550,7 @@ class LapTracker:
             previous = float(self._previous[idx])
             self._previous[idx] = current
             record = self.lifecycle.records[agent_id]
-            if not record.is_active:
+            if not record.is_active or agent_id in skip_agents:
                 self._previous_points[idx] = point
                 continue
             forward = previous < 0.0 <= current
