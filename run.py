@@ -23,7 +23,7 @@ if SRC_DIR.is_dir():
     sys.path.insert(0, str(SRC_DIR))
 
 from core.scenario import (
-    MAX_SPEED_OPTIONS, ScenarioError, apply_parameter_overrides,
+    ScenarioError, apply_parameter_overrides,
     load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config,
     resolve_max_speed, validate_scenario,
 )
@@ -60,8 +60,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--render", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--max-speed", type=float, choices=MAX_SPEED_OPTIONS, default=None,
-                   help="Shared forward speed limit in m/s for learner vehicles and MPCs; "
+    p.add_argument("--max-speed", type=float, default=None,
+                   help="Positive finite shared forward speed limit in m/s for learner vehicles and MPCs; "
                         "overrides environment.max_speed and individual forward limits")
     budget_args = p.add_mutually_exclusive_group()
     budget_args.add_argument("--episodes", type=int, default=None)
@@ -343,7 +343,7 @@ def main() -> None:
         # Validate the effective configuration after CLI overrides, so a local
         # --num-envs 1 check can override a scenario sized for a larger machine.
         # Apply speed choices before expansion so a CLI override can replace or
-        # remove a YAML preset before it changes the physical/controller limits.
+        # remove a YAML speed limit before it changes the physical/controller limits.
         load_overrides = list(args.parameter_overrides)
         if args.max_speed is not None:
             load_overrides.append(f"environment.max_speed={args.max_speed}")

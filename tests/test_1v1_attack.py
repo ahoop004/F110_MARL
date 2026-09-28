@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+import yaml
 
-from core.scenario import load_and_expand_scenario, validate_scenario, ScenarioError
+from core.scenario import load_and_expand_scenario, validate_scenario
 from core.setup import create_training_setup
 from env.attack import AttackTracker
 from env.respawn import reset_respawned
@@ -40,12 +41,33 @@ def test_arms_differ_only_in_actor_training_and_labels():
     assert obs == original['observation']['observation']
 
 
-@pytest.mark.parametrize('key,value', [('max_speed', 4.), ('max_acceleration', 4.), ('max_steering_reference_rate', 1.5)])
-def test_mismatched_controller_limits_rejected(key, value):
-    config = scenario()
-    config['agents']['car_1']['params'][key] = value
-    with pytest.raises(ScenarioError, match='matched MPC/ego'):
-        validate_scenario(config)
+@pytest.mark.parametrize('override', [
+    'agents.car_1.params.max_speed=7.5',
+    'agents.car_1.params.max_acceleration=4.0',
+    'agents.car_1.params.max_steering_reference_rate=1.5',
+    'agents.car_0.action_constraints.max_wheel_acceleration=80.0',
+    'agents.car_0.action_constraints.max_wheel_deceleration=60.0',
+    'agents.car_0.action_constraints.prevent_reverse=false',
+    'agents.car_0.action_constraints.speed_control=wheel_speed',
+    'environment.vehicle_params.wheel_actuators.wheel_speed_max=150.0',
+    'environment.vehicle_params.wheel_actuators.steering_max=0.5',
+    'environment.respawn.random_ahead.speed=7.5',
+    'environment.timestep=0.025',
+])
+@pytest.mark.parametrize('lora', [False, True])
+def test_attack_parameters_can_be_overridden_independently(monkeypatch, override, lora):
+    import run
+
+    path = str(DIRECTORY / ('mappo_1v1_attack' + ('_lora' if lora else '') + '.yaml'))
+    monkeypatch.setattr('sys.argv', ['run.py', '--scenario', path, '--set', override])
+    args = run.parse_args()
+    config = run.apply_cli_overrides(load_and_expand_scenario(path), args)
+    validate_scenario(config)
+    key, raw = override.split('=', 1)
+    actual = config
+    for part in key.split('.'):
+        actual = actual[part]
+    assert actual == yaml.safe_load(raw)
 
 
 def attack_step(tracker, time, *, crashed=False, failed=False, gap=2.):

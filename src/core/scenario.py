@@ -18,7 +18,6 @@ class ScenarioError(Exception):
     pass
 
 
-MAX_SPEED_OPTIONS = (5.0, 10.0, 15.0, 20.0)
 _MPC_ALGORITHMS = {
     "racing_mpc", "kinematic_mpc", "obstacle_aware_mpc",
     "defensive_mpc", "cbf_mpc", "mpcc",
@@ -26,17 +25,18 @@ _MPC_ALGORITHMS = {
 
 
 def resolve_max_speed(scenario: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply an optional shared forward speed preset to learners and MPCs.
+    """Apply an optional shared forward speed limit to learners and MPCs.
 
-    The preset takes precedence over individual forward limits. With nonlinear
+    The shared limit takes precedence over individual forward limits. With nonlinear
     physics it limits rolling-speed references, not the slipping chassis speed.
     Reverse bounds, acceleration limits and observation scales stay unchanged.
     """
     speed = scenario.get("environment", {}).get("max_speed")
     if speed is None:
         return scenario
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or speed not in MAX_SPEED_OPTIONS:
-        raise ScenarioError("environment.max_speed must be one of 5, 10, 15, or 20 m/s")
+    if (isinstance(speed, bool) or not isinstance(speed, (int, float))
+            or not math.isfinite(speed) or speed <= 0):
+        raise ScenarioError("environment.max_speed must be a positive finite number in m/s")
 
     result = copy.deepcopy(scenario)
     environment = result["environment"]
@@ -546,26 +546,6 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                 resolved = resolve_evaluation_protocol(scenario, protocol)
                 _validate_attack_episode_limit(eval_termination, resolved["max_steps"], ego,
                                                f"evaluation.{protocol}")
-        # Preserve the source actor's physical/action contract while requiring
-        # the fixed controller to have exactly the same attainable references.
-        vehicle = environment.get("vehicle_params", {})
-        actuator = vehicle.get("wheel_actuators", {})
-        constraints = agents[ego].get("action_constraints", {})
-        controller = agents[target].get("params", {})
-        if (vehicle.get("model") != "combined_slip_st" or constraints.get("speed_control") != "wheel_acceleration"
-                or constraints.get("prevent_reverse") is not True):
-            raise ScenarioError("attack_task requires the pretrained non-reversing wheel_acceleration contract")
-        radius = actuator["wheel_radius"]
-        speed = actuator["wheel_speed_max"] * radius
-        acceleration = constraints["max_wheel_acceleration"] * radius
-        deceleration = constraints["max_wheel_deceleration"] * radius
-        steering_rate = (actuator["steering_max"] - actuator["steering_min"]) / environment["timestep"]
-        if (not math.isclose(controller.get("max_speed", 5.), speed)
-                or not math.isclose(controller.get("max_acceleration", 5.), acceleration)
-                or not math.isclose(acceleration, deceleration)
-                or controller.get("max_steering_reference_rate", 1.5) < steering_rate
-                or recovery["random_ahead"]["speed"] > speed):
-            raise ScenarioError("attack_task requires matched MPC/ego speed, acceleration, braking and unrestricted steering-reference limits")
     # Multi-car races can request boundary facts for rewards without enabling
     # the single-car time-trial boundary-reset protocol.
     if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents and not recovery
@@ -784,7 +764,6 @@ __all__ = [
     'ScenarioError',
     'load_scenario',
     'apply_parameter_overrides',
-    'MAX_SPEED_OPTIONS',
     'resolve_max_speed',
     'load_yaml_config',
     'validate_scenario',

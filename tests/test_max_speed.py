@@ -1,4 +1,4 @@
-"""Shared speed presets must reach both policy actions and fixed MPC commands."""
+"""Shared speed limits must reach both policy actions and fixed MPC commands."""
 from copy import deepcopy
 from pathlib import Path
 
@@ -11,10 +11,10 @@ from core.setup import create_training_setup
 from wrappers.actions.composer import ActionComposer
 
 
-@pytest.mark.parametrize("speed", [5, 10, 15, 20])
+@pytest.mark.parametrize("speed", [1.25, 5, 7.5, 10, 15, 20, 25])
 def test_shared_speed_reaches_learner_and_mpc(speed):
     scenario = load_and_expand_scenario(
-        "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+        "scenarios/mappo_1v1_attack.yaml",
         overrides=[f"environment.max_speed={speed}"],
     )
     env, opponents, _ = create_training_setup(scenario, scenario_dir=Path("scenarios").resolve())
@@ -39,14 +39,16 @@ def test_shared_speed_reaches_learner_and_mpc(speed):
         env.close()
 
 
-@pytest.mark.parametrize("speed", [5, 10, 15, 20])
+@pytest.mark.parametrize("speed", [1.25, 5, 7.5, 10, 15, 20, 25])
 @pytest.mark.parametrize("path", [
     "scenarios/ppo_lap_completion_transfer_3lap.yaml",
     "scenarios/mappo_2v2_asymmetric.yaml",
     "scenarios/mappo_2v2_race.yaml",
     "scenarios/render/racing_mpc.yaml",
+    "scenarios/mappo_1v1_attack.yaml",
+    "scenarios/mappo_1v1_attack_lora.yaml",
 ])
-def test_presets_resolve_across_workflows(path, speed):
+def test_speed_limits_resolve_across_workflows(path, speed):
     scenario = load_and_expand_scenario(path, overrides=[f"environment.max_speed={speed}"])
     actuators = scenario["environment"]["vehicle_params"]["wheel_actuators"]
     assert actuators["wheel_speed_max"] * actuators["wheel_radius"] == pytest.approx(speed)
@@ -59,7 +61,7 @@ def test_cli_speed_overrides_yaml_and_individual_limits(monkeypatch):
     import run
 
     monkeypatch.setattr("sys.argv", [
-        "run.py", "--scenario", "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+        "run.py", "--scenario", "scenarios/mappo_1v1_attack.yaml",
         "--set", "environment.max_speed=10",
         "--set", "agents.car_1.params.max_speed=5", "--max-speed", "15",
     ])
@@ -74,7 +76,7 @@ def test_cli_set_speed_resolves_without_dedicated_flag(monkeypatch):
     import run
 
     monkeypatch.setattr("sys.argv", [
-        "run.py", "--scenario", "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+        "run.py", "--scenario", "scenarios/mappo_1v1_attack.yaml",
         "--set", "environment.max_speed=20",
     ])
     args = run.parse_args()
@@ -85,6 +87,8 @@ def test_cli_set_speed_resolves_without_dedicated_flag(monkeypatch):
 
 @pytest.mark.parametrize("configured,arguments,expected", [
     (10, [], 10),
+    (7.5, [], 7.5),
+    (10, ["--max-speed", "12.5"], 12.5),
     (10, ["--set", "environment.max_speed=!delete"], 5),
     (7, ["--max-speed", "20"], 20),
     (10, ["--set", "environment.max_speed=15", "--max-speed", "5"], 5),
@@ -108,14 +112,14 @@ def test_main_resolves_yaml_and_cli_before_building_controllers(
     assert resolved["agents"]["car_0"]["params"]["max_speed"] == expected
 
 
-@pytest.mark.parametrize("value", [0, -5, 7, True, "10", float("nan"), float("inf")])
+@pytest.mark.parametrize("value", [0, -5, True, "10", float("nan"), float("inf")])
 def test_invalid_speed_is_rejected(value):
     with pytest.raises(ScenarioError, match="environment.max_speed"):
         resolve_max_speed({"environment": {"max_speed": value}})
 
 
 def test_speed_uses_physical_radius_without_changing_other_contracts():
-    scenario = load_and_expand_scenario("scenarios/ppo_1v1_racing_mpc_circle.yaml")
+    scenario = load_and_expand_scenario("scenarios/mappo_1v1_attack.yaml")
     scenario["environment"]["max_speed"] = 20
     scenario["environment"]["vehicle_params"]["wheel_actuators"]["wheel_radius"] = .1
     original = deepcopy(scenario)

@@ -59,7 +59,7 @@ venv/bin/python run.py --scenario scenarios/mappo_1v1_attack_lora.yaml \
 Saved checkpoints include the actor base and adapters; evaluation does not need
 the original pretraining file. Add `--render` to visualize either arm locally.
 
-## Equal vehicle and command limits
+## Default vehicle and command limits
 
 The simulator applies one shared vehicle model, footprint, mass, tire model,
 friction draw and actuator configuration to both cars. These remain compatible
@@ -87,13 +87,30 @@ The MPC's extra steering-reference smoother is set to 17 rad/s, exceeding the
 entire allowed reference span per decision (16.756 rad/s). This makes it
 nonbinding, matching the pretrained ego's ability to request any allowed angle
 each decision. Both physical steering actuators still obey the same ±3.2 rad/s
-bound and lag. Scenario validation rejects mismatched command limits.
+bound and lag. These matching command limits are scenario defaults; validation
+also accepts independently configured limits and supported action settings.
 
 The shared underlying wheel model retains its pretrained −400 rad/s lower
 bound, but both controllers restrict **commands** to nonnegative wheel speeds.
 These are rolling-reference bounds, not clamps on measured chassis velocity or
 acceleration: tire slip and actuator response determine actual motion. Changing
 physics/action limits requires a compatible source checkpoint.
+
+Change parameters in YAML or with `--set KEY=YAML`, for example:
+
+```bash
+venv/bin/python run.py --scenario scenarios/mappo_1v1_attack.yaml \
+  --set agents.car_1.params.max_speed=4.2 \
+  --set agents.car_1.params.max_acceleration=3.0 \
+  --set agents.car_1.params.max_steering_reference_rate=1.5
+```
+
+`--max-speed VALUE` accepts any positive finite speed in m/s and sets the shared
+vehicle wheel-speed ceiling plus every MPC's forward limit. For independent
+limits, omit this flag and leave `environment.max_speed` unset (or remove it with
+`--set environment.max_speed=!delete`). Physical wheel bounds still constrain
+controller commands. Numeric validity, supported task structure and checkpoint
+compatibility are still checked.
 
 ## Observations and transfer
 

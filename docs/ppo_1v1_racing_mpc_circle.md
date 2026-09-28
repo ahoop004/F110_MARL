@@ -17,10 +17,10 @@ or an explicit migration. The learner starts
 approximately 3 m behind it. Training uses one environment, 1024-step PPO
 rollouts, a constant 0.0001 learning rate and a 120M-transition budget.
 
-Select matching learner/MPC limits with `--max-speed 5`, `10`, `15`, or `20`,
-or set `environment.max_speed` in the scenario. This updates both the shared
-wheel-speed ceiling and the MPC limit. At the current radius the corresponding
-wheel ceilings are 100, 200, 300, and 400 rad/s. Use an initialization checkpoint
+Select matching learner/MPC limits with `--max-speed VALUE` (any positive finite
+value), or set `environment.max_speed` in the scenario. This updates both the
+shared wheel-speed ceiling and the MPC limit. At the current radius, 7.5 m/s
+corresponds to 150 rad/s. Use an initialization checkpoint
 with matching speed bounds; for a scratch run, add
 `--set experiment.checkpoint=null`. These are command limits; tire slip,
 actuator response and MPC cornering constraints determine actual vehicle speed.
