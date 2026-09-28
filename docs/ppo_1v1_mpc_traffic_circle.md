@@ -44,3 +44,44 @@ bonus. Ego sees traffic through its existing LiDAR observation. Five extra input
 always describe its configured target (`car_1`), regardless of which traffic car
 is closest. The observation has 163 inputs; pretrained actor/critic input layers
 are expanded with zero new columns, preserving initial behavior.
+
+The traffic MPC geometry and kinematic rollouts use cached Numba kernels.
+The first use can include compilation time; subsequent decisions use the
+compiled code. Candidate counts, planning horizons, and control frequency are
+unchanged. Kinematic MPC applies previous-action smoothness in a single search.
+
+Measure controller and physics costs without PPO, rendering, or experiment
+logging:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 venv/bin/python scripts/benchmark_mpc_traffic.py --traffic --steps 16
+```
+
+This benchmark holds ego stationary and excludes the first two decisions from
+timing. It reports per-controller times and action/pose hashes for comparisons
+across revisions; it does not measure end-to-end training throughput.
+It uses the canonical 1v1 scenario with traffic overrides; omit `--traffic` to
+measure the plain 1v1 setup.
+
+The [recorded comparison](benchmarks/mpc_traffic_optimization.json) on a Xeon
+Silver 4214 measured 2.64 s/step before and 0.48 s/step after (5.5x faster), with
+identical action and pose hashes. This is one 16-step sample after warmup, using
+seed 42 and a 10 m/s racing-opponent limit; timings vary with traffic and hardware.
+
+A [second optimization pass](benchmarks/mpc_traffic_optimization_round2.json)
+shares the nearest-centerline search across path, heading, and progress costs,
+and removes temporary prediction arrays from racing MPC objective evaluations.
+Across seeds 42–44 with 32 measured decisions per seed, controller/physics time
+fell from 444 to 275 ms/step (another 1.6x). The plain 1v1 scenario improved from
+24.1 to 22.5 ms/step in the same short benchmark. Action and pose hashes matched
+for all six before/after comparisons; controller settings are unchanged.
+
+These recorded timings predate the MF6.1 racing prediction model. The allocation
+optimizations have been carried forward to its eight-state midpoint integrator,
+including its steering limits and grip costs. Re-run the benchmark to measure
+performance with the current model; the historical timings are not current results.
+
+For parallel training, add `--num-envs 8 --no-render` to the training command.
+With the current pooled `n_steps: 1024`, eight workers collect 128 decisions each
+per PPO update. Benchmark worker counts on the training machine; the scenario
+keeps its existing training and evaluation settings.

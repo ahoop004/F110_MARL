@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from numba import njit
 
 
 DEFAULT_DT = 0.1
@@ -103,15 +104,32 @@ def rollout_kinematic_bicycle(
     horizon = max(0, int(horizon))
     action_array = normalize_actions(actions, horizon)
 
-    trajectory = np.zeros((horizon + 1, 3), dtype=np.float32)
-    trajectory[0] = normalize_pose(pose)
-    for idx in range(horizon):
-        trajectory[idx + 1] = kinematic_bicycle_step(
-            trajectory[idx],
-            action_array[idx],
-            dt=dt,
-            wheelbase=wheelbase,
-        )
+    return _rollout_normalized(
+        normalize_pose(pose), action_array, max(float(dt), 0.0), max(float(wheelbase), 1e-6),
+    )
+
+
+@njit(cache=True, error_model="numpy")
+def _rollout_normalized(pose, actions, dt, wheelbase):
+    """Roll out normalized inputs without per-step Python calls and copies."""
+    trajectory = np.empty((len(actions) + 1, 3), dtype=np.float32)
+    trajectory[0] = pose
+    for idx in range(len(actions)):
+        # The public step normalizes each incoming state, including any
+        # nonfinite values produced by an extreme previous action.
+        x, y, theta = (np.float64(trajectory[idx, 0]), np.float64(trajectory[idx, 1]),
+                       np.float64(trajectory[idx, 2]))
+        if not np.isfinite(x):
+            x = 0.0
+        if not np.isfinite(y):
+            y = 0.0
+        if not np.isfinite(theta):
+            theta = 0.0
+        steer, speed = np.float64(actions[idx, 0]), np.float64(actions[idx, 1])
+        trajectory[idx + 1, 0] = x + speed * np.cos(theta) * dt
+        trajectory[idx + 1, 1] = y + speed * np.sin(theta) * dt
+        angle = theta + speed / wheelbase * np.tan(steer) * dt
+        trajectory[idx + 1, 2] = (angle + np.pi) % (2.0 * np.pi) - np.pi
     return trajectory
 
 

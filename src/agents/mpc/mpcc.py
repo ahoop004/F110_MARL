@@ -43,7 +43,7 @@ _DEFAULTS = {
 
 
 class MPCCAgent:
-    """Dependency-free, sample-based MPCC-style fixed-policy agent.
+    """Sample-based MPCC-style fixed-policy agent.
 
     This is not a nonlinear optimizer.  It rolls out short candidate
     ``[steering, speed]`` sequences with a kinematic bicycle model and selects

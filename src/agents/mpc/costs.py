@@ -6,13 +6,8 @@ from typing import Optional
 
 import numpy as np
 
-from agents.mpc.track_geometry import (
-    CenterlineGeometry,
-    heading_error as track_heading_error,
-    prepare_centerline_geometry,
-    progress_along_centerline,
-    project_to_centerline,
-)
+from agents.mpc._geometry_kernels import mpcc_geometry_terms, nearest_path_indices
+from agents.mpc.track_geometry import CenterlineGeometry, prepare_centerline_geometry
 
 
 @dataclass(frozen=True)
@@ -47,13 +42,38 @@ def trajectory_cost(
     if traj.shape[0] == 0:
         return 0.0
 
-    total = 0.0
-    total += weights.path_tracking * path_tracking_cost(traj, centerline)
-    total += weights.heading_error * heading_error_cost(traj, centerline)
-    total += weights.target_speed * target_speed_cost(acts, target_speed)
-    total += weights.control_effort * control_effort_cost(acts)
-    total += weights.steering_smoothness * steering_smoothness_cost(acts)
-    total -= weights.progress * progress_reward(traj, centerline)
+    # Normalize once and share nearest points across all three geometry terms.
+    # Keep the NumPy float32 reductions used by the individual public helpers.
+    path = _normalize_centerline(centerline)
+    path_cost, heading_cost, progress = 0.0, 0.0, 0.0
+    if len(path):
+        indices = nearest_path_indices(traj, path)
+        errors = traj[:, :2] - path[indices]
+        path_cost = float(np.mean(np.sum(errors * errors, axis=1)))
+        if len(path) > 1:
+            starts = np.minimum(indices, len(path) - 2)
+            tangents = path[starts + 1] - path[starts]
+            headings = np.arctan2(tangents[:, 1], tangents[:, 0])
+            errors = _wrap_angles(traj[:, 2] - headings)
+            heading_cost = float(np.mean(errors * errors))
+            progress = float(max(0, int(indices[-1]) - int(indices[0])))
+
+    speed_cost, control_cost, smoothness_cost = 0.0, 0.0, 0.0
+    if len(acts):
+        if target_speed is not None and np.isfinite(float(target_speed)):
+            errors = acts[:, 1] - float(target_speed)
+            speed_cost = float(np.mean(errors * errors))
+        control_cost = float(np.mean(np.sum(acts * acts, axis=1)))
+        if len(acts) > 1:
+            deltas = np.diff(acts[:, 0])
+            smoothness_cost = float(np.mean(deltas * deltas))
+
+    total = weights.path_tracking * path_cost
+    total += weights.heading_error * heading_cost
+    total += weights.target_speed * speed_cost
+    total += weights.control_effort * control_cost
+    total += weights.steering_smoothness * smoothness_cost
+    total -= weights.progress * progress
     return float(total)
 
 
@@ -65,7 +85,7 @@ def mpcc_geometry_cost(
 ) -> float:
     """Compute MPCC-style geometry cost over a candidate trajectory.
 
-    This helper is dependency-free and uses centerline projection geometry:
+    This helper uses compiled centerline projection geometry:
     contouring/lateral error, lag/longitudinal error, heading error, and
     approximate forward arc-length progress.  It returns zero when geometry or
     trajectory inputs are missing/too short.
@@ -79,26 +99,10 @@ def mpcc_geometry_cost(
     if traj.shape[0] == 0 or not geometry.valid:
         return 0.0
 
-    contour_values = []
-    lag_values = []
-    heading_values = []
-    last_index = None
-    for pose in traj:
-        projection = project_to_centerline(
-            geometry,
-            pose[:2],
-            heading=float(pose[2]) if pose.shape[0] >= 3 else None,
-            last_index=last_index,
-        )
-        last_index = projection.index
-        contour_values.append(projection.contouring_error)
-        lag_values.append(projection.lag_error)
-        heading_values.append(track_heading_error(geometry, pose, last_index=projection.index))
-
-    contour_arr = np.asarray(contour_values, dtype=np.float32)
-    lag_arr = np.asarray(lag_values, dtype=np.float32)
-    heading_arr = np.asarray(heading_values, dtype=np.float32)
-    progress = progress_along_centerline(geometry, traj)
+    errors, progress = mpcc_geometry_terms(
+        traj, geometry.points, geometry.arc_lengths, geometry.total_length, geometry.closed,
+    )
+    contour_arr, lag_arr, heading_arr = errors
     total = (
         weights.contouring * float(np.mean(contour_arr * contour_arr))
         + weights.lag * float(np.mean(lag_arr * lag_arr))

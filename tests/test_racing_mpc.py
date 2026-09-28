@@ -27,6 +27,18 @@ def test_prediction_preserves_actuator_lag_and_grip_bound():
     assert abs(future[4]) <= 3.2*.05
 
 
+@pytest.mark.parametrize('dtype', [np.float32, np.float64, np.int64])
+def test_prediction_does_not_mutate_or_quantize_input(dtype):
+    state = np.array([0, 0, 0, 1, 0, 1, 0, 0], dtype=dtype)
+    original = state.copy()
+    control = np.array([.1, 2.5])
+    expected = predict_step(state.astype(np.float64), control, P, .05)
+    result = predict_step(state, control, P, .05)
+    assert result.dtype == np.float64
+    np.testing.assert_array_equal(state, original)
+    np.testing.assert_array_equal(result, expected)
+
+
 def test_map_distance_uses_origin_rotation_and_rejects_outside():
     field = np.tile(np.arange(10, dtype=float), (10, 1))
     assert _distance(field, 3., 4., np.zeros(3), 1.) == pytest.approx(3.)
@@ -52,6 +64,23 @@ def test_wall_cost_checks_footprint_even_when_center_is_inside():
     body_cost, body_clearance, _ = _shoot(controls, *shooting_args(footprint=np.array([[0., .6]])))
     assert center_clearance > 0 and body_clearance < 0
     assert body_cost > center_cost
+
+
+@pytest.mark.parametrize('moving_traffic', [False, True])
+def test_shooting_without_trajectory_keeps_cost_clearance_and_inputs(moving_traffic):
+    controls = np.array([[.1, 2.5], [-.1, 1.5], [0., 0.], [.2, 1.]])
+    traffic = np.array([[1.4, 0., .2, .5, .1]]) if moving_traffic else None
+    args = shooting_args(traffic=traffic, footprint=np.array([[0., 0.], [.2, .15]]))
+    controls_before = controls.copy()
+    arrays_before = [arg.copy() for arg in args if isinstance(arg, np.ndarray)]
+    recorded = _shoot(controls, *args)
+    unrecorded = _shoot(controls, *args, record_trajectory=False)
+    assert recorded[:2] == unrecorded[:2]
+    assert recorded[2].shape == (20, 8)
+    assert unrecorded[2].shape == (0, 8)
+    np.testing.assert_array_equal(controls, controls_before)
+    for before, after in zip(arrays_before, [arg for arg in args if isinstance(arg, np.ndarray)]):
+        np.testing.assert_array_equal(before, after)
 
 
 def test_moving_vehicle_prediction_changes_collision_cost():

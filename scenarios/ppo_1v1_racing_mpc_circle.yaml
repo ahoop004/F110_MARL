@@ -321,6 +321,10 @@ environment:
       mu: 1.0489
   respawn_agents:
     - car_1
+  rendering:
+    vehicle_colors:
+      car_0: '#3288ff'
+      car_1: '#ff2020'  # designated race opponent
 
 # Deterministic checkpoint-selection evaluation; final_test uses separate fixed seeds.
 evaluation:

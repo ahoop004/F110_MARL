@@ -6,7 +6,8 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from agents.mpc.base import MPCConfig, evaluate_action_sequences, generate_action_sequences
-from agents.mpc.costs import CostWeights
+from agents.mpc.costs import CostWeights, trajectory_cost
+from agents.mpc.rollout import rollout_kinematic_bicycle
 
 
 _DEFAULTS = {
@@ -96,22 +97,21 @@ class KinematicMPCAgent:
             return self._fallback_action.copy()
 
         target_speed = self._target_speed(obs)
-        result = evaluate_action_sequences(
-            pose,
-            self._candidate_sequences,
-            centerline=centerline,
-            target_speed=target_speed,
-            config=self._config,
-            weights=self._weights,
-        )
-        action = result.first_action
-
         if self._previous_action is not None and self._candidate_sequences.shape[0] > 1:
             action = self._select_with_previous_action_smoothness(
                 pose,
                 centerline,
                 target_speed,
             )
+        else:
+            action = evaluate_action_sequences(
+                pose,
+                self._candidate_sequences,
+                centerline=centerline,
+                target_speed=target_speed,
+                config=self._config,
+                weights=self._weights,
+            ).first_action
 
         action = self._clip_action(action)
         self._previous_action = action.copy()
@@ -136,18 +136,24 @@ class KinematicMPCAgent:
         best_cost = float("inf")
         best_action = self._fallback_action
         for sequence in self._candidate_sequences:
-            result = evaluate_action_sequences(
+            trajectory = rollout_kinematic_bicycle(
                 pose,
-                sequence.reshape(1, sequence.shape[0], sequence.shape[1]),
+                sequence,
+                dt=self._config.dt,
+                wheelbase=self._config.wheelbase,
+                horizon=self._config.horizon,
+            )
+            cost = trajectory_cost(
+                trajectory,
+                sequence,
                 centerline=centerline,
                 target_speed=target_speed,
-                config=self._config,
                 weights=self._weights,
             )
-            first = result.first_action
+            first = sequence[0]
             speed_delta = float(first[1] - self._previous_action[1])
             steer_delta = float(first[0] - self._previous_action[0])
-            cost = result.cost + self._speed_smoothness_weight * (
+            cost += self._speed_smoothness_weight * (
                 speed_delta * speed_delta + steer_delta * steer_delta
             )
             if cost < best_cost:

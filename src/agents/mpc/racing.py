@@ -67,7 +67,15 @@ def predict_step(state, control, p, dt):
     Midpoint integration uses smaller steps for stiff low-speed tire response.
     Actuators use the same exact held-reference solution as the simulator.
     """
-    state = state.copy()
+    future = np.empty(8, dtype=np.float64)
+    future[:] = state
+    _predict_step_inplace(future, control[0], control[1], p, dt)
+    return future
+
+
+@njit(cache=True)
+def _predict_step_inplace(state, steering, speed, p, dt):
+    """Reuse the shooting state with the current MF6.1 midpoint model."""
     front_speed = state[3]*np.cos(state[4])+(state[6]+(p[0]-p[1])*state[7])*np.sin(state[4])
     contact_speed = min(abs(state[3]), abs(front_speed))
     # Reserve the possible speed drop over this decision when choosing the
@@ -79,12 +87,11 @@ def predict_step(state, control, p, dt):
     for _ in range(steps):
         delta, wheel = state[4], state[5]
         mid = state + .5*h*_chassis_rhs(state, delta, wheel, p)
-        mid_delta = first_order_actuator_step(delta, control[0], h/2, p[2], -p[3], p[3])
-        mid_wheel = first_order_actuator_step(wheel, control[1], h/2, p[4], -p[5], p[5])
+        mid_delta = first_order_actuator_step(delta, steering, h/2, p[2], -p[3], p[3])
+        mid_wheel = first_order_actuator_step(wheel, speed, h/2, p[4], -p[5], p[5])
         state += h*_chassis_rhs(mid, mid_delta, mid_wheel, p)
-        state[4] = first_order_actuator_step(delta, control[0], h, p[2], -p[3], p[3])
-        state[5] = first_order_actuator_step(wheel, control[1], h, p[4], -p[5], p[5])
-    return state
+        state[4] = first_order_actuator_step(delta, steering, h, p[2], -p[3], p[3])
+        state[5] = first_order_actuator_step(wheel, speed, h, p[4], -p[5], p[5])
 
 
 def _speed_profile(points, max_speed, mu, utilization, deceleration):
@@ -116,25 +123,29 @@ def _limit_command(command, previous, dt, speed_rate, steering_rate):
 @njit(cache=True)
 def _shoot(controls, initial, path, field, origin, resolution, footprint,
            traffic, p, dt, repeat, speed_limit, margin, reference_rate,
-           steering_rate=1.5, grip_utilization=.8):
-    state = initial[:8].copy()
-    previous = np.array([initial[9], initial[8]])
+           steering_rate=1.5, grip_utilization=.8, record_trajectory=True):
+    state = np.empty(8, dtype=np.float64)
+    state[:] = initial[:8]
+    previous_steering, previous_speed = initial[9], initial[8]
     cost, min_clearance = 0.0, 1e6
-    trajectory = np.empty((len(controls)*repeat, 8))
+    trajectory = np.empty((len(controls)*repeat if record_trajectory else 0, 8))
     last_index = 0
     previous_s = 0.0
     for k in range(len(controls)*repeat):
-        command = controls[k // repeat].copy()
-        command = _limit_command(command, previous, dt, reference_rate, steering_rate)
+        steering = _clip(controls[k // repeat, 0], previous_steering-steering_rate*dt,
+                         previous_steering+steering_rate*dt)
+        speed = _clip(controls[k // repeat, 1], previous_speed-reference_rate*dt,
+                      previous_speed+reference_rate*dt)
         # Penalize every executed change, including the first command and ramps
         # inside a knot. Compare against the applied reference, not raw knots.
-        cost += 1.0*(command[0]-previous[0])**2/dt
-        cost += .005*(command[1]-previous[1])**2
-        previous = command
-        state = predict_step(state, command, p, dt)
+        cost += 1.0*(steering-previous_steering)**2/dt
+        cost += .005*(speed-previous_speed)**2
+        previous_steering, previous_speed = steering, speed
+        _predict_step_inplace(state, steering, speed, p, dt)
         if not np.isfinite(state).all():
             return np.inf, -np.inf, trajectory
-        trajectory[k] = state
+        if record_trajectory:
+            trajectory[k] = state
         # Local ordered centerline, extended across the finish seam by the caller.
         best, idx = 1e20, last_index
         for j in range(max(0, last_index-5), min(len(path)-1, last_index+30)):
@@ -311,7 +322,7 @@ class RacingMPCAgent:
                 self.margin, self.acceleration, self.steering_reference_rate,
                 self.grip_utilization)
         def objective(flat):
-            return _shoot(flat.reshape(self.knots, 2), *args)[0]
+            return _shoot(flat.reshape(self.knots, 2), *args, record_trajectory=False)[0]
         # Curvature-based seed gives the optimizer useful steering from rest.
         seed = np.zeros((self.knots, 2))
         seed[:, 1] = self.max_speed
@@ -329,7 +340,7 @@ class RacingMPCAgent:
         # Re-solving all three starts at every decision wastes most traffic CPU
         # time after a safe passing trajectory has already been found. Retry
         # when the warm plan becomes unsafe, or periodically when following slowly.
-        warm_clearance = _shoot(seed, *args)[1]
+        warm_clearance = _shoot(seed, *args, record_trajectory=False)[1]
         retry_pass = (self._decisions % 10 == 0 and initial[3] < .6*self.max_speed)
         if len(traffic) and (warm_clearance < 0. or retry_pass):
             for bias in (-.12, .12):

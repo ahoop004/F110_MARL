@@ -1,0 +1,77 @@
+{
+  "baseline_revision": "9e529582245aa1de99ac60b5c9e2bf3dd5c4056a",
+  "cpu": "Intel Xeon Silver 4214",
+  "method": "Single-process comparison with frozen expanded settings and the original cost, rollout, and kinematic functions restored for the baseline. Headless, stationary ego, no PPO inference or updates. Warmup excluded from timings but included in action/pose hashes.",
+  "scenario_override_from_baseline_revision": {
+    "agents.car_1.params.max_speed": 10.0
+  },
+  "timing_repetitions": 1,
+  "action_and_pose_hashes_identical": true,
+  "speedup": 5.466508608854155,
+  "before": {
+    "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+    "seed": 42,
+    "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+    "steps": 16,
+    "warmup": 2,
+    "resets": 0,
+    "controller_and_physics_steps_per_second": 0.3786662757371201,
+    "mean_ms": {
+      "car_1": 9.553014635457657,
+      "car_2": 333.1429129175376,
+      "car_3": 154.93694390170276,
+      "car_4": 158.58048168593086,
+      "car_5": 979.6619764529169,
+      "car_6": 993.6326791212196,
+      "env.step": 11.33978807774838
+    },
+    "p95_ms": {
+      "car_1": 12.211420922540128,
+      "car_2": 368.76605707220733,
+      "car_3": 173.84323466103524,
+      "car_4": 174.4626648724079,
+      "car_5": 1069.8225801461376,
+      "car_6": 1097.7252184529789,
+      "env.step": 14.660570013802499
+    },
+    "actions_sha256": "706298746843dbfe5241c854d597762fdb07f1af13a7f392ece95d4677773731",
+    "states_sha256": "f346e3eda77d43f2d041b18cefe790a22bf8ad64b64c83527448b080d3698ec8"
+  },
+  "after": {
+    "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+    "seed": 42,
+    "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+    "steps": 16,
+    "warmup": 2,
+    "resets": 0,
+    "controller_and_physics_steps_per_second": 2.069982456199708,
+    "mean_ms": {
+      "car_1": 10.267021207255311,
+      "car_2": 101.8994244368514,
+      "car_3": 121.59767486446071,
+      "car_4": 123.10360923584085,
+      "car_5": 70.29606265132315,
+      "car_6": 43.691651488188654,
+      "env.step": 12.240437921718694
+    },
+    "p95_ms": {
+      "car_1": 13.796180370263755,
+      "car_2": 109.2234620009549,
+      "car_3": 136.05974876554683,
+      "car_4": 139.0836433856748,
+      "car_5": 79.76779219461605,
+      "car_6": 46.90939839929342,
+      "env.step": 15.857367892749608
+    },
+    "actions_sha256": "706298746843dbfe5241c854d597762fdb07f1af13a7f392ece95d4677773731",
+    "states_sha256": "f346e3eda77d43f2d041b18cefe790a22bf8ad64b64c83527448b080d3698ec8"
+  },
+  "validation": {
+    "new_equivalence_tests_passed": 34,
+    "existing_tests_passed": 67,
+    "existing_failures_reproduced_on_baseline_revision": [
+      "tests/test_racing_mpc.py::test_active_team_scenarios_use_one_fixed_mpc_opponent_profile",
+      "tests/test_speed_actions.py::test_frenet_environment_observes_applied_reference_rate (4 parametrizations)"
+    ]
+  }
+}

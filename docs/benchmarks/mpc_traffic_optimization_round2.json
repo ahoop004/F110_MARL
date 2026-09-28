@@ -1,0 +1,331 @@
+{
+  "baseline": "After the first MPC optimization pass; before fused trajectory scoring and racing-MPC allocation reuse.",
+  "cpu": "Intel Xeon Silver 4214",
+  "method": "One headless, stationary-ego rollout per seed (42, 43, 44), 32 measured decisions after two warmup decisions. No PPO inference or training updates. Speedup is the ratio of average per-step wall times across these equal-length rollouts.",
+  "source_sha256": {
+    "costs": {
+      "before": "5574ae4f7766d58b4f646790addfe86b3f9b3878f4d5c1fcd5538f493d85acbe",
+      "after": "eb57ac6869015d1f43f19de713100bae3407360a47e251afae0bffe2c77178fa"
+    },
+    "racing": {
+      "before": "bd453c464e768344b1bf3de0de7c49b9e2c9f64db7cf2aeaeb55e550cab4466f",
+      "after": "7a40c0f35c39d041ad62a0c1484823fec3a61ed5560dea2c9060c02f4d8e1102"
+    }
+  },
+  "results": {
+    "ppo_1v1_mpc_traffic_circle": {
+      "mean_ms_before": 443.86491141388734,
+      "mean_ms_after": 274.90920456087525,
+      "speedup": 1.6145873039169154,
+      "scenario_action_and_pose_hashes_identical": true,
+      "before": [
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 42,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 1,
+          "controller_and_physics_steps_per_second": 2.2944599896883022,
+          "mean_ms": {
+            "car_1": 12.230592394189443,
+            "car_2": 92.71917882142588,
+            "car_3": 108.47853394807316,
+            "car_4": 108.15237537462963,
+            "car_5": 61.89759091648739,
+            "car_6": 41.184063513355795,
+            "env.step": 11.170063284225762
+          },
+          "p95_ms": {
+            "car_1": 25.771861639805138,
+            "car_2": 102.25185324670747,
+            "car_3": 119.54078658018261,
+            "car_4": 119.6623852243647,
+            "car_5": 68.63418744178489,
+            "car_6": 43.46532661002129,
+            "env.step": 13.793352397624403
+          },
+          "actions_sha256": "87fef36b80897d46b41882fc28c59683f26c5b747d0f7bc93b19c68df57725ed",
+          "states_sha256": "cda617314ef3c76f77f25093f34904d60f6c15d386b4bb32212616fca1d01ccc"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 43,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 2.213886160667756,
+          "mean_ms": {
+            "car_1": 34.97185223386623,
+            "car_2": 89.65907558740582,
+            "car_3": 105.55668346933089,
+            "car_4": 106.35037228348665,
+            "car_5": 62.84321229759371,
+            "car_6": 41.55668569001136,
+            "env.step": 10.756527015473694
+          },
+          "p95_ms": {
+            "car_1": 80.81709778634831,
+            "car_2": 101.5256630256772,
+            "car_3": 118.43998125987127,
+            "car_4": 118.83962991414592,
+            "car_5": 70.06023150170222,
+            "car_6": 44.11772204330191,
+            "env.step": 13.210401288233697
+          },
+          "actions_sha256": "6bff22deab609a2c0ecc25531a8c6be9c97f7c6fd05a6dc9bd7c716d9a1ed989",
+          "states_sha256": "ad541a6ef9481f39ff8c3152868291faa25ba909609f7b1b701c365be2851a8e"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 44,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 2.251907733638178,
+          "mean_ms": {
+            "car_1": 13.388054772804026,
+            "car_2": 93.4336801583413,
+            "car_3": 109.47797628614353,
+            "car_4": 111.43244992854306,
+            "car_5": 64.39547061745543,
+            "car_6": 41.43950824800413,
+            "env.step": 10.50078740081517
+          },
+          "p95_ms": {
+            "car_1": 28.5307104117237,
+            "car_2": 102.28125053690746,
+            "car_3": 119.16803802596405,
+            "car_4": 120.23455935996026,
+            "car_5": 69.02905293973163,
+            "car_6": 43.346574483439326,
+            "env.step": 12.660382629837839
+          },
+          "actions_sha256": "f28bd1064cec4cf9e835a1ac4b694f3d09d7493b32a5f5542bf34ba51e0c7a4f",
+          "states_sha256": "e57c81ad804bc5fd54b6480a70a7b19edf8f1694326ae38d749165f489193217"
+        }
+      ],
+      "after": [
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 42,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 1,
+          "controller_and_physics_steps_per_second": 3.7890924841868237,
+          "mean_ms": {
+            "car_1": 11.64533485280117,
+            "car_2": 36.334955344500486,
+            "car_3": 50.75034609762952,
+            "car_4": 51.894229371100664,
+            "car_5": 61.60040647955611,
+            "car_6": 40.80729279667139,
+            "env.step": 10.882872375077568
+          },
+          "p95_ms": {
+            "car_1": 26.713639753870666,
+            "car_2": 41.23202278278768,
+            "car_3": 57.165912457276136,
+            "car_4": 57.96125485794619,
+            "car_5": 69.0831245156005,
+            "car_6": 43.4294049278833,
+            "env.step": 14.644018432591109
+          },
+          "actions_sha256": "87fef36b80897d46b41882fc28c59683f26c5b747d0f7bc93b19c68df57725ed",
+          "states_sha256": "cda617314ef3c76f77f25093f34904d60f6c15d386b4bb32212616fca1d01ccc"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 43,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 3.546300066215719,
+          "mean_ms": {
+            "car_1": 33.38123958383221,
+            "car_2": 36.264489936002064,
+            "car_3": 50.646352909097914,
+            "car_4": 50.70387857267633,
+            "car_5": 60.204957393580116,
+            "car_6": 40.365581669902895,
+            "env.step": 10.417534373118542
+          },
+          "p95_ms": {
+            "car_1": 80.06784236058593,
+            "car_2": 41.19405784877017,
+            "car_3": 57.742693717591465,
+            "car_4": 57.20945334760472,
+            "car_5": 68.32712463801727,
+            "car_6": 42.7366181393154,
+            "env.step": 13.162756594829261
+          },
+          "actions_sha256": "6bff22deab609a2c0ecc25531a8c6be9c97f7c6fd05a6dc9bd7c716d9a1ed989",
+          "states_sha256": "ad541a6ef9481f39ff8c3152868291faa25ba909609f7b1b701c365be2851a8e"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_mpc_traffic_circle.yaml",
+          "seed": 44,
+          "scenario_sha256": "8366af0e0d82887c79076d2a01954f84cd8af8ebe930dbdbc502b2a82c14b38e",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 3.586438560644023,
+          "mean_ms": {
+            "car_1": 12.857426096161362,
+            "car_2": 38.69463784212712,
+            "car_3": 54.32892064709449,
+            "car_4": 54.87776775407838,
+            "car_5": 64.72455111361342,
+            "car_6": 42.50493529252708,
+            "env.step": 10.839903181476984
+          },
+          "p95_ms": {
+            "car_1": 26.204638089984655,
+            "car_2": 42.342882975935936,
+            "car_3": 59.804486751090735,
+            "car_4": 58.5290176095441,
+            "car_5": 70.086760353297,
+            "car_6": 45.98876611562446,
+            "env.step": 14.377627894282341
+          },
+          "actions_sha256": "f28bd1064cec4cf9e835a1ac4b694f3d09d7493b32a5f5542bf34ba51e0c7a4f",
+          "states_sha256": "e57c81ad804bc5fd54b6480a70a7b19edf8f1694326ae38d749165f489193217"
+        }
+      ]
+    },
+    "ppo_1v1_racing_mpc_circle": {
+      "mean_ms_before": 24.118948640534654,
+      "mean_ms_after": 22.537381143289775,
+      "speedup": 1.0701753006345092,
+      "scenario_action_and_pose_hashes_identical": true,
+      "before": [
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 42,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 35.30621283737041,
+          "mean_ms": {
+            "car_1": 24.970437698357273,
+            "env.step": 3.3531892113387585
+          },
+          "p95_ms": {
+            "car_1": 82.83348374534398,
+            "env.step": 3.5712709766812623
+          },
+          "actions_sha256": "f41e3a1110368ca58a0fd2e2dd210efde3bab691ba61d960d3aff3cb893113f5",
+          "states_sha256": "8bf526531bcf43fac52a4c8ca77e1ba34b86b6ead26b03c71141d48883455eaa"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 43,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 43.82536115558891,
+          "mean_ms": {
+            "car_1": 19.396631818381138,
+            "env.step": 3.4212063837912865
+          },
+          "p95_ms": {
+            "car_1": 71.53073325753212,
+            "env.step": 3.562848432920873
+          },
+          "actions_sha256": "7fe758d5e4902af7ba8f0c4138dbb8e37a20b7e50f14234735fa6107e285b5cf",
+          "states_sha256": "51e29b657c30069ad185bc3de822f1fbb4f9caffa72f32929cee3c0e14e9857b"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 44,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 47.135613966500706,
+          "mean_ms": {
+            "car_1": 17.925386295246426,
+            "env.step": 3.2899945144890808
+          },
+          "p95_ms": {
+            "car_1": 46.03613655781372,
+            "env.step": 3.6682745674625035
+          },
+          "actions_sha256": "de281ce631f7d4492bfaf84d7e640136d66072fe049806be95fef290c129634b",
+          "states_sha256": "3d924af534056ae76c0823347a12331fc01d657eb4b77180bd150bbec9928db9"
+        }
+      ],
+      "after": [
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 42,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 36.81719592975074,
+          "mean_ms": {
+            "car_1": 23.7435215167352,
+            "env.step": 3.4176996123278514
+          },
+          "p95_ms": {
+            "car_1": 78.2674275804311,
+            "env.step": 3.741730854380876
+          },
+          "actions_sha256": "f41e3a1110368ca58a0fd2e2dd210efde3bab691ba61d960d3aff3cb893113f5",
+          "states_sha256": "8bf526531bcf43fac52a4c8ca77e1ba34b86b6ead26b03c71141d48883455eaa"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 43,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 50.020295213113634,
+          "mean_ms": {
+            "car_1": 16.78533057565801,
+            "env.step": 3.206554632924963
+          },
+          "p95_ms": {
+            "car_1": 63.27351292129606,
+            "env.step": 3.471760102547705
+          },
+          "actions_sha256": "7fe758d5e4902af7ba8f0c4138dbb8e37a20b7e50f14234735fa6107e285b5cf",
+          "states_sha256": "51e29b657c30069ad185bc3de822f1fbb4f9caffa72f32929cee3c0e14e9857b"
+        },
+        {
+          "scenario": "scenarios/ppo_1v1_racing_mpc_circle.yaml",
+          "seed": 44,
+          "scenario_sha256": "186d96a5104910986eeddebc07801c41b5dff3ec49ff775c09c9a0ca33b19b9b",
+          "steps": 32,
+          "warmup": 2,
+          "resets": 0,
+          "controller_and_physics_steps_per_second": 48.87815567723423,
+          "mean_ms": {
+            "car_1": 17.18545678158989,
+            "env.step": 3.273580310633406
+          },
+          "p95_ms": {
+            "car_1": 44.91822953568769,
+            "env.step": 3.507135808467865
+          },
+          "actions_sha256": "de281ce631f7d4492bfaf84d7e640136d66072fe049806be95fef290c129634b",
+          "states_sha256": "3d924af534056ae76c0823347a12331fc01d657eb4b77180bd150bbec9928db9"
+        }
+      ]
+    }
+  },
+  "validation": {
+    "mpc_equivalence_tests_passed": 83,
+    "racing_and_traffic_integration_tests_passed": 32,
+    "randomized_racing_shooting_cases_exactly_matching_previous_implementation": 100,
+    "known_unrelated_test_excluded": "tests/test_racing_mpc.py::test_active_team_scenarios_use_one_fixed_mpc_opponent_profile"
+  }
+}
