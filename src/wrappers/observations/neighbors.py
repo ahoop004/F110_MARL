@@ -197,16 +197,19 @@ __all__ = ["TargetStateComponent", "RelativePoseComponent", "FrenetNeighborsComp
 class TargetFrenetComponent(ObservationComponent):
     """Dedicated configured target: normalized [ds, dd, dvs, dvd, present]."""
 
-    def __init__(self, maxima):
+    def __init__(self, maxima, agent_ids=None):
         if set(maxima) != set(_FIELDS):
             raise ValueError("target_frenet requires fixed scales for all four fields")
         self.scales = np.asarray([maxima[field] for field in _FIELDS], dtype=np.float32)
         if not np.isfinite(self.scales).all() or (self.scales <= 0).any():
             raise ValueError("target_frenet scales must be finite and positive")
+        self.agent_ids = tuple(agent_ids or ())
+        if len(set(self.agent_ids)) != len(self.agent_ids):
+            raise ValueError("target_frenet agent_ids must be unique")
 
     @property
     def dim(self):
-        return 5
+        return 5 + len(self.agent_ids)
 
     def compute_into(self, raw_obs, info, out):
         out.fill(0.0)
@@ -218,3 +221,5 @@ class TargetFrenetComponent(ObservationComponent):
             raise ValueError("Target Frenet facts must be finite")
         out[:4] = values / self.scales
         out[4] = 1.0
+        if self.agent_ids:
+            out[5 + self.agent_ids.index(target["agent_id"])] = 1.0

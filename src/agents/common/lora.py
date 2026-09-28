@@ -67,7 +67,7 @@ class LoRAActor(Actor):
     No dropout or automatic weight merging changes the rollout/update policy.
     """
 
-    def __init__(self, base: Actor, config, n_agents):
+    def __init__(self, base: Actor, config, n_agents, input_dims=None):
         nn.Module.__init__(self)
         self.net = base.net
         self.log_std = base.log_std
@@ -79,11 +79,14 @@ class LoRAActor(Actor):
         if not self.target_layers:
             raise ValueError("LoRA requires at least one actor hidden layer")
         count = n_agents if self.config["mode"] == "per_agent" else 1
+        self.input_dims = list(input_dims or [self.net[0].in_features] * count)
+        if len(self.input_dims) != count:
+            raise ValueError("LoRA input dimensions must match adapter routing")
         self.adapters = nn.ModuleList([
             nn.ModuleDict({str(i): LowRankResidual(
-                self.net[i].in_features, self.net[i].out_features,
+                self.input_dims[bank] if i == 0 else self.net[i].in_features, self.net[i].out_features,
                 self.config["rank"], self.config["alpha"],
-            ) for i in self.target_layers}) for _ in range(count)
+            ) for i in self.target_layers}) for bank in range(count)
         ])
         self.net.requires_grad_(False)
         self.log_std.requires_grad_(self.config["train_log_std"] and not self.config.get("per_agent_log_std"))
@@ -106,7 +109,8 @@ class LoRAActor(Actor):
         for i, layer in enumerate(self.net):
             output = layer(obs)
             if str(i) in bank:
-                output = output + bank[str(i)](obs)
+                residual = bank[str(i)]
+                output = output + residual(obs[..., :residual.A.shape[1]])
             obs = output
         return obs
 

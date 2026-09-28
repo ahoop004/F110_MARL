@@ -32,12 +32,14 @@ class CollectorAgent:
     compute_team_gae = MAPPOAgent.compute_team_gae
     clear_buffers = MAPPOAgent.clear_buffers
     any_buffer_full = MAPPOAgent.any_buffer_full
+    pack_observations = MAPPOAgent.pack_observations
 
     def __init__(self, contract, horizon):
         for name, value in contract.items():
             setattr(self, name, value)
         self.n_steps = horizon
         self.device = torch.device("cpu")
+        self.obs_dims = contract.get("obs_dims", {aid: self.obs_dim for aid in self.agent_ids})
         self.buffers = {
             aid: MAPPORolloutBuffer(horizon, self.obs_dim, self.global_state_dim,
                                    self.action_dim, self.device)
@@ -55,9 +57,10 @@ class CollectorAgent:
         # Environment snapshots are read-only; own one writable CPU copy before
         # handing the same state to each teammate's tensor buffer.
         global_state = np.array(global_state, dtype=np.float32, copy=True)
-        for aid in agent_ids:
+        packed = self.pack_observations(agent_ids, observations)
+        for index, aid in enumerate(agent_ids):
             self.buffers[aid].add(
-                observations[aid], global_state, actions[aid], rewards[aid],
+                packed[index], global_state, actions[aid], rewards[aid],
                 log_probs[aid], values[aid], terminated[aid], truncated[aid],
                 None if raw_actions is None else raw_actions[aid],
             )
@@ -164,8 +167,8 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
             raise ValueError("MAPPO collector global-state contract mismatch")
         for aid in ids:
             space = env.action_spaces[aid]
-            if (obs[aid].obs_dim != contract["obs_dim"] or
-                    obs[aid].contract != contract["observation_contract"] or
+            if (obs[aid].obs_dim != contract.get("obs_dims", {}).get(aid, contract["obs_dim"]) or
+                    obs[aid].contract != contract.get("observation_contracts", {}).get(aid, contract["observation_contract"]) or
                     not np.array_equal(space.low, contract["action_low"]) or
                     not np.array_equal(space.high, contract["action_high"])):
                 raise ValueError("MAPPO collector observation/action contract mismatch")
@@ -296,6 +299,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     agent = trainer.agent
     contract = {name: getattr(agent, name) for name in (
         "agent_ids", "obs_dim", "global_state_dim", "global_state_contract_version",
+        "obs_dims", "observation_contracts",
         "action_dim", "action_low", "action_high", "observation_contract", "gamma",
         "gae_lambda", "critic_mode", "reward_mode", "team_return_mode", "team_reward_reduction",
     )}

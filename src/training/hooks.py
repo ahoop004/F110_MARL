@@ -522,7 +522,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+        if selection_strategy not in {"racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -541,7 +541,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         self._next_evaluation_step = evaluate_every_steps
         self._console = console
         self._wandb = wandb_logger
-        self._best_score: Optional[tuple[float, float, float, float]] = None
+        self._best_score: Optional[tuple[float, ...]] = None
         self._history_path = self._dir / "evaluation_history.jsonl"
         self._evaluation_count = 0
         self.evaluation_seconds = 0.0
@@ -551,6 +551,8 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_priority(strategy):
+        if strategy == "racer_attack":
+            return "racer completion > both learners finish > fewer learner failures > attack score > racer finish time/progress"
         if strategy == "attack":
             return "survival-qualified successes minus twice ego failures per scheduled lap (no timeout) or minute (timed) > fewer ego failures > successes/minute > progress"
         if strategy == "asymmetric_support":
@@ -562,7 +564,12 @@ class EvaluationCheckpointHook(CheckpointHook):
                 "clean finish time if both-finished=100%, otherwise earned net progress")
 
     @staticmethod
-    def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+    def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, ...]:
+        if strategy == "racer_attack":
+            finish = summary.get("focal_mean_clean_finish_time_s")
+            tie = -float(finish) if summary["focal_completion_rate"] == 1. and finish is not None else float(summary["focal_mean_net_progress"])
+            return (float(summary["focal_completion_rate"]), float(summary["team_both_finished_rate"]),
+                    -float(summary["learner_failure_rate"]), float(summary["attack_score"]), tie)
         if strategy == "attack":
             return (float(summary["attack_score"]), -float(summary["attack_ego_crash_rate"]),
                     float(summary["attack_successes_per_minute"]), float(summary.get("mean_net_progress") or 0.))

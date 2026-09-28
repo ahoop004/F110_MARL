@@ -476,7 +476,9 @@ def main() -> None:
     if algorithm == "mappo":
         params = {**params, **resolve_mappo_config(scenario)}
         obs_dims = {aid: obs_composers[aid].obs_dim for aid in trainable_ids}
-        if len(set(obs_dims.values())) != 1:
+        params["_observation_dims"] = obs_dims
+        params["_observation_contracts"] = {aid: getattr(obs_composers[aid], "contract", None) for aid in trainable_ids}
+        if len(set(obs_dims.values())) != 1 and (params.get("lora") or {}).get("mode") != "per_agent":
             raise ValueError(
                 "Shared MAPPO actor requires identical local observation dimensions; "
                 f"got {obs_dims}."
@@ -496,9 +498,13 @@ def main() -> None:
                 )
 
     pretrained_actor_path: Optional[Path] = None
+    adapter_transfer = params.get("adapter_transfer")
+    if adapter_transfer and getattr(args, "pretrained_actor", None):
+        raise ValueError("Use training_defaults.adapter_transfer.checkpoint to select an adapter source")
     if getattr(args, "pretrained_actor", None):
         params["pretrained_actor_checkpoint"] = str(resolve_checkpoint_path(args.pretrained_actor))
-    pretrained_actor_value = params.get("pretrained_actor_checkpoint")
+    pretrained_actor_value = (adapter_transfer["checkpoint"] if adapter_transfer
+                              else params.get("pretrained_actor_checkpoint"))
     if algorithm == "mappo" and pretrained_actor_value:
         pretrained_actor_path = _resolve_scenario_relative_path(
             str(pretrained_actor_value), scenario_dir
@@ -595,7 +601,8 @@ def main() -> None:
         provenance["pretrained_actor"] = {
             "path": str(pretrained_actor_path),
             "sha256": hashlib.sha256(pretrained_actor_path.read_bytes()).hexdigest(),
-            "load_scope": "actor_only",
+            "load_scope": "frozen_base_and_selected_adapter" if adapter_transfer else "actor_only",
+            "adapter_transfer": adapter_transfer,
             "observation_extension": params.get("pretrained_actor_observation_extension"),
             "lora": params.get("lora"),
         }
@@ -923,6 +930,8 @@ def _run_eval(
         obs_composers[focal_agent_id].contract if params["_physics_contract"] is not None else None)
     if algorithm == "mappo":
         params = {**params, **resolve_mappo_config(scenario)}
+        params["_observation_dims"] = {aid: obs_composers[aid].obs_dim for aid in trainable_ids}
+        params["_observation_contracts"] = {aid: getattr(obs_composers[aid], "contract", None) for aid in trainable_ids}
     action_composers = {
         aid: ActionComposer.from_config(
             env.action_spaces[aid].low,
@@ -1118,9 +1127,7 @@ def _run_eval(
                     if aid in active_agents and aid in wrapped_obs
                 ]
                 if active_trainable_ids and algorithm == "mappo":
-                    stacked_observations = np.stack(
-                        [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
-                    )
+                    stacked_observations = [wrapped_obs[aid] for aid in active_trainable_ids]
                     actions_norm, _ = agent.act_batch(
                         active_trainable_ids,
                         stacked_observations,
@@ -2000,7 +2007,12 @@ def _run_mappo(
     )
     pretrained_actor = params.get("_resolved_pretrained_actor_checkpoint")
     if pretrained_actor:
-        agent.load_pretrained_actor(str(pretrained_actor))
+        transfer = params.get("adapter_transfer")
+        if transfer:
+            agent.load_pretrained_adapter(str(pretrained_actor), source_agent=transfer["source_agent"],
+                                         target_agent=transfer["target_agent"])
+        else:
+            agent.load_pretrained_actor(str(pretrained_actor))
         console.print_info(
             f"Initialized MAPPO actors from checkpoint: {pretrained_actor}"
         )

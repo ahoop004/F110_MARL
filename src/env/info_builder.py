@@ -12,6 +12,7 @@ from env.types import AgentLifecycleRecord, AgentState, GlobalState, StepFacts
 MINIMAL_INFO_KEYS = {
     "agent_id",
     "target_frenet",
+    "target_id",
     "target_respawned",
     "attack",
     "respawned", "respawn_reason", "boundary_event",

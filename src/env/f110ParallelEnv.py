@@ -59,7 +59,7 @@ from env.state_buffer import (
 )
 from env.types import AgentRaceStatus, AgentState, GlobalState
 from env.respawn import validate_respawn, sample_ahead_pose
-from env.attack import AttackTracker, validate_attack
+from env.attack import AttackTracker, MultiTargetAttackTracker, validate_attack
 from utils.centerline import project_to_centerline
 from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
@@ -312,7 +312,10 @@ class F110ParallelEnv:
         recovery = validate_respawn(merged.get("respawn"), self.possible_agents)
         self._respawn_config = recovery
         attack = validate_attack(merged.get("attack_task"), self.possible_agents)
-        self._attack_tracker = AttackTracker(attack) if attack else None
+        self._attack_tracker = None
+        if attack:
+            tracker_type = MultiTargetAttackTracker if "target_ids" in attack else AttackTracker
+            self._attack_tracker = tracker_type(attack)
         self.boundary_respawn_agents = set(recovery.get("boundary_agents", []))
         self.collision_respawn_agents = set(recovery.get("collision_agents", []))
         self.respawn_agents = set(merged.get("respawn_agents", []))
@@ -638,7 +641,7 @@ class F110ParallelEnv:
             self._render_state.render_obs = {}
             return
         self._render_state.render_obs = build_render_observations(
-            self.agents,
+            [aid for aid in self.agents if self.sim.collidable_mask[self._agent_id_to_index[aid]]],
             obs,
             agent_index=self._agent_id_to_index,
             agent_target_index=self._agent_target_index,
@@ -928,6 +931,8 @@ class F110ParallelEnv:
         joint = np.zeros((self.n_agents, 2), dtype=np.float32)
         agent_index = self._agent_id_to_index
         active_before_step = tuple(self.agents)
+        attack_ego = self._attack_tracker.config["ego_id"] if self._attack_tracker else None
+        acted_target = self.get_target_id(attack_ego) if attack_ego else None
         for aid in active_before_step:
             if aid in actions:
                 joint[agent_index[aid]] = np.asarray(actions[aid], dtype=np.float32)
@@ -1019,9 +1024,10 @@ class F110ParallelEnv:
             self._elapsed_steps,
         )
         collision_array = np.asarray(collisions)
-        if self._attack_tracker is not None:
+        if self._attack_tracker is not None and attack_ego in active_before_step:
             self._attack_tracker.update(time=self.current_time, infos=infos,
-                collisions=dict(zip(self.possible_agents, map(bool, collision_array))))
+                collisions=dict(zip(self.possible_agents, map(bool, collision_array))),
+                **({"active_target": acted_target} if isinstance(self._attack_tracker, MultiTargetAttackTracker) else {}))
             ego_id = self._attack_tracker.config["ego_id"]
             ego_record = self.lifecycle.records[ego_id]
             infos[ego_id]["attack"].update(
@@ -1111,6 +1117,19 @@ class F110ParallelEnv:
                     action=joint[agent_index[aid]],
                     vehicle_state=self.sim.agents[agent_index[aid]].physics_state,
                 )
+        # Apply zero-clearance removals to the returned state too, not just the
+        # next decision. Their terminal facts remain available for one final reward.
+        if self._terminal_controller.config.remove_after_clearance:
+            previous_visibility = self.sim.collidable_mask.copy()
+            self._terminal_controller.apply(joint, agent_index=agent_index, simulator=self.sim,
+                                            step=self._elapsed_steps)
+            if not np.array_equal(previous_visibility, self.sim.collidable_mask):
+                self.sim.refresh_scans()
+                scans = self.sim.current_observation()["scans"]
+                for aid in obs:
+                    if "scans" in obs[aid]:
+                        obs[aid]["scans"] = scans[agent_index[aid]]
+            self._inject_frenet_neighbors(infos)
         add_time_limit_info(infos, truncations=truncations)
         self._inject_finish_line_info(infos)
         add_episode_metadata(
@@ -1169,7 +1188,7 @@ class F110ParallelEnv:
         ahead = self._respawn_config.get("random_ahead")
         for aid in sorted(agent_ids):
             idx = self._agent_id_to_index[aid]
-            others = np.delete(poses[:, :2], idx, axis=0)
+            others = poses[[i for i in range(self.n_agents) if i != idx and self.sim.collidable_mask[i]], :2]
             geometry = self._centerline_progress_tracker._geometry
             if ahead:
                 poses[idx] = sample_ahead_pose(geometry=geometry,
@@ -1717,8 +1736,16 @@ class F110ParallelEnv:
                 continue
             infos.setdefault(agent_id, {})["frenet_neighbors"] = neighbors
             infos[agent_id]["agent_id"] = agent_id
+            if (isinstance(self._attack_tracker, MultiTargetAttackTracker)
+                    and agent_id == self._attack_tracker.config["ego_id"]):
+                candidates = [n for n in neighbors if n["agent_id"] in self._attack_tracker.config["target_ids"]
+                              and self.lifecycle.records[n["agent_id"]].is_active and n["delta_s"] > 0]
+                nearest = min(candidates, key=lambda n: (n["delta_s"], n["agent_id"]), default=None)
+                self._agent_target_index[agent_id] = (self._agent_id_to_index[nearest["agent_id"]]
+                                                      if nearest else None)
             target_index = self._agent_target_index.get(agent_id)
             target_id = self.possible_agents[target_index] if target_index is not None else None
+            infos[agent_id]["target_id"] = target_id
             infos[agent_id]["target_frenet"] = next(
                 (neighbor for neighbor in neighbors if neighbor["agent_id"] == target_id), None)
 

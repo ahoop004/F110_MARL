@@ -402,6 +402,9 @@ def aggregate_eval_episodes(
         aid: _rate(ep.agents[aid].completed for ep in episodes if aid in ep.agents)
         for aid in all_agent_ids
     }
+    summary["learner_failure_rate"] = _rate(
+        ep.agents[aid].terminal_reason in {"collision", "track_boundary"}
+        for ep in episodes for aid in trainable_ids)
     # The first learner is the progressing car in asymmetric support races.
     if focal_agent_id:
         focal = [ep.agents[focal_agent_id] for ep in episodes]
@@ -415,7 +418,8 @@ def aggregate_eval_episodes(
         times = [f.finish_elapsed_steps * timestep for f in focal
                  if timestep is not None and f.clean_finish and f.finish_elapsed_steps is not None]
         summary["focal_mean_clean_finish_time_s"] = _mean(times) if times else None
-        attacks = [f for f in focal if f.attack_horizon_steps is not None]
+        attacks = [ep.agents[aid] for ep in episodes for aid in trainable_ids
+                   if ep.agents[aid].attack_horizon_steps is not None]
         if attacks:
             successes = sum(f.attack_successes for f in attacks)
             failures = sum(f.attack_ego_failed for f in attacks)

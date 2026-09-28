@@ -73,8 +73,8 @@ class DeterministicMAPPOEvaluator:
                         ids = [aid for aid in self.trainable_ids if aid in self.env.agents]
                         normalized, physical, wrapped_rows = {}, {}, {}
                         if ids:
-                            wrapped = np.stack([self.obs_composers[aid].wrap(
-                                obs.get(aid, {}), infos.get(aid, {})) for aid in ids])
+                            wrapped = [self.obs_composers[aid].wrap(
+                                obs.get(aid, {}), infos.get(aid, {})) for aid in ids]
                             wrapped_rows = dict(zip(ids, wrapped))
                             normalized, _ = self.agent.act_batch(ids, wrapped, deterministic=True)
                             physical = {aid: self.actions[aid].process(normalized[aid]) for aid in ids}

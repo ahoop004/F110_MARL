@@ -329,9 +329,10 @@ class MARLTrainer:
                 active_trainable_ids = [
                     aid for aid in self.trainable_ids if aid in active_before
                 ]
-                stacked_observations = np.stack(
-                    [wrapped_obs[aid] for aid in active_trainable_ids], axis=0
-                ) if active_trainable_ids else np.empty((0, getattr(self.agent, "obs_dim", 0)), dtype=np.float32)
+                rows = [wrapped_obs[aid] for aid in active_trainable_ids]
+                stacked_observations = (self.agent.pack_observations(active_trainable_ids, rows)
+                    if hasattr(self.agent, "pack_observations") else np.stack(rows)
+                    if rows else np.empty((0, getattr(self.agent, "obs_dim", 0)), dtype=np.float32))
                 if parallel:
                     actions_norm, log_probs, values, raw_actions = yield (
                         "act", (active_trainable_ids, stacked_observations, global_state)

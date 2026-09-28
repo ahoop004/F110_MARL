@@ -368,6 +368,19 @@ class Simulator(object):
             "collisions": self.collisions.copy(),
         }
 
+    def refresh_scans(self):
+        """Refresh sensing after removal without advancing physics or collision events."""
+        visible = np.flatnonzero(self.collidable_mask)
+        for local, index in enumerate(visible):
+            agent = self.agents[index]
+            agent.compute_scan()
+            others = visible[visible != index]
+            if hasattr(agent, "update_opp_poses"):
+                agent.update_opp_poses(self.agent_poses[others])
+            if hasattr(agent, "ray_cast_agents"):
+                agent.ray_cast_agents(self._verts_buffer_f32[visible], local)
+            np.copyto(self._scan_buffer[index], agent.scan)
+
 
     def reset(self, poses: np.ndarray, velocities: Optional[np.ndarray] = None, *, friction_mu=None, agent_indices=None) -> dict:
         """
@@ -385,7 +398,10 @@ class Simulator(object):
             raise ValueError(f"poses must be an array with shape (N,3); got {getattr(poses, 'shape', None)}")
         if poses.shape[0] != self.num_agents:
             raise ValueError("Number of poses for reset does not match number of agents.")
-        self.collidable_mask.fill(True)
+        if agent_indices is None:
+            self.collidable_mask.fill(True)
+        else:
+            self.collidable_mask[list(agent_indices)] = True
         if velocities is not None:
             if not isinstance(velocities, np.ndarray):
                 velocities = np.array(velocities, dtype=np.float32)
@@ -452,14 +468,23 @@ class Simulator(object):
             )
             self._verts_buffer_f64[i, :, :] = verts
             self._verts_buffer_f32[i, :, :] = verts
-        col_flags, hit_idx = collision_multiple(self._verts_buffer_f64)
+        visible = np.flatnonzero(self.collidable_mask)
+        flags, hits = collision_multiple(self._verts_buffer_f64[visible])
+        col_flags = np.zeros(N, dtype=np.float64)
+        hit_idx = np.full(N, -1, dtype=np.int64)
+        col_flags[visible] = flags
+        for local, hit in enumerate(hits):
+            if hit >= 0:
+                hit_idx[visible[local]] = visible[int(hit)]
 
         if N > 1:
             for i, agent in enumerate(self.agents):
+                if not self.collidable_mask[i]:
+                    continue
                 if hasattr(agent, "update_opp_poses"):
                     count = 0
                     for j in range(N):
-                        if j == i:
+                        if j == i or not self.collidable_mask[j]:
                             continue
                         self._opp_pose_buffer[count, 0] = self.agent_poses[j, 0]
                         self._opp_pose_buffer[count, 1] = self.agent_poses[j, 1]
@@ -468,7 +493,7 @@ class Simulator(object):
                     agent.update_opp_poses(self._opp_pose_buffer[:count])
 
                 if hasattr(agent, "ray_cast_agents"):
-                    agent.ray_cast_agents(self._verts_buffer_f32, i)
+                    agent.ray_cast_agents(self._verts_buffer_f32[visible], int(np.searchsorted(visible, i)))
                     scan_row = np.asarray(agent.scan, dtype=np.float32)
                     if scan_row.shape[0] != self._scan_buffer.shape[1]:
                         self._ensure_scan_capacity(scan_row.shape[0])

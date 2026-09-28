@@ -172,7 +172,8 @@ class ObservationComposer:
 
         target_frenet_cfg = obs.get("target_frenet", {})
         if target_frenet_cfg.get("enabled", False):
-            components.append(TargetFrenetComponent(target_frenet_cfg.get("maxima", {})))
+            components.append(TargetFrenetComponent(target_frenet_cfg.get("maxima", {}),
+                                                   target_frenet_cfg.get("agent_ids")))
 
         if not components:
             raise ValueError("ObservationComposer: no components enabled in obs config.")

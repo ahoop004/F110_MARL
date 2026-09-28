@@ -212,10 +212,16 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
     if evaluation.get("selection_strategy") == "attack" and not scenario.get("environment", {}).get("attack_task"):
         raise ScenarioError("attack checkpoint selection requires environment.attack_task")
+    if evaluation.get("selection_strategy") == "racer_attack":
+        attack = scenario.get("environment", {}).get("attack_task") or {}
+        racer = evaluation.get("progress_agent_id")
+        if ("target_ids" not in attack or racer == attack.get("ego_id")
+                or not scenario.get("agents", {}).get(racer, {}).get("trainable")):
+            raise ScenarioError("racer_attack selection requires a separate racer and dynamic attacker")
     if evaluation.get("selection_strategy") == "asymmetric_support":
         progress_id = evaluation.get("progress_agent_id")
         config = scenario.get("agents", {}).get(progress_id, {})
@@ -283,7 +289,8 @@ def _validate_attack_episode_limit(termination, max_steps, ego, phase):
     lap_completion = termination.get("lap_completion", True)
     if not isinstance(lap_completion, bool):
         raise ScenarioError(f"attack_task {phase} lap_completion must be boolean")
-    if lap_completion and termination.get("lap_finish_agents") != [ego]:
+    finishers = [ego] if isinstance(ego, str) else list(ego)
+    if lap_completion and termination.get("lap_finish_agents") != finishers:
         raise ScenarioError(f"attack_task {phase} lap_finish_agents must contain only {ego}")
     if max_steps == 0 and not lap_completion:
         raise ScenarioError(f"attack_task {phase} requires a finite horizon or learner lap completion")
@@ -483,7 +490,36 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         attack = validate_attack(environment.get("attack_task"), agents)
     except ValueError as exc:
         raise ScenarioError(str(exc)) from exc
-    if attack:
+    if attack and "target_ids" in attack:
+        ego, targets = attack["ego_id"], attack["target_ids"]
+        if (len(agents) != 4 or len(trainable_ids) != 2 or ego not in trainable_ids
+                or set(targets) != set(agents) - set(trainable_ids)
+                or any(agents[a].get("algorithm") != "racing_mpc" for a in targets)
+                or any(agents[a].get("algorithm") != "mappo" for a in trainable_ids)):
+            raise ScenarioError("Dynamic attack_task requires two MAPPO learners and two racing_mpc opponents")
+        if (set(recovery.get("boundary_agents", [])) != set(targets)
+                or set(recovery.get("collision_agents", [])) != set(targets)
+                or recovery.get("collision_placement") != "nearest_centerline"):
+            raise ScenarioError("Dynamic attack_task requires opponent-only nearest-centerline respawn")
+        if (not limits.get("terminate") or environment.get("terminate_on_collision") is not True
+                or environment.get("action_repeat", 1) != 1):
+            raise ScenarioError("Dynamic attack_task requires learner failure termination and action_repeat=1")
+        terminal = environment.get("terminal_agents", {})
+        if (not terminal.get("remove_after_clearance") or terminal.get("crash_clearance_steps") != 0
+                or terminal.get("finish_clearance_steps") != 0):
+            raise ScenarioError("Dynamic attack_task requires immediate terminal vehicle removal")
+        termination = environment.get("episode_termination", {})
+        _validate_attack_episode_limit(termination, environment.get("max_steps", 5000), trainable_ids, "training")
+        evaluation = scenario.get("evaluation", {}) or {}
+        if evaluation:
+            if not evaluation.get("terminate_on_track_limit") or not evaluation.get("terminate_on_collision"):
+                raise ScenarioError("Dynamic attack evaluation requires learner failure termination")
+            eval_term = {**termination, "mode": evaluation.get("episode_termination_mode", termination.get("mode")),
+                         "lap_completion": evaluation.get("lap_completion", True)}
+            for phase in (["selection", "final"] if evaluation.get("final_test") else ["selection"]):
+                _validate_attack_episode_limit(eval_term, resolve_evaluation_protocol(scenario, phase)["max_steps"],
+                                               trainable_ids, f"evaluation.{phase}")
+    if attack and "target_id" in attack:
         ego, target = attack["ego_id"], attack["target_id"]
         if (len(agents) != 2 or trainable_ids != [ego] or agents[target].get("algorithm") != "racing_mpc"
                 or agents[ego].get("target_id") != target):
@@ -590,6 +626,15 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         critic_mode = mappo["critic_mode"]
         reduction = mappo["team_reward_reduction"]
         params = {**scenario.get("training_defaults", {}), **agents[trainable_ids[0]].get("params", {})}
+        transfer = params.get("adapter_transfer")
+        if transfer is not None:
+            if (not isinstance(transfer, dict) or set(transfer) != {"checkpoint", "source_agent", "target_agent"}
+                    or any(not isinstance(v, str) or not v for v in transfer.values())
+                    or transfer["target_agent"] not in trainable_ids
+                    or (params.get("lora") or {}).get("mode") != "per_agent"
+                    or not (params.get("lora") or {}).get("per_agent_log_std")
+                    or params.get("pretrained_actor_checkpoint")):
+                raise ScenarioError("adapter_transfer requires checkpoint/source_agent/target_agent, per_agent LoRA/exploration and no separate base checkpoint")
         if not isinstance(params.get("require_pretrained_actor", False), bool):
             raise ScenarioError("require_pretrained_actor must be boolean")
         if mappo["actor_mode"] == "independent" and params.get("lora") is not None:
@@ -639,7 +684,8 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         # to be selected as the focal agent in run.py.
         reference_id = trainable_mappo[0]
         reference = agents[reference_id]
-        shared_fields = ("observation", "params", "action_constraints")
+        shared_fields = (("params", "action_constraints") if (params.get("lora") or {}).get("mode") == "per_agent"
+                         else ("observation", "params", "action_constraints"))
         for agent_id in trainable_mappo[1:]:
             for field in shared_fields:
                 if agents[agent_id].get(field, {}) != reference.get(field, {}):

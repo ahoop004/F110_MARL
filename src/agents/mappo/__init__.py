@@ -37,6 +37,7 @@ import torch.optim as optim
 from agents.common import Actor, Critic, compute_gae, ppo_minibatch_step, mean_update_metrics
 from agents.common.lora import LoRAActor, resolve_lora_config
 from agents.common.independent import IndependentActors
+from agents.common.observations import pack_observations
 from utils.torch_io import resolve_device
 
 
@@ -185,7 +186,11 @@ class MAPPOAgent:
             raise ValueError("MAPPO requires at least one trainable agent ID.")
         if len(set(agent_ids)) != len(agent_ids):
             raise ValueError("MAPPO trainable agent IDs must be unique and ordered.")
-        self.obs_dim = obs_dim
+        self.obs_dims = dict(params.get("_observation_dims") or {aid: obs_dim for aid in agent_ids})
+        if set(self.obs_dims) != set(agent_ids) or any(
+                isinstance(d, bool) or not isinstance(d, int) or d <= 0 for d in self.obs_dims.values()):
+            raise ValueError("MAPPO observation dimensions must name every learner with a positive width")
+        self.obs_dim = obs_dim = max(self.obs_dims.values())
         self.global_state_dim = global_state_dim
         self.global_state_contract_version = str(
             params.get("_global_state_contract_version", "legacy_unspecified")
@@ -196,6 +201,10 @@ class MAPPOAgent:
         self.action_contract = dict(params.get("_action_contract", {"speed_control": "direct"}))
         self.physics_contract = params.get("_physics_contract")
         self.observation_contract = params.get("_observation_contract")
+        self.observation_contracts = dict(params.get("_observation_contracts") or {
+            aid: self.observation_contract for aid in agent_ids})
+        if set(self.observation_contracts) != set(agent_ids):
+            raise ValueError("Observation contracts must name every learner")
         self.pretrained_actor_observation_extension = params.get("pretrained_actor_observation_extension")
         if self.pretrained_actor_observation_extension not in (None, "frenet_neighbors", "target_frenet"):
             raise ValueError("pretrained_actor_observation_extension must be null, frenet_neighbors or target_frenet")
@@ -205,6 +214,9 @@ class MAPPOAgent:
         if self.actor_mode not in {"shared", "independent"}:
             raise ValueError("actor_mode must be shared or independent")
         self.lora_config = resolve_lora_config(params.get("lora"))
+        if len(set(self.obs_dims.values())) > 1 and not (
+                self.lora_config and self.lora_config["mode"] == "per_agent"):
+            raise ValueError("Different observation dimensions require per_agent LoRA")
         if self.actor_mode == "independent" and self.lora_config is not None:
             raise ValueError("Independent actors cannot also use LoRA; use shared with per_agent adapters")
         self.pretrained_actor_source = None
@@ -291,13 +303,17 @@ class MAPPOAgent:
             self.actor = IndependentActors(self.actor, self.agent_ids).to(self.device)
         self.lora_contract = None
         if self.lora_config is not None:
-            self.actor = LoRAActor(self.actor, self.lora_config, len(self.agent_ids)).to(self.device)
+            inputs = ([self.obs_dims[aid] for aid in self.agent_ids]
+                      if self.lora_config["mode"] == "per_agent" else None)
+            self.actor = LoRAActor(self.actor, self.lora_config, len(self.agent_ids), inputs).to(self.device)
             self.lora_contract = {
                 "version": 1, **self.lora_config,
                 "target_layers": self.actor.target_layers,
                 "agent_to_adapter": {aid: (i if self.lora_config["mode"] == "per_agent" else 0)
                                      for i, aid in enumerate(self.agent_ids)},
             }
+            if len(set(self.obs_dims.values())) > 1:
+                self.lora_contract["observation_dims"] = dict(self.obs_dims)
         self._optim_parameters = tuple(p for p in self.actor.parameters() if p.requires_grad) + tuple(
             self.critic.parameters())
         self.optimizer = optim.Adam(self._optim_parameters, lr=self.lr)
@@ -365,9 +381,10 @@ class MAPPOAgent:
         log_prob : float
             Log probability of the sampled action.
         """
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         if self.routed_actor and agent_id is None:
             raise ValueError("Routed actor act requires agent_id")
+        aid = agent_id if agent_id is not None else self.agent_ids[0]
+        obs_t = torch.as_tensor(self.pack_observations([aid], [obs]), dtype=torch.float32, device=self.device)
         action_t, log_prob_t = self.actor_actions(
             obs_t, [agent_id if agent_id is not None else self.agent_ids[0]], deterministic=deterministic)
         return (
@@ -386,7 +403,7 @@ class MAPPOAgent:
         ordered_ids = self._validate_agent_batch(agent_ids)
         if not ordered_ids:
             return {}, {}
-        obs = np.asarray(observations, dtype=np.float32)
+        obs = self.pack_observations(ordered_ids, observations)
         if obs.shape != (len(ordered_ids), self.obs_dim):
             raise ValueError(
                 "Expected batched local observations with shape "
@@ -411,6 +428,9 @@ class MAPPOAgent:
             for index, agent_id in enumerate(ordered_ids)
         }
         return actions, log_probs
+
+    def pack_observations(self, agent_ids, observations):
+        return pack_observations(agent_ids, observations, self.obs_dims, self.obs_dim)
 
     def _validate_agent_batch(self, agent_ids: Sequence[str]) -> List[str]:
         ordered_ids = [str(agent_id) for agent_id in agent_ids]
@@ -523,7 +543,7 @@ class MAPPOAgent:
     ) -> None:
         """Store one transition in *agent_id*'s rollout buffer."""
         self.buffers[agent_id].add(
-            obs,
+            self.pack_observations([agent_id], [obs])[0],
             global_state,
             action,
             reward,
@@ -556,9 +576,7 @@ class MAPPOAgent:
             raise ValueError(
                 f"Expected global state dimension {self.global_state_dim}, got {state.size}."
             )
-        obs_batch = np.stack(
-            [np.asarray(observations[aid], dtype=np.float32) for aid in ordered_ids]
-        )
+        obs_batch = self.pack_observations(ordered_ids, observations)
         action_batch = np.stack(
             [np.asarray(actions[aid], dtype=np.float32) for aid in ordered_ids]
         )
@@ -949,6 +967,10 @@ class MAPPOAgent:
         }
         self._lora_ready = True
 
+    def load_pretrained_adapter(self, path, *, source_agent, target_agent):
+        from agents.common.adapter_transfer import import_adapter
+        import_adapter(self, path, source_agent=source_agent, target_agent=target_agent)
+
     def save(self, path: str) -> None:
         self._require_lora_source()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -964,12 +986,14 @@ class MAPPOAgent:
                 "algorithm": "mappo",
                 "agent_ids": self.agent_ids,
                 "obs_dim": self.obs_dim,
+                "obs_dims": self.obs_dims,
                 "action_dim": self.action_dim,
                 "action_low": self.action_low,
                 "action_high": self.action_high,
                 "action_contract": self.action_contract,
                 "physics_contract": self.physics_contract,
                 "observation_contract": self.observation_contract,
+                "observation_contracts": self.observation_contracts,
                 "global_state_dim": self.global_state_dim,
                 "global_state_contract_version": self.global_state_contract_version,
                 "critic_input_dim": self.critic_input_dim,
@@ -989,10 +1013,14 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        if (ckpt.get("obs_dims", {aid: ckpt.get("obs_dim") for aid in self.agent_ids}) != self.obs_dims
+                or ckpt.get("observation_contracts", {aid: ckpt.get("observation_contract")
+                            for aid in self.agent_ids}) != self.observation_contracts):
+            raise ValueError("Incompatible per-learner observation contract")
         if ckpt.get("actor_mode", "shared") != self.actor_mode:
             raise ValueError("Incompatible MAPPO actor_mode; shared and independent checkpoints are distinct")
         if ckpt.get("actor_routing", self._agent_index) != self._agent_index:
-            raise ValueError("Incompatible MAPPO actor routing contract")
+            raise ValueError("Incompatible MAPPO checkpoint contract: actor routing differs")
         if self.actor_mode == "independent":
             actors = ckpt.get("actors", {})
             if set(actors) != set(self.agent_ids):
