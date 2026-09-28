@@ -74,6 +74,9 @@ mappo:
 
 # Simulation, map selection, race lifecycle and sensing parameters.
 environment:
+  # Optional shared forward limit for learners and MPCs: 5, 10, 15, or 20 m/s.
+  # Overrides wheel_speed_max and MPC max_speed; also available as --max-speed.
+  # max_speed: 5.0
   # Physics seconds per step; decision duration is timestep * action_repeat.
   timestep: 0.05
   # Number of LiDAR beams; affects policy input width when LiDAR is enabled.

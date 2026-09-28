@@ -7,6 +7,7 @@ training setups in a concise, readable format.
 
 from typing import Dict, Any, Optional
 import copy
+import math
 import yaml
 from pathlib import Path
 
@@ -15,6 +16,44 @@ from pathlib import Path
 class ScenarioError(Exception):
     """Exception raised for scenario configuration errors."""
     pass
+
+
+MAX_SPEED_OPTIONS = (5.0, 10.0, 15.0, 20.0)
+_MPC_ALGORITHMS = {
+    "racing_mpc", "kinematic_mpc", "obstacle_aware_mpc",
+    "defensive_mpc", "cbf_mpc", "mpcc",
+}
+
+
+def resolve_max_speed(scenario: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply an optional shared forward speed preset to learners and MPCs.
+
+    The preset takes precedence over individual forward limits. With nonlinear
+    physics it limits rolling-speed references, not the slipping chassis speed.
+    Reverse bounds, acceleration limits and observation scales stay unchanged.
+    """
+    speed = scenario.get("environment", {}).get("max_speed")
+    if speed is None:
+        return scenario
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or speed not in MAX_SPEED_OPTIONS:
+        raise ScenarioError("environment.max_speed must be one of 5, 10, 15, or 20 m/s")
+
+    result = copy.deepcopy(scenario)
+    environment = result["environment"]
+    vehicle = environment.setdefault("vehicle_params", {})
+    if vehicle.get("model") == "combined_slip_st":
+        actuators = vehicle.get("wheel_actuators", {})
+        radius = actuators.get("wheel_radius")
+        if (isinstance(radius, bool) or not isinstance(radius, (int, float))
+                or not math.isfinite(radius) or radius <= 0):
+            raise ScenarioError("environment.max_speed requires a positive finite wheel_radius")
+        actuators["wheel_speed_max"] = float(speed) / radius
+    else:
+        vehicle["v_max"] = float(speed)
+    for agent in result.get("agents", {}).values():
+        if str(agent.get("algorithm", "")).strip().lower() in _MPC_ALGORITHMS:
+            agent.setdefault("params", {})["max_speed"] = float(speed)
+    return result
 
 
 MAPPO_DEFAULTS: Dict[str, str] = {
@@ -173,8 +212,10 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
+    if evaluation.get("selection_strategy") == "attack" and not scenario.get("environment", {}).get("attack_task"):
+        raise ScenarioError("attack checkpoint selection requires environment.attack_task")
     if evaluation.get("selection_strategy") == "asymmetric_support":
         progress_id = evaluation.get("progress_agent_id")
         config = scenario.get("agents", {}).get(progress_id, {})
@@ -421,6 +462,46 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("respawn_on_vehicle_collision must be boolean")
     if environment.get("respawn_on_vehicle_collision", False) and not respawn_agents:
         raise ScenarioError("respawn_on_vehicle_collision requires respawn_agents")
+    from env.attack import validate_attack
+    try:
+        attack = validate_attack(environment.get("attack_task"), agents)
+    except ValueError as exc:
+        raise ScenarioError(str(exc)) from exc
+    if attack:
+        ego, target = attack["ego_id"], attack["target_id"]
+        if (len(agents) != 2 or trainable_ids != [ego] or agents[target].get("algorithm") != "racing_mpc"
+                or agents[ego].get("target_id") != target):
+            raise ScenarioError("attack_task requires one learner targeting one fixed racing_mpc")
+        if (set(recovery.get("boundary_agents", [])) != {target}
+                or set(recovery.get("collision_agents", [])) != {target}
+                or recovery.get("collision_placement") != "random_ahead"
+                or recovery.get("random_ahead", {}).get("ego_id") != ego):
+            raise ScenarioError("attack_task requires target-only random-ahead boundary and collision respawn")
+        termination = environment.get("episode_termination", {})
+        if (not limits.get("terminate") or environment.get("terminate_on_collision") is not True
+                or termination.get("lap_completion", True) or termination.get("mode") != "all_trainable"
+                or environment.get("action_repeat", 1) != 1 or environment.get("max_steps", 0) <= 0):
+            raise ScenarioError("attack_task requires ego crash termination, all_trainable, no lap finish, action_repeat=1 and a finite horizon")
+        # Preserve the source actor's physical/action contract while requiring
+        # the fixed controller to have exactly the same attainable references.
+        vehicle = environment.get("vehicle_params", {})
+        actuator = vehicle.get("wheel_actuators", {})
+        constraints = agents[ego].get("action_constraints", {})
+        controller = agents[target].get("params", {})
+        if (vehicle.get("model") != "combined_slip_st" or constraints.get("speed_control") != "wheel_acceleration"
+                or constraints.get("prevent_reverse") is not True):
+            raise ScenarioError("attack_task requires the pretrained non-reversing wheel_acceleration contract")
+        radius = actuator["wheel_radius"]
+        speed = actuator["wheel_speed_max"] * radius
+        acceleration = constraints["max_wheel_acceleration"] * radius
+        deceleration = constraints["max_wheel_deceleration"] * radius
+        steering_rate = (actuator["steering_max"] - actuator["steering_min"]) / environment["timestep"]
+        if (not math.isclose(controller.get("max_speed", 5.), speed)
+                or not math.isclose(controller.get("max_acceleration", 5.), acceleration)
+                or not math.isclose(acceleration, deceleration)
+                or controller.get("max_steering_reference_rate", 1.5) < steering_rate
+                or recovery["random_ahead"]["speed"] > speed):
+            raise ScenarioError("attack_task requires matched MPC/ego speed, acceleration, braking and unrestricted steering-reference limits")
     # Multi-car races can request boundary facts for rewards without enabling
     # the single-car time-trial boundary-reset protocol.
     if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents and not recovery
@@ -613,7 +694,7 @@ def load_and_expand_scenario(path: str, validate: bool = True, *, overrides=None
         >>> # Ready to use for training
     """
     # Load raw scenario
-    scenario = apply_parameter_overrides(load_scenario(path), overrides)
+    scenario = resolve_max_speed(apply_parameter_overrides(load_scenario(path), overrides))
 
     # Validate before resolving targets
     if validate:
@@ -629,6 +710,8 @@ __all__ = [
     'ScenarioError',
     'load_scenario',
     'apply_parameter_overrides',
+    'MAX_SPEED_OPTIONS',
+    'resolve_max_speed',
     'load_yaml_config',
     'validate_scenario',
     'resolve_mappo_config',

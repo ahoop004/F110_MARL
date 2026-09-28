@@ -15,6 +15,13 @@ both enforce this limit. Active pretraining, transfer, self-play and MPC render
 scenarios use the same ceiling. Tire slip still determines actual chassis speed.
 Corner-speed planning may select lower speeds; the shared value is a maximum.
 
+To select another shared ceiling, pass `--max-speed 5`, `10`, `15`, or `20` to
+`run.py`, or set `environment.max_speed` in the scenario YAML. The preset sets
+both learner wheel-reference bounds and every MPC's `params.max_speed`; at the
+current radius the four choices correspond to 100/200/300/400 rad/s. It works
+for single-car pretraining, PPO pursuit, MAPPO teams and fixed-controller renders.
+Use the same preset for pretraining, transfer and checkpoint evaluation.
+
 Changing the wheel-reference ceiling changes the checkpoint physics/action-bound
 contract. Existing checkpoints with the old 400 rad/s ceiling are rejected by
 the strict loader. New pretraining uses the matching limit; old checkpoints need

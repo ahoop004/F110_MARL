@@ -22,7 +22,11 @@ if SRC_DIR.is_dir():
         sys.path.remove(str(SRC_DIR))
     sys.path.insert(0, str(SRC_DIR))
 
-from core.scenario import ScenarioError, load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config, validate_scenario, apply_parameter_overrides
+from core.scenario import (
+    MAX_SPEED_OPTIONS, ScenarioError, apply_parameter_overrides,
+    load_and_expand_scenario, resolve_evaluation_protocol, resolve_mappo_config,
+    resolve_max_speed, validate_scenario,
+)
 from core.setup import (
     build_obs_composer, build_obs_composers,
     build_reward_composer, build_reward_composers,
@@ -56,6 +60,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--render", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--max-speed", type=float, choices=MAX_SPEED_OPTIONS, default=None,
+                   help="Shared forward speed limit in m/s for learner vehicles and MPCs; "
+                        "overrides environment.max_speed and individual forward limits")
     budget_args = p.add_mutually_exclusive_group()
     budget_args.add_argument("--episodes", type=int, default=None)
     budget_args.add_argument("--total-steps", type=int, default=None,
@@ -107,6 +114,8 @@ def parse_args() -> argparse.Namespace:
 def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
     if getattr(args, "parameter_overrides", None):
         scenario = apply_parameter_overrides(scenario, args.parameter_overrides)
+    if getattr(args, "max_speed", None) is not None:
+        scenario.setdefault("environment", {})["max_speed"] = args.max_speed
     if args.seed is not None:
         scenario.setdefault("experiment", {})["seed"] = args.seed
     if args.episodes is not None:
@@ -142,7 +151,7 @@ def apply_cli_overrides(scenario: Dict, args: argparse.Namespace) -> Dict:
             if cfg.get("trainable", False) and cfg.get("algorithm") in {"ppo", "mappo"}:
                 cfg.setdefault("params", {})["n_steps"] = horizon * (num_envs if cfg["algorithm"] == "ppo" else 1)
         scenario.setdefault("training_defaults", {})["rollout_steps_per_env"] = horizon
-    return scenario
+    return resolve_max_speed(scenario)
 
 
 def _resolve_scenario_relative_path(value: str, scenario_dir: Path) -> Path:
@@ -333,13 +342,18 @@ def main() -> None:
     try:
         # Validate the effective configuration after CLI overrides, so a local
         # --num-envs 1 check can override a scenario sized for a larger machine.
-        scenario = load_and_expand_scenario(args.scenario, validate=False)
+        # Apply speed choices before expansion so a CLI override can replace or
+        # remove a YAML preset before it changes the physical/controller limits.
+        load_overrides = list(args.parameter_overrides)
+        if args.max_speed is not None:
+            load_overrides.append(f"environment.max_speed={args.max_speed}")
+        scenario = load_and_expand_scenario(args.scenario, validate=False, overrides=load_overrides)
     except (ScenarioError, FileNotFoundError) as exc:
         console.print_error(f"Failed to load scenario: {exc}")
         sys.exit(1)
 
-    scenario = apply_cli_overrides(scenario, args)
     try:
+        scenario = apply_cli_overrides(scenario, args)
         validate_scenario(scenario)
     except ScenarioError as exc:
         console.print_error(f"Invalid scenario after CLI overrides: {exc}")

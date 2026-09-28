@@ -62,6 +62,11 @@ class AgentEpisodeFacts:
     reward_components: Dict[str, float] = field(default_factory=dict)
     boundary_respawns: int = 0
     collision_respawns: int = 0
+    attack_successes: int = 0
+    attack_target_crashes: int = 0
+    attack_eligible_crashes: int = 0
+    attack_ego_failed: bool = False
+    attack_horizon_steps: int = 0
     active_steps: int = 0
     done_step: Optional[int] = None
     finish_step: Optional[int] = None
@@ -166,6 +171,13 @@ def update_agent_step_facts(
         if facts.done_step is not None:
             continue
         facts.active_steps += 1
+        attack = info.get("attack")
+        if attack is not None:
+            facts.attack_successes += int(attack["success"])
+            facts.attack_target_crashes += int(attack["target_crash"])
+            facts.attack_eligible_crashes += int(attack["eligible_crash"])
+            facts.attack_ego_failed |= bool(attack["ego_failed"])
+            facts.attack_horizon_steps = int(attack["horizon_steps"])
         if info.get("respawned"):
             facts.boundary_respawns += info.get("respawn_reason") == "track_boundary"
             facts.collision_respawns += info.get("respawn_reason") == "collision"
@@ -299,6 +311,11 @@ def episode_race_record(episode: EvalEpisodeFacts, *, timestep: float,
         if include_rewards and aid in episode.trainable_team:
             agents[aid].update(reward=f.reward_total, individual_reward=f.individual_reward_total,
                                reward_components=dict(f.reward_components))
+        if f.attack_horizon_steps:
+            agents[aid].update(attack_successes=f.attack_successes,
+                              attack_target_crashes=f.attack_target_crashes,
+                              attack_eligible_crashes=f.attack_eligible_crashes,
+                              attack_ego_failed=f.attack_ego_failed)
     own = [agents[aid] for aid in episode.trainable_team]
     others = [agents[aid] for aid in episode.opponent_team]
     finishes = [a["clean_finish_time_s"] for a in own if a["clean_finish_time_s"] is not None]
@@ -393,6 +410,20 @@ def aggregate_eval_episodes(
         times = [f.finish_elapsed_steps * timestep for f in focal
                  if timestep is not None and f.clean_finish and f.finish_elapsed_steps is not None]
         summary["focal_mean_clean_finish_time_s"] = _mean(times) if times else None
+        attacks = [f for f in focal if f.attack_horizon_steps]
+        if attacks:
+            successes = sum(f.attack_successes for f in attacks)
+            failures = sum(f.attack_ego_failed for f in attacks)
+            minutes = sum(f.active_steps for f in attacks) * timestep / 60 if timestep else 0.
+            budget_minutes = sum(f.attack_horizon_steps for f in attacks) * timestep / 60 if timestep else 0.
+            summary.update(attack_successes=successes,
+                attack_target_crashes=sum(f.attack_target_crashes for f in attacks),
+                attack_eligible_crashes=sum(f.attack_eligible_crashes for f in attacks),
+                attack_ego_crash_rate=failures / len(attacks),
+                attack_successes_per_minute=successes / minutes if minutes else 0.,
+                # Early ego termination retains its full evaluation time budget;
+                # dying shortly after a success cannot inflate selection score.
+                attack_score=(successes - 2 * failures) / budget_minutes if budget_minutes else 0.)
     summary["per_agent_timeout_rate"] = {
         aid: _rate(ep.agents[aid].timed_out for ep in episodes if aid in ep.agents)
         for aid in all_agent_ids

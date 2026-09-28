@@ -58,7 +58,8 @@ from env.state_buffer import (
     TerminalVehicleController,
 )
 from env.types import AgentRaceStatus, AgentState, GlobalState
-from env.respawn import validate_respawn
+from env.respawn import validate_respawn, sample_ahead_pose
+from env.attack import AttackTracker, validate_attack
 from utils.centerline import project_to_centerline
 from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
@@ -309,6 +310,9 @@ class F110ParallelEnv:
                                        finish_on_laps=bool(episode_termination.get("lap_completion", True)),
                                        lap_finish_agents=episode_termination.get("lap_finish_agents"))
         recovery = validate_respawn(merged.get("respawn"), self.possible_agents)
+        self._respawn_config = recovery
+        attack = validate_attack(merged.get("attack_task"), self.possible_agents)
+        self._attack_tracker = AttackTracker(attack) if attack else None
         self.boundary_respawn_agents = set(recovery.get("boundary_agents", []))
         self.collision_respawn_agents = set(recovery.get("collision_agents", []))
         self.respawn_agents = set(merged.get("respawn_agents", []))
@@ -840,6 +844,8 @@ class F110ParallelEnv:
         self._collision_flags.fill(False)
         self._collision_steps.fill(-1)
         self.lifecycle.reset()
+        if self._attack_tracker is not None:
+            self._attack_tracker.reset()
         self._terminal_controller.reset()
 
         self.lap_counts.fill(0.0)
@@ -1013,6 +1019,10 @@ class F110ParallelEnv:
             self._elapsed_steps,
         )
         collision_array = np.asarray(collisions)
+        if self._attack_tracker is not None:
+            self._attack_tracker.update(time=self.current_time, infos=infos,
+                collisions=dict(zip(self.possible_agents, map(bool, collision_array))))
+            infos[self._attack_tracker.config["ego_id"]]["attack"]["horizon_steps"] = self.max_steps
         for idx, agent_id in enumerate(self.possible_agents):
             if agent_id not in active_before_step:
                 continue
@@ -1147,28 +1157,30 @@ class F110ParallelEnv:
         return obs, rewards, terminations, truncations, infos
 
     def _respawn_on_centerline(self, agent_ids):
-        """Reset any recovering car at its nearest unoccupied centerline point.
-
-        Learner boundary recovery and MPC recovery share placement and state
-        cleanup. Race position never influences where a car is put back.
-        """
+        """Recover at the nearest clear point, or a configured random gap ahead."""
         points = np.asarray(self.centerline_points)[:, :2]
         poses = self.sim.agent_poses.copy()
         indices = []
+        ahead = self._respawn_config.get("random_ahead")
         for aid in sorted(agent_ids):
             idx = self._agent_id_to_index[aid]
-            candidates = points
-            order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
             others = np.delete(poses[:, :2], idx, axis=0)
-            clearance = 2.0 * float(self.sim.params["length"])
-            valid = order[np.all(np.linalg.norm(candidates[order, None] - others[None], axis=2)
-                                 > clearance, axis=1)]
-            if not len(valid):
-                raise RuntimeError("No unoccupied centerline respawn point")
-            k = int(valid[0])
-            position = candidates[k]
-            projection = project_to_centerline(self._centerline_progress_tracker._geometry, position, 0.0)
-            poses[idx] = [*position, projection.tangent_heading]
+            geometry = self._centerline_progress_tracker._geometry
+            if ahead:
+                poses[idx] = sample_ahead_pose(geometry=geometry,
+                    ego_pose=poses[self._agent_id_to_index[ahead["ego_id"]]],
+                    other_positions=others, rng=self.rng, config=ahead, walls=self.walls,
+                    length=self.sim.params["length"], width=self.sim.params["width"])
+            else:
+                order = np.argsort(np.sum((points - poses[idx, :2]) ** 2, axis=1))
+                clearance = 2.0 * float(self.sim.params["length"])
+                valid = order[np.all(np.linalg.norm(points[order, None] - others[None], axis=2)
+                                     > clearance, axis=1)]
+                if not len(valid):
+                    raise RuntimeError("No unoccupied centerline respawn point")
+                position = points[int(valid[0])]
+                projection = project_to_centerline(geometry, position, 0.0)
+                poses[idx] = [*position, projection.tangent_heading]
             indices.append(idx)
             self._collision_flags[idx] = False
             self._collision_steps[idx] = -1
@@ -1179,7 +1191,12 @@ class F110ParallelEnv:
             self._track_preview_last_indices.pop(aid, None)
             if self._lap_tracker is not None:
                 self._lap_tracker.relocate(aid, poses[idx, :2])
-        return self.sim.reset(poses, agent_indices=indices)
+        obs = self.sim.reset(poses, agent_indices=indices,
+                            velocities=np.full(self.n_agents, ahead["speed"]) if ahead else None)
+        if ahead:
+            for idx in indices:
+                self._last_control_commands[idx] = self.sim.agents[idx].control_reference
+        return obs
 
     # ------------------------------------------------------------------
     # Finish line helpers

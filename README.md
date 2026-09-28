@@ -28,6 +28,33 @@ options are mutually exclusive. For MAPPO, one joint race decision counts once,
 while individual learner samples are tracked separately.
 W&B is optional and `--no-wandb` overrides scenario logging settings.
 
+Matched 1v1 attack fine-tuning and LoRA scenarios are available as
+`scenarios/mappo_1v1_attack.yaml` and `scenarios/mappo_1v1_attack_lora.yaml`.
+Both load `outputs/pretrain/best_model2.pt`, use equal vehicle/command limits,
+and respawn crashed targets ahead of the surviving attacker. See
+[the attack setup](docs/1v1_attack.md) for commands and task/evaluation semantics.
+
+Use `--max-speed 5`, `10`, `15`, or `20` to give learners and MPCs a shared
+forward speed limit in m/s. The equivalent YAML setting is
+`environment.max_speed: 10`, also available as `--set environment.max_speed=10`.
+The dedicated flag takes precedence, and the shared setting overrides individual
+vehicle and MPC forward limits. Omitting it preserves existing limits.
+At the current 0.05 m wheel radius, these presets set the wheel-speed ceiling to
+100, 200, 300, or 400 rad/s. They limit rolling-speed commands; actual chassis
+speed depends on slip and actuator response, and MPC slows for corners.
+
+Checkpoint loading requires matching vehicle/action bounds. Use a checkpoint
+trained at the selected speed, or start PPO from scratch:
+
+```bash
+venv/bin/python run.py --scenario scenarios/ppo_1v1_racing_mpc_circle.yaml \
+  --max-speed 15 --set experiment.checkpoint=null --no-render
+```
+
+For MAPPO scratch runs, also clear `training_defaults.pretrained_actor_checkpoint`
+and any LoRA configuration. Reverse bounds, acceleration limits and observation
+scales are unchanged by the speed preset.
+
 Evaluate a checkpoint with the same scenario and experiment overrides used for
 training (the resolved configuration is checked against checkpoint provenance):
 

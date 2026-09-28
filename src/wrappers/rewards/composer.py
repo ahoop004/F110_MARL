@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple, Type
 from core.scenario import load_yaml_config
 
 from wrappers.rewards.base import RewardComponent
+from wrappers.rewards.attack import AttackRewardComponent
 from wrappers.rewards.race_penalties import TeamRacePenaltiesComponent
 from wrappers.rewards.motion import (
     CenterlineDeviationPenaltyComponent,
@@ -44,6 +45,7 @@ from wrappers.rewards.completion import (
 
 
 COMPONENT_REGISTRY: Dict[str, Type[RewardComponent]] = {
+    "attack": AttackRewardComponent,
     "race_pursuit": RacePursuitComponent,
     "team_race_result": TeamRaceResultComponent,
     "team_race_penalties": TeamRacePenaltiesComponent,

@@ -503,10 +503,11 @@ class CheckpointHook(TrainingHook):
 class EvaluationCheckpointHook(CheckpointHook):
     """Select ``best_model.pt`` using deterministic racing outcomes.
 
-    Completion is always first. The default then ranks collision avoidance,
+    Racing strategies rank completion first, then collision avoidance,
     absolute progress, and finish speed. The opt-in completion_progress strategy
     ranks earned net progress before collision avoidance until every race is
-    completed, then ranks safety and finish time. Neither uses reward.
+    completed, then ranks safety and finish time. Attack selection instead uses
+    survival-qualified target crashes and ego failures. None infer outcomes from reward.
     """
 
     def __init__(
@@ -521,7 +522,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+        if selection_strategy not in {"attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -550,6 +551,8 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_priority(strategy):
+        if strategy == "attack":
+            return "survival-qualified successes minus twice ego failures per scheduled minute > fewer ego failures > successes/minute > progress"
         if strategy == "asymmetric_support":
             return "progress car completion > progress car beats opponents > fewer learner collisions > progress car finish time/net progress"
         objective = {"team_completion": "at-least-one-finished rate",
@@ -560,6 +563,9 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, float, float, float]:
+        if strategy == "attack":
+            return (float(summary["attack_score"]), -float(summary["attack_ego_crash_rate"]),
+                    float(summary["attack_successes_per_minute"]), float(summary.get("mean_net_progress") or 0.))
         if strategy == "asymmetric_support":
             complete = float(summary["focal_completion_rate"])
             finish = summary.get("focal_mean_clean_finish_time_s")
@@ -665,7 +671,7 @@ class EvaluationCheckpointHook(CheckpointHook):
             "environment_steps": self._environment_steps,
             "selection_strategy": self._selection_strategy,
             "selection_priority": (self.selection_priority(self._selection_strategy)
-                                   if self._selection_strategy.startswith("team_") or self._selection_strategy == "asymmetric_support" else None),
+                                   if self._selection_strategy.startswith("team_") or self._selection_strategy in {"asymmetric_support", "attack"} else None),
             "selection_score": [
                 value if np.isfinite(value) else None for value in score
             ],
@@ -686,7 +692,14 @@ class EvaluationCheckpointHook(CheckpointHook):
             scalar_metrics["eval/environment_steps"] = self._environment_steps
             self._wandb.log_metrics(scalar_metrics)
 
-        if self._console is not None and self._selection_strategy == "asymmetric_support":
+        if self._console is not None and self._selection_strategy == "attack":
+            self._console.print_info(
+                f"attack eval steps={self._environment_steps} "
+                f"successes/min={summary['attack_successes_per_minute']:.3f} "
+                f"ego_crash={summary['attack_ego_crash_rate']:.1%} "
+                f"score={summary['attack_score']:.3f} "
+                f"checkpoint={'saved best' if is_best else 'kept previous'}")
+        elif self._console is not None and self._selection_strategy == "asymmetric_support":
             self._console.print_info(
                 f"asymmetric eval steps={self._environment_steps} "
                 f"racer_completion={summary['focal_completion_rate']:.1%} "

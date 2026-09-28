@@ -197,8 +197,8 @@ class MAPPOAgent:
         self.physics_contract = params.get("_physics_contract")
         self.observation_contract = params.get("_observation_contract")
         self.pretrained_actor_observation_extension = params.get("pretrained_actor_observation_extension")
-        if self.pretrained_actor_observation_extension not in (None, "frenet_neighbors"):
-            raise ValueError("pretrained_actor_observation_extension must be null or frenet_neighbors")
+        if self.pretrained_actor_observation_extension not in (None, "frenet_neighbors", "target_frenet"):
+            raise ValueError("pretrained_actor_observation_extension must be null, frenet_neighbors or target_frenet")
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
         self.actor_mode = str(params.get("actor_mode", "shared"))
@@ -813,18 +813,19 @@ class MAPPOAgent:
     # ------------------------------------------------------------------
 
     def _pretrained_observation_dim(self, checkpoint: Dict) -> int:
-        """Allow only an explicit, appended neighbor block after the driving state."""
+        """Allow an explicit target/neighbor block appended to the driving state."""
         source = checkpoint.get("observation_contract")
         if source == self.observation_contract:
             return self.obs_dim
-        if self.pretrained_actor_observation_extension != "frenet_neighbors":
+        extension = self.pretrained_actor_observation_extension
+        if extension not in {"frenet_neighbors", "target_frenet"}:
             raise ValueError("Incompatible checkpoint observation_contract; observation semantics differ")
         from copy import deepcopy
         target = deepcopy(self.observation_contract)
         if not isinstance(source, dict) or not isinstance(target, dict):
             raise ValueError("Neighbor extension requires explicit observation contracts")
         obs = target.get("observation", {})
-        neighbors = obs.pop("frenet_neighbors", {})
+        neighbors = obs.pop(extension, {})
         source_obs = source.get("observation", {})
         # The composer appends neighbors immediately after Frenet state. Restrict
         # this migration to that layout; never pad arbitrary or reordered inputs.
@@ -837,12 +838,15 @@ class MAPPOAgent:
         source_dim = 10 + 2 * points
         if "lidar" in enabled:
             source_dim += int(source.get("lidar_beams", 108))
-        from wrappers.observations.neighbors import FrenetNeighborsComponent
-        added_dim = FrenetNeighborsComponent(
-            max_neighbors=int(neighbors.get("max_neighbors", 1)),
-            include_team=bool(neighbors.get("include_team", False)),
-            agent_ids=neighbors.get("agent_ids"),
-        ).dim
+        from wrappers.observations.neighbors import FrenetNeighborsComponent, TargetFrenetComponent
+        if extension == "target_frenet":
+            added_dim = TargetFrenetComponent(neighbors.get("maxima", {})).dim
+        else:
+            added_dim = FrenetNeighborsComponent(
+                max_neighbors=int(neighbors.get("max_neighbors", 1)),
+                include_team=bool(neighbors.get("include_team", False)),
+                agent_ids=neighbors.get("agent_ids"),
+            ).dim
         if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
                 or self.obs_dim != source_dim + added_dim):
             raise ValueError("Neighbor extension observation dimensions do not match the contracts")

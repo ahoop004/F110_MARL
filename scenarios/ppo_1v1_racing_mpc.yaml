@@ -26,7 +26,7 @@ experiment:
   # Seconds allowed for a live worker to respond.
   worker_response_timeout_s: 120
   # null for scratch; checkpoint file/run directory for PPO transfer or --eval. Paths are scenario-relative.
-  checkpoint: ../outputs/L_map_pretrain/best_model.pt
+  checkpoint: ../outputs/pretrain/best_model2.pt
 
 # Shared learner defaults. agents.<id>.params overrides these values.
 training_defaults:
@@ -55,6 +55,9 @@ training_defaults:
 
 # Simulation, map selection, race lifecycle and sensing parameters.
 environment:
+  # Optional shared forward limit for learners and MPCs: 5, 10, 15, or 20 m/s.
+  # Overrides wheel_speed_max and MPC max_speed; also available as --max-speed.
+  # max_speed: 5.0
   # Physics seconds per step; decision duration is timestep * action_repeat.
   timestep: 0.05
   # Number of LiDAR beams; affects policy input width when LiDAR is enabled.
@@ -249,13 +252,35 @@ environment:
       RVY6: 0.0
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
-    - circle_map
-  # Training maps. Keep intended held-out maps out of this list.
+     - Budapest_map
+     - circle_map
+    #  - L_map
+     - Melbourne_map
+     - Montreal_map
+     - Shanghai_map
+     - Silverstone_map
+     - Spa_map
+     - Spielberg_map
   map_bundles_train:
-    - circle_map
-  # Evaluation maps; disjointness is a protocol choice, not automatic.
+     - Budapest_map
+     - circle_map
+    #  - L_map
+     - Melbourne_map
+     - Montreal_map
+     - Shanghai_map
+     - Silverstone_map
+     - Spa_map
+     - Spielberg_map
   map_bundles_eval:
+    - Budapest_map
     - circle_map
+    # - L_map
+    - Melbourne_map
+    - Montreal_map
+    - Shanghai_map
+    - Silverstone_map
+    - Spa_map
+    - Spielberg_map
   # Map switching schedule; per_episode changes the map when the environment resets.
   map_cycle: per_episode
   # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.

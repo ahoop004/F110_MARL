@@ -10,12 +10,20 @@ The learner loads actor and critic from `outputs/L_map_pretrain/best_model.pt`,
 preserves the original 158 driving inputs and appends five target-opponent inputs
 (163 total). The actor and critic receive five zero-initialized input columns,
 preserving their initial outputs, and training starts with a fresh optimizer.
-The fixed racing MPC and learner share a 5 m/s forward rolling-speed cap
+By default, the fixed racing MPC and learner share a 5 m/s forward rolling-speed cap
 (100 rad/s at the 0.05 m wheel radius). The initialization checkpoint must use
 this vehicle/action-bound contract; old 400 rad/s checkpoints require retraining
 or an explicit migration. The learner starts
 approximately 3 m behind it. Training uses one environment, 1024-step PPO
 rollouts, a constant 0.0001 learning rate and a 120M-transition budget.
+
+Select matching learner/MPC limits with `--max-speed 5`, `10`, `15`, or `20`,
+or set `environment.max_speed` in the scenario. This updates both the shared
+wheel-speed ceiling and the MPC limit. At the current radius the corresponding
+wheel ceilings are 100, 200, 300, and 400 rad/s. Use an initialization checkpoint
+with matching speed bounds; for a scratch run, add
+`--set experiment.checkpoint=null`. These are command limits; tire slip,
+actuator response and MPC cornering constraints determine actual vehicle speed.
 
 The reward retains signed metre progress and the exclusive -1 boundary cost.
 `configs/reward/tasks/race_1v1_pursuit.yaml` adds -0.01 per decision while behind
