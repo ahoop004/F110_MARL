@@ -236,8 +236,25 @@ def test_training_checkpoint_selection_and_standalone_evaluation(tmp_path, monke
     monkeypatch.setattr(run, 'load_and_expand_scenario', lambda *_a, **_kw: deepcopy(s))
     path = str(DIRECTORY / 'mappo_2v2_attack_transfer.yaml')
     output = tmp_path / 'train'
-    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', path, '--quiet', '--no-wandb', '--output-dir', str(output)])
+    dataset = tmp_path / 'dataset'
+    monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', path, '--quiet', '--no-wandb', '--output-dir', str(output),
+        '--dataset-dir', str(dataset), '--dataset-chunk-size', '3'])
     run.main()
+    metadata = json.loads((dataset / 'metadata.json').read_text())
+    assert metadata['schema_version'] == '2.1' and metadata['complete']
+    assert metadata['observation_width'] == 201
+    assert set(metadata['observation_contracts']) == {'car_0', 'car_1'}
+    seen = set()
+    for chunk_path in dataset.glob('transitions_*.npz'):
+        with np.load(chunk_path, allow_pickle=True) as chunk:
+            assert chunk['obs'].shape[1] == chunk['next_obs'].shape[1] == 201
+            for i, aid in enumerate(chunk['agent_id']):
+                size = 192 if aid == 'car_0' else 201
+                seen.add(aid)
+                assert chunk['observation_dim'][i] == size
+                assert not chunk['obs'][i, size:].any()
+                assert not chunk['next_obs'][i, size:].any()
+    assert seen == {'car_0', 'car_1'}
     saved = output / 'best_model.pt'
     state = safe_load(str(saved), map_location='cpu')
     assert state['obs_dims'] == {'car_0': 192, 'car_1': 201}

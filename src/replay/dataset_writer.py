@@ -24,6 +24,10 @@ Each ``.npz`` contains parallel arrays (same first dimension N):
     step_idx     int32   (N,)
     agent_id     object  (N,)  — str
 
+Schema 2.1 supports different learner observation sizes using a fixed padded
+width across chunks and an ``observation_dim`` int32 array of actual row sizes.
+Per-learner dimensions must be declared in metadata before writing.
+
 ``metadata.json`` is written (or updated) on :meth:`close`.  It records the
 ``DATASET_SCHEMA_VERSION`` so consumers can detect forward-incompatible changes.
 """
@@ -42,8 +46,12 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 DATASET_SCHEMA_VERSION = "2.0"
+HETEROGENEOUS_DATASET_SCHEMA_VERSION = "2.1"
 RACE_DATASET_SCHEMA_VERSION = "3.0"
-SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION, RACE_DATASET_SCHEMA_VERSION})
+SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({
+    "1.0", DATASET_SCHEMA_VERSION, HETEROGENEOUS_DATASET_SCHEMA_VERSION,
+    RACE_DATASET_SCHEMA_VERSION,
+})
 
 
 def detect_dataset_schema(path: str | Path) -> str:
@@ -97,6 +105,12 @@ class DatasetWriter:
         self._dir = Path(output_dir)
         self._chunk_size = max(1, int(chunk_size))
         self._extra_meta: Dict[str, Any] = dict(metadata or {})
+        self._obs_dims = {
+            str(aid): int(dim)
+            for aid, dim in self._extra_meta.get("observation_dims", {}).items()
+        }
+        self._heterogeneous = len(set(self._obs_dims.values())) > 1
+        self._obs_width = max(self._obs_dims.values(), default=0)
 
         self._buffer: List["TransitionRecord"] = []
         self._chunk_idx = 0
@@ -118,6 +132,10 @@ class DatasetWriter:
         """Buffer one transition.  Flushes automatically when buffer is full."""
         if self._closed:
             raise RuntimeError("DatasetWriter is closed — cannot add more records.")
+        if self._obs_dims:
+            expected = self._obs_dims.get(record.agent_id)
+            if expected is None or np.shape(record.obs) != (expected,) or np.shape(record.next_obs) != (expected,):
+                raise ValueError(f"Observation shape differs from dataset contract for {record.agent_id}")
         self._physics_log.write(record.episode_id, record.map_id, record.info.get('physics'))
         self._buffer.append(record)
         if len(self._buffer) >= self._chunk_size:
@@ -130,11 +148,12 @@ class DatasetWriter:
         self._dir.mkdir(parents=True, exist_ok=True)
 
         n = len(self._buffer)
-        obs_dim = len(self._buffer[0].obs)
+        obs_dim = self._obs_width or len(self._buffer[0].obs)
         act_dim = len(self._buffer[0].action_norm)
         gs_dim = len(self._buffer[0].global_state)
 
         obs_arr         = np.zeros((n, obs_dim),  dtype=np.float32)
+        observation_dim_arr = np.zeros(n, dtype=np.int32)
         act_norm_arr    = np.zeros((n, act_dim),  dtype=np.float32)
         act_phys_arr    = np.zeros((n, act_dim),  dtype=np.float32)
         reward_arr      = np.zeros(n,             dtype=np.float32)
@@ -165,11 +184,13 @@ class DatasetWriter:
         lifecycle_mask_arr = np.zeros((n, len(mask_keys), mask_dim), dtype=bool)
 
         for i, rec in enumerate(self._buffer):
-            obs_arr[i]        = rec.obs
+            observation_dim_arr[i] = len(rec.obs)
+            row_width = len(rec.obs) if self._heterogeneous else obs_dim
+            obs_arr[i, :row_width] = rec.obs
             act_norm_arr[i]   = rec.action_norm
             act_phys_arr[i]   = rec.action_phys
             reward_arr[i]     = rec.reward
-            next_obs_arr[i]   = rec.next_obs
+            next_obs_arr[i, :row_width] = rec.next_obs
             terminated_arr[i] = rec.terminated
             truncated_arr[i]  = rec.truncated
             if gs_dim > 0:
@@ -216,6 +237,7 @@ class DatasetWriter:
                 finish_position=finish_position_arr,
                 lifecycle_masks=lifecycle_mask_arr,
                 lifecycle_mask_keys=np.asarray(mask_keys, dtype=object),
+                **({"observation_dim": observation_dim_arr} if self._heterogeneous else {}),
             )
         _log.info("DatasetWriter: wrote %d transitions → %s", n, chunk_path)
 
@@ -230,12 +252,14 @@ class DatasetWriter:
     def _write_metadata(self, *, exclusive: bool = False, complete: bool = False) -> None:
         meta: Dict[str, Any] = {
             **self._extra_meta,
-            "schema_version": DATASET_SCHEMA_VERSION,
+            "schema_version": HETEROGENEOUS_DATASET_SCHEMA_VERSION if self._heterogeneous else DATASET_SCHEMA_VERSION,
             "total_transitions": self._total,
             "num_chunks": self._chunk_idx,
             "chunk_size": self._chunk_size,
             "complete": complete,
         }
+        if self._heterogeneous:
+            meta.update(observation_padding="zero_right", observation_width=self._obs_width)
         meta_path = self._dir / "metadata.json"
         self._dir.mkdir(parents=True, exist_ok=True)
         with open(meta_path, "x" if exclusive else "w") as f:

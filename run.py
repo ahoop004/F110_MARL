@@ -674,6 +674,7 @@ def main() -> None:
                 "physics_contract": params.get("_physics_contract"),
                 "action_contract": params["_action_contract"],
                 "observation_contract": params.get("_observation_contract"),
+                "observation_contracts": params.get("_observation_contracts"),
                 "global_state_dim": len(env.get_global_state().vector),
                 "global_state_contract_version": env.get_global_state().metadata.get(
                     "vector_contract_version"

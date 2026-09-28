@@ -55,6 +55,13 @@ rollout storage and inference pad to 201 internally. Padding is checked and
 never exposed as an observation feature. Inference groups each learner's rows
 across environments, retaining batched collection and PPO updates.
 
+Optional `--dataset-dir` recording uses schema 2.1 for different observation
+sizes: every chunk has width 201, each row carries `observation_dim`, and
+unused columns are zero. Read `obs[row, :observation_dim[row]]` (likewise
+`next_obs`) to recover the learner's observation. Metadata records each
+learner's observation contract. Equal-size datasets retain schema 2.0;
+sampled race recordings retain schema 3.0 with separate per-learner arrays.
+
 ## Targets, rewards and lifecycle
 
 The attacker selects the nearest active opponent with positive signed wrapped
