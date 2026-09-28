@@ -8,8 +8,32 @@ maps, seeds, rewards, limits and collection/evaluation budgets.
 
 Both initialize the actor from `outputs/pretrain/best_model2.pt`. The original
 PPO critic is not transferred because MAPPO's critic consumes the joint state.
-The default training budget is 20 million joint decisions; each episode lasts
-at most 1,200 physics steps (60 simulated seconds), ending earlier on ego failure.
+The default training budget is 20 million joint decisions. Training and evaluation
+episodes end when the learner completes 20 laps, or earlier on ego collision or
+boundary exit. There is no physics-step timeout. Only `car_0` finishes on laps;
+the MPC target keeps driving and respawning even after its own 20th lap.
+
+Both scenarios use:
+
+```yaml
+environment:
+  max_steps: 0
+  target_laps: 20
+  episode_termination:
+    mode: all_trainable
+    lap_completion: true
+    lap_finish_agents: [car_0]
+evaluation:
+  max_steps: 0
+  target_laps: 20
+  lap_completion: true
+```
+
+Rollout boundaries still trigger learning updates during an episode. After an
+episode ends, collection resets and continues until `experiment.total_steps`.
+Final evaluation inherits the same lap/time settings unless explicitly overridden.
+With no timeout, an evaluation episode can continue indefinitely if the learner
+stops making lap progress without crashing or leaving the track.
 
 ```bash
 venv/bin/python run.py --scenario scenarios/mappo_1v1_attack.yaml --no-wandb
@@ -109,7 +133,7 @@ For credit, ego must have been moving forward faster than 0.5 m/s and within
 Ego must then survive for another 0.5 s after the target crash. Every qualifying
 crash can earn credit, including multiple crashes within one episode. Pending
 credit is cancelled by ego failure and is not carried across episode resets;
-credit still pending at the time limit is unawarded. Recent proximity is an
+credit still pending when the episode ends is unawarded. Recent proximity is an
 interaction proxy, not proof of causation.
 
 ## Reward and checkpoint selection
@@ -128,11 +152,18 @@ proximity bonus. The legacy once-per-episode crash rewards are not used.
 Evaluation records raw target crashes, eligible crashes, survival-qualified
 successes, successes per simulated minute, and ego crash rate (including
 boundary exits). The primary checkpoint score is
-`(successes - 2 * ego_failures) / scheduled_evaluation_minutes`.
-An early ego crash keeps its full scheduled time budget in that denominator,
+`(successes - 2 * ego_failures) / scheduled_learner_laps`, where each episode
+contributes its configured 20-lap budget, including episodes that end early.
+An early ego crash keeps its full scheduled lap budget in that denominator,
 so early termination cannot inflate the primary score. Ties prefer fewer ego
 failures, then successes per actual simulated minute, then earned progress.
 The failure weight matches the 20:10 terminal reward ratio.
+
+Reports and checkpoint metadata label this score with
+`attack_score_basis: scheduled_laps`. Existing time-bounded attack configurations
+remain supported and retain the original score per scheduled evaluation minute
+(`scheduled_minutes`). These two score units should not be compared directly.
+Lap-bounded attack metrics remain present when `max_steps` is zero.
 
 Evaluate the unadapted policy and target's ordinary driving as baselines before
 interpreting increased target crashes as effective attacks. The setup and smoke

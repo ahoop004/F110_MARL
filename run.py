@@ -2067,8 +2067,6 @@ def _run_mappo(
         import torch
 
         protocol = resolve_evaluation_protocol(scenario, "selection")
-        if protocol["max_steps"] <= 0:
-            raise ValueError("MAPPO checkpoint evaluation requires a finite max_steps")
         eval_scenario = copy.deepcopy(scenario)
         eval_scenario["experiment"]["seed"] = protocol["seed"]
         eval_scenario["environment"]["max_steps"] = protocol["max_steps"]

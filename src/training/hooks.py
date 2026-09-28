@@ -552,7 +552,7 @@ class EvaluationCheckpointHook(CheckpointHook):
     @staticmethod
     def selection_priority(strategy):
         if strategy == "attack":
-            return "survival-qualified successes minus twice ego failures per scheduled minute > fewer ego failures > successes/minute > progress"
+            return "survival-qualified successes minus twice ego failures per scheduled lap (no timeout) or minute (timed) > fewer ego failures > successes/minute > progress"
         if strategy == "asymmetric_support":
             return "progress car completion > progress car beats opponents > fewer learner collisions > progress car finish time/net progress"
         objective = {"team_completion": "at-least-one-finished rate",
@@ -697,7 +697,7 @@ class EvaluationCheckpointHook(CheckpointHook):
                 f"attack eval steps={self._environment_steps} "
                 f"successes/min={summary['attack_successes_per_minute']:.3f} "
                 f"ego_crash={summary['attack_ego_crash_rate']:.1%} "
-                f"score={summary['attack_score']:.3f} "
+                f"score={summary['attack_score']:.3f} ({summary['attack_score_basis']}) "
                 f"checkpoint={'saved best' if is_best else 'kept previous'}")
         elif self._console is not None and self._selection_strategy == "asymmetric_support":
             self._console.print_info(

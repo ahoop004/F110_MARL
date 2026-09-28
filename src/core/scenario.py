@@ -241,8 +241,9 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
         raise ScenarioError("'evaluation.final_test' accepts seed, episodes, target_laps and max_steps.")
     for key in ("target_laps", "max_steps"):
         value = (final or {}).get(key)
-        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
-            raise ScenarioError(f"evaluation.final_test.{key} must be a positive integer")
+        minimum = 0 if key == "max_steps" else 1
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < minimum):
+            raise ScenarioError(f"evaluation.final_test.{key} must be an integer >= {minimum}")
     for name, config in (("selection", selection), ("final", final)):
         if config is None:
             continue
@@ -271,6 +272,21 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     if target_laps is not None:
         result["target_laps"] = target_laps
     return result
+
+
+def _validate_attack_episode_limit(termination, max_steps, ego, phase):
+    """Keep the target driving and require a time or learner-lap episode bound."""
+    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 0:
+        raise ScenarioError(f"attack_task {phase} max_steps must be a nonnegative integer")
+    if termination.get("mode") != "all_trainable":
+        raise ScenarioError(f"attack_task {phase} requires all_trainable termination")
+    lap_completion = termination.get("lap_completion", True)
+    if not isinstance(lap_completion, bool):
+        raise ScenarioError(f"attack_task {phase} lap_completion must be boolean")
+    if lap_completion and termination.get("lap_finish_agents") != [ego]:
+        raise ScenarioError(f"attack_task {phase} lap_finish_agents must contain only {ego}")
+    if max_steps == 0 and not lap_completion:
+        raise ScenarioError(f"attack_task {phase} requires a finite horizon or learner lap completion")
 
 
 def validate_scenario(scenario: Dict[str, Any]) -> None:
@@ -479,9 +495,21 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
             raise ScenarioError("attack_task requires target-only random-ahead boundary and collision respawn")
         termination = environment.get("episode_termination", {})
         if (not limits.get("terminate") or environment.get("terminate_on_collision") is not True
-                or termination.get("lap_completion", True) or termination.get("mode") != "all_trainable"
-                or environment.get("action_repeat", 1) != 1 or environment.get("max_steps", 0) <= 0):
-            raise ScenarioError("attack_task requires ego crash termination, all_trainable, no lap finish, action_repeat=1 and a finite horizon")
+                or environment.get("action_repeat", 1) != 1):
+            raise ScenarioError("attack_task requires ego crash termination and action_repeat=1")
+        _validate_attack_episode_limit(termination, environment.get("max_steps", 5000), ego, "training")
+        evaluation = scenario.get("evaluation", {}) or {}
+        if evaluation:
+            # Track-limit evaluation enables lap finishing by default in setup;
+            # an explicit lap_completion setting takes precedence.
+            eval_termination = {**termination,
+                "mode": evaluation.get("episode_termination_mode", termination.get("mode")),
+                "lap_completion": evaluation.get("lap_completion", True)}
+            protocols = ["selection", "final"] if evaluation.get("final_test") else ["selection"]
+            for protocol in protocols:
+                resolved = resolve_evaluation_protocol(scenario, protocol)
+                _validate_attack_episode_limit(eval_termination, resolved["max_steps"], ego,
+                                               f"evaluation.{protocol}")
         # Preserve the source actor's physical/action contract while requiring
         # the fixed controller to have exactly the same attainable references.
         vehicle = environment.get("vehicle_params", {})

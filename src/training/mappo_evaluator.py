@@ -18,6 +18,13 @@ class DeterministicMAPPOEvaluator:
                  action_composer, episodes, base_seed, action_repeat=1, focal_agent_id=None):
         self.env = env
         self.trainable_ids = list(trainable_ids)
+        if env.max_steps <= 0:
+            finishers = env.lifecycle.lap_finish_agents if env.lifecycle.finish_on_laps else set()
+            relevant = self.trainable_ids if env.episode_termination_mode == "all_trainable" else env.possible_agents
+            lap_bounded = (bool(finishers) if env.episode_termination_mode == "any_agent"
+                           else bool(relevant) and set(relevant) <= finishers)
+            if not lap_bounded:
+                raise ValueError("MAPPO checkpoint evaluation requires a finite max_steps or lap completion for its termination group")
         self.focal_agent_id = focal_agent_id or self.trainable_ids[0]
         if self.focal_agent_id not in self.trainable_ids:
             raise ValueError("Evaluation focal agent must be a learner")

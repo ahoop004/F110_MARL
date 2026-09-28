@@ -48,7 +48,8 @@ environment:
     spacing: 0.3
   episode_termination:
     mode: all_trainable
-    lap_completion: false
+    lap_completion: true
+    lap_finish_agents: [car_0]  # Only the learner finishes; the MPC keeps driving.
   terminal_agents:
     remain_collidable: true
     crashed_behavior: stationary
@@ -222,7 +223,7 @@ environment:
   lap_counting:
     require_finish_line: true
     count_initial_crossing_as_lap: false
-  max_steps: 12000
+  max_steps: 0  # No physics-step timeout; finish at 20 learner laps or ego failure.
   action_repeat: 1
   centerline_features: true
   centerline_render: true
@@ -287,13 +288,13 @@ evaluation:
   # One selection episode per map; final testing uses two per map and new seeds.
   episodes: 8
   target_laps: 20
-  max_steps: 1200
+  max_steps: 0
   seed: 10042
   selection_strategy: attack
   final_test:
     episodes: 16
     seed: 20042
-  lap_completion: false
+  lap_completion: true
   terminate_on_track_limit: true
   terminate_on_collision: true
 agents:

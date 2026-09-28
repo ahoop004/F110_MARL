@@ -1,5 +1,6 @@
 """Matched attack transfer, repeated successes, relocation and executable workflows."""
 from copy import deepcopy
+import json
 from pathlib import Path
 
 import numpy as np
@@ -176,19 +177,24 @@ def test_effective_speed_braking_and_steering_limits_match(attack_env):
         previous = actual
 
 
-def test_selection_penalizes_failure_and_does_not_reward_early_termination():
+@pytest.mark.parametrize('horizon,laps,basis,failed_score', [
+    (1200, 0, 'scheduled_minutes', -1.),
+    (0, 20, 'scheduled_laps', -.05),
+])
+def test_selection_penalizes_failure_and_does_not_reward_early_termination(horizon, laps, basis, failed_score):
     def result(steps, failed):
         facts = create_episode_facts(episode=0, agent_ids=['car_0', 'car_1'],
                                     trainable_ids=['car_0'], opponent_ids=['car_1'])
         for step in range(1, steps + 1):
             attack = dict(success=int(step == 1), target_crash=False, eligible_crash=False,
-                          ego_failed=failed and step == steps, horizon_steps=1200)
+                          ego_failed=failed and step == steps, horizon_steps=horizon, target_laps=laps)
             update_agent_step_facts(facts, step_idx=step, infos={'car_0': {'attack': attack}})
         return aggregate_eval_episodes([facts], timestep=.05)
     safe, failed, later_failure = result(100, False), result(10, True), result(100, True)
     assert safe['attack_successes'] == 1
     assert failed['attack_ego_crash_rate'] == 1.
-    assert failed['attack_score'] == later_failure['attack_score'] == -1.
+    assert safe['attack_score_basis'] == basis
+    assert failed['attack_score'] == later_failure['attack_score'] == failed_score
     assert EvaluationCheckpointHook.selection_score(safe, 'attack') > EvaluationCheckpointHook.selection_score(failed, 'attack')
 
 
@@ -238,10 +244,13 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     torch.set_num_threads(1)
     config = scenario(lora)
     config['experiment'].update(total_steps=8, num_envs=num_envs, num_workers=1)
-    config['environment']['max_steps'] = 3
+    # Rollout updates and the aggregate training budget must work without an
+    # episode timeout, including in the grouped collector.
+    assert config['environment']['max_steps'] == 0
     for key in ('map_bundles', 'map_bundles_train', 'map_bundles_eval'):
         config['environment'][key] = ['circle_map']
-    config['evaluation'].update(every_steps=4, episodes=1, max_steps=3)
+    config['evaluation'].update(every_steps=4, episodes=1)
+    assert config['evaluation']['max_steps'] == 0
     config['training_defaults'].update(rollout_steps_per_env=2, device='cpu')
     config['agents']['car_0']['params'].update(pi_hidden_dims=[8, 8], vf_hidden_dims=[8],
         device='cpu', n_steps=4, batch_size=2, n_epochs=1)
@@ -256,6 +265,25 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     source_path = tmp_path / 'source.pt'
     source.save(str(source_path))
     config['training_defaults']['pretrained_actor_checkpoint'] = str(source_path)
+    original_setup = run.create_training_setup
+
+    def setup(*args, **kwargs):
+        env, *rest = original_setup(*args, **kwargs)
+        if kwargs.get('mode') == 'eval':
+            original_step = env.step
+
+            def step(actions):
+                # Supply accepted lap crossings to keep this integration test
+                # short while exercising real lap termination without a timeout.
+                if env._elapsed_steps == 2:
+                    for _ in range(env.target_laps):
+                        env.lifecycle.record_lap_crossing('car_0', step=env._elapsed_steps)
+                return original_step(actions)
+
+            env.step = step
+        return env, *rest
+
+    monkeypatch.setattr(run, 'create_training_setup', setup)
     monkeypatch.setattr(run, 'load_and_expand_scenario', lambda *_a, **_kw: deepcopy(config))
     path = str(DIRECTORY / ('mappo_1v1_attack' + ('_lora' if lora else '') + '.yaml'))
     output = tmp_path / 'train'
@@ -267,6 +295,9 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     assert payload['obs_dim'] == 163
     assert payload['checkpoint_selection']['selection_strategy'] == 'attack'
     assert payload['checkpoint_selection']['environment_steps'] > 0
+    assert payload['checkpoint_selection']['attack_score_basis'] == 'scheduled_laps'
+    assert payload['checkpoint_selection']['attack_score_budget'] == 20
+    assert payload['checkpoint_selection']['focal_completion_rate'] == 1.
     if lora:
         assert payload['lora_contract']['rank'] == 4
         for key, value in source.actor.net.state_dict().items():
@@ -281,3 +312,6 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     monkeypatch.setattr(sys, 'argv', ['run.py', '--scenario', path, '--eval', '--checkpoint',
         str(checkpoint), '--eval-episodes', '1', '--no-wandb', '--quiet', '--output-dir', str(tmp_path / 'eval')])
     run.main()
+    report = json.loads((tmp_path / 'eval' / 'evaluation_report.json').read_text())
+    assert report['summary']['attack_score_basis'] == 'scheduled_laps'
+    assert report['summary']['focal_completion_rate'] == 1.

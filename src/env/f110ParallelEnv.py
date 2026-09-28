@@ -1022,7 +1022,12 @@ class F110ParallelEnv:
         if self._attack_tracker is not None:
             self._attack_tracker.update(time=self.current_time, infos=infos,
                 collisions=dict(zip(self.possible_agents, map(bool, collision_array))))
-            infos[self._attack_tracker.config["ego_id"]]["attack"]["horizon_steps"] = self.max_steps
+            ego_id = self._attack_tracker.config["ego_id"]
+            ego_record = self.lifecycle.records[ego_id]
+            infos[ego_id]["attack"].update(
+                horizon_steps=self.max_steps,
+                target_laps=ego_record.target_laps if ego_record.finish_on_laps else 0,
+            )
         for idx, agent_id in enumerate(self.possible_agents):
             if agent_id not in active_before_step:
                 continue
