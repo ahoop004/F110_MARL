@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from agents.mpc.racing import RacingMPCAgent, _distance, _shoot, predict_step, _limit_command, _speed_profile
+from agents.mpc.racing import RacingMPCAgent, _distance, _shoot, predict_step, _limit_command, _speed_profile, _chassis_rhs
+from physics.dynamic_models import first_order_actuator_step
 
 
 from pathlib import Path
@@ -37,6 +38,35 @@ def test_prediction_does_not_mutate_or_quantize_input(dtype):
     assert result.dtype == np.float64
     np.testing.assert_array_equal(state, original)
     np.testing.assert_array_equal(result, expected)
+
+
+@pytest.mark.parametrize('mu', [0., .4, 1.0489, 1.2])
+def test_prediction_matches_allocating_midpoint_reference(mu):
+    # Keep the previous array-expression integrator as a numerical reference
+    # for the allocation-free RHS and reusable midpoint buffer.
+    rng = np.random.default_rng(319)
+    params = P.copy()
+    params[7] = mu
+    dt = .05
+    for _ in range(12):
+        initial = np.array([0., 0., 0., rng.uniform(0, 5), rng.uniform(-.2, .2),
+                            rng.uniform(0, 5), rng.uniform(-.5, .5), rng.uniform(-1, 1)])
+        command = np.array([rng.uniform(-.4, .4), rng.uniform(0, 5)])
+        state = initial.copy()
+        front_speed = state[3]*np.cos(state[4])+(state[6]+(params[0]-params[1])*state[7])*np.sin(state[4])
+        contact_speed = min(abs(state[3]), abs(front_speed))
+        contact_speed -= dt*(params[7]*9.81+abs(state[7]*state[6]))
+        steps = max(1, int(np.ceil(dt/min(.02, .004*max(.5, contact_speed)/.5))))
+        h = dt/steps
+        for _ in range(steps):
+            delta, wheel = state[4], state[5]
+            mid = state + .5*h*np.asarray(_chassis_rhs(state, delta, wheel, params))
+            mid_delta = first_order_actuator_step(delta, command[0], h/2, params[2], -params[3], params[3])
+            mid_wheel = first_order_actuator_step(wheel, command[1], h/2, params[4], -params[5], params[5])
+            state += h*np.asarray(_chassis_rhs(mid, mid_delta, mid_wheel, params))
+            state[4] = first_order_actuator_step(delta, command[0], h, params[2], -params[3], params[3])
+            state[5] = first_order_actuator_step(wheel, command[1], h, params[4], -params[5], params[5])
+        np.testing.assert_array_equal(predict_step(initial, command, params, dt), state)
 
 
 def test_map_distance_uses_origin_rotation_and_rejects_outside():
@@ -229,11 +259,11 @@ def test_real_setup_identity_action_units_limits_reset_and_map_switch():
         controller.reset()
         assert np.isfinite(controller.act(obs['car_0'])).all()
         assert not np.array_equal(old_path, controller.controller.path)
-        controller.controller.field[:] = controller.controller.margin/2
+        controller.controller.field = np.full_like(controller.controller.field, controller.controller.margin/2)
         controller.act(obs['car_0'])
         assert controller.last_plan['brake_fallback']  # no overlap, but insufficient margin
         assert controller.last_plan['predicted_safety_slack_m'] < 0
-        controller.controller.field[:] = -1.  # no feasible predicted route
+        controller.controller.field = np.full_like(controller.controller.field, -1.)  # no feasible predicted route
         action = controller.act(obs['car_0'])
         assert controller.last_plan['brake_fallback']
         assert action[1] == 0.  # standing reset can request a complete stop

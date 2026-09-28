@@ -8,6 +8,9 @@ Traffic uses range-limited, perfect simulator states with constant world velocit
 """
 from __future__ import annotations
 
+from pathlib import Path
+from weakref import WeakValueDictionary
+
 import numpy as np
 from numba import njit
 from PIL import Image
@@ -16,6 +19,32 @@ from scipy.optimize import minimize
 from utils.track_preview import _resample_uniform
 from physics.dynamic_models import first_order_actuator_step
 from physics.tire_models import MF61_KEYS, mf61_tire_force
+
+
+# Grouped collectors often have several controllers on the same map. Keep only
+# fields still owned by a controller, so cycling maps does not retain an entire
+# map bundle per worker. Shared fields are immutable.
+_DISTANCE_FIELDS = WeakValueDictionary()
+
+
+def _map_distance_field(image_path, meta):
+    path = Path(image_path).resolve()
+    stat = path.stat()
+    resolution = float(meta['resolution'])
+    free_thresh = float(meta.get('free_thresh', .196))
+    negate = bool(meta.get('negate', 0))
+    key = (str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size,
+           resolution, free_thresh, negate)
+    field = _DISTANCE_FIELDS.get(key)
+    if field is None:
+        with Image.open(path) as image:
+            pixels = np.flipud(np.asarray(image.convert('L'), dtype=np.float64)) / 255.
+        occupancy = pixels if negate else 1-pixels
+        free = occupancy < free_thresh
+        field = (distance_transform_edt(free)-distance_transform_edt(~free))*resolution
+        field.setflags(write=False)
+        _DISTANCE_FIELDS[key] = field
+    return field
 
 
 @njit(cache=True)
@@ -53,11 +82,11 @@ def _chassis_rhs(state, delta, wheel, p):
     fx_r, fy_r, _, _ = mf61_tire_force(
         vx, vy-lr*rate, wheel, rear_load, p[7], p[13+n:], p[12])
     front_y = fx_f*si+fy_f*co
-    return np.array([vx*np.cos(yaw)-vy*np.sin(yaw),
+    return (vx*np.cos(yaw)-vy*np.sin(yaw),
                      vx*np.sin(yaw)+vy*np.cos(yaw), rate,
                      (fx_f*co-fy_f*si+fx_r)/mass+rate*vy,
                      0., 0., (front_y+fy_r)/mass-rate*vx,
-                     (lf*front_y-lr*fy_r)/inertia])
+                     (lf*front_y-lr*fy_r)/inertia)
 
 
 @njit(cache=True)
@@ -84,12 +113,20 @@ def _predict_step_inplace(state, steering, speed, p, dt):
     max_step = min(.02, .004*max(.5, contact_speed)/.5)
     steps = max(1, int(np.ceil(dt/max_step)))
     h = dt/steps
+    # Scalar tuples keep RHS evaluations allocation-free. Reuse one midpoint
+    # buffer across the stiff substeps instead of allocating vector expressions
+    # twice per substep for every optimizer objective evaluation.
+    mid = np.empty(8, dtype=np.float64)
     for _ in range(steps):
         delta, wheel = state[4], state[5]
-        mid = state + .5*h*_chassis_rhs(state, delta, wheel, p)
+        rhs = _chassis_rhs(state, delta, wheel, p)
+        for i in range(8):
+            mid[i] = state[i] + .5*h*rhs[i]
         mid_delta = first_order_actuator_step(delta, steering, h/2, p[2], -p[3], p[3])
         mid_wheel = first_order_actuator_step(wheel, speed, h/2, p[4], -p[5], p[5])
-        state += h*_chassis_rhs(mid, mid_delta, mid_wheel, p)
+        rhs = _chassis_rhs(mid, mid_delta, mid_wheel, p)
+        for i in range(8):
+            state[i] += h*rhs[i]
         state[4] = first_order_actuator_step(delta, steering, h, p[2], -p[3], p[3])
         state[5] = first_order_actuator_step(wheel, speed, h, p[4], -p[5], p[5])
 
@@ -260,11 +297,7 @@ class RacingMPCAgent:
         meta = self.env.map_meta
         self.origin = np.array(meta['origin'], dtype=np.float64)
         self.resolution = float(meta['resolution'])
-        with Image.open(self.env.map_image_path) as image:
-            pixels = np.flipud(np.asarray(image.convert('L'), dtype=np.float64)) / 255.
-        occupancy = pixels if meta.get('negate', 0) else 1-pixels
-        free = occupancy < float(meta.get('free_thresh', .196))
-        self.field = (distance_transform_edt(free)-distance_transform_edt(~free))*self.resolution
+        self.field = _map_distance_field(self.env.map_image_path, meta)
         # Sample the entire rectangle, not only corners (thin walls can cross edges).
         xs = np.linspace(-self.p[8]/2, self.p[8]/2, int(np.ceil(self.p[8]/self.resolution))+1)
         ys = np.linspace(-self.p[9]/2, self.p[9]/2, int(np.ceil(self.p[9]/self.resolution))+1)

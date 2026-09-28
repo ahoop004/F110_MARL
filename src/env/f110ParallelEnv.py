@@ -1337,14 +1337,15 @@ class F110ParallelEnv:
         self.renderer.on_draw()
         self.renderer.flip()
 
-        if self.render_mode == "human":
-            time.sleep(0.005)
-        elif self.render_mode == "rgb_array":
+        if self.render_mode == "rgb_array":
             buf = pyg_img.get_buffer_manager().get_color_buffer()
             w, h = buf.width, buf.height
             img = buf.get_image_data()
-            data = img.get_data("RGB", -w * 3)
-            frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 3).copy()
+            # Pyglet's RGBA -> RGB conversion uses a regex for every pixel.
+            # Read the color buffer's native layout and let NumPy drop alpha
+            # and flip bottom-up OpenGL rows into a detached RGB frame.
+            data = img.get_data("RGBA", w * 4)
+            frame = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 4)[::-1, :, :3].copy()
             return frame
 
     def add_render_callback(self, callback: Callable[["EnvRenderer"], None]) -> None:

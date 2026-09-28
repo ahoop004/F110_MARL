@@ -222,7 +222,7 @@ environment:
   lap_counting:
     require_finish_line: true
     count_initial_crossing_as_lap: false
-  max_steps: 1200
+  max_steps: 12000
   action_repeat: 1
   centerline_features: true
   centerline_render: true

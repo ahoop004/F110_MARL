@@ -1,0 +1,794 @@
+{
+  "review_date": "2026-09-28",
+  "baseline_commit": "fdca65345e2b0f78093d291c6ba641aa8d6c321f",
+  "hardware": {
+    "cpu": "Intel Xeon Silver 4214",
+    "physical_cores": 12,
+    "logical_cpus": 24,
+    "gpu": "Quadro RTX 5000"
+  },
+  "python": "3.12.3",
+  "packages": {
+    "numpy": "2.3.3",
+    "scipy": "1.16.2",
+    "numba": "0.62.1",
+    "torch": "2.8.0",
+    "pyglet": "2.1.9"
+  },
+  "source_sha256": {
+    "src/agents/mpc/racing.py": "cf4358b7c66e56f31295449b79cb9c13d16f785b5bd4c38bf4dcbbebd6c62139",
+    "src/env/f110ParallelEnv.py": "7ab335c2dfb61329be8a8786c86199e14f72cae5298a2336f2cb57d7d6d6e4f7",
+    "scripts/benchmark_mpc_traffic.py": "738eb093e539f9fc4c95d5f16ff5159ece135f78ebc4e1df00a0ff758f266916"
+  },
+  "baseline_racing_source_sha256": "2f2a99d837e7df82cfd572497313ed1d984cd73388056a9c8431e4ea74f6005c",
+  "limitations": [
+    "Controller probes park the learner; they exclude learner inference and updates.",
+    "Prediction comparison uses alternating original/optimized controller classes in one process, three repetitions, seed 42, 20 warmup and 200 measured decisions. It predates map-field sharing.",
+    "Some controller timing and the first collector runs overlap focused test execution; this is a local desktop, not an exclusive HPC allocation.",
+    "Collector results have one repetition per layout, three updates, eight environments, horizon 64, evaluation and W&B disabled; rates exclude the first round.",
+    "Ready scheduling changes action-sampling order and trajectories.",
+    "A separate user edit changed LoRA environment.max_steps from 1200 to 12000 after the collector/test runs; final controller comparisons stay below both timeouts."
+  ],
+  "prediction_comparison": [
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.3047979559923988,
+      "measured_wall_seconds": 7.305880596017232,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 27.375207871454826,
+      "controller_and_physics_steps_per_second": 27.384718836845764,
+      "mean_ms": {
+        "car_1": 33.72733897616854,
+        "env.step": 2.7893770053924527
+      },
+      "p95_ms": {
+        "car_1": 76.93155026645398,
+        "env.step": 3.3874708722578344
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "before",
+      "repetition": 0
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.3903371539781801,
+      "measured_wall_seconds": 6.942258361988934,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 28.80906897603573,
+      "controller_and_physics_steps_per_second": 28.81968950140137,
+      "mean_ms": {
+        "car_1": 31.805062844214262,
+        "env.step": 2.8934372888761573
+      },
+      "p95_ms": {
+        "car_1": 72.65646095329429,
+        "env.step": 4.4387469461071305
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "after",
+      "repetition": 0
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.3001423070090823,
+      "measured_wall_seconds": 6.918142336973688,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 28.909494812084073,
+      "controller_and_physics_steps_per_second": 28.92004937470428,
+      "mean_ms": {
+        "car_1": 31.713621026283363,
+        "env.step": 2.8644665503816213
+      },
+      "p95_ms": {
+        "car_1": 74.39471500401847,
+        "env.step": 3.2938720527454275
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "after",
+      "repetition": 1
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.1986524290114176,
+      "measured_wall_seconds": 7.34940324400668,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 27.213093819977395,
+      "controller_and_physics_steps_per_second": 27.222392155465492,
+      "mean_ms": {
+        "car_1": 33.89789206557907,
+        "env.step": 2.836572499072645
+      },
+      "p95_ms": {
+        "car_1": 83.5508252828731,
+        "env.step": 3.3312599582131948
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "before",
+      "repetition": 1
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2670620259887073,
+      "measured_wall_seconds": 7.144180247996701,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 27.99481438840824,
+      "controller_and_physics_steps_per_second": 28.004085691316167,
+      "mean_ms": {
+        "car_1": 32.96925013506552,
+        "env.step": 2.739824998570839
+      },
+      "p95_ms": {
+        "car_1": 78.50961592339443,
+        "env.step": 3.0892882015905343
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "before",
+      "repetition": 2
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "fc575c135f7f1795da29ba32e0c594c7104d98e8d782815e0cf2abacceab3007",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2605539099895395,
+      "measured_wall_seconds": 6.964183978008805,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 28.718368244083045,
+      "controller_and_physics_steps_per_second": 28.727742554751266,
+      "mean_ms": {
+        "car_1": 31.981170761282556,
+        "env.step": 2.8283865192497615
+      },
+      "p95_ms": {
+        "car_1": 75.82171661924804,
+        "env.step": 3.109916593530214
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "after",
+      "repetition": 2
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.3513941019773483,
+      "measured_wall_seconds": 7.153625668986933,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 27.957850921255034,
+      "controller_and_physics_steps_per_second": 27.96599125228473,
+      "mean_ms": {
+        "car_1": 33.074567985895555,
+        "env.step": 2.6831489846517798
+      },
+      "p95_ms": {
+        "car_1": 81.76213947153879,
+        "env.step": 3.348204297071788
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "before",
+      "repetition": 0
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2748029849899467,
+      "measured_wall_seconds": 6.7085766840027645,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 29.81258311869922,
+      "controller_and_physics_steps_per_second": 29.822572730687654,
+      "mean_ms": {
+        "car_1": 30.821484775660792,
+        "env.step": 2.710162846778985
+      },
+      "p95_ms": {
+        "car_1": 79.73405680386347,
+        "env.step": 3.123526350827887
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "after",
+      "repetition": 0
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2822961090132594,
+      "measured_wall_seconds": 6.528903755999636,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 30.633013975158246,
+      "controller_and_physics_steps_per_second": 30.642635825311498,
+      "mean_ms": {
+        "car_1": 30.03720651526237,
+        "env.step": 2.597061819251394
+      },
+      "p95_ms": {
+        "car_1": 75.88970988290383,
+        "env.step": 3.093033413460944
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "after",
+      "repetition": 1
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2486451939912513,
+      "measured_wall_seconds": 6.893930154998088,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 29.011027890237663,
+      "controller_and_physics_steps_per_second": 29.01993149071384,
+      "mean_ms": {
+        "car_1": 31.835447400517296,
+        "env.step": 2.623627746506827
+      },
+      "p95_ms": {
+        "car_1": 80.25490958825685,
+        "env.step": 3.1012105318950485
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "before",
+      "repetition": 1
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2528292129863985,
+      "measured_wall_seconds": 6.924810067983344,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 28.88165856341593,
+      "controller_and_physics_steps_per_second": 28.889992317317027,
+      "mean_ms": {
+        "car_1": 32.010183408419834,
+        "env.step": 2.60387910209829
+      },
+      "p95_ms": {
+        "car_1": 83.28427079395622,
+        "env.step": 2.9819446339388374
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "before",
+      "repetition": 2
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "4deda1ce84dd0a1e9a6fbb03fdfaaff1a740df15bd0acfda1e0496165f8ca491",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.2042488039878663,
+      "measured_wall_seconds": 6.437658545997692,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 31.06719602647153,
+      "controller_and_physics_steps_per_second": 31.076821951587238,
+      "mean_ms": {
+        "car_1": 29.61655114486348,
+        "env.step": 2.5617713862448
+      },
+      "p95_ms": {
+        "car_1": 75.0199657049961,
+        "env.step": 2.98065873212181
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "after",
+      "repetition": 2
+    }
+  ],
+  "final_controller_equivalence": [
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "c148a301e69d9c2074eb031589ac2706b4da52af195889cc51b83abee4a8d843",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.335877073026495,
+      "measured_wall_seconds": 6.745137554011308,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 29.650989086362035,
+      "controller_and_physics_steps_per_second": 29.66013021128275,
+      "mean_ms": {
+        "car_1": 31.163804398674984,
+        "env.step": 2.551489259058144
+      },
+      "p95_ms": {
+        "car_1": 71.75750858295942,
+        "env.step": 2.9208591848146166
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "before",
+      "map": "Budapest_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "c148a301e69d9c2074eb031589ac2706b4da52af195889cc51b83abee4a8d843",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.1926212450198364,
+      "measured_wall_seconds": 6.375120743992738,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 31.37195482743751,
+      "controller_and_physics_steps_per_second": 31.38257475556198,
+      "mean_ms": {
+        "car_1": 29.28988813975593,
+        "env.step": 2.574928810063284
+      },
+      "p95_ms": {
+        "car_1": 69.1238350540516,
+        "env.step": 3.029740702186245
+      },
+      "actions_sha256": "4bfbcd78d715c1d035967b7666a2bbc86b0068e50c1cd58509f41a0034dfa25f",
+      "states_sha256": "c1fa171f79e6180fee57d12a67ed1fdcf706ac2af31a99ff587a89401690da48",
+      "implementation": "after",
+      "map": "Budapest_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "54d7957717022b9eaa0915bf3228e1b96daa7e56072a4a070b5e599efc8d0614",
+      "steps": 80,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 0.9702827110013459,
+      "measured_wall_seconds": 2.119303321989719,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 37.748253952101386,
+      "controller_and_physics_steps_per_second": 37.76073089719976,
+      "mean_ms": {
+        "car_1": 24.118013212500955,
+        "env.step": 2.3645250286790542
+      },
+      "p95_ms": {
+        "car_1": 30.662949317775194,
+        "env.step": 2.701145900937263
+      },
+      "actions_sha256": "c914a10bf1b319d1508e0837be49a2ed479e65b753eedb7ff6871eccbb224782",
+      "states_sha256": "6553b105e0175922d1a50e12f8d9b7de11e5760834c086715ad37138a508bd64",
+      "implementation": "before",
+      "map": "circle_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+      "seed": 42,
+      "scenario_sha256": "54d7957717022b9eaa0915bf3228e1b96daa7e56072a4a070b5e599efc8d0614",
+      "steps": 80,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 0.9591029589937534,
+      "measured_wall_seconds": 2.0303734509798232,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 39.401618436939955,
+      "controller_and_physics_steps_per_second": 39.4171591794452,
+      "mean_ms": {
+        "car_1": 22.938162112768623,
+        "env.step": 2.431499750673538
+      },
+      "p95_ms": {
+        "car_1": 29.91921556240413,
+        "env.step": 2.864217206661124
+      },
+      "actions_sha256": "c914a10bf1b319d1508e0837be49a2ed479e65b753eedb7ff6871eccbb224782",
+      "states_sha256": "6553b105e0175922d1a50e12f8d9b7de11e5760834c086715ad37138a508bd64",
+      "implementation": "after",
+      "map": "circle_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "3cc9aea9bae7dfc8a9b5273da730f07dfff72ea16974b4b590c16c8fbf25026d",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.1989875700091943,
+      "measured_wall_seconds": 6.458765983988997,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 30.965667512306748,
+      "controller_and_physics_steps_per_second": 30.974120174551217,
+      "mean_ms": {
+        "car_1": 29.891757850855356,
+        "env.step": 2.3932592655182816
+      },
+      "p95_ms": {
+        "car_1": 75.57664069026941,
+        "env.step": 2.771876456972677
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "before",
+      "map": "Budapest_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "3cc9aea9bae7dfc8a9b5273da730f07dfff72ea16974b4b590c16c8fbf25026d",
+      "steps": 200,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 1.1842903580109123,
+      "measured_wall_seconds": 6.09029469199595,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 32.839133426966356,
+      "controller_and_physics_steps_per_second": 32.848767253431184,
+      "mean_ms": {
+        "car_1": 28.049582407111302,
+        "env.step": 2.392960300348932
+      },
+      "p95_ms": {
+        "car_1": 70.78853700077158,
+        "env.step": 2.865840720187407
+      },
+      "actions_sha256": "d68b8f7004bf5fb07c0999c2bdb35bd271b551500bfb2cebb14e7cb0334c2a93",
+      "states_sha256": "765d08fd9af94504d86feca6c47e3fd79e05c4c017fd59938cb49d9435cc9d18",
+      "implementation": "after",
+      "map": "Budapest_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "f085aad45ade6d8b3e100a743d9f6715286fd09bdbd3cbc2936e398db30155c3",
+      "steps": 80,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 0.9637335209990852,
+      "measured_wall_seconds": 2.142879418999655,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 37.332945237462695,
+      "controller_and_physics_steps_per_second": 37.344833850234046,
+      "mean_ms": {
+        "car_1": 24.438085749352467,
+        "env.step": 2.339379749901127
+      },
+      "p95_ms": {
+        "car_1": 26.889353155274858,
+        "env.step": 2.65018817881355
+      },
+      "actions_sha256": "8756ac1dc01290246707bde8fe56800e10c0e85cc1dd4f4083b43e470bd91cc3",
+      "states_sha256": "824758fb0625969780c0d36d0258f85bdd4776909d6aa6fd29d9346989dc114b",
+      "implementation": "before",
+      "map": "circle_map"
+    },
+    {
+      "scenario": "/home/ahoop004/F110_MARL/scenarios/ppo_1v1_racing_mpc.yaml",
+      "seed": 42,
+      "scenario_sha256": "f085aad45ade6d8b3e100a743d9f6715286fd09bdbd3cbc2936e398db30155c3",
+      "steps": 80,
+      "warmup": 20,
+      "resets": 0,
+      "render": false,
+      "setup_seconds": 0.9635346139839385,
+      "measured_wall_seconds": 2.0233155460155103,
+      "reset_seconds": 0.0,
+      "measured_steps_per_second": 39.53906258346257,
+      "controller_and_physics_steps_per_second": 39.55270885543472,
+      "mean_ms": {
+        "car_1": 22.92642533648177,
+        "env.step": 2.356293064804049
+      },
+      "p95_ms": {
+        "car_1": 23.29059133335247,
+        "env.step": 2.750411099987104
+      },
+      "actions_sha256": "8756ac1dc01290246707bde8fe56800e10c0e85cc1dd4f4083b43e470bd91cc3",
+      "states_sha256": "824758fb0625969780c0d36d0258f85bdd4776909d6aa6fd29d9346989dc114b",
+      "implementation": "after",
+      "map": "circle_map"
+    }
+  ],
+  "four_controllers_same_map": [
+    {
+      "implementation": "before",
+      "map_build_seconds": [
+        0.491994463984156,
+        0.48628689401084557,
+        0.4877912380034104,
+        0.5058831769856624
+      ],
+      "unique_fields": 4,
+      "field_bytes": 128000000
+    },
+    {
+      "implementation": "after",
+      "map_build_seconds": [
+        0.49919629900250584,
+        0.0008365630055777729,
+        0.0006886119954288006,
+        0.0006876770057715476
+      ],
+      "unique_fields": 1,
+      "field_bytes": 32000000
+    }
+  ],
+  "desktop_render_probe": {
+    "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack_lora.yaml",
+    "seed": 42,
+    "scenario_sha256": "25a4bacd9e37bd7877c05e2204b2f7b0f88bf8da8566be3b611eb38f27257453",
+    "steps": 100,
+    "warmup": 20,
+    "resets": 0,
+    "render": true,
+    "setup_seconds": 1.3821887919912115,
+    "measured_wall_seconds": 2.861483243003022,
+    "reset_seconds": 0.0,
+    "measured_steps_per_second": 34.94691092269115,
+    "controller_and_physics_steps_per_second": 35.706966561547965,
+    "mean_ms": {
+      "car_1": 25.242368011095095,
+      "env.step": 2.7633713808609173,
+      "env.render": 0.5912291308050044
+    },
+    "p95_ms": {
+      "car_1": 32.15119835658693,
+      "env.step": 3.0873194482410327,
+      "env.render": 0.7667349986149926
+    },
+    "actions_sha256": "edc9afa7d6c44bbf0d45b647b58d69a2f44dc3ee1ef09b29661e93c40e90f509",
+    "states_sha256": "5dba1b943a34192dc090507b5ccf914a6a10a8687099804afc174256b207882c"
+  },
+  "rgb_capture": {
+    "width": 1000,
+    "height": 800,
+    "before_mean_ms": 470.1,
+    "before_frames": 8,
+    "after": {
+      "mean_ms": 7.888941050623544,
+      "frames": 20
+    },
+    "note": "Static offscreen color-buffer capture; before cProfile attributed 3.728 of 3.761 seconds to Pyglet regex conversion."
+  },
+  "collectors": [
+    {
+      "workers": 4,
+      "num_envs": 8,
+      "scheduling": "synchronous",
+      "repetition": 0,
+      "command": [
+        "/home/ahoop004/F110_MARL/venv/bin/python",
+        "/home/ahoop004/F110_MARL/run.py",
+        "--scenario",
+        "scenarios/mappo_1v1_attack_lora.yaml",
+        "--num-envs",
+        "8",
+        "--num-workers",
+        "4",
+        "--collector-scheduling",
+        "synchronous",
+        "--rollout-steps-per-env",
+        "64",
+        "--total-steps",
+        "1536",
+        "--seed",
+        "42",
+        "--torch-threads",
+        "1",
+        "--no-render",
+        "--no-wandb",
+        "--quiet",
+        "--output-dir",
+        "/tmp/f110_1v1_collector_review/w4_synchronous_r0",
+        "--set",
+        "evaluation.enabled=false"
+      ],
+      "process_wall_seconds": 51.56405410901061,
+      "startup_seconds": 6.718500668008346,
+      "measured_rounds": 2,
+      "measured_steps": 1024.0,
+      "collection_steps_per_second": 55.272892952752514,
+      "round_steps_per_second": 54.957118948023144,
+      "update_seconds": 0.10644865498761646,
+      "output_dir": "/tmp/f110_1v1_collector_review/w4_synchronous_r0"
+    },
+    {
+      "workers": 4,
+      "num_envs": 8,
+      "scheduling": "ready",
+      "repetition": 0,
+      "command": [
+        "/home/ahoop004/F110_MARL/venv/bin/python",
+        "/home/ahoop004/F110_MARL/run.py",
+        "--scenario",
+        "scenarios/mappo_1v1_attack_lora.yaml",
+        "--num-envs",
+        "8",
+        "--num-workers",
+        "4",
+        "--collector-scheduling",
+        "ready",
+        "--rollout-steps-per-env",
+        "64",
+        "--total-steps",
+        "1536",
+        "--seed",
+        "42",
+        "--torch-threads",
+        "1",
+        "--no-render",
+        "--no-wandb",
+        "--quiet",
+        "--output-dir",
+        "/tmp/f110_1v1_collector_review/w4_ready_r0",
+        "--set",
+        "evaluation.enabled=false"
+      ],
+      "process_wall_seconds": 37.215375062980456,
+      "startup_seconds": 6.818034783995245,
+      "measured_rounds": 2,
+      "measured_steps": 1024.0,
+      "collection_steps_per_second": 80.47030412833139,
+      "round_steps_per_second": 79.79130131948581,
+      "update_seconds": 0.10828800100716762,
+      "output_dir": "/tmp/f110_1v1_collector_review/w4_ready_r0"
+    },
+    {
+      "workers": 8,
+      "num_envs": 8,
+      "scheduling": "synchronous",
+      "repetition": 0,
+      "command": [
+        "/home/ahoop004/F110_MARL/venv/bin/python",
+        "/home/ahoop004/F110_MARL/run.py",
+        "--scenario",
+        "scenarios/mappo_1v1_attack_lora.yaml",
+        "--num-envs",
+        "8",
+        "--num-workers",
+        "8",
+        "--collector-scheduling",
+        "synchronous",
+        "--rollout-steps-per-env",
+        "64",
+        "--total-steps",
+        "1536",
+        "--seed",
+        "42",
+        "--torch-threads",
+        "1",
+        "--no-render",
+        "--no-wandb",
+        "--quiet",
+        "--output-dir",
+        "/tmp/f110_1v1_collector_review/w8_synchronous_r0",
+        "--set",
+        "evaluation.enabled=false"
+      ],
+      "process_wall_seconds": 36.54897656699177,
+      "startup_seconds": 6.121982137003215,
+      "measured_rounds": 2,
+      "measured_steps": 1024.0,
+      "collection_steps_per_second": 75.59887856693229,
+      "round_steps_per_second": 75.05166046013092,
+      "update_seconds": 0.09876083600101992,
+      "output_dir": "/tmp/f110_1v1_collector_review/w8_synchronous_r0"
+    },
+    {
+      "workers": 8,
+      "num_envs": 8,
+      "scheduling": "ready",
+      "repetition": 0,
+      "command": [
+        "/home/ahoop004/F110_MARL/venv/bin/python",
+        "/home/ahoop004/F110_MARL/run.py",
+        "--scenario",
+        "scenarios/mappo_1v1_attack_lora.yaml",
+        "--num-envs",
+        "8",
+        "--num-workers",
+        "8",
+        "--collector-scheduling",
+        "ready",
+        "--rollout-steps-per-env",
+        "64",
+        "--total-steps",
+        "1536",
+        "--seed",
+        "42",
+        "--torch-threads",
+        "1",
+        "--no-render",
+        "--no-wandb",
+        "--quiet",
+        "--output-dir",
+        "/tmp/f110_1v1_collector_review/w8_ready_r0",
+        "--set",
+        "evaluation.enabled=false"
+      ],
+      "process_wall_seconds": 28.251589043007698,
+      "startup_seconds": 5.593764182005543,
+      "measured_rounds": 2,
+      "measured_steps": 1024.0,
+      "collection_steps_per_second": 113.36673668236159,
+      "round_steps_per_second": 112.13986830638856,
+      "update_seconds": 0.09882168201147579,
+      "output_dir": "/tmp/f110_1v1_collector_review/w8_ready_r0"
+    }
+  ],
+  "validation": {
+    "focused_passes_before_concurrent_yaml_edit": 59,
+    "unrelated_configuration_assertions_deselected": 2,
+    "initial_broader_run": {
+      "passed": 54,
+      "failed": 3,
+      "setup_errors": 5
+    },
+    "standalone_reference_predictions_bitwise_equal": 120,
+    "matched_arm_assertion_after_concurrent_yaml_edit": "Confirmed failing: LoRA max_steps=12000, full actor max_steps=1200; user edit preserved."
+  }
+}

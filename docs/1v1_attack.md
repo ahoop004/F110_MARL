@@ -22,6 +22,9 @@ For parallel collection, add `--num-envs 8` (and optionally
 collection settings and seeds for both arms. This does not reproduce the serial
 rollout size, so compare runs within the same collection protocol.
 
+For render profiling, MPC optimizations and a 128-core launch/benchmark recipe,
+see [the 1v1 performance review](1v1_mpc_performance.md).
+
 Evaluate with the corresponding scenario and saved checkpoint:
 
 ```bash
