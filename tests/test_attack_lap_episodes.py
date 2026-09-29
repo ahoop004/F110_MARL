@@ -20,16 +20,17 @@ def scenario(lora=False):
 
 @pytest.mark.parametrize('lora', [False, True])
 @pytest.mark.parametrize('mode', ['train', 'eval'])
-def test_twenty_learner_laps_finish_without_timeout_or_target_finish(lora, mode):
+def test_five_learner_laps_finish_with_timeout_and_without_target_finish(lora, mode):
     config = scenario(lora)
-    assert config['environment']['max_steps'] == config['evaluation']['max_steps'] == 0
-    assert config['environment']['target_laps'] == config['evaluation']['target_laps'] == 20
+    assert config['environment']['max_steps'] == config['evaluation']['max_steps'] == 40000
+    assert config['environment']['target_laps'] == config['evaluation']['target_laps'] == 5
+    assert resolve_evaluation_protocol(config, 'final')['max_steps'] == 40000
     for key in ('map_bundles', 'map_bundles_train', 'map_bundles_eval'):
         config['environment'][key] = ['circle_map']
     env, _, _ = create_training_setup(config, mode=mode, scenario_dir=DIRECTORY)
     try:
         env.reset(seed=42)
-        assert env.max_steps == 0
+        assert env.max_steps == 40000
         assert env.lifecycle.finish_on_laps
         assert env.lifecycle.lap_finish_agents == {'car_0'}
         # Move past both historical timeouts without simulating thousands of
@@ -37,7 +38,7 @@ def test_twenty_learner_laps_finish_without_timeout_or_target_finish(lora, mode)
         env._elapsed_steps = 12001
         for _ in range(25):
             env.lifecycle.record_lap_crossing('car_1', step=env._elapsed_steps)
-        for _ in range(19):
+        for _ in range(4):
             env.lifecycle.record_lap_crossing('car_0', step=env._elapsed_steps)
         _, _, terms, truncs, infos = env.step({})
         assert not any(terms.values()) and not any(truncs.values())
@@ -51,24 +52,35 @@ def test_twenty_learner_laps_finish_without_timeout_or_target_finish(lora, mode)
         assert not any(truncs.values())
         assert env.episode_done and not env.agents
         assert infos['car_0']['terminal_reason'] == 'race_complete'
-        assert infos['car_0']['lap_count'] == 20
-        assert infos['car_0']['attack']['horizon_steps'] == 0
-        assert infos['car_0']['attack']['target_laps'] == 20
+        assert infos['car_0']['lap_count'] == 5
+        assert infos['car_0']['attack']['horizon_steps'] == 40000
+        assert infos['car_0']['attack']['target_laps'] == 5
         assert not infos['car_0']['attack']['ego_failed']
 
         facts = create_episode_facts(episode=0, agent_ids=['car_0', 'car_1'],
                                     trainable_ids=['car_0'], opponent_ids=['car_1'])
         update_agent_step_facts(facts, step_idx=1, infos=infos, terminations=terms)
         record = episode_race_record(facts, timestep=env.timestep)
-        assert record['agents']['car_0']['attack_target_laps'] == 20
+        assert record['agents']['car_0']['attack_target_laps'] == 5
         assert record['agents']['car_0']['finished']
         summary = aggregate_eval_episodes([facts], timestep=env.timestep)
-        assert summary['attack_score_basis'] == 'scheduled_laps'
-        assert summary['attack_score_budget'] == 20
+        assert summary['attack_score_basis'] == 'scheduled_minutes'
+        assert summary['attack_score_budget'] == pytest.approx(2000 / 60)
         assert summary['attack_score'] == 0.
         env.reset(seed=42)
         assert env.lifecycle.records['car_0'].lap_count == 0
         assert len(env.agents) == 2
+        # A stalled learner remains active until the configured final step,
+        # then truncates without being treated as an ego crash or lap finish.
+        env._elapsed_steps = env.max_steps - 2
+        _, _, terms, truncs, _ = env.step({})
+        assert not any(terms.values()) and not any(truncs.values())
+        _, _, terms, truncs, infos = env.step({})
+        assert not any(terms.values()) and all(truncs.values())
+        assert env.episode_done and not env.agents
+        assert infos['car_0']['time_limit']
+        assert not infos['car_0']['race_completed']
+        assert not infos['car_0']['attack']['ego_failed']
     finally:
         env.close()
 
@@ -87,6 +99,7 @@ def test_twenty_learner_laps_finish_without_timeout_or_target_finish(lora, mode)
 ])
 def test_attack_rejects_missing_learner_bound_or_stopping_target(phase, field, value):
     config = scenario()
+    config['environment']['max_steps'] = config['evaluation']['max_steps'] = 0
     section = config[phase]
     if phase == 'environment' and field != 'max_steps':
         section = section['episode_termination']

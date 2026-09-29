@@ -214,11 +214,11 @@ environment:
   - Spielberg_map
   map_cycle: per_episode
   map_pick: round_robin
-  target_laps: 20
+  target_laps: 5
   lap_counting:
     require_finish_line: true
     count_initial_crossing_as_lap: false
-  max_steps: 0  # No physics-step timeout; finish at 20 learner laps or ego failure.
+  max_steps: 40000  # 2000 simulated seconds; allows five laps plus slow attack maneuvers.
   action_repeat: 1
   centerline_features: true
   centerline_render: true
@@ -282,8 +282,8 @@ evaluation:
   every_steps: 409600
   # One selection episode per map; final testing uses two per map and new seeds.
   episodes: 8
-  target_laps: 20
-  max_steps: 0
+  target_laps: 5
+  max_steps: 40000
   seed: 10042
   selection_strategy: attack
   final_test:

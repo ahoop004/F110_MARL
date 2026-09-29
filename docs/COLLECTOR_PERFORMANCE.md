@@ -89,11 +89,27 @@ suppresses console status. The asymmetric scenario prints every completed update
 With 400 environments and horizon 256, a full round collects up to 102,400 joint
 decisions before producing losses; the MPC opponents can make that take time.
 
-The heartbeat reports `phase`, initialized workers, workers at the update
-barrier, worker-message count, time since the last message, actions dispatched,
-and steps incorporated into completed updates. Increasing messages/actions during
-`collecting` show activity; `inference` means the parent is serving policy requests. An increasing last-message age during `updating` or
-`evaluation_checkpoint_logging` is expected because collectors are paused.
+During training the heartbeat reports completed episodes, mean and latest episode
+return, average episode length and learner laps, finish rate, crash/boundary-exit
+rate, and timeout rate. Attack tasks also show confirmed successes and target
+crashes per episode. These statistics use the most recent
+`experiment.terminal_recent_episodes` completed episodes (default 100), and update
+as workers report episodes, without waiting for an optimizer update. Finish rate
+means all learners finished; failure and timeout rates mean any learner was
+affected. Until the first episode completes, return is explicitly pending.
+`env_steps` counts decisions incorporated into completed updates.
+
+During checkpoint evaluation, the heartbeat instead shows the current evaluation
+episode, map, physics steps/limit, simulated seconds, learner laps/targets,
+terminal outcomes, and attack counts. Episode starts and completions print
+immediately. `progress_age_s` measures time since the latest evaluator report;
+reports refresh at most once per second between decisions. The selection evaluator
+does not compute rewards, so `train_return_mean` remains explicitly labeled as the
+recent training return. Training workers are paused during this evaluation.
+
+Worker readiness is still shown during startup. Detailed collector counters
+(messages, dispatched actions, barrier counts and worker-message age) remain in
+the `collector/*` telemetry rather than dominating the terminal.
 A stuck individual worker still triggers the configured response timeout.
 These heartbeats cannot diagnose a process that the scheduler has suspended or killed.
 

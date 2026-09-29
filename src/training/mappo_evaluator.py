@@ -1,6 +1,7 @@
 """Isolated deterministic MAPPO evaluation for checkpoint selection."""
 from copy import deepcopy
 import random
+import time
 
 import numpy as np
 from env.respawn import reset_respawned
@@ -35,6 +36,34 @@ class DeterministicMAPPOEvaluator:
         self.base_seed = int(base_seed)
         self.action_repeat = int(action_repeat)
         self.recording = None
+        self.progress_callback = None
+        self._next_progress = 0.
+
+    def set_progress_callback(self, callback):
+        previous, self.progress_callback = self.progress_callback, callback
+        return previous
+
+    def _report_progress(self, facts, episode, steps, status='running'):
+        if self.progress_callback is None:
+            return
+        now = time.monotonic()
+        if status == 'running' and now < self._next_progress:
+            return
+        self._next_progress = now + 1.
+        learners = [facts.agents[aid] for aid in self.trainable_ids]
+        finishers = self.env.lifecycle.lap_finish_agents if self.env.lifecycle.finish_on_laps else set()
+        row = dict(episode=episode + 1, episodes=self.episodes,
+            map=str(getattr(self.env, '_map_bundle_active', None) or self.env.map_name),
+            status=status, steps=steps, max_steps=self.env.max_steps,
+            sim_seconds=steps * self.env.timestep,
+            laps=','.join(f'{a.agent_id}:{a.final_lap_count}/'
+                         f'{self.env.target_laps if a.agent_id in finishers else "unlimited"}' for a in learners),
+            outcome=','.join(f'{a.agent_id}:{a.terminal_reason or "active"}' for a in learners))
+        attacks = [a for a in learners if a.attack_horizon_steps is not None]
+        if attacks:
+            row.update(attack_successes=sum(a.attack_successes for a in attacks),
+                       target_crashes=sum(a.attack_target_crashes for a in attacks))
+        self.progress_callback(row)
 
     def bind_agent(self, agent):
         self.agent = agent
@@ -69,6 +98,7 @@ class DeterministicMAPPOEvaluator:
                     )
                     steps = 0
                     decision = 0
+                    self._report_progress(facts, episode, steps, 'starting')
                     while self.env.agents:
                         ids = [aid for aid in self.trainable_ids if aid in self.env.agents]
                         normalized, physical, wrapped_rows = {}, {}, {}
@@ -103,9 +133,11 @@ class DeterministicMAPPOEvaluator:
                         for aid in ids:
                             if aid not in respawned:
                                 self.obs_composers[aid].update_prev_action(normalized[aid])
+                        self._report_progress(facts, episode, steps)
                     if self.recording:
                         self.recording.end()
                     result = finalize_episode_facts(facts)
+                    self._report_progress(result, episode, steps, 'complete')
                     results.append(result)
                     map_name = getattr(self.env, "_map_bundle_active", None) or self.env.map_name
                     by_map.setdefault(str(map_name), []).append(result)
@@ -131,6 +163,8 @@ class DeterministicMAPPOEvaluator:
             torch.random.set_rng_state(torch_state)
             if cuda_states is not None:
                 torch.cuda.set_rng_state_all(cuda_states)
+            if self.progress_callback is not None:
+                self.progress_callback(None)
         summary = aggregate_eval_episodes(results, timestep=self.env.timestep, focal_agent_id=self.focal_agent_id)
         summary["per_map"] = {name: aggregate_eval_episodes(rows, timestep=self.env.timestep, focal_agent_id=self.focal_agent_id)
                               for name, rows in by_map.items()}

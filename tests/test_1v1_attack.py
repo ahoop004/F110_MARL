@@ -263,16 +263,25 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     from agents.ppo import PPOAgent
     from env.spaces_builder import build_action_spaces
     from utils.torch_io import safe_load
+    from training.collector_progress import CollectorProgress
+    evaluation_progress = []
+    original_progress = CollectorProgress.evaluation_progress
+
+    def capture_progress(progress, row):
+        evaluation_progress.append(None if row is None else dict(row))
+        original_progress(progress, row)
+
+    monkeypatch.setattr(CollectorProgress, 'evaluation_progress', capture_progress)
     torch.set_num_threads(1)
     config = scenario(lora)
     config['experiment'].update(total_steps=8, num_envs=num_envs, num_workers=1)
-    # Rollout updates and the aggregate training budget must work without an
-    # episode timeout, including in the grouped collector.
-    assert config['environment']['max_steps'] == 0
+    # Rollout updates and the aggregate training budget must work within a long
+    # episode, including in the grouped collector.
+    assert config['environment']['max_steps'] == 40000
     for key in ('map_bundles', 'map_bundles_train', 'map_bundles_eval'):
         config['environment'][key] = ['circle_map']
     config['evaluation'].update(every_steps=4, episodes=1)
-    assert config['evaluation']['max_steps'] == 0
+    assert config['evaluation']['max_steps'] == 40000
     config['training_defaults'].update(rollout_steps_per_env=2, device='cpu')
     config['agents']['car_0']['params'].update(pi_hidden_dims=[8, 8], vf_hidden_dims=[8],
         device='cpu', n_steps=4, batch_size=2, n_epochs=1)
@@ -296,7 +305,7 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
 
             def step(actions):
                 # Supply accepted lap crossings to keep this integration test
-                # short while exercising real lap termination without a timeout.
+                # short while exercising real lap termination before the timeout.
                 if env._elapsed_steps == 2:
                     for _ in range(env.target_laps):
                         env.lifecycle.record_lap_crossing('car_0', step=env._elapsed_steps)
@@ -317,9 +326,17 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
     assert payload['obs_dim'] == 163
     assert payload['checkpoint_selection']['selection_strategy'] == 'attack'
     assert payload['checkpoint_selection']['environment_steps'] > 0
-    assert payload['checkpoint_selection']['attack_score_basis'] == 'scheduled_laps'
-    assert payload['checkpoint_selection']['attack_score_budget'] == 20
+    assert payload['checkpoint_selection']['attack_score_basis'] == 'scheduled_minutes'
+    assert payload['checkpoint_selection']['attack_score_budget'] == pytest.approx(2000 / 60)
     assert payload['checkpoint_selection']['focal_completion_rate'] == 1.
+    if num_envs > 1:
+        assert evaluation_progress[-1] is None
+        finished = [row for row in evaluation_progress if row and row['status'] == 'complete']
+        assert finished
+        assert all(row['laps'] == 'car_0:5/5' for row in finished)
+        assert all(row['outcome'] == 'car_0:race_complete' for row in finished)
+        assert all(row['map'] == 'circle_map' and row['max_steps'] == 40000 for row in finished)
+        assert all('attack_successes' in row and 'target_crashes' in row for row in finished)
     if lora:
         assert payload['lora_contract']['rank'] == 4
         for key, value in source.actor.net.state_dict().items():
@@ -335,5 +352,5 @@ def test_training_and_standalone_checkpoint_evaluation(tmp_path, monkeypatch, lo
         str(checkpoint), '--eval-episodes', '1', '--no-wandb', '--quiet', '--output-dir', str(tmp_path / 'eval')])
     run.main()
     report = json.loads((tmp_path / 'eval' / 'evaluation_report.json').read_text())
-    assert report['summary']['attack_score_basis'] == 'scheduled_laps'
+    assert report['summary']['attack_score_basis'] == 'scheduled_minutes'
     assert report['summary']['focal_completion_rate'] == 1.

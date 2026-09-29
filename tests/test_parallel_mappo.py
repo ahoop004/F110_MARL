@@ -212,6 +212,10 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
     assert progress[0]["collector/updates"] == 0
     assert progress[-1]["collector/updated_environment_steps"] == 15
     assert progress[-1]["collector/actions_dispatched"] == 15
+    assert progress[-1]["collector/completed_episodes"] == 5
+    assert progress[-1]["collector/recent_episodes"] == 5
+    assert progress[-1]["collector/recent_reward_mean"] == pytest.approx(
+        np.mean([row[1] for row in capture.episodes]))
     assert {row["collector/phase"] for row in progress} >= {"collecting", "updating"}
     # Collector telemetry must not masquerade as a learning update.
     assert len([row for row in logs if "train/update" in row]) == len(capture.updates)

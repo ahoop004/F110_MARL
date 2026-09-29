@@ -322,7 +322,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     previous = {key: os.environ.get(key) for key in thread_vars}
     progress = CollectorProgress(getattr(trainer, 'console', None), workers=workers,
         environments=num_envs, horizon=horizon,
-        interval=experiment.get('collector_progress_interval_s', 15.))
+        interval=experiment.get('collector_progress_interval_s', 15.),
+        window=int(experiment.get('terminal_recent_episodes', 100)))
+    evaluation_callbacks = []
     dispatched = 0
 
     def receive(worker_id, starting=False):
@@ -346,6 +348,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 for hook in record_hooks:
                     hook.on_step(payload)
             elif kind == "episode":
+                progress.episode_completed(*payload)
                 pending_episodes.append(payload)
             elif kind == 'race_record':
                 for hook in race_hooks:
@@ -390,6 +393,10 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             scheduler.exclude_parent_time(time.monotonic() - started)
 
     try:
+        for hook in trainer.hooks:
+            setter = getattr(hook, 'set_evaluation_progress', None)
+            if setter is not None:
+                evaluation_callbacks.append((setter, setter(progress.evaluation_progress)))
         progress.start()
         publish_progress(force=True)
         console = getattr(trainer, 'console', None)
@@ -521,6 +528,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         progress.set(phase="finished")
         success = True
     finally:
+        for setter, previous_callback in evaluation_callbacks:
+            setter(previous_callback)
         progress.close()
         _close_collectors(list(connections.values()), processes, failed=not success)
         for key, value in previous.items():

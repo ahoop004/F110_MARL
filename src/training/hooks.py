@@ -744,6 +744,11 @@ class EvaluationCheckpointHook(CheckpointHook):
                 metadata={"checkpoint_selection": record},
             )
 
+    def set_evaluation_progress(self, callback):
+        """Connect parallel console monitoring without changing evaluation metrics."""
+        setter = getattr(self._evaluator, 'set_progress_callback', None)
+        return setter(callback) if setter is not None else None
+
 
 class PhysicsEpisodeHook(TrainingHook):
     """Write sampled episode physics through the shared provenance logger."""
