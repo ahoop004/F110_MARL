@@ -10,6 +10,28 @@ def test_wall_distance_uses_segment_interior_and_handles_duplicate_vertices():
     np.testing.assert_allclose(_distance_to_wall(np.array([[5., 1.], [9., 5.]]), wall), [1., 1.])
 
 
+@pytest.mark.parametrize('vertices', [1, 2, 5, 1000])
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_compiled_wall_distance_matches_vectorized_reference(vertices, dtype):
+    rng = np.random.default_rng(62)
+    wall = rng.normal(size=(vertices, 2)).astype(dtype)
+    if vertices > 2:
+        wall[1] = wall[0]
+    points = rng.normal(size=(20, 2)).astype(dtype)
+    points[0] = wall[0]
+    starts = np.asarray(wall, dtype=np.float64)
+    vectors = np.roll(starts, -1, axis=0) - starts
+    lengths = np.sum(vectors * vectors, axis=1)
+    expected = []
+    for point in points:
+        relative = point - starts
+        t = np.divide(np.sum(relative * vectors, axis=1), lengths,
+                      out=np.zeros(len(starts)), where=lengths > 0)
+        residual = relative - np.clip(t, 0., 1.)[:, None] * vectors
+        expected.append(np.sqrt(np.min(np.sum(residual * residual, axis=1))))
+    np.testing.assert_array_equal(_distance_to_wall(points, wall), np.asarray(expected, dtype=np.float32))
+
+
 def test_corner_width_does_not_hit_remote_boundary():
     # The inner corner sits just above the horizontal cross-section. A normal
     # ray misses it and spans the outer enclosure's entire 12 m width.

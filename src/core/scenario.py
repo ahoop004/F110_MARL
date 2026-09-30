@@ -563,6 +563,10 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("evaluation.episode_termination_mode must be any_agent, all_agents, or all_trainable")
     if experiment.get("collector_scheduling", "synchronous") not in {"synchronous", "ready"}:
         raise ScenarioError("experiment.collector_scheduling must be synchronous or ready")
+    eval_workers = scenario.get("evaluation", {}).get("num_workers", 1)
+    if eval_workers != 'auto' and (isinstance(eval_workers, bool)
+            or not isinstance(eval_workers, int) or eval_workers < 1):
+        raise ScenarioError("evaluation.num_workers must be a positive integer or auto")
     num_envs = experiment.get("num_envs", 1)
     for name in ("num_envs", "num_workers", "torch_threads", "worker_startup_batch_size",
                  "worker_startup_timeout_s", "worker_response_timeout_s"):

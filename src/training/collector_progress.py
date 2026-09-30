@@ -109,6 +109,9 @@ class CollectorProgress:
                     f"steps={m['evaluation_steps']}/{m['evaluation_max_steps'] or 'unlimited'} "
                     f"sim_s={m['evaluation_sim_seconds']:.1f} laps={m['evaluation_laps']} "
                     f"outcome={m['evaluation_outcome']}")
+            if 'evaluation_workers' in m:
+                text += (f" workers={m['evaluation_workers']} "
+                         f"completed={m['evaluation_completed_episodes']}/{m['evaluation_episodes']}")
             if 'evaluation_attack_successes' in m:
                 text += (f" attacks={m['evaluation_attack_successes']} "
                          f"target_crashes={m['evaluation_target_crashes']}")

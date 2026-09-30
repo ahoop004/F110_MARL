@@ -838,6 +838,12 @@ class F110ParallelEnv:
             or (seed is None and "map_episode_index" in (options or {}))
         ):
             raise ValueError("map_episode_index requires an explicit seed and a nonnegative integer")
+        spawn_episode_index = (options or {}).get('spawn_episode_index')
+        if 'spawn_episode_index' in (options or {}) and (seed is None
+                or isinstance(spawn_episode_index, bool)
+                or not isinstance(spawn_episode_index, (int, np.integer))
+                or spawn_episode_index < 0):
+            raise ValueError('spawn_episode_index requires an explicit seed and a nonnegative integer')
         if self._skill_tracker is not None:
             if 'skill_stage' in (options or {}):
                 self.set_skill_stage(options['skill_stage'])

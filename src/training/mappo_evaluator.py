@@ -79,84 +79,18 @@ class DeterministicMAPPOEvaluator:
         raw_actions = deepcopy(self.agent.last_raw_actions)
         self.agent.actor.eval()
         results, by_map, physics_episodes, episode_records = [], {}, [], []
-        protocol = dict(name=self.protocol_name, seeds=list(range(self.base_seed, self.base_seed+self.episodes)),
+        protocol = dict(name=self.protocol_name, spawn_schedule='episode_index_v1',
+            seeds=list(range(self.base_seed, self.base_seed+self.episodes)),
             max_steps=self.env.max_steps, timestep_s=self.env.timestep,
             target_laps=getattr(self.env, 'target_laps', None), action_repeat=self.action_repeat)
         try:
             with torch.no_grad():
-                for episode in range(self.episodes):
-                    obs, infos = self.env.reset(seed=self.base_seed + episode,
-                                               options={"map_episode_index": episode})
-                    from env.skills import reset_skill_opponent
-                    reset_skill_opponent(self.env, self.other_agents)
-                    spawn_context = capture_spawn_context(self.env, self.env.possible_agents)
-                    record_context = self.recording.start(episode, infos, protocol=protocol) if self.recording else {}
-                    for item in [*self.obs_composers.values(), *self.actions.values(),
-                                 *self.other_agents.values()]:
-                        if hasattr(item, "reset"):
-                            item.reset()
-                    facts = create_episode_facts(
-                        episode=episode, agent_ids=self.env.possible_agents,
-                        trainable_ids=self.trainable_ids,
-                        opponent_ids=list(self.other_agents),
-                    )
-                    steps = 0
-                    decision = 0
-                    self._report_progress(facts, episode, steps, 'starting')
-                    while self.env.agents:
-                        ids = [aid for aid in self.trainable_ids if aid in self.env.agents]
-                        normalized, physical, wrapped_rows = {}, {}, {}
-                        if ids:
-                            wrapped = [self.obs_composers[aid].wrap(
-                                obs.get(aid, {}), infos.get(aid, {})) for aid in ids]
-                            wrapped_rows = dict(zip(ids, wrapped))
-                            normalized, _ = self.agent.act_batch(ids, wrapped, deterministic=True)
-                            physical = {aid: self.actions[aid].process(normalized[aid]) for aid in ids}
-                        for aid, controller in self.other_agents.items():
-                            if aid in self.env.agents:
-                                physical[aid] = controller.act(obs.get(aid, {}))
-                        for substep in range(self.action_repeat):
-                            if self.recording:
-                                self.recording.before_step(infos, obs, steps)
-                            obs, _, terms, truncs, infos = self.env.step(physical)
-                            steps += 1
-                            update_agent_step_facts(facts, step_idx=steps, infos=infos,
-                                                    terminations=terms, truncations=truncs,
-                                                    agent_states={aid: self.env.get_agent_state(aid)
-                                                                  for aid in self.env.possible_agents})
-                            if self.recording:
-                                self.recording.step(infos=infos, obs=obs, physical=physical, normalized=normalized,
-                                    wrapped=wrapped_rows, physics_index=steps-1, decision_index=decision, substep=substep,
-                                    terminated=terms, truncated=truncs)
-                            if (not set(physical).issubset(self.env.agents)
-                                    or any(info.get("respawned") for info in infos.values())):
-                                break
-                        respawned = reset_respawned(infos, controllers=self.other_agents,
-                            actions=self.actions, observations=self.obs_composers)
-                        decision += 1
-                        for aid in ids:
-                            if aid not in respawned:
-                                self.obs_composers[aid].update_prev_action(normalized[aid])
-                        self._report_progress(facts, episode, steps)
-                        if getattr(self, 'render', False):
-                            self.env.render()
-                    if self.recording:
-                        self.recording.end()
-                    result = finalize_episode_facts(facts)
-                    self._report_progress(result, episode, steps, 'complete')
+                for result, map_name, record, physics in self._collect_episodes(protocol):
                     results.append(result)
-                    map_name = getattr(self.env, "_map_bundle_active", None) or self.env.map_name
-                    by_map.setdefault(str(map_name), []).append(result)
-                    episode_records.append({
-                        **episode_race_record(result, timestep=self.env.timestep, include_rewards=False),
-                        "phase": "evaluation", "environment_episode": episode,
-                        "seed": self.base_seed + episode, "map_id": map_name,
-                        "spawn_configuration": spawn_context, **record_context,
-                    })
-                    physics = infos.get(self.trainable_ids[0], {}).get("physics")
+                    by_map.setdefault(map_name, []).append(result)
+                    episode_records.append(record)
                     if physics is not None:
-                        physics_episodes.append({"seed": self.base_seed + episode,
-                                                 "map_bundle": map_name, "physics": physics})
+                        physics_episodes.append(physics)
         except BaseException:
             if self.recording:
                 self.recording.failed = True
@@ -175,12 +109,7 @@ class DeterministicMAPPOEvaluator:
         summary["per_map"] = {name: aggregate_eval_episodes(rows, timestep=self.env.timestep, focal_agent_id=self.focal_agent_id)
                               for name, rows in by_map.items()}
         summary["episode_results"] = episode_records
-        summary["evaluation_protocol"] = {
-            "name": self.protocol_name, "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
-            "max_steps": self.env.max_steps, "timestep_s": self.env.timestep,
-            "target_laps": getattr(self.env, "target_laps", None),
-            "action_repeat": self.action_repeat,
-        }
+        summary["evaluation_protocol"] = protocol
         if physics_episodes:
             summary["physics_episodes"] = physics_episodes
         # This evaluator measures race facts; reward is not computed here.
@@ -189,6 +118,81 @@ class DeterministicMAPPOEvaluator:
                         "per_agent_individual_rewards_mean", "per_agent_reward_components_mean"):
                 row.pop(key, None)
         return summary
+
+    def _collect_episodes(self, protocol):
+        return [self._evaluate_episode(episode, protocol) for episode in range(self.episodes)]
+
+    def _evaluate_episode(self, episode, protocol):
+        obs, infos = self.env.reset(seed=self.base_seed + episode,
+                                   options={"map_episode_index": episode, "spawn_episode_index": episode})
+        from env.skills import reset_skill_opponent
+        reset_skill_opponent(self.env, self.other_agents)
+        spawn_context = capture_spawn_context(self.env, self.env.possible_agents)
+        record_context = self.recording.start(episode, infos, protocol=protocol) if self.recording else {}
+        for item in [*self.obs_composers.values(), *self.actions.values(),
+                     *self.other_agents.values()]:
+            if hasattr(item, "reset"):
+                item.reset()
+        facts = create_episode_facts(
+            episode=episode, agent_ids=self.env.possible_agents,
+            trainable_ids=self.trainable_ids,
+            opponent_ids=list(self.other_agents),
+        )
+        steps = 0
+        decision = 0
+        self._report_progress(facts, episode, steps, 'starting')
+        while self.env.agents:
+            ids = [aid for aid in self.trainable_ids if aid in self.env.agents]
+            normalized, physical, wrapped_rows = {}, {}, {}
+            if ids:
+                wrapped = [self.obs_composers[aid].wrap(
+                    obs.get(aid, {}), infos.get(aid, {})) for aid in ids]
+                wrapped_rows = dict(zip(ids, wrapped))
+                normalized, _ = self.agent.act_batch(ids, wrapped, deterministic=True)
+                physical = {aid: self.actions[aid].process(normalized[aid]) for aid in ids}
+            for aid, controller in self.other_agents.items():
+                if aid in self.env.agents:
+                    physical[aid] = controller.act(obs.get(aid, {}))
+            for substep in range(self.action_repeat):
+                if self.recording:
+                    self.recording.before_step(infos, obs, steps)
+                obs, _, terms, truncs, infos = self.env.step(physical)
+                steps += 1
+                update_agent_step_facts(facts, step_idx=steps, infos=infos,
+                                        terminations=terms, truncations=truncs,
+                                        agent_states={aid: self.env.get_agent_state(aid)
+                                                      for aid in self.env.possible_agents})
+                if self.recording:
+                    self.recording.step(infos=infos, obs=obs, physical=physical, normalized=normalized,
+                        wrapped=wrapped_rows, physics_index=steps-1, decision_index=decision, substep=substep,
+                        terminated=terms, truncated=truncs)
+                if (not set(physical).issubset(self.env.agents)
+                        or any(info.get("respawned") for info in infos.values())):
+                    break
+            respawned = reset_respawned(infos, controllers=self.other_agents,
+                actions=self.actions, observations=self.obs_composers)
+            decision += 1
+            for aid in ids:
+                if aid not in respawned:
+                    self.obs_composers[aid].update_prev_action(normalized[aid])
+            self._report_progress(facts, episode, steps)
+            if getattr(self, 'render', False):
+                self.env.render()
+        if self.recording:
+            self.recording.end()
+        result = finalize_episode_facts(facts)
+        self._report_progress(result, episode, steps, 'complete')
+        map_name = getattr(self.env, "_map_bundle_active", None) or self.env.map_name
+        record = {
+            **episode_race_record(result, timestep=self.env.timestep, include_rewards=False),
+            "phase": "evaluation", "environment_episode": episode,
+            "seed": self.base_seed + episode, "map_id": map_name,
+            "spawn_configuration": spawn_context, **record_context,
+        }
+        physics = infos.get(self.trainable_ids[0], {}).get("physics")
+        physics_record = ({"seed": self.base_seed + episode, "map_bundle": map_name,
+                           "physics": physics} if physics is not None else None)
+        return result, str(map_name), record, physics_record
 
     def close(self):
         if self.recording:

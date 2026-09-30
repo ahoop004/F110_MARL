@@ -202,7 +202,8 @@ class SpawnManager:
             _cl = centerline
             _walls = walls
             def _cl_fn() -> Optional[Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]]:
-                return self._sample_centerline(_cl, _walls)
+                return self._sample_centerline(_cl, _walls,
+                    episode_index=(options or {}).get('spawn_episode_index'))
             centerline_fn = _cl_fn
 
         result = resolve_reset_spawn(
@@ -246,6 +247,7 @@ class SpawnManager:
         self,
         centerline: Optional[np.ndarray],
         walls: Optional[Any],
+        *, episode_index: Optional[int] = None,
     ) -> Optional[Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]]:
         result = sample_centerline_relative_spawn(
             spawn_policy=self._spawn_policy,
@@ -259,6 +261,7 @@ class SpawnManager:
             rng=self._rng,
             current_index=self._centerline_index,
             walls=walls,
+            episode_index=episode_index,
         )
         if result is None:
             return None

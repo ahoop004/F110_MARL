@@ -52,6 +52,101 @@ rollout size, so compare runs within the same collection protocol.
 For render profiling, MPC optimizations and a 128-core launch/benchmark recipe,
 see [the 1v1 performance review](1v1_mpc_performance.md).
 
+### HPC training and checkpoint evaluation
+
+On one GPU with 128 allocated CPU cores, launch one trainer with grouped workers:
+
+```bash
+python3 -u run.py --scenario scenarios/mappo_1v1_attack.yaml \
+  --num-envs 400 --num-workers 100 --torch-threads 1 \
+  --collector-scheduling ready \
+  --set evaluation.every_steps=2048000 --no-render
+```
+
+Use the same settings for the LoRA arm. `ready` serves training workers as they
+finish their MPC solves instead of waiting at every action barrier. Weights
+remain fixed until the collection round ends. Scheduling changes stochastic
+action ordering; benchmark it against `synchronous` on the allocated node.
+
+Both attack scenarios set `evaluation.num_workers: auto`. For checkpoint
+selection this uses at most eight workers, capped by episode count and the
+training worker/environment counts. Thus the command above runs all eight
+evaluation races concurrently, while local one-environment training evaluates
+serially. Set `--set evaluation.num_workers=1` for a serial comparison, or use
+an explicit positive count. The startup line reports the resolved worker count.
+Evaluation heartbeats include `workers` and the number of completed episodes.
+
+Evaluation workers own only CPU simulation and MPC. The parent keeps the GPU
+actor and serves each race with the same inference batch shape as serial
+evaluation. Workers persist across checkpoint evaluations, so process startup
+and first-use compilation affect the first evaluation most. Training workers
+wait during evaluation. The longest race still determines when evaluation can
+finish; eight workers cannot shorten one individual 40,000-step race.
+
+The eight maps, seeds, five-lap target, 40,000-step limit and selection score
+remain the same. Round-robin spawn positions now use the global episode index,
+independent of worker assignment and earlier evaluations. This fixes the old
+serial evaluator's advancing spawn cursor. Checkpoint evaluation histories identify this as
+`spawn_schedule: episode_index_v1`; repeated evaluations now replay the same
+starts. Earlier evaluations that used the drifting cursor are not identical
+trials. Training spawn sampling is unaffected.
+
+Trajectory recording and rendering retain serial evaluation because those
+adapters are bound to one environment; requesting parallel workers prints a
+warning when falling back. Standalone `--eval` also retains its existing serial
+execution and reward/recording report. The worker setting applies to checkpoint
+selection during fixed-opponent MAPPO training.
+
+With 400 environments and horizon 256, each update follows 102,400 joint
+decisions. The command above evaluates every 20 rounds. Increasing the cadence
+interval reduces the number of evaluations, not each evaluation's duration, and
+changes which checkpoints are eligible for selection. Compare
+`perf/collection_seconds`, `perf/update_seconds`, and `eval/evaluation_seconds`
+separately; collection/round throughput excludes evaluation hook time.
+
+Attack clearance checks also use a compiled exact wall-segment search to avoid
+large temporary arrays per footprint corner. Physics, MPC solver budgets and
+the geometry used by rewards are unchanged. For a controlled training throughput
+comparison, use `scripts/benchmark_collectors.py` with evaluation disabled;
+restore evaluation for the training experiment.
+
+Measure checkpoint evaluation separately on the allocated node:
+
+```bash
+python3 scripts/benchmark_mappo_evaluation.py \
+  --scenario scenarios/mappo_1v1_attack.yaml \
+  --workers 1 8 --max-steps 128 --repetitions 2 \
+  --output /tmp/attack_eval_benchmark.json
+```
+
+This uses the configured pretrained actor; `--checkpoint /path/to/model.pt`
+instead measures a trained MAPPO checkpoint. It runs one cold evaluation and two
+warm evaluations per worker count. The shortened cap is for timing only; these
+scores must not replace the five-lap selection protocol.
+
+A [local September 30 probe](benchmarks/1v1_parallel_evaluation.json) used all
+eight maps, the real pretrained actor and a Quadro RTX 5000. Each evaluation
+completed 781 physics steps under the 128-step cap:
+
+| Evaluation workers | First evaluation | Mean of two warm evaluations |
+| --- | ---: | ---: |
+| 1 | 48.53 s | 47.46 s |
+| 8 | 13.49 s | 8.64 s |
+
+All six evaluation summaries matched exactly. The approximately 5.5× warm
+speedup is a bounded local result, not an HPC or full-race prediction. Separate
+alternating 200-step controller/environment probes improved from 27.3 to 32.1
+decisions/s after the exact wall-distance optimization (about 18%), with matching
+action and simulator-state hashes. Those probes exclude policy inference,
+optimization and evaluation; measure end-to-end training on the HPC.
+
+A separate small training check (eight environments, four workers, three
+64-step rounds, one repetition per scheduler) measured 37.5 decisions/s with
+`synchronous` and 56.3 with `ready`, including optimizer time and excluding the
+first round. Whole-process times were 50.0 s and 38.9 s. This supports trying
+`ready` for the MPC workload, but different action-draw ordering means these are
+equal work budgets rather than identical trajectories or learning comparisons.
+
 Evaluate with the corresponding scenario and saved checkpoint:
 
 ```bash

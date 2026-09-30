@@ -1105,7 +1105,7 @@ def _run_eval(
         for episode in range(eval_episodes):
             obs_dict, info_dict = env.reset(
                 seed=base_seed + episode,
-                options={"map_episode_index": episode},
+                options={"map_episode_index": episode, "spawn_episode_index": episode},
             )
             eval_maps[episode] = info_dict.get(focal_agent_id, {}).get("map_bundle") or getattr(
                 env, "_map_bundle_active", None)
@@ -2111,9 +2111,11 @@ def _run_mappo(
             console=console, wandb_logger=wandb_logger))
     elif eval_cfg.get("enabled", False):
         from training.mappo_evaluator import DeterministicMAPPOEvaluator
+        from training.parallel_mappo_evaluator import ParallelMAPPOEvaluator, evaluation_workers
         import torch
 
         protocol = resolve_evaluation_protocol(scenario, "selection")
+        eval_workers = evaluation_workers(scenario, protocol['episodes'])
         eval_scenario = copy.deepcopy(scenario)
         eval_scenario["experiment"]["seed"] = protocol["seed"]
         eval_scenario["environment"]["max_steps"] = protocol["max_steps"]
@@ -2141,12 +2143,16 @@ def _run_mappo(
             for controller in eval_agents.values():
                 if hasattr(controller, "set_env"):
                     controller.set_env(eval_env)
-            evaluator = DeterministicMAPPOEvaluator(
+            evaluator_class = ParallelMAPPOEvaluator if eval_workers > 1 else DeterministicMAPPOEvaluator
+            parallel_options = (dict(scenario=eval_scenario, scenario_dir=scenario_dir,
+                                     num_workers=eval_workers) if eval_workers > 1 else {})
+            evaluator = evaluator_class(
                 env=eval_env, trainable_ids=trainable_ids, other_agents=eval_agents,
                 obs_composers=eval_obs, action_composer=action_composer,
                 episodes=protocol["episodes"], base_seed=protocol["seed"],
                 action_repeat=action_repeat,
                 focal_agent_id=eval_cfg.get("progress_agent_id"),
+                **parallel_options,
             ).bind_agent(agent)
             _configure_evaluation_recording(evaluator, scenario, output_dir, run_id, provenance)
             trainer.hooks.append(EvaluationCheckpointHook(
@@ -2158,7 +2164,9 @@ def _run_mappo(
             ))
             console.print_info(f"Selection evaluation: {protocol['episodes']} races, "
                                f"seeds {protocol['seed']}..{protocol['seed'] + protocol['episodes'] - 1}, "
-                               f"target_laps={eval_env.target_laps}, max_physics_steps={eval_env.max_steps}.")
+                               f"target_laps={eval_env.target_laps}, max_physics_steps={eval_env.max_steps}, "
+                               f"workers={1 if evaluator.recording else eval_workers} "
+                               f"({'serial recording' if evaluator.recording else 'parallel' if eval_workers > 1 else 'serial'}).")
         except Exception:
             eval_env.close()
             raise

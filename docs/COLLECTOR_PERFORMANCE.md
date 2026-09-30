@@ -50,7 +50,10 @@ mode is recorded in provenance. Compare learning curves as well as throughput.
 
 The two-trainable-team self-play collector retains its existing scheduler.
 Worker-local inference, multi-node Ray execution, and asynchronous evaluation are
-not part of this change.
+not part of this change. Fixed-opponent MAPPO checkpoint evaluation can now use
+`evaluation.num_workers` for concurrent CPU races with the policy in the parent;
+training still pauses until those races finish. See the
+[attack HPC guide](1v1_attack.md#hpc-training-and-checkpoint-evaluation).
 
 ## Asymmetric 2v2
 

@@ -263,6 +263,7 @@ def sample_centerline_relative_spawn(
     rng: np.random.Generator,
     current_index: int,
     walls: Optional[Mapping[str, np.ndarray]] = None,
+    episode_index: Optional[int] = None,
 ) -> Optional[CenterlineSpawnResult]:
     """Generate relative grid poses or independently randomized track poses."""
 
@@ -300,7 +301,8 @@ def sample_centerline_relative_spawn(
 
     next_index = int(current_index)
     if mode == "round_robin":
-        idx = next_index
+        idx = (min_idx + episode_index % (max_idx - min_idx + 1)
+               if episode_index is not None else next_index)
         if idx < min_idx or idx > max_idx:
             idx = min_idx
         next_index = idx + 1

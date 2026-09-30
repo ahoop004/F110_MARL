@@ -280,6 +280,8 @@ environment:
     survival_min_progress: 0.5  # Metres of net forward travel; still moving at confirmation.
 evaluation:
   enabled: true
+  # Parallel checkpoint races on HPC; one worker for serial local training.
+  num_workers: auto
   every_steps: 409600
   # One selection episode per map; final testing uses two per map and new seeds.
   episodes: 8

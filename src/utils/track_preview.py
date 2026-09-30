@@ -364,16 +364,41 @@ def _track_width(
 
 def _distance_to_wall(points: np.ndarray, wall: np.ndarray) -> np.ndarray:
     """Shortest distance to a closed wall polyline, including segment interiors."""
-    starts = np.asarray(wall, dtype=np.float64)
-    vectors = np.roll(starts, -1, axis=0) - starts
-    squared_lengths = np.sum(vectors * vectors, axis=1)
+    return _closed_wall_distances(np.asarray(points, dtype=np.float64),
+                                  np.asarray(wall, dtype=np.float64))
+
+
+@njit(cache=True)
+def _closed_wall_distances(points, wall):
+    """Exact segment search without per-corner arrays proportional to map size."""
+    if len(wall) == 0:
+        raise ValueError("Cannot measure distance to an empty wall")
+    vectors = np.empty_like(wall)
+    squared_lengths = np.zeros(len(wall))
+    for segment in range(len(wall)):
+        for axis in range(wall.shape[1]):
+            value = wall[(segment + 1) % len(wall), axis] - wall[segment, axis]
+            vectors[segment, axis] = value
+            squared_lengths[segment] += value * value
     distances = np.empty(len(points), dtype=np.float32)
-    for index, point in enumerate(points):
-        relative = point - starts
-        fractions = np.divide(np.sum(relative * vectors, axis=1), squared_lengths,
-                              out=np.zeros(len(starts)), where=squared_lengths > 0)
-        residual = relative - np.clip(fractions, 0.0, 1.0)[:, None] * vectors
-        distances[index] = np.sqrt(np.min(np.sum(residual * residual, axis=1)))
+    for index in range(len(points)):
+        best = np.inf
+        for segment in range(len(wall)):
+            dot = 0.
+            for axis in range(wall.shape[1]):
+                dot += (points[index, axis] - wall[segment, axis]) * vectors[segment, axis]
+            fraction = dot / squared_lengths[segment] if squared_lengths[segment] > 0 else 0.
+            fraction = min(1., max(0., fraction))
+            squared_distance = 0.
+            for axis in range(wall.shape[1]):
+                residual = (points[index, axis] - wall[segment, axis]
+                            - fraction * vectors[segment, axis])
+                squared_distance += residual * residual
+            if np.isnan(squared_distance):
+                best = squared_distance
+                break
+            best = min(best, squared_distance)
+        distances[index] = np.sqrt(best)
     return distances
 
 

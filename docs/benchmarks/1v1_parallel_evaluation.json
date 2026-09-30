@@ -1,0 +1,262 @@
+{
+  "date": "2026-09-30",
+  "base_commit": "26be402917e815e030643566db6889bf442a8254",
+  "hardware": {
+    "cpu": "Intel(R) Xeon(R) Silver 4214 CPU @ 2.20GHz",
+    "policy_gpu": "Quadro RTX 5000",
+    "torch_threads": 1
+  },
+  "scope": "Local bounded probes, not measurements of the 128-core HPC allocation. Working-tree parallel evaluation and exact wall-distance optimization applied.",
+  "evaluation": {
+    "scenario": "scenarios/mappo_1v1_attack.yaml",
+    "actor": "outputs/pretrain/best_model2.pt",
+    "episodes": 8,
+    "max_steps": 128,
+    "protocol": "selection seeds 10042..10049; all eight configured maps; episode-indexed spawns",
+    "command": "venv/bin/python scripts/benchmark_mappo_evaluation.py --workers 1 8 --max-steps 128 --repetitions 2",
+    "measurements": [
+      {
+        "workers": 1,
+        "iteration": 0,
+        "seconds": 48.5326918179926,
+        "physics_steps": 781,
+        "matches_serial": true
+      },
+      {
+        "workers": 1,
+        "iteration": 1,
+        "seconds": 48.00003947100777,
+        "physics_steps": 781,
+        "matches_serial": true
+      },
+      {
+        "workers": 1,
+        "iteration": 2,
+        "seconds": 46.92696236500342,
+        "physics_steps": 781,
+        "matches_serial": true
+      },
+      {
+        "workers": 8,
+        "iteration": 0,
+        "seconds": 13.494325463005225,
+        "physics_steps": 781,
+        "matches_serial": true
+      },
+      {
+        "workers": 8,
+        "iteration": 1,
+        "seconds": 8.505064144002972,
+        "physics_steps": 781,
+        "matches_serial": true
+      },
+      {
+        "workers": 8,
+        "iteration": 2,
+        "seconds": 8.773421701000188,
+        "physics_steps": 781,
+        "matches_serial": true
+      }
+    ],
+    "all_summaries_identical": true,
+    "warm_speedup": 5.493942159489833
+  },
+  "geometry": {
+    "method": "Two alternating reference/compiled comparisons using scripts.benchmark_mpc_traffic.benchmark with seed 42, 20 warmup decisions, 200 timed decisions and a stationary learner. Both env.attack and utils.track_preview used the selected distance function. Full MPC settings retained.",
+    "identical_actions_and_states": true,
+    "measurements": [
+      {
+        "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack.yaml",
+        "seed": 42,
+        "scenario_sha256": "5e4952b65247fcc06683612b96cf7b9f58c8864790dc89f2671a3ef66aee05be",
+        "steps": 200,
+        "warmup": 20,
+        "resets": 0,
+        "render": false,
+        "setup_seconds": 1.3697882429987658,
+        "measured_wall_seconds": 7.371359605007456,
+        "reset_seconds": 0.0,
+        "measured_steps_per_second": 27.132036790626458,
+        "controller_and_physics_steps_per_second": 27.140628189921085,
+        "mean_ms": {
+          "car_1": 25.945903954925598,
+          "env.step": 10.899227005284047
+        },
+        "p95_ms": {
+          "car_1": 64.634914657654,
+          "env.step": 11.52869025900145
+        },
+        "actions_sha256": "cfe08ab75325ecf8e4facf8953293724e83df0da9f21b29f9d7ec6211f6ce640",
+        "states_sha256": "5fadde72c36e06d81d79a229431030d91041c00e9be991b6dead45601d8ed8d2",
+        "geometry": "vectorized",
+        "repetition": 0
+      },
+      {
+        "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack.yaml",
+        "seed": 42,
+        "scenario_sha256": "5e4952b65247fcc06683612b96cf7b9f58c8864790dc89f2671a3ef66aee05be",
+        "steps": 200,
+        "warmup": 20,
+        "resets": 0,
+        "render": false,
+        "setup_seconds": 0.42627657200500835,
+        "measured_wall_seconds": 6.210635166004067,
+        "reset_seconds": 0.0,
+        "measured_steps_per_second": 32.20282542029921,
+        "controller_and_physics_steps_per_second": 32.21340656146522,
+        "mean_ms": {
+          "car_1": 25.712215110106627,
+          "env.step": 5.330760679862578
+        },
+        "p95_ms": {
+          "car_1": 64.55589409888488,
+          "env.step": 5.898869447264586
+        },
+        "actions_sha256": "cfe08ab75325ecf8e4facf8953293724e83df0da9f21b29f9d7ec6211f6ce640",
+        "states_sha256": "5fadde72c36e06d81d79a229431030d91041c00e9be991b6dead45601d8ed8d2",
+        "geometry": "compiled",
+        "repetition": 0
+      },
+      {
+        "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack.yaml",
+        "seed": 42,
+        "scenario_sha256": "5e4952b65247fcc06683612b96cf7b9f58c8864790dc89f2671a3ef66aee05be",
+        "steps": 200,
+        "warmup": 20,
+        "resets": 0,
+        "render": false,
+        "setup_seconds": 1.1747336169937626,
+        "measured_wall_seconds": 7.280555489996914,
+        "reset_seconds": 0.0,
+        "measured_steps_per_second": 27.4704313805161,
+        "controller_and_physics_steps_per_second": 27.478815890441858,
+        "mean_ms": {
+          "car_1": 25.68337518023327,
+          "env.step": 10.708294824289624
+        },
+        "p95_ms": {
+          "car_1": 64.47103650425561,
+          "env.step": 11.347527644102229
+        },
+        "actions_sha256": "cfe08ab75325ecf8e4facf8953293724e83df0da9f21b29f9d7ec6211f6ce640",
+        "states_sha256": "5fadde72c36e06d81d79a229431030d91041c00e9be991b6dead45601d8ed8d2",
+        "geometry": "vectorized",
+        "repetition": 1
+      },
+      {
+        "scenario": "/home/ahoop004/F110_MARL/scenarios/mappo_1v1_attack.yaml",
+        "seed": 42,
+        "scenario_sha256": "5e4952b65247fcc06683612b96cf7b9f58c8864790dc89f2671a3ef66aee05be",
+        "steps": 200,
+        "warmup": 20,
+        "resets": 0,
+        "render": false,
+        "setup_seconds": 0.42136979498900473,
+        "measured_wall_seconds": 6.245383725006832,
+        "reset_seconds": 0.0,
+        "measured_steps_per_second": 32.02365279801622,
+        "controller_and_physics_steps_per_second": 32.034040591007255,
+        "mean_ms": {
+          "car_1": 25.8879666505527,
+          "env.step": 5.328825909818988
+        },
+        "p95_ms": {
+          "car_1": 65.57197974834705,
+          "env.step": 5.785970605211332
+        },
+        "actions_sha256": "cfe08ab75325ecf8e4facf8953293724e83df0da9f21b29f9d7ec6211f6ce640",
+        "states_sha256": "5fadde72c36e06d81d79a229431030d91041c00e9be991b6dead45601d8ed8d2",
+        "geometry": "compiled",
+        "repetition": 1
+      }
+    ],
+    "throughput_ratio": 1.1762559526981085
+  },
+  "collection": {
+    "method": "One repetition per scheduler, eight environments in four workers, horizon 64, three rounds / 1536 decisions, real full pretrained actor and default optimizer. Evaluation disabled. Rates exclude the first round. Different scheduling changes stochastic trajectories.",
+    "measurements": [
+      {
+        "workers": 4,
+        "num_envs": 8,
+        "scheduling": "synchronous",
+        "repetition": 0,
+        "command": [
+          "/home/ahoop004/F110_MARL/venv/bin/python",
+          "/home/ahoop004/F110_MARL/run.py",
+          "--scenario",
+          "scenarios/mappo_1v1_attack.yaml",
+          "--num-envs",
+          "8",
+          "--num-workers",
+          "4",
+          "--collector-scheduling",
+          "synchronous",
+          "--rollout-steps-per-env",
+          "64",
+          "--total-steps",
+          "1536",
+          "--seed",
+          "42",
+          "--torch-threads",
+          "1",
+          "--no-render",
+          "--no-wandb",
+          "--quiet",
+          "--output-dir",
+          "/tmp/f110_collectors_zh2hy08x/w4_synchronous_r0",
+          "--set",
+          "evaluation.enabled=false"
+        ],
+        "process_wall_seconds": 49.987229682010366,
+        "startup_seconds": 4.49012241300079,
+        "measured_rounds": 2,
+        "measured_steps": 1024.0,
+        "collection_steps_per_second": 37.66885445065529,
+        "round_steps_per_second": 37.538210205576654,
+        "update_seconds": 0.09460939500422683,
+        "output_dir": "/tmp/f110_collectors_zh2hy08x/w4_synchronous_r0"
+      },
+      {
+        "workers": 4,
+        "num_envs": 8,
+        "scheduling": "ready",
+        "repetition": 0,
+        "command": [
+          "/home/ahoop004/F110_MARL/venv/bin/python",
+          "/home/ahoop004/F110_MARL/run.py",
+          "--scenario",
+          "scenarios/mappo_1v1_attack.yaml",
+          "--num-envs",
+          "8",
+          "--num-workers",
+          "4",
+          "--collector-scheduling",
+          "ready",
+          "--rollout-steps-per-env",
+          "64",
+          "--total-steps",
+          "1536",
+          "--seed",
+          "42",
+          "--torch-threads",
+          "1",
+          "--no-render",
+          "--no-wandb",
+          "--quiet",
+          "--output-dir",
+          "/tmp/f110_collectors_zh2hy08x/w4_ready_r0",
+          "--set",
+          "evaluation.enabled=false"
+        ],
+        "process_wall_seconds": 38.94495806400664,
+        "startup_seconds": 4.598406072997022,
+        "measured_rounds": 2,
+        "measured_steps": 1024.0,
+        "collection_steps_per_second": 56.609032938740164,
+        "round_steps_per_second": 56.3132241859394,
+        "update_seconds": 0.09501996099425014,
+        "output_dir": "/tmp/f110_collectors_zh2hy08x/w4_ready_r0"
+      }
+    ]
+  }
+}
