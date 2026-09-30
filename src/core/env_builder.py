@@ -117,6 +117,8 @@ def build_env_kwargs(
         "terminal_agents",
         "respawn",
         "attack_task",
+        "skill_task",
+        "skill_stages",
         "respawn_agents",
         "respawn_on_vehicle_collision",
         "agent_teams",

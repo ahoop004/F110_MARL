@@ -35,10 +35,12 @@ class EpisodeOutcome(Enum):
     TARGET_FINISH = "target_finish"
     FINISHED = "finished"
     TRACK_BOUNDARY = "track_boundary"
+    SKILL_SUCCESS = "skill_success"
+    SKILL_FAILURE = "skill_failure"
 
     def is_success(self) -> bool:
         """Check if outcome represents attacker success."""
-        return self in {EpisodeOutcome.TARGET_CRASH, EpisodeOutcome.FINISHED}
+        return self in {EpisodeOutcome.TARGET_CRASH, EpisodeOutcome.FINISHED, EpisodeOutcome.SKILL_SUCCESS}
 
     def is_failure(self) -> bool:
         """Check if outcome represents attacker failure."""
@@ -76,6 +78,11 @@ def determine_outcome(info: Dict[str, Any], truncated: bool = False) -> EpisodeO
         >>> determine_outcome(info)
         <EpisodeOutcome.COLLISION: 'collision'>
     """
+    skill = info.get('skill')
+    if skill is not None and skill.get('done'):
+        if skill['outcome'] == 'timeout':
+            return EpisodeOutcome.TIMEOUT
+        return EpisodeOutcome.SKILL_SUCCESS if skill['success'] else EpisodeOutcome.SKILL_FAILURE
     terminal_reason = info.get("terminal_reason")
     if terminal_reason == "track_boundary":
         return EpisodeOutcome.TRACK_BOUNDARY

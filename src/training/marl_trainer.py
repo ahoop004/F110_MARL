@@ -255,7 +255,12 @@ class MARLTrainer:
         collected, episode = 0, 0
         started_training = time.perf_counter()
         while (collected < total_steps if total_steps is not None else episode < n_episodes):
+            curriculum = getattr(self.agent, 'skill_curriculum_state', None)
+            if curriculum is not None:
+                self.env.set_skill_stage(curriculum['stage'])
             obs_dict, info_dict = self.env.reset()
+            from env.skills import reset_skill_opponent
+            reset_skill_opponent(self.env, self.other_agents)
             for controller in self.other_agents.values():
                 if hasattr(controller, "reset"):
                     controller.reset()

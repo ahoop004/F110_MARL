@@ -16,7 +16,8 @@ from metrics.racing_eval import (
 
 class DeterministicMAPPOEvaluator:
     def __init__(self, *, env, trainable_ids, other_agents, obs_composers,
-                 action_composer, episodes, base_seed, action_repeat=1, focal_agent_id=None):
+                 action_composer, episodes, base_seed, action_repeat=1, focal_agent_id=None,
+                 protocol_name='selection'):
         self.env = env
         self.trainable_ids = list(trainable_ids)
         if env.max_steps <= 0:
@@ -34,6 +35,7 @@ class DeterministicMAPPOEvaluator:
         self.actions = {aid: deepcopy(action_composer) for aid in trainable_ids}
         self.episodes = int(episodes)
         self.base_seed = int(base_seed)
+        self.protocol_name = protocol_name
         self.action_repeat = int(action_repeat)
         self.recording = None
         self.progress_callback = None
@@ -77,7 +79,7 @@ class DeterministicMAPPOEvaluator:
         raw_actions = deepcopy(self.agent.last_raw_actions)
         self.agent.actor.eval()
         results, by_map, physics_episodes, episode_records = [], {}, [], []
-        protocol = dict(name='selection', seeds=list(range(self.base_seed, self.base_seed+self.episodes)),
+        protocol = dict(name=self.protocol_name, seeds=list(range(self.base_seed, self.base_seed+self.episodes)),
             max_steps=self.env.max_steps, timestep_s=self.env.timestep,
             target_laps=getattr(self.env, 'target_laps', None), action_repeat=self.action_repeat)
         try:
@@ -85,6 +87,8 @@ class DeterministicMAPPOEvaluator:
                 for episode in range(self.episodes):
                     obs, infos = self.env.reset(seed=self.base_seed + episode,
                                                options={"map_episode_index": episode})
+                    from env.skills import reset_skill_opponent
+                    reset_skill_opponent(self.env, self.other_agents)
                     spawn_context = capture_spawn_context(self.env, self.env.possible_agents)
                     record_context = self.recording.start(episode, infos, protocol=protocol) if self.recording else {}
                     for item in [*self.obs_composers.values(), *self.actions.values(),
@@ -134,6 +138,8 @@ class DeterministicMAPPOEvaluator:
                             if aid not in respawned:
                                 self.obs_composers[aid].update_prev_action(normalized[aid])
                         self._report_progress(facts, episode, steps)
+                        if getattr(self, 'render', False):
+                            self.env.render()
                     if self.recording:
                         self.recording.end()
                     result = finalize_episode_facts(facts)
@@ -170,7 +176,7 @@ class DeterministicMAPPOEvaluator:
                               for name, rows in by_map.items()}
         summary["episode_results"] = episode_records
         summary["evaluation_protocol"] = {
-            "name": "selection", "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
+            "name": self.protocol_name, "seeds": list(range(self.base_seed, self.base_seed + self.episodes)),
             "max_steps": self.env.max_steps, "timestep_s": self.env.timestep,
             "target_laps": getattr(self.env, "target_laps", None),
             "action_repeat": self.action_repeat,

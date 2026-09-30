@@ -632,7 +632,7 @@ def main() -> None:
             output_dir=output_dir,
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
             provenance=provenance,
-            save_best_training_reward=not evaluation_selection_enabled,
+            save_best_training_reward=not evaluation_selection_enabled and not scenario.get('skill_curriculum'),
             save_final=algorithm == "mappo",
             save_every_steps=(int(params.get("checkpoint_every_steps", 4096000))
                               if exp_cfg.get("total_steps") is not None or
@@ -1049,6 +1049,28 @@ def _run_eval(
     output_dir.mkdir(parents=True, exist_ok=True)
     evaluation_provenance = build_run_provenance(scenario, scenario_path=args.scenario,
         run_id=run_id, algorithm=algorithm, trainable_agents=trainable_ids)
+    if provenance_scenario.get('skill_curriculum'):
+        from training.skill_evaluator import SkillEvaluator
+        if args.eval_episodes is not None:
+            env.close()
+            raise ValueError('Skill suites use per-stage evaluation_episodes_per_map and retention.episodes_per_map; do not override --eval-episodes')
+        evaluator = None
+        try:
+            evaluator = SkillEvaluator(scenario=provenance_scenario, scenario_dir=scenario_dir,
+                agent=agent, output_dir=output_dir, protocol=protocol_name or 'selection', render=render)
+            summary = evaluator.evaluate_final() if protocol_name == 'final' else evaluator.evaluate()
+            report = dict(checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash,
+                checkpoint_provenance=stored_provenance, provenance_mismatches=mismatches,
+                evaluation_provenance=evaluation_provenance, protocol=protocol_name or 'selection',
+                environment_steps=checkpoint_steps, summary=summary)
+            (output_dir / 'evaluation_report.json').write_text(json.dumps(report, indent=2) + '\n')
+            console.print_info(f"Skill success={summary['skill_success_rate']:.1%}, "
+                f"retention={'passed' if summary['retention_passed'] else 'failed'}; report: {output_dir / 'evaluation_report.json'}")
+        finally:
+            if evaluator is not None:
+                evaluator.close()
+            env.close()
+        return
     recorded_protocol = dict(name=protocol_name or 'custom', seeds=list(range(base_seed, base_seed+eval_episodes)),
         max_steps=env.max_steps, target_laps=getattr(env, 'target_laps', None),
         timestep_s=env.timestep, action_repeat=action_repeat)
@@ -2023,6 +2045,12 @@ def _run_mappo(
             f"actor_trainable={trainable}/{total}; centralized critic fully trainable"
         )
 
+    skill_curriculum = None
+    if (scenario or {}).get('skill_curriculum'):
+        from training.skill_curriculum import SkillCurriculum
+        skill_curriculum = SkillCurriculum(scenario['skill_curriculum'])
+        agent.skill_curriculum_state = skill_curriculum.state_dict()
+
     # Wire checkpoint hook (same pattern as single-agent trainers)
     for hook in hooks:
         if hasattr(hook, "_agent") and hook._agent is None:
@@ -2057,7 +2085,7 @@ def _run_mappo(
     console.print_info(
         f"Experiment={exp_cfg.get('name')} train_maps={env_cfg.get('map_bundles_train')} "
         f"eval_maps={env_cfg.get('map_bundles_eval')} seed={exp_cfg.get('seed')} "
-        f"training_mode={'finite' if env.lifecycle.finish_on_laps else 'continuous'}; "
+        f"training_mode={'skill' if skill_curriculum is not None else 'finite' if env.lifecycle.finish_on_laps else 'continuous'}; "
         "env_steps count joint decisions; agent_steps count learner transitions; physics_steps count simulator steps.")
     console.print_info(
         f"Starting MAPPO training for {budget} "
@@ -2073,7 +2101,15 @@ def _run_mappo(
     )
     evaluator = None
     eval_cfg = (scenario or {}).get("evaluation", {}) or {}
-    if eval_cfg.get("enabled", False):
+    if skill_curriculum is not None and eval_cfg.get('enabled', False):
+        from training.skill_evaluator import SkillEvaluator
+        evaluator = SkillEvaluator(scenario=scenario, scenario_dir=scenario_dir, agent=agent,
+            output_dir=output_dir, curriculum=skill_curriculum)
+        trainer.hooks.append(EvaluationCheckpointHook(agent, str(output_dir), evaluator,
+            evaluate_every=int(eval_cfg.get('every_episodes', 100)), selection_strategy='skill',
+            evaluate_every_steps=eval_cfg.get('every_steps'), provenance=provenance,
+            console=console, wandb_logger=wandb_logger))
+    elif eval_cfg.get("enabled", False):
         from training.mappo_evaluator import DeterministicMAPPOEvaluator
         import torch
 
@@ -2137,6 +2173,9 @@ def _run_mappo(
     finally:
         if evaluator is not None:
             evaluator.close()
+
+    if skill_curriculum is not None and not (Path(output_dir) / 'best_model.pt').exists():
+        console.print_info('No retention-qualified adapter was selected. Ordinary checkpoints remain available; see evaluation_history.jsonl when evaluation is enabled.')
 
 
 if __name__ == "__main__":

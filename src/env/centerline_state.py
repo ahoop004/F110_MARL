@@ -179,6 +179,14 @@ class CenterlineProgressTracker:
     def closed(self) -> bool:
         return self._geometry.closed if self._geometry is not None else False
 
+    def prepare_geometry(self, centerline):
+        """Make current-map arc geometry available before vehicles are spawned."""
+        if self._geometry is None or self._geometry_source is not centerline:
+            self._geometry = prepare_centerline_geometry(centerline)
+            self._geometry_source = centerline
+            self.reset()
+        return self._geometry
+
     def update(
         self,
         centerline: np.ndarray,
@@ -193,12 +201,7 @@ class CenterlineProgressTracker:
         result: Dict[str, Dict[str, float]] = {}
         if centerline is None or centerline.ndim != 2 or centerline.shape[0] < 2:
             return result
-        if self._geometry is None or self._geometry_source is not centerline:
-            self._geometry = prepare_centerline_geometry(centerline)
-            self._geometry_source = centerline
-            for aid in self._agent_ids:
-                self._last_indices[aid] = -1
-                self._prev_progress[aid] = -1.0
+        self.prepare_geometry(centerline)
 
         for aid in self._agent_ids:
             idx = agent_index.get(aid)

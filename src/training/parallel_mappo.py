@@ -262,6 +262,8 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
             connection.send(("rollout", (pooled, sum(counts.values()), physics, sink.take())))
             metrics = connection.recv()  # Policy update barrier, including an empty final rollout.
             for agent in agents.values():
+                if 'skill_curriculum' in metrics:
+                    agent.skill_curriculum_state = metrics['skill_curriculum']
                 agent.policy_version = metrics["train/updates"]
                 agent.recording_stop = metrics.get('recording/storage_full', False)
                 agent.recording_progress = metrics['train/environment_steps']
@@ -508,6 +510,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 if steps:
                     for hook in trainer.hooks:
                         hook.on_update(metrics)
+                if getattr(agent, 'skill_curriculum_state', None) is not None:
+                    metrics['skill_curriculum'] = agent.skill_curriculum_state
                 for worker_id in waiting:
                     connections[worker_id].send(metrics)
                 waiting.clear()

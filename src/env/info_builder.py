@@ -15,6 +15,7 @@ MINIMAL_INFO_KEYS = {
     "target_id",
     "target_respawned",
     "attack",
+    "skill", "skill_spawn",
     "respawned", "respawn_reason", "boundary_event",
     "lap_start_step", "lap_time_steps",
     "track_limits",
@@ -57,7 +58,8 @@ STABLE_STEP_INFO_KEYS: frozenset = frozenset(
         "terminal_reason",   # str | None — immutable terminal cause
         "terminal_step",     # int | None — first terminal simulator step
         "finish_position",   # int | None — immutable one-based order
-        "status",            # str — active/finished/crashed/truncated
+        "status",            # str — active/finished/crashed/truncated/task_complete
+        "skill",             # dict — authoritative tactical task facts, when enabled
         "target_lap_count",
         "target_race_completed",
         "target_terminal_reason",

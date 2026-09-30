@@ -37,6 +37,12 @@ Both load `outputs/pretrain/best_model2.pt`, default to equal vehicle/command li
 and respawn crashed targets ahead of the surviving attacker. See
 [the attack setup](docs/1v1_attack.md) for commands and task/evaluation semantics.
 
+Independent passing and defending LoRA scenarios are available as
+`scenarios/mappo_1v1_pass_lora.yaml` and `scenarios/mappo_1v1_defend_lora.yaml`.
+They train against racing MPC with automatic circle-to-eight-map curricula and
+require paired solo lap retention for checkpoint selection. See
+[skill adapter training](docs/skill_adapters.md) for tasks, evaluation and smoke runs.
+
 Use `--max-speed VALUE` with any positive finite value to give learners and MPCs
 a shared forward speed limit in m/s. The equivalent YAML setting is
 `environment.max_speed: 10`, also available as `--set environment.max_speed=10`.

@@ -114,6 +114,8 @@ def create_training_setup(
     # Extract configuration sections
     experiment_config = scenario['experiment']
     env_config = dict(scenario['environment'])
+    if scenario.get('skill_curriculum'):
+        env_config['skill_stages'] = scenario['skill_curriculum']['stages']
     env_config = apply_map_split(env_config, experiment_config, mode)
     env_config["physics_phase"] = "eval" if mode in {"eval", "evaluation", "test"} else "train"
     evaluation = scenario.get("evaluation", {}) or {}
@@ -154,6 +156,8 @@ def create_training_setup(
             centerline_render=bool(env_config.get("centerline_render", False)),
         )
         env_config["feature_requirements"] = requirements.as_dict()
+        if env_config.get('skill_task'):
+            env_config['feature_requirements']['centerline_progress_agents'] = list(agent_configs)
         geometry_required = bool(
             requirements.requires_centerline_facts
             or requirements.requires_track_preview

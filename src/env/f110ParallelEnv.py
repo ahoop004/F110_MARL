@@ -60,6 +60,7 @@ from env.state_buffer import (
 from env.types import AgentRaceStatus, AgentState, GlobalState
 from env.respawn import validate_respawn, sample_ahead_pose
 from env.attack import AttackTracker, MultiTargetAttackTracker, attack_geometry, validate_attack
+from env.skills import SkillTracker, validate_skill_task, sample_skill_spawn
 from utils.centerline import project_to_centerline
 from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
@@ -240,7 +241,8 @@ class F110ParallelEnv:
         self.track_limits_enabled = bool(limits_cfg.get("enabled", False))
         self.terminate_on_track_boundary = bool(limits_cfg.get("terminate", True))
         if (self.track_limits_enabled and self.terminate_on_track_boundary
-                and self.n_agents != 1 and not merged.get("respawn_agents") and not merged.get("respawn")):
+                and self.n_agents != 1 and not merged.get("respawn_agents") and not merged.get("respawn")
+                and not merged.get('skill_task')):
             raise ValueError("Track-limit time trials require one vehicle")
         preview_cfg = merged.get("track_preview", {}) or {}
         self._track_preview_points = max(int(preview_cfg.get("points", 20)), 1)
@@ -313,6 +315,14 @@ class F110ParallelEnv:
         self._respawn_config = recovery
         attack = validate_attack(merged.get("attack_task"), self.possible_agents)
         self._attack_tracker = None
+        skill = validate_skill_task(merged.get('skill_task'), self.possible_agents)
+        self._skill_tracker = SkillTracker(skill) if skill else None
+        self._skill_stages = merged.get('skill_stages', [])
+        self._skill_stage = None
+        self._pending_skill_stage = 0
+        self.skill_spawn = None
+        if skill and not self._skill_stages:
+            raise ValueError('skill_task requires skill_curriculum stages')
         if attack:
             tracker_type = MultiTargetAttackTracker if "target_ids" in attack else AttackTracker
             self._attack_tracker = tracker_type(attack)
@@ -812,6 +822,12 @@ class F110ParallelEnv:
             return
         self.start_poses = np.asarray(poses, dtype=np.float32)
 
+    def set_skill_stage(self, index):
+        """Queue a curriculum change; never alter an episode already in flight."""
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(self._skill_stages):
+            raise ValueError('Invalid skill stage index')
+        self._pending_skill_stage = index
+
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
         """Reset; seeded map cycles restart unless map_episode_index is supplied."""
         map_episode_index = (options or {}).get("map_episode_index", 0)
@@ -822,6 +838,13 @@ class F110ParallelEnv:
             or (seed is None and "map_episode_index" in (options or {}))
         ):
             raise ValueError("map_episode_index requires an explicit seed and a nonnegative integer")
+        if self._skill_tracker is not None:
+            if 'skill_stage' in (options or {}):
+                self.set_skill_stage(options['skill_stage'])
+            if self._skill_stage != self._pending_skill_stage:
+                self._skill_stage = self._pending_skill_stage
+                self._map_scheduler.set_bundles(self._skill_stages[self._skill_stage]['maps'],
+                    split='eval' if self._map_split_mode == 'eval' else 'train')
         self._invalidate_global_state_cache()
         self._global_state_metadata = None
         self.last_step_facts = None
@@ -879,6 +902,17 @@ class F110ParallelEnv:
         if isinstance(options, dict) and "spawn_plan" in options:
             _spawn_plan = options["spawn_plan"]
 
+        if self._skill_tracker is not None:
+            if any(key in (options or {}) for key in ('spawn_plan', 'poses', 'velocities')):
+                raise ValueError('Skill starts are configured through skill_curriculum stages')
+            poses, velocities, self.skill_spawn = sample_skill_spawn(
+                geometry=self._centerline_progress_tracker.prepare_geometry(self.centerline_points), walls=self.walls,
+                rng=self.rng, stage=self._skill_stages[self._skill_stage],
+                task=self._skill_tracker.config, agent_ids=self.possible_agents,
+                length=self.params['length'], width=self.params['width'])
+            self.skill_spawn['stage_index'] = self._skill_stage
+            options = {**(options or {}), 'poses': poses, 'velocities': velocities}
+
         spawn_result = self._spawn_manager.resolve(
             options,
             centerline=self.centerline_points,
@@ -921,6 +955,12 @@ class F110ParallelEnv:
             info_level=self.info_level,
         )
         self._update_centerline_observation_facts(infos)
+        if self._skill_tracker is not None:
+            ego = self._skill_tracker.config['ego_id']
+            self._skill_tracker.reset(-infos[ego]['target_frenet']['delta_s'])
+            infos[ego]['skill'] = self._skill_tracker.facts()
+            infos[ego]['skill'].update(stage_index=self._skill_stage, stage=self.skill_spawn['stage'])
+            infos[ego]['skill_spawn'] = dict(self.skill_spawn)
         self._attach_physics_metadata(infos)
         self._attach_central_state(obs)
         self._refresh_render_observations(obs)
@@ -1084,12 +1124,24 @@ class F110ParallelEnv:
             infos[aid]["boundary_event"] = True
 
         trunc_flag = self.max_steps > 0 and self._elapsed_steps + 1 >= self.max_steps
+        if self._skill_tracker is not None:
+            ego = self._skill_tracker.config['ego_id']
+            facts = self._skill_tracker.update(time=self.current_time, infos=infos,
+                collisions=dict(zip(self.possible_agents, map(bool, collision_array))),
+                track_length=self.centerline_track_length, timed_out=trunc_flag)
+            infos[ego]['skill'] = facts
+            facts.update(stage_index=self._skill_stage, stage=self.skill_spawn['stage'])
+            infos[ego]['skill_spawn'] = dict(self.skill_spawn)
+            if facts['done'] and facts['outcome'] != 'timeout':
+                self.lifecycle.complete_skill(success=facts['success'], step=self._elapsed_steps)
+            elif facts['done']:
+                trunc_flag = True
         if trunc_flag:
             self.lifecycle.truncate_active(step=self._elapsed_steps)
 
         terminations = {
             aid: self.lifecycle.records[aid].status
-            in {AgentRaceStatus.FINISHED, AgentRaceStatus.CRASHED}
+            in {AgentRaceStatus.FINISHED, AgentRaceStatus.CRASHED, AgentRaceStatus.TASK_COMPLETE}
             for aid in self.possible_agents
         }
         truncations = {

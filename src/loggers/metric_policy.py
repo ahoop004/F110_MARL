@@ -14,6 +14,7 @@ AXES = {
 }
 
 CORE = (
+    "episode/skill/*", "eval/skill_*", "eval/retention_*", "eval/base_skill_*", "eval/curriculum_*",
     "episode/reward", "episode/steps", "episode/lap_count", "episode/lap_time_s",
     "episode/completed", "episode/failed", "episode/timeout", "episode/net_progress_laps",
     "episode/reward/*", "episode/individual_reward/*",

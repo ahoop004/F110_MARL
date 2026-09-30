@@ -114,7 +114,13 @@ class ConsoleHook(TrainingHook):
             agent_rewards = metrics.get("agent_rewards") if isinstance(metrics, dict) else None
             attacks = [a for a in metrics.get("race_record", {}).get("agents", {}).values()
                        if a.get("team") == "trainable" and "attack_successes" in a]
-            if attacks and len(agent_rewards or {}) == 1:
+            skills = [a['skill'] for a in metrics.get('race_record', {}).get('agents', {}).values() if 'skill' in a]
+            if skills:
+                fact = skills[0]
+                self._log.print_info(f"ep {episode:>6}  reward={reward:+.2f}  stage={fact['stage']} "
+                    f"skill={fact['skill']} outcome={fact['outcome']} "
+                    f"progress_m={fact['ego_progress']:.2f} lead_m={fact['ego_lead']:.2f}")
+            elif attacks and len(agent_rewards or {}) == 1:
                 self._log.print_info(
                     f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  "
                     f"attacks={sum(a['attack_successes'] for a in attacks)}  "
@@ -215,7 +221,12 @@ class MAPPOConsoleHook(TrainingHook):
             text += f" return={number('training_return')}"
             attacks = [a for r in rows for a in r["agents"].values()
                        if a.get("team") == "trainable" and "attack_successes" in a]
-            if attacks:
+            skills = [a['skill'] for r in rows for a in r['agents'].values() if 'skill' in a]
+            if skills:
+                text += (f" skill_success={np.mean([s['success'] for s in skills]):.1%} "
+                         f"ego_failure={np.mean([s['ego_failed'] for s in skills]):.1%} "
+                         f"progress_m={np.mean([s['ego_progress'] for s in skills]):.2f}")
+            elif attacks:
                 text += (f" attacks/ep={sum(a['attack_successes'] for a in attacks) / len(rows):.2f} "
                          f"ego_failure={np.mean([a['attack_ego_failed'] for a in attacks]):.1%} "
                          f"progress_laps={number('mean_net_progress_laps')}")
@@ -299,6 +310,13 @@ class WandbHook(TrainingHook):
             log["episode/failed"] = float(reasons[0] in {"collision", "track_boundary"}
                                            or outcomes[0] in {"self_crash", "collision", "track_boundary"})
             log["episode/timeout"] = float(reasons[0] == "time_limit" or outcomes[0] == "timeout")
+        skills = [f['skill'] for f in learners.values() if 'skill' in f]
+        if skills:
+            for key in ('success', 'ego_failed', 'ego_progress', 'lead_retention'):
+                log[f'episode/skill/{key}'] = float(np.mean([s[key] for s in skills]))
+            times = [s['pass_time_s'] for s in skills if s['pass_time_s'] is not None]
+            if times:
+                log['episode/skill/pass_time_s'] = float(np.mean(times))
         attacks = [f for f in learners.values() if "attack_successes" in f]
         if attacks:
             for key in ("attack_successes", "attack_target_crashes", "attack_eligible_crashes"):
@@ -503,7 +521,7 @@ class EvaluationCheckpointHook(CheckpointHook):
         selection_strategy: str = "completion_safety",
         evaluate_every_steps: Optional[int] = None,
     ) -> None:
-        if selection_strategy not in {"racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
+        if selection_strategy not in {"skill", "racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties"}:
             raise ValueError(f"Unknown checkpoint selection strategy: {selection_strategy!r}")
         self._selection_strategy = selection_strategy
         super().__init__(
@@ -532,6 +550,8 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_priority(strategy):
+        if strategy == 'skill':
+            return 'retention required; equal-stage skill success > fewer ego failures > pass time or defense progress'
         if strategy == "racer_attack":
             return "racer completion > both learners finish > fewer learner failures > attack score > racer finish time/progress"
         if strategy == "attack":
@@ -546,6 +566,9 @@ class EvaluationCheckpointHook(CheckpointHook):
 
     @staticmethod
     def selection_score(summary: Dict[str, Any], strategy: str = "completion_safety") -> tuple[float, ...]:
+        if strategy == 'skill':
+            return (float(summary['skill_success_rate']), -float(summary['skill_ego_failure_rate']),
+                    float(summary['skill_tiebreak']))
         if strategy == "racer_attack":
             finish = summary.get("focal_mean_clean_finish_time_s")
             tie = -float(finish) if summary["focal_completion_rate"] == 1. and finish is not None else float(summary["focal_mean_net_progress"])
@@ -651,7 +674,8 @@ class EvaluationCheckpointHook(CheckpointHook):
                        policy_version=self._policy_version,
                        reported_at_environment_steps=self._environment_steps)
         score = self.selection_score(summary, self._selection_strategy)
-        is_best = self._best_score is None or score > self._best_score
+        is_best = (summary.get('retention_passed', True) and
+                   (self._best_score is None or score > self._best_score))
         record = {
             "training_episode": completed_episodes,
             "run_id": run_id,
@@ -680,7 +704,14 @@ class EvaluationCheckpointHook(CheckpointHook):
             scalar_metrics["eval/environment_steps"] = self._environment_steps
             self._wandb.log_metrics(scalar_metrics)
 
-        if self._console is not None and self._selection_strategy == "attack":
+        if self._console is not None and self._selection_strategy == 'skill':
+            self._console.print_info(
+                f"skill eval steps={self._environment_steps} success={summary['skill_success_rate']:.1%} "
+                f"ego_failure={summary['skill_ego_failure_rate']:.1%} "
+                f"retention={'passed' if summary['retention_passed'] else 'failed'} "
+                f"stage={summary.get('curriculum_stage', 0) + 1} "
+                f"checkpoint={'saved best' if is_best else 'no qualifying best' if self._best_score is None else 'kept previous'}")
+        elif self._console is not None and self._selection_strategy == "attack":
             self._console.print_info(
                 f"attack eval steps={self._environment_steps} "
                 f"successes/min={summary['attack_successes_per_minute']:.3f} "

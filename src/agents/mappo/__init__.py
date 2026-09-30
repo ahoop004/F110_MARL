@@ -1006,6 +1006,8 @@ class MAPPOAgent:
                 "activation": self.activation,
                 "lora_contract": self.lora_contract,
                 "pretrained_actor_source": self.pretrained_actor_source,
+                **({'skill_curriculum': self.skill_curriculum_state}
+                   if getattr(self, 'skill_curriculum_state', None) is not None else {}),
             },
             path,
         )
@@ -1013,6 +1015,7 @@ class MAPPOAgent:
     def load(self, path: str) -> None:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
+        self.skill_curriculum_state = ckpt.get('skill_curriculum')
         if (ckpt.get("obs_dims", {aid: ckpt.get("obs_dim") for aid in self.agent_ids}) != self.obs_dims
                 or ckpt.get("observation_contracts", {aid: ckpt.get("observation_contract")
                             for aid in self.agent_ids}) != self.observation_contracts):

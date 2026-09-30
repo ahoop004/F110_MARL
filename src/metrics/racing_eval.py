@@ -69,6 +69,7 @@ class AgentEpisodeFacts:
     # None means this episode has no attack task; zero means no time limit.
     attack_horizon_steps: Optional[int] = None
     attack_target_laps: int = 0
+    skill: Optional[dict] = None
     active_steps: int = 0
     done_step: Optional[int] = None
     finish_step: Optional[int] = None
@@ -173,6 +174,8 @@ def update_agent_step_facts(
         if facts.done_step is not None:
             continue
         facts.active_steps += 1
+        if 'skill' in info:
+            facts.skill = dict(info['skill'])
         attack = info.get("attack")
         if attack is not None:
             facts.attack_successes += int(attack["success"])
@@ -321,6 +324,8 @@ def episode_race_record(episode: EvalEpisodeFacts, *, timestep: float,
                               attack_ego_failed=f.attack_ego_failed,
                               attack_horizon_steps=f.attack_horizon_steps,
                               attack_target_laps=f.attack_target_laps)
+        if f.skill is not None:
+            agents[aid]['skill'] = dict(f.skill)
     own = [agents[aid] for aid in episode.trainable_team]
     others = [agents[aid] for aid in episode.opponent_team]
     finishes = [a["clean_finish_time_s"] for a in own if a["clean_finish_time_s"] is not None]

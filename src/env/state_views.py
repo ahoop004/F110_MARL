@@ -171,6 +171,7 @@ def build_masks(
             AgentRaceStatus.FINISHED,
             AgentRaceStatus.CRASHED,
             AgentRaceStatus.TRUNCATED,
+            AgentRaceStatus.TASK_COMPLETE,
         ):
             masks[f"{status.value}_mask"] = np.array(
                 [lifecycle_records[aid].status == status for aid in possible_agents],

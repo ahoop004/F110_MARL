@@ -107,6 +107,13 @@ class RaceLifecycle:
         return self._transition(agent_id, AgentRaceStatus.CRASHED,
                                 TerminalReason.TRACK_BOUNDARY, step=step)
 
+    def complete_skill(self, *, success: bool, step: int) -> None:
+        """End active participants without awarding laps or finishing positions."""
+        for aid in self.active_agents:
+            self._transition(aid, AgentRaceStatus.TASK_COMPLETE,
+                             TerminalReason.SKILL_SUCCESS if success else TerminalReason.SKILL_FAILURE,
+                             step=step)
+
     def truncate_active(self, *, step: int) -> Tuple[str, ...]:
         transitioned = []
         for agent_id in self.active_agents:

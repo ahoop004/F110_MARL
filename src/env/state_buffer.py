@@ -106,7 +106,7 @@ class TerminalVehicleController:
                 self._freeze(simulator, idx)
                 joint_actions[idx] = (0.0, 0.0)
                 continue
-            if state.status in {AgentRaceStatus.CRASHED, AgentRaceStatus.TRUNCATED}:
+            if state.status in {AgentRaceStatus.CRASHED, AgentRaceStatus.TRUNCATED, AgentRaceStatus.TASK_COMPLETE}:
                 self._freeze(simulator, idx)
                 joint_actions[idx] = (0.0, 0.0)
                 continue

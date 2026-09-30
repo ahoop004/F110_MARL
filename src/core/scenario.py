@@ -212,10 +212,12 @@ def resolve_evaluation_protocol(scenario: Dict[str, Any], protocol: str) -> Dict
     evaluation = scenario.get("evaluation", {}) or {}
     if not isinstance(evaluation, dict):
         raise ScenarioError("'evaluation' must be a dictionary.")
-    if evaluation.get("selection_strategy", "completion_safety") not in {"racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
+    if evaluation.get("selection_strategy", "completion_safety") not in {"skill", "racer_attack", "attack", "asymmetric_support", "map_curriculum", "completion_safety", "completion_progress", "lap_time", "team_completion", "team_combined", "team_first_place", "team_sweep", "team_combined_penalties", "two_team_completion"}:
         raise ScenarioError("Unknown evaluation.selection_strategy.")
     if evaluation.get("selection_strategy") == "attack" and not scenario.get("environment", {}).get("attack_task"):
         raise ScenarioError("attack checkpoint selection requires environment.attack_task")
+    if evaluation.get('selection_strategy') == 'skill' and not scenario.get('skill_curriculum'):
+        raise ScenarioError('skill checkpoint selection requires skill_curriculum')
     if evaluation.get("selection_strategy") == "racer_attack":
         attack = scenario.get("environment", {}).get("attack_task") or {}
         racer = evaluation.get("progress_agent_id")
@@ -340,6 +342,11 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
         raise ScenarioError("'experiment.total_steps' must be a positive integer or null.")
 
     environment = scenario["environment"]
+    from training.skill_curriculum import validate_skill_curriculum
+    try:
+        validate_skill_curriculum(scenario)
+    except ValueError as exc:
+        raise ScenarioError(str(exc)) from exc
     if any(key in block for block in (scenario, environment)
            for key in ("wheel_actuators", "combined_slip_vehicle")):
         raise ScenarioError(
@@ -548,7 +555,7 @@ def validate_scenario(scenario: Dict[str, Any]) -> None:
                                                f"evaluation.{protocol}")
     # Multi-car races can request boundary facts for rewards without enabling
     # the single-car time-trial boundary-reset protocol.
-    if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents and not recovery
+    if (limits.get("enabled") and limits.get("terminate", True) and not respawn_agents and not recovery and not environment.get('skill_task')
             and (len(agents) != 1 or environment.get("terminate_on_collision", True))):
         raise ScenarioError("Track-limit time trials require one vehicle and terminate_on_collision: false")
     evaluation_mode = scenario.get("evaluation", {}).get("episode_termination_mode")

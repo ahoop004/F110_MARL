@@ -20,6 +20,7 @@ class AgentRaceStatus(str, Enum):
     FINISHED = "finished"
     CRASHED = "crashed"
     TRUNCATED = "truncated"
+    TASK_COMPLETE = "task_complete"
 
 
 class TerminalReason(str, Enum):
@@ -29,6 +30,8 @@ class TerminalReason(str, Enum):
     COLLISION = "collision"
     TRACK_BOUNDARY = "track_boundary"
     TIME_LIMIT = "time_limit"
+    SKILL_SUCCESS = "skill_success"
+    SKILL_FAILURE = "skill_failure"
 
 
 @dataclass
