@@ -131,4 +131,4 @@ def test_progress_throttles_without_advancing_optimizer_or_worker_activity(monke
     assert rows[-1]['collector/worker_messages'] == 1
     assert rows[-1]['collector/updates'] == 0
     hook.on_update({'train/policy_loss': .5})
-    assert rows[-1]['train/update'] == 1
+    assert rows[-1]['train/updates'] == 1

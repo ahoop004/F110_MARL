@@ -91,7 +91,7 @@ class ConsoleHook(TrainingHook):
         self._log_every = max(1, log_every)
         self._summary_every = max(1, summary_every)
         self._rewards: Deque[float] = deque(maxlen=summary_every)
-        self._outcomes: List[str] = []
+        self._outcomes: Deque[str] = deque(maxlen=self._summary_every)
         self._agent_outcomes: Dict[str, Deque[str]] = {}
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
@@ -112,7 +112,14 @@ class ConsoleHook(TrainingHook):
         if episode % self._log_every == 0:
             mean_r = np.mean(self._rewards) if self._rewards else 0.0
             agent_rewards = metrics.get("agent_rewards") if isinstance(metrics, dict) else None
-            if isinstance(agent_rewards, dict) and len(agent_rewards) > 1:
+            attacks = [a for a in metrics.get("race_record", {}).get("agents", {}).values()
+                       if a.get("team") == "trainable" and "attack_successes" in a]
+            if attacks and len(agent_rewards or {}) == 1:
+                self._log.print_info(
+                    f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  "
+                    f"attacks={sum(a['attack_successes'] for a in attacks)}  "
+                    f"target_crashes={sum(a['attack_target_crashes'] for a in attacks)}  outcome={outcome}")
+            elif isinstance(agent_rewards, dict) and len(agent_rewards) > 1:
                 rewards_str = "  ".join(
                     f"{aid}={r:+.2f}" for aid, r in agent_rewards.items()
                 )
@@ -148,9 +155,11 @@ class ConsoleHook(TrainingHook):
 
         if episode % self._summary_every == 0 and self._outcomes:
             from collections import Counter
-            counts = Counter(self._outcomes[-self._summary_every:])
+            counts = Counter(self._outcomes)
             self._log.print_info(f"  outcomes (last {self._summary_every}): {dict(counts)}")
             for aid, outcomes in self._agent_outcomes.items():
+                if len(self._agent_outcomes) == 1:
+                    break
                 agent_counts = Counter(outcomes)
                 self._log.print_info(f"    {aid} outcomes: {dict(agent_counts)}")
 
@@ -194,7 +203,7 @@ class MAPPOConsoleHook(TrainingHook):
         self._last_printed = identity
         text = (f"MAPPO update={m.get('train/updates', 0)} "
                 f"env_steps={m.get('train/environment_steps', 0)} "
-                f"env_steps/s={m.get('perf/round_env_steps_per_second', 0):.1f} "
+                f"env_steps/s={m.get('perf/end_to_end_env_steps_per_second', m.get('perf/round_env_steps_per_second', 0)):.1f} "
                 f"completed_window={len(rows)} completed_total={self._episodes}")
         def mean(key):
             values = [r[key] for r in rows if r.get(key) is not None]
@@ -204,7 +213,13 @@ class MAPPOConsoleHook(TrainingHook):
             return "n/a" if value is None else f"{value:.2f}"
         if rows:
             text += f" return={number('training_return')}"
-            if rows[-1]["race_mode"] == "continuous":
+            attacks = [a for r in rows for a in r["agents"].values()
+                       if a.get("team") == "trainable" and "attack_successes" in a]
+            if attacks:
+                text += (f" attacks/ep={sum(a['attack_successes'] for a in attacks) / len(rows):.2f} "
+                         f"ego_failure={np.mean([a['attack_ego_failed'] for a in attacks]):.1%} "
+                         f"progress_laps={number('mean_net_progress_laps')}")
+            elif rows[-1]["race_mode"] == "continuous":
                 text += (f" progress_laps={number('mean_net_progress_laps')} "
                          f"laps={number('mean_learner_laps')} duration_s={number('duration_s')} "
                          f"collision_dnfs={sum(r['own_collision_dnf_count'] for r in rows)} "
@@ -225,116 +240,82 @@ class MAPPOConsoleHook(TrainingHook):
 
 
 class WandbHook(TrainingHook):
-    """Logs episode and update metrics to Weights & Biases."""
+    """Log completed episode facts without requesting per-step transitions."""
 
-    requires_transition_record = True
+    requires_transition_record = False
 
-    def __init__(self, wandb_logger: Optional[WandbLogger]) -> None:
+    def __init__(self, wandb_logger: WandbLogger) -> None:
         self._wandb = wandb_logger
         self._update = 0
-        self._episodes: Dict[Any, Dict[str, Any]] = {}
-
-    def on_step(self, record: "TransitionRecord") -> None:
-        worker_id = getattr(record, "info", {}).get("worker_id")
-        state = self._episodes.setdefault(worker_id, {"agents": set(), "components": {}, "map_id": None})
-        aid = str(record.agent_id)
-        state["agents"].add(aid)
-        if record.map_id:
-            state["map_id"] = str(record.map_id)
-        agent_components = state["components"].setdefault(aid, {})
-        for component, value in (record.reward_components or {}).items():
-            try:
-                component_value = float(value)
-            except (TypeError, ValueError):
-                continue
-            agent_components[str(component)] = (
-                agent_components.get(str(component), 0.0) + component_value
-            )
-
-    def take_episode_state(self, worker_id=None) -> Dict[str, Any]:
-        """Drain accumulated metrics for local logging or transfer from a worker."""
-        return self._episodes.pop(worker_id, {"agents": set(), "components": {}, "map_id": None})
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
+        should_log = getattr(self._wandb, "should_log", lambda group: True)
+        if not should_log("train"):
+            return
+        race = metrics.get("race_record", {})
+        learners = {aid: facts for aid, facts in race.get("agents", {}).items()
+                    if facts["team"] == "trainable"}
         log = {"episode/reward": reward, "episode/number": episode}
-        worker_id = info.get("worker_id") if isinstance(info, dict) else None
-        state = self.take_episode_state(worker_id)
-        if type(self) is WandbHook and isinstance(info, dict):
-            state = info.get("_wandb_episode_state", state)
-        if isinstance(info, dict):
-            for key in ("worker_id", "worker_seed", "worker_episode"):
-                if key in info:
-                    log[f"episode/{key}"] = info[key]
-            outcome = info.get("outcome")
-            if outcome:
-                log["episode/outcome"] = str(outcome)
-            map_id = info.get("map_bundle") or state["map_id"]
-            if map_id:
-                log["episode/map_bundle"] = str(map_id)
-
-        episode_steps = metrics.get("episode_steps")
-        if episode_steps is not None:
-            log["episode/steps"] = episode_steps
-        lap_count = info.get("lap_count") if isinstance(info, dict) else None
-        if lap_count is not None:
-            log["episode/lap_count"] = lap_count
-        lap_time = metrics.get("lap_time_s")
-        if lap_time is not None:
-            log["episode/lap_time_s"] = lap_time
-
-        # Per-agent breakdown (MAPPO with >1 trainable agent) — flatten into
-        # individual scalar/string keys rather than nested dicts.
-        agent_rewards = metrics.get("agent_rewards")
-        if isinstance(agent_rewards, dict):
-            for aid, r in agent_rewards.items():
-                log[f"episode/reward/{aid}"] = r
-        agent_individual_rewards = metrics.get("agent_individual_rewards")
-        if isinstance(agent_individual_rewards, dict):
-            for aid, r in agent_individual_rewards.items():
-                log[f"episode/individual_reward/{aid}"] = r
-        agent_outcomes = metrics.get("agent_outcomes")
-        if isinstance(agent_outcomes, dict):
-            for aid, o in agent_outcomes.items():
-                log[f"episode/outcome/{aid}"] = str(o)
-        for metric_name in (
-            "agent_terminal_reasons",
-            "agent_finish_positions",
-            "agent_lap_counts",
+        for key in ("worker_id", "worker_seed", "worker_episode", "outcome", "map_bundle"):
+            value = info.get(key)
+            if value is not None:
+                log[f"episode/{key}"] = value
+        if race.get("map_id") is not None:
+            log["episode/map_bundle"] = race["map_id"]
+        for name, value in (
+            ("steps", metrics.get("episode_steps")), ("lap_count", info.get("lap_count")),
+            ("lap_time_s", metrics.get("lap_time_s")),
+            ("net_progress_laps", race.get("mean_net_progress_laps")),
         ):
-            values = metrics.get(metric_name)
-            if isinstance(values, dict):
-                label = metric_name.removeprefix("agent_")
-                for aid, value in values.items():
+            if value is not None:
+                log[f"episode/{name}"] = value
+
+        agent_rewards = metrics.get("agent_rewards", {})
+        agent_outcomes = metrics.get("agent_outcomes", {})
+        terminal_reasons = metrics.get("agent_terminal_reasons", {})
+        multi = len(learners or agent_rewards or agent_outcomes) > 1
+        if multi:
+            for aid, value in agent_rewards.items():
+                log[f"episode/reward/{aid}"] = value
+            if metrics.get("reward_mode") == "team_shared":
+                for aid, value in metrics.get("agent_individual_rewards", {}).items():
+                    log[f"episode/individual_reward/{aid}"] = value
+            for name in ("agent_outcomes", "agent_terminal_reasons", "agent_finish_positions", "agent_lap_counts"):
+                for aid, value in metrics.get(name, {}).items():
                     if value is not None:
-                        log[f"episode/{label}/{aid}"] = value
+                        log[f"episode/{name.removeprefix('agent_')}/{aid}"] = value
+        outcomes = list(agent_outcomes.values()) or [info.get("outcome")]
+        reasons = list(terminal_reasons.values()) or [info.get("terminal_reason")]
+        if multi:
+            log["episode/team/completion_rate"] = sum(v == "finished" for v in outcomes) / len(outcomes)
+            log["episode/team/all_finished"] = float(all(v == "finished" for v in outcomes))
+            log["episode/team/failure_rate"] = sum(v in {"collision", "track_boundary"} for v in reasons) / len(reasons)
+            log["episode/team/timeout_rate"] = sum(v == "time_limit" for v in reasons) / len(reasons)
+            for key in ("first_place", "sweep", "rank_score"):
+                if race.get(key) is not None:
+                    log[f"episode/team/{key}"] = race[key]
+        else:
+            log["episode/completed"] = float(outcomes[0] == "finished")
+            log["episode/failed"] = float(reasons[0] in {"collision", "track_boundary"}
+                                           or outcomes[0] in {"self_crash", "collision", "track_boundary"})
+            log["episode/timeout"] = float(reasons[0] == "time_limit" or outcomes[0] == "timeout")
+        attacks = [f for f in learners.values() if "attack_successes" in f]
+        if attacks:
+            for key in ("attack_successes", "attack_target_crashes", "attack_eligible_crashes"):
+                log[f"episode/{key}"] = sum(f[key] for f in attacks)
+            log["episode/attack_ego_failed"] = float(any(f["attack_ego_failed"] for f in attacks))
 
-        terminal_reasons = metrics.get("agent_terminal_reasons")
-        if isinstance(agent_outcomes, dict) and agent_outcomes:
-            agent_count = len(agent_outcomes)
-            finished = sum(str(value) == "finished" for value in agent_outcomes.values())
-            log["episode/team/completion_rate"] = finished / agent_count
-            log["episode/team/all_finished"] = float(finished == agent_count)
-        if isinstance(terminal_reasons, dict) and terminal_reasons:
-            agent_count = len(terminal_reasons)
-            collisions = sum(
-                str(value) == "collision" for value in terminal_reasons.values()
-            )
-            timeouts = sum(
-                str(value) == "time_limit" for value in terminal_reasons.values()
-            )
-            log["episode/team/collision_rate"] = collisions / agent_count
-            log["episode/team/timeout_rate"] = timeouts / agent_count
-
-        # Persist per-agent and team-mean component totals for reward debugging.
-        component_totals: Dict[str, float] = {}
-        for aid, components in state["components"].items():
-            for component, value in components.items():
-                log[f"episode/reward_component/{component}/{aid}"] = value
-                component_totals[component] = component_totals.get(component, 0.0) + value
-        denominator = max(len(state["agents"]), 1)
-        for component, total in component_totals.items():
-            log[f"episode/reward_component_mean/{component}"] = total / denominator
-
+        if should_log("reward_components"):
+            totals: Dict[str, float] = {}
+            for aid, facts in learners.items():
+                for component, value in facts.get("reward_components", {}).items():
+                    log[f"episode/reward_component/{component}/{aid}"] = value
+                    totals[component] = totals.get(component, 0.) + value
+            if multi:
+                for component, total in totals.items():
+                    log[f"episode/reward_component_mean/{component}"] = total / len(learners)
+            for component, value in race.get("team_reward_components", {}).items():
+                log[f"episode/team_reward_component/{component}"] = value
         self._wandb.log_metrics(log)
 
     def on_collector_progress(self, metrics: Dict) -> None:
@@ -342,7 +323,7 @@ class WandbHook(TrainingHook):
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._update += 1
-        self._wandb.log_metrics({"train/update": self._update, **metrics})
+        self._wandb.log_metrics({"train/updates": self._update, **metrics})
 
 
 class CSVHook(TrainingHook):
@@ -407,9 +388,9 @@ class CurriculumHook(TrainingHook):
                 self._manager.success_rate,
             )
 
-        if self._wandb is not None and hasattr(self._wandb, "log"):
+        if self._wandb is not None:
             summary = self._manager.summary()
-            self._wandb.log(summary, step=episode)
+            self._wandb.log_metrics(summary)
 
 
 class CheckpointHook(TrainingHook):
@@ -754,7 +735,7 @@ class PhysicsEpisodeHook(TrainingHook):
     """Write sampled episode physics through the shared provenance logger."""
     requires_transition_record = True
 
-    def __init__(self, output_dir, *, transition_records=True) -> None:
+    def __init__(self, output_dir, *, transition_records=False) -> None:
         from core.provenance import PhysicsEpisodeLog
         self.requires_transition_record = transition_records
         self._log = PhysicsEpisodeLog(output_dir)

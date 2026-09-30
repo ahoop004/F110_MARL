@@ -1,64 +1,10 @@
 wandb:
   logging:
-    # Comment out any key to disable that log group.
+    # auto selects compact task metrics; debug includes detailed diagnostics.
+    profile: auto
     groups:
-      define_metrics: true
       train: true
-      # target: true
-      # spawn: true
-      # curriculum: true
-      # curriculum_phase: true
       eval: true
-      eval_agg: true
-      trainer_hooks: true
-    # Comment out any metric to disable it.
-    metrics:
-      train/episode: true
-      train/outcome: true
-      train/success: true
-      train/episode_success: true
-      train/episode_reward: true
-      train/episode_steps: true
-      train/success_rate: true
-      train/reward_mean: true
-      # train/steps_mean: true
-      # train/spawn_point: true
-      # train/spawn_stage: true
-      # target/success: true
-      # target/crash: true
-      # curriculum/stage: true
-      # curriculum/stage_success_rate: true
-      curriculum/phase_idx: true
-      # curriculum/phase_name: true
-      # curriculum/phase_success_rate: true
-      curriculum/eval_success_streak: true
-      curriculum/eval_window_success_rate: true
-      curriculum/eval_window_count: true
-      curriculum/eval_window_size: true
-      curriculum/criteria_eval_success_rate: true
-      curriculum/criteria_eval_required_runs: true
-      eval/episode: true
-      # eval/episode_reward: true
-      # eval/episode_steps: true
-      eval/episode_success: true
-      eval/episode_success_rate: true
-      eval/rolling_success_rate: true
-      eval/run: true
-      # eval/spawn_point: true
-      # eval/training_episode: true
-      eval_agg/success_rate: true
-      # eval_agg/avg_reward: true
-      # eval_agg/avg_episode_length: true
-      # eval_agg/std_reward: true
-      # eval_agg/std_episode_length: true
-      # eval_agg/num_episodes: true
-      # eval_agg/outcome_target_crash: true
-      # eval_agg/outcome_self_crash: true
-      # eval_agg/outcome_collision: true
-      # eval_agg/outcome_timeout: true
-      # eval_agg/outcome_idle_stop: true
-      # eval_agg/outcome_target_finish: true
-      # Rich visualizations (logged automatically when eval_agg is enabled):
-      #   eval_viz/outcome_distribution: Bar chart of outcome percentages
-      #   eval_viz/reward_distribution: Histogram of episode rewards
-      #   eval_viz/spawn_performance: Table of success rates by spawn point
+      performance: true
+      curriculum: true
+      # collector and reward_components default off; debug enables both.

@@ -233,6 +233,7 @@ def _run_heuristic(
             entity=wandb_cfg.get("entity"),
             notes=wandb_cfg.get("notes"),
             mode=wandb_cfg.get("mode", "online"),
+            logging_config=wandb_cfg.get("logging"),
         )
 
     env, agents, _ = create_training_setup(
@@ -319,11 +320,11 @@ def _run_heuristic(
             )
 
             if wandb_logger:
-                wandb_logger.log({
-                    "episode": episode,
-                    "steps": step,
-                    "collision": int(any_collision),
-                    "timeout": int(timeout),
+                wandb_logger.log_metrics({
+                    "episode/number": episode,
+                    "episode/steps": step,
+                    "episode/failed": int(any_collision),
+                    "episode/timeout": int(timeout),
                 })
     finally:
         csv_logger.close()
@@ -438,6 +439,7 @@ def main() -> None:
             entity=wandb_cfg.get("entity"),
             notes=wandb_cfg.get("notes"),
             mode=wandb_cfg.get("mode", "online"),
+            logging_config=wandb_cfg.get("logging"),
             run_id=run_id,
         )
 
@@ -643,7 +645,7 @@ def main() -> None:
 
     if params.get("_physics_contract") is not None:
         from training.hooks import PhysicsEpisodeHook
-        hooks.append(PhysicsEpisodeHook(output_dir, transition_records=algorithm != 'mappo'))
+        hooks.append(PhysicsEpisodeHook(output_dir))
 
     # Optional dataset recording
     dataset_writer = None
@@ -1651,7 +1653,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
             "environment_step_unit": "joint_environment_decisions",
             "environment_seeds": [(env_seed + i) % (2 ** 32) for i in range(num_envs)],
         }
-    CSVLogger(str(output), scenario, provenance=provenance)
+    local_logger = CSVLogger(str(output), scenario, provenance=provenance)
     protocol = resolve_evaluation_protocol(scenario, args.eval_protocol or "selection")
     if args.eval and not args.eval_protocol:
         protocol["episodes"] = args.eval_episodes or args.episodes or protocol["episodes"]
@@ -1720,18 +1722,13 @@ def _run_two_team(scenario, args, console, scenario_dir):
                         "actor_observation_contract": params["_observation_contract"]},
                 name=wb.get("name", run_id), group=wb.get("group"), entity=wb.get("entity"),
                 job_type="two-team-evaluation" if args.eval else wb.get("job_type", "two-team-training"),
-                tags=wb.get("tags"), notes=wb.get("notes"), mode=wb.get("mode", "online"), run_id=run_id)
+                tags=wb.get("tags"), notes=wb.get("notes"), mode=wb.get("mode", "online"), run_id=run_id,
+                logging_config=wb.get("logging"))
             if logger.run is not None:
-                logger.run.define_metric("selfplay/environment_steps")
-                logger.run.define_metric("selfplay/*", step_metric="selfplay/environment_steps")
-                logger.run.define_metric("selfplay_eval/environment_steps")
-                logger.run.define_metric("selfplay_eval/*", step_metric="selfplay_eval/environment_steps")
-                logger.run.define_metric("perf/*", step_metric="train/environment_steps")
                 console.print_info(f"W&B: {logger.wandb_url or 'offline'}")
 
         def emit(filename, row):
-            with (output / filename).open("a") as stream:
-                stream.write(json.dumps(row, sort_keys=True) + "\n")
+            local_logger.log_jsonl(filename, row)
             if logger:
                 logger.log_metrics(row)
 
@@ -1841,9 +1838,9 @@ def _run_two_team(scenario, args, console, scenario_dir):
                 **{f"selfplay_eval/{key}": value for key, value in context.items()},
                 "selfplay_eval/is_best": is_best,
                 **{f"selfplay_eval/{key}": value for key, value in summary.items()}})
-            with (output / "evaluation_races.jsonl").open("a") as stream:
-                for row in rows:
-                    stream.write(json.dumps({"round": eval_round, **row}) + "\n")
+            for row in rows:
+                local_logger.log_jsonl("evaluation_races.jsonl", {"round": eval_round, **row})
+            local_logger.flush()
             if is_best:
                 best = score
                 save_pair("best_pair", episode, summary)
@@ -1944,6 +1941,7 @@ def _run_two_team(scenario, args, console, scenario_dir):
             "wandb_url": logger.wandb_url if logger else None}, indent=2) + "\n")
         recording_complete = True
     finally:
+        local_logger.close()
         if race_writer is not None:
             race_writer.close(complete=recording_complete)
         if eval_writer is not None:

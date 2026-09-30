@@ -161,12 +161,7 @@ def test_scenario_trains_and_writes_192_input_checkpoint(tmp_path, monkeypatch, 
         "--no-wandb", "--quiet", "--output-dir", str(tmp_path / "playback")])
     run.main()
     assert (tmp_path / 'playback' / 'evaluation_report.json').exists()
-    if num_envs > 1:
-        import csv
-        with (tmp_path / "collector_progress.csv").open() as stream:
-            progress = list(csv.DictReader(stream))
-        assert progress[0]["collector/phase"] == "startup"
-        assert int(progress[-1]["collector/updated_environment_steps"]) == 9
+    assert not (tmp_path / "collector_progress.csv").exists()
 
 
 def test_asymmetric_training_resets_after_learners_and_evaluation_runs_full_race():

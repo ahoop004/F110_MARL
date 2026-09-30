@@ -16,12 +16,12 @@ import numpy as np
 import torch
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
+from training.hooks import transition_record_hooks
 from training.collector_progress import CollectorProgress
 from training.collector_scheduling import (
     CollectorEventSink, CollectorScheduler,
     _close_collectors, _report_worker_error, _worker_startup_settings,
 )
-from training.hooks import WandbHook
 from training.on_policy_trainer import _WorkerHook
 
 
@@ -139,7 +139,7 @@ def infer_requests(agent, requests):
 
 
 def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
-                    run_id, sink, record_transitions, aggregate_wandb, total_steps=None):
+                    run_id, sink, record_transitions, total_steps=None):
     from core.setup import build_obs_composers, build_reward_composers, create_training_setup
     from training.marl_trainer import MARLTrainer
     from wrappers.actions.composer import ActionComposer
@@ -188,7 +188,7 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
                                     num_envs=int(scenario['experiment'].get('num_envs', 1)))
         trainer = MARLTrainer(
             env, agent, ids, opponents, obs, rewards, actions, action_repeat=repeat,
-            hooks=[_WorkerHook(sink, env_id, seed, record_transitions, aggregate_wandb)],
+            hooks=[_WorkerHook(sink, env_id, seed, record_transitions)],
             run_id=f"{run_id}_env{env_id:04d}", reward_mode=agent.reward_mode,
             team_reward_reduction=agent.team_reward_reduction,
             race_recorder=recorder,
@@ -200,7 +200,7 @@ def _make_collector(scenario, scenario_dir, env_id, episodes, horizon, contract,
 
 
 def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
-                    contract, run_id, record_transitions, aggregate_wandb, step_budget=False):
+                    contract, run_id, record_transitions, step_budget=False):
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["PYGLET_HEADLESS"] = "true"
     torch.set_num_threads(1)
@@ -210,7 +210,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
         for env_id, quota in assignments:
             envs[env_id], agents[env_id], generators[env_id] = _make_collector(
                 scenario, scenario_dir, env_id, 0 if step_budget else quota, horizon, contract, run_id,
-                sink, record_transitions, aggregate_wandb,
+                sink, record_transitions,
                 total_steps=quota if step_budget else None,
             )
         connection.send(("ready", len(envs)))
@@ -303,8 +303,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         "action_dim", "action_low", "action_high", "observation_contract", "gamma",
         "gae_lambda", "critic_mode", "reward_mode", "team_return_mode", "team_reward_reduction",
     )}
-    record_hooks = [h for h in trainer._transition_hooks if type(h) is not WandbHook]
-    aggregate_wandb = any(type(h) is WandbHook for h in trainer._transition_hooks)
+    record_hooks = transition_record_hooks(trainer.hooks)
     race_hooks = [h for h in trainer.hooks if hasattr(h, 'on_race_record')]
     scenario = copy.deepcopy(scenario)
     # Enable worker capture only when the parent has a corresponding writer.
@@ -415,7 +414,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 process = context.Process(
                     target=_collect_worker,
                     args=(child, scenario, str(scenario_dir), assignments, horizon,
-                          contract, trainer.run_id, bool(record_hooks), aggregate_wandb, total_steps is not None),
+                          contract, trainer.run_id, bool(record_hooks), total_steps is not None),
                     name=f"mappo-collector-{worker_id}",
                 )
                 connections[worker_id] = parent

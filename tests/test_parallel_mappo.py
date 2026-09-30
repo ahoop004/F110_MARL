@@ -218,7 +218,7 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
         np.mean([row[1] for row in capture.episodes]))
     assert {row["collector/phase"] for row in progress} >= {"collecting", "updating"}
     # Collector telemetry must not masquerade as a learning update.
-    assert len([row for row in logs if "train/update" in row]) == len(capture.updates)
+    assert len([row for row in logs if "train/updates" in row]) == len(capture.updates)
     assert all(np.isfinite(m["train/policy_loss"]) for m in capture.updates
                if m["train/rollout_agent_samples"])
 

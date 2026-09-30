@@ -7,6 +7,8 @@ and per-episode/rolling metrics logging.
 from typing import Dict, Any, Optional
 import wandb
 
+from loggers.metric_policy import AXES, MetricPolicy
+
 
 class WandbLogger:
     """Logger for Weights & Biases integration.
@@ -62,7 +64,9 @@ class WandbLogger:
         """
         self.project = project
         self.enabled = mode != "disabled"
-        self.logging_config = logging_config if isinstance(logging_config, dict) else None
+        self.logging_config = (logging_config if logging_config is not None else
+                               (config or {}).get("wandb", {}).get("logging", {}))
+        self.policy = MetricPolicy(self.logging_config, config)
 
         # Store run ID for alignment with checkpoints
         self.custom_run_id = run_id
@@ -104,79 +108,34 @@ class WandbLogger:
                         pass
                 if self.should_log("define_metrics"):
                     try:
-                        # Keep episode and optimizer-update charts on explicit,
-                        # independent x-axes. W&B's internal step remains
-                        # monotonic because callers do not provide a global step.
-                        wandb.define_metric("episode/number")
-                        wandb.define_metric("episode/*", step_metric="episode/number")
-                        wandb.define_metric("collector/elapsed_seconds")
-                        wandb.define_metric("collector/*", step_metric="collector/elapsed_seconds")
-                        wandb.define_metric("train/update")
-                        wandb.define_metric("train/*", step_metric="train/update")
-                        wandb.define_metric("train/episode")
-                        wandb.define_metric("target/*", step_metric="train/episode")
-                        wandb.define_metric("curriculum/*", step_metric="train/episode")
-                        wandb.define_metric("eval/episode")
-                        wandb.define_metric("eval/episode_*", step_metric="eval/episode")
-                        wandb.define_metric("eval/rolling_*", step_metric="eval/episode")
-                        wandb.define_metric("eval/training_episode", step_metric="eval/episode")
-                        wandb.define_metric("eval/spawn_point", step_metric="eval/episode")
-                        wandb.define_metric("eval/run")
-                        wandb.define_metric("eval_agg/episode_*", step_metric="eval/episode")
-                        wandb.define_metric("eval_agg/*", step_metric="eval/run")
+                        for namespace, axis in AXES.items():
+                            wandb.define_metric(axis)
+                            wandb.define_metric(f"{namespace}/*", step_metric=axis)
                     except Exception:
                         pass
         else:
             self.run = None
 
     def should_log(self, key: str) -> bool:
-        """Check if a logging group is enabled."""
-        if not self.enabled:
-            return False
-        group_config = self._get_group_config()
-        if group_config is None:
-            return True
-        return bool(group_config.get(key, False))
-
-    def _get_group_config(self) -> Optional[Dict[str, Any]]:
-        if not isinstance(self.logging_config, dict):
-            return None
-        if "groups" in self.logging_config:
-            groups = self.logging_config.get("groups")
-            return groups if isinstance(groups, dict) else {}
-        return self.logging_config
-
-    def _get_metrics_config(self) -> Optional[Dict[str, Any]]:
-        if not isinstance(self.logging_config, dict):
-            return None
-        metrics = self.logging_config.get("metrics")
-        if metrics is None:
-            return None
-        if isinstance(metrics, dict):
-            return metrics
-        if isinstance(metrics, (list, tuple, set)):
-            return {name: True for name in metrics}
-        return None
+        """Check an effective logging group before preparing optional metrics."""
+        return self.enabled and self.policy.group_enabled(key)
 
     def _filter_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
-        metrics_config = self._get_metrics_config()
-        if metrics_config is None:
-            return metrics
-        return {key: value for key, value in metrics.items() if metrics_config.get(key, False)}
+        return self.policy.filter(metrics)
 
     def log_metrics(
         self,
         metrics: Dict[str, Any],
         step: Optional[int] = None,
     ):
-        """Log arbitrary metrics dict.
+        """Log metrics selected by the configured profile, groups, and allowlist.
 
         Args:
             metrics: Dict of metrics to log
             step: Optional step number
 
         Example:
-            >>> logger.log_metrics({'custom_metric': 42.0}, step=100)
+            >>> logger.log_metrics({'train/policy_loss': 0.2, 'train/environment_steps': 100})
         """
         if not self.enabled:
             return

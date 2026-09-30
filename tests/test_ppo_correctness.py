@@ -737,7 +737,7 @@ def test_parallel_ppo_collects_exact_episodes_and_is_repeatable(device, accelera
             assert row["episode/reward"] == reward
             assert row["episode/worker_id"] == info["worker_id"]
             assert row["episode/steps"] == metrics["episode_steps"]
-        assert not wandb._episodes
+        assert not wandb.requires_transition_record
         assert [episode[0] for episode in capture.episodes] == [0, 1, 2]
         assert len(capture.updates) == 2
         # Two of three global episodes finish between the pooled updates.
@@ -1530,3 +1530,37 @@ def test_ready_grouped_ppo_curriculum_stop_preserves_evaluated_weights():
         assert trainer.collected_steps == 8
     finally:
         trainer.env.close()
+
+
+def test_standard_logging_avoids_step_records_and_writes_physics_at_reset(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    import training.on_policy_trainer as module
+    from training.hooks import PhysicsEpisodeHook, WandbHook
+
+    class Env(_OneStepTruncationEnv):
+        def reset(self, options=None):
+            obs, infos = super().reset(options)
+            infos['car_0']['physics'] = {'mu': 1.}
+            return obs, infos
+
+    def reject_transition(**kwargs):
+        raise AssertionError('Standard logging must not allocate transition records')
+
+    monkeypatch.setattr(module, 'TransitionRecord', reject_transition)
+    logs, writes = [], []
+    physics = PhysicsEpisodeHook(tmp_path)
+    write = physics._log.write
+    def record_write(*args):
+        writes.append(args)
+        write(*args)
+    monkeypatch.setattr(physics._log, 'write', record_write)
+    trainer = OnPolicyTrainer(
+        Env(), 'car_0', _RecordingAgent(), {}, _ObservationComposer(),
+        _RewardComposer(), _ActionComposer(),
+        hooks=[physics, WandbHook(SimpleNamespace(log_metrics=logs.append))])
+    trainer.train(2)
+    assert len(writes) == 2
+    assert len({row[0] for row in writes}) == 2
+    assert len([json.loads(line) for line in physics.path.read_text().splitlines()]) == 2
+    assert [row['episode/reward'] for row in logs] == [1., 1.]

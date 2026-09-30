@@ -13,7 +13,7 @@ from metrics.outcomes import determine_outcome
 from training.collector_scheduling import (
     _close_collectors, _report_worker_error, _worker_startup_settings,
 )
-from training.hooks import TrainingHook, WandbHook, transition_record_hooks
+from training.hooks import TrainingHook, transition_record_hooks
 from training.reward_context import build_reward_context, transition_lifecycle_fields
 from wrappers.actions.composer import ActionComposer
 from wrappers.observations.composer import ObservationComposer
@@ -101,10 +101,8 @@ class OnPolicyTrainer:
         if total_steps is not None and total_steps < num_envs:
             raise ValueError("total_steps must be at least num_envs")
         self._set_training_progress(0, total_steps or n_episodes)
-        # Standard W&B needs only episode totals. Dataset/custom hooks retain
-        # the full transition stream, including custom WandbHook subclasses.
-        record_hooks = [h for h in self._transition_hooks if type(h) is not WandbHook]
-        aggregate_wandb = any(type(h) is WandbHook for h in self._transition_hooks)
+        # Only dataset/custom hooks request the full transition stream.
+        record_hooks = transition_record_hooks(self.hooks)
 
         def receive(worker_id, *, starting=False):
             connection = connections[worker_id]
@@ -144,7 +142,7 @@ class OnPolicyTrainer:
                         args=(child, scenario, str(scenario_dir), self.rl_agent_id, worker_id,
                               n_episodes // num_envs + (worker_id < n_episodes % num_envs),
                               self.agent.n_steps // num_envs, self.run_id, self.agent.gamma,
-                              self.agent.gae_lambda, bool(record_hooks), aggregate_wandb,
+                              self.agent.gae_lambda, bool(record_hooks),
                               None if total_steps is None else
                               total_steps // num_envs + (worker_id < total_steps % num_envs)),
                         name=f"ppo-collector-{worker_id}",
@@ -346,6 +344,7 @@ class OnPolicyTrainer:
         collected = 0
         episode = 0
         self.agent.buffer.clear()
+        started_training = time.perf_counter()
         while (collected < total_steps if total_steps is not None else episode < n_episodes):
             obs_dict, info_dict = self._reset_env()
             for controller in self.other_agents.values():
@@ -369,6 +368,11 @@ class OnPolicyTrainer:
             episode_id = self._episode_id(episode)
             map_id = self._map_id()
             spawn_id = self._spawn_id()
+            for hook in self.hooks:
+                callback = getattr(hook, "on_episode_start", None)
+                if callback is not None:
+                    callback(dict(episode_id=episode_id, map_id=map_id,
+                        physics=info_dict.get(self.rl_agent_id, {}).get("physics")))
 
             while not done:
                 # Copy before stepping: dataset state and observation describe
@@ -514,7 +518,12 @@ class OnPolicyTrainer:
                         reply = yield "rollout", self.agent.pack_rollout(next_value)
                         update_metrics = self.agent.apply_reply(reply)
                     else:
+                        update_started = time.perf_counter()
                         update_metrics = self.agent.update(next_value)
+                        if update_metrics:
+                            update_metrics["perf/update_seconds"] = time.perf_counter() - update_started
+                            update_metrics["perf/end_to_end_env_steps_per_second"] = collected / max(
+                                time.perf_counter() - started_training, 1e-9)
                     self.agent.buffer.clear()
                     if update_metrics:
                         update_metrics["train/environment_steps"] = collected
@@ -530,6 +539,7 @@ class OnPolicyTrainer:
                 break
             outcome = determine_outcome(last_info, truncated=episode_truncated)
             last_info["outcome"] = outcome.value
+            last_info.setdefault("map_bundle", map_id)
             update_metrics = dict(update_metrics)
             update_metrics["episode_steps"] = step_idx
             # Lifecycle timing persists after the crossing and counts physics
@@ -627,17 +637,14 @@ class _RemotePolicy:
 
 
 class _WorkerHook(TrainingHook):
-    def __init__(self, connection, worker_id, seed, record_transitions, aggregate_wandb=False):
+    def __init__(self, connection, worker_id, seed, record_transitions):
         self.connection = connection
         self.worker_id = worker_id
         self.seed = seed
         self._record_transitions = record_transitions
-        self._wandb = WandbHook(None) if aggregate_wandb else None
-        self.requires_transition_record = record_transitions or aggregate_wandb
+        self.requires_transition_record = record_transitions
 
     def on_step(self, record):
-        if self._wandb is not None:
-            self._wandb.on_step(record)
         if not self._record_transitions:
             return
         from dataclasses import replace
@@ -651,8 +658,6 @@ class _WorkerHook(TrainingHook):
     def on_episode_end(self, episode, reward, info, metrics):
         info = {**info, "worker_id": self.worker_id, "worker_seed": self.seed,
                 "worker_episode": episode}
-        if self._wandb is not None:
-            info["_wandb_episode_state"] = self._wandb.take_episode_state()
         metrics = {**metrics, "worker_id": self.worker_id, "worker_seed": self.seed,
                    "worker_episode": episode}
         self.connection.send(("episode", (reward, info, metrics)))
@@ -660,7 +665,7 @@ class _WorkerHook(TrainingHook):
 
 def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
                         n_episodes, n_steps, run_id, gamma, gae_lambda, record_transitions,
-                        aggregate_wandb, total_steps=None):
+                        total_steps=None):
     import copy
     from pathlib import Path
 
@@ -698,7 +703,7 @@ def _collect_ppo_worker(connection, scenario, scenario_dir, agent_id, worker_id,
                 decision_dt=float(env_cfg.get("timestep", 0.01)) * int(env_cfg.get("action_repeat", 1)),
             ),
             action_repeat=int(env_cfg.get("action_repeat", 1)),
-            hooks=[_WorkerHook(connection, worker_id, seed, record_transitions, aggregate_wandb)],
+            hooks=[_WorkerHook(connection, worker_id, seed, record_transitions)],
             run_id=f"{run_id}_worker{worker_id:03d}",
         )
         connection.send(("ready", (observations.obs_dim, space.low, space.high)))

@@ -15,18 +15,18 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from training.hooks import transition_record_hooks
 from training.collector_scheduling import (
     CollectorEventSink, CollectorScheduler,
     _close_collectors, _report_worker_error, _worker_startup_settings,
 )
-from training.hooks import WandbHook
 from training.on_policy_trainer import (
     OnPolicyTrainer, _RemotePolicy, _WorkerHook,
 )
 
 
 def _make_collector(scenario, directory, agent_id, env_id, quota, horizon,
-                    run_id, gamma, gae_lambda, sink, record, aggregate, step_budget):
+                    run_id, gamma, gae_lambda, sink, record, step_budget):
     from core.setup import build_obs_composer, build_reward_composer, create_training_setup
     from wrappers.actions.composer import ActionComposer
 
@@ -54,7 +54,7 @@ def _make_collector(scenario, directory, agent_id, env_id, quota, horizon,
             ActionComposer.from_config(space.low, space.high, cfg.get('action_constraints', {}),
                 decision_dt=float(env_cfg.get('timestep', .01)) * int(env_cfg.get('action_repeat', 1))),
             action_repeat=int(env_cfg.get('action_repeat', 1)),
-            hooks=[_WorkerHook(sink, env_id, seed, record, aggregate)],
+            hooks=[_WorkerHook(sink, env_id, seed, record)],
             run_id=f'{run_id}_worker{env_id:03d}',
         )
         generator = trainer.iter_train(0 if step_budget else quota, parallel=True,
@@ -66,7 +66,7 @@ def _make_collector(scenario, directory, agent_id, env_id, quota, horizon,
 
 
 def _collect_worker(connection, scenario, directory, agent_id, assignments,
-                    horizon, run_id, gamma, gae_lambda, record, aggregate, step_budget):
+                    horizon, run_id, gamma, gae_lambda, record, step_budget):
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
     os.environ['PYGLET_HEADLESS'] = 'true'
     torch.set_num_threads(1)
@@ -77,7 +77,7 @@ def _collect_worker(connection, scenario, directory, agent_id, assignments,
         for env_id, quota in assignments:
             envs[env_id], generators[env_id], contract = _make_collector(
                 scenario, directory, agent_id, env_id, quota, horizon, run_id,
-                gamma, gae_lambda, sink, record, aggregate, step_budget)
+                gamma, gae_lambda, sink, record, step_budget)
             contracts.append(contract)
         connection.send(('ready', contracts))
         if connection.recv() != ('start', None):
@@ -132,8 +132,7 @@ def train_parallel(trainer, scenario, directory, num_envs, n_episodes, *, total_
     startup = _worker_startup_settings(scenario)
     scheduler = CollectorScheduler(experiment.get("collector_scheduling", "synchronous"),
                                    startup["worker_response_timeout_s"])
-    record_hooks = [h for h in trainer._transition_hooks if type(h) is not WandbHook]
-    aggregate = any(type(h) is WandbHook for h in trainer._transition_hooks)
+    record_hooks = transition_record_hooks(trainer.hooks)
     context = mp.get_context('spawn')
     connections, processes, process_by_worker = {}, [], {}
     waiting = {}
@@ -197,7 +196,7 @@ def train_parallel(trainer, scenario, directory, num_envs, n_episodes, *, total_
                 process = context.Process(target=_collect_worker, name=f'ppo-collector-{worker_id}', args=(
                     child, scenario, str(directory), trainer.rl_agent_id, assignments,
                     horizon, trainer.run_id, agent.gamma, agent.gae_lambda,
-                    bool(record_hooks), aggregate, total_steps is not None))
+                    bool(record_hooks), total_steps is not None))
                 connections[worker_id] = parent
                 try:
                     process.start()

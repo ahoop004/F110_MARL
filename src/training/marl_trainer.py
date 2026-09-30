@@ -17,6 +17,7 @@ Key differences from :class:`~training.on_policy_trainer.OnPolicyTrainer`
 from __future__ import annotations
 
 import copy
+import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -252,6 +253,7 @@ class MARLTrainer:
                 or not isinstance(total_steps, int) or total_steps <= 0):
             raise ValueError("total_steps must be a positive integer")
         collected, episode = 0, 0
+        started_training = time.perf_counter()
         while (collected < total_steps if total_steps is not None else episode < n_episodes):
             obs_dict, info_dict = self.env.reset()
             for controller in self.other_agents.values():
@@ -631,10 +633,14 @@ class MARLTrainer:
                         next_values = yield "value", next_global_state
                         update_metrics = self.agent.finish_fragment(next_values)
                     else:
+                        update_started = time.perf_counter()
                         update_metrics = self.agent.update(
                             next_global_state=next_global_state,
                         )
                         self._updates += bool(update_metrics)
+                        update_metrics["perf/update_seconds"] = time.perf_counter() - update_started
+                        update_metrics["perf/end_to_end_env_steps_per_second"] = collected / max(
+                            time.perf_counter() - started_training, 1e-9)
                     self.agent.clear_buffers()
                     update_metrics["train/environment_steps"] = self._environment_steps
                     update_metrics["train/physics_steps"] = self._physics_steps

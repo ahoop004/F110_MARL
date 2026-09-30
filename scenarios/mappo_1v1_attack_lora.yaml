@@ -409,13 +409,14 @@ agents:
       max_steering_reference_rate: 17.0
 wandb:
   logging:
+    # auto selects compact task metrics; debug includes detailed diagnostics.
+    profile: auto
     groups:
-      define_metrics: true
       train: true
       eval: true
-      eval_agg: true
-      trainer_hooks: true
-    # No metric allowlist: include attack outcomes, PPO losses and reward components.
+      performance: true
+      curriculum: true
+      # collector and reward_components default off; debug enables both.
   enabled: true
   project: marl-f110-complete
   entity: ahoop004-old-dominion-university

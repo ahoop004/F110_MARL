@@ -19,6 +19,9 @@ PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/ppo.yaml
 PYGLET_HEADLESS=true venv/bin/python run.py --scenario scenarios/legacy/mappo_gaplock.yaml --no-wandb --episodes 1
 ```
 
+Logging uses compact task metrics by default. See [metrics logging](docs/metrics_logging.md)
+for debug dashboards, local CSV exports, and buffering controls.
+
 Use `--seed` for repeatability, `--output-dir` for a specific output location,
 `--dataset-dir` for transition recording, and `--render` for local visualization.
 PPO and MAPPO support `experiment.total_steps` or `--total-steps N` for an

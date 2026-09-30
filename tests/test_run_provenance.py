@@ -50,7 +50,7 @@ def test_csv_hook_writes_snapshot_and_episode_metrics(tmp_path) -> None:
     row = next(csv.DictReader((tmp_path / "episode_metrics.csv").open()))
     assert row["episode_steps"] == "123"
     assert row["map_bundle"] == "circle_map"
-    assert row["train_loss"] == "0.25"
+    assert "train_loss" not in row
 
 
 def test_run_provenance_hashes_source_and_resolved_config(tmp_path) -> None:

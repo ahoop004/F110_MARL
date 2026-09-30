@@ -80,7 +80,7 @@ def test_race_record_preserves_finish_and_continuous_missingness(tmp_path):
     assert all(continuous[key] is None for key in ("both_finished", "first_place", "sweep", "rank_score"))
     assert continuous["agents"]["a"]["finished"] is None
     finite.update(episode_id="run_env0_ep0", spawn_ids={}, training_return=2.)
-    logger = CSVLogger(str(tmp_path))
+    logger = CSVLogger(str(tmp_path), scenario_config={"logging": {"csv_exports": True}})
     logger.log_training_episode(0, 2., {}, {"race_record": finite})
     logger.close()
     assert json.loads((tmp_path / "race_metrics.jsonl").read_text())["agents"]["b"]["boundary_dnf"]
@@ -97,3 +97,53 @@ def test_race_record_preserves_finish_and_continuous_missingness(tmp_path):
     monitor.on_episode_end(1, 1., {}, {"race_record": continuous})
     monitor.on_update({"train/updates": 2, "train/environment_steps": 20})
     assert "first_place" not in lines[-1] and "progress_laps=" in lines[-1]
+
+
+def test_default_race_logging_keeps_one_source_and_update_clock(tmp_path):
+    race = {"episode_id": "run_ep0", "agents": {"car_0": {"team": "trainable"}},
+            "training_return": 2., "attack_successes": 1}
+    logger = CSVLogger(str(tmp_path))
+    logger.log_training_episode(0, 2., {}, {"race_record": race, "train/policy_loss": .1})
+    logger.log_update({"train/policy_loss": .1, "train/environment_steps": 100})
+    logger.log_collector_progress({"collector/phase": "updating"})
+    logger.close()
+    logger.close()  # Training hook and CLI cleanup both close the logger.
+    assert json.loads((tmp_path / "race_metrics.jsonl").read_text()) == race
+    assert not (tmp_path / "episode_metrics.csv").exists()
+    assert not (tmp_path / "agent_metrics.csv").exists()
+    assert not (tmp_path / "collector_progress.csv").exists()
+    assert list(csv.DictReader((tmp_path / "update_metrics.csv").open())) == [
+        {"train/policy_loss": "0.1", "train/environment_steps": "100"}]
+
+
+def test_csv_batches_schema_changes_and_flushes_on_interval(tmp_path, monkeypatch):
+    import loggers.csv_logger as module
+    now = [0.]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    logger = CSVLogger(str(tmp_path), scenario_config={"logging": {
+        "flush_every": 3, "flush_interval_seconds": 10., "collector_progress": True}})
+    logger.log_update({"step": 1})
+    logger.log_update({"step": 2, "late": 4})
+    path = tmp_path / "update_metrics.csv"
+    assert not path.exists()
+    logger.log_update({"step": 3, "late": 5})
+    assert len(list(csv.DictReader(path.open()))) == 3
+    logger.log_update({"step": 4, "another": 6})
+    now[0] = 11.
+    logger.log_collector_progress({"collector/phase": "updating"})
+    rows = list(csv.DictReader(path.open()))
+    assert [r["another"] for r in rows] == ["", "", "", "6"]
+    assert next(csv.DictReader((tmp_path / "collector_progress.csv").open())) == {
+        "collector/phase": "updating"}
+    logger.log_update({"step": 5})
+    logger.close()
+    assert len(list(csv.DictReader(path.open()))) == 5
+
+
+def test_heuristic_agent_facts_are_kept_without_a_race_record(tmp_path):
+    logger = CSVLogger(str(tmp_path))
+    logger.log_training_episode(0, 0., {}, {
+        'agent_outcomes': {'a': 'finished', 'b': 'self_crash'}, 'episode_steps': 10})
+    logger.close()
+    rows = list(csv.DictReader((tmp_path / 'agent_metrics.csv').open()))
+    assert {r['agent_id']: r['outcome'] for r in rows} == {'a': 'finished', 'b': 'self_crash'}

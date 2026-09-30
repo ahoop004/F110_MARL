@@ -486,34 +486,14 @@ agents:
 # Weights & Biases logging; --no-wandb disables it.
 wandb:
   logging:
+    # auto selects compact task metrics; debug includes detailed diagnostics.
+    profile: auto
     groups:
-      define_metrics: true
       train: true
       eval: true
-      eval_agg: true
-      trainer_hooks: true
-    metrics:
-      train/episode: true
-      train/outcome: true
-      train/success: true
-      train/episode_success: true
-      train/episode_reward: true
-      train/episode_steps: true
-      train/success_rate: true
-      train/reward_mean: true
-      curriculum/phase_idx: true
-      curriculum/eval_success_streak: true
-      curriculum/eval_window_success_rate: true
-      curriculum/eval_window_count: true
-      curriculum/eval_window_size: true
-      curriculum/criteria_eval_success_rate: true
-      curriculum/criteria_eval_required_runs: true
-      eval/episode: true
-      eval/episode_success: true
-      eval/episode_success_rate: true
-      eval/rolling_success_rate: true
-      eval/run: true
-      eval_agg/success_rate: true
+      performance: true
+      curriculum: true
+      # collector and reward_components default off; debug enables both.
   # true enables this component; false disables it.
   enabled: true
   # Logging project name.
