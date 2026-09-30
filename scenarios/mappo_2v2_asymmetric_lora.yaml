@@ -383,6 +383,7 @@ environment:
 evaluation:
   # true enables this component; false disables it.
   enabled: true
+  num_workers: auto
   # Evaluation interval in completed training episodes.
   every_episodes: 100
   # Match the objective: lap_time, completion_progress, team_completion, team_combined, team_first_place, team_sweep, team_combined_penalties, map_curriculum, or two_team_completion.

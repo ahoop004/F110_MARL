@@ -199,6 +199,7 @@ def test_scenarios_preserve_frozen_base_contract_and_independent_defaults():
         assert cfg['environment']['vehicle_params'] == base['environment']['vehicle_params']
         assert cfg['environment']['map_bundles_train'] == ['circle_map']
         assert cfg['evaluation']['episodes'] == 80 and cfg['evaluation']['final_test']['episodes'] == 160
+        assert cfg['evaluation']['num_workers'] == 'auto'
 
 
 def test_frozen_zero_target_columns_still_learn_opponent_conditioning_through_lora():
@@ -391,9 +392,10 @@ def tiny_scenario(tmp_path, skill, num_envs):
     cfg['training_defaults'].update(rollout_steps_per_env=2, checkpoint_every_steps=4)
     cfg['agents']['car_0']['params'].update(pi_hidden_dims=[8, 8], vf_hidden_dims=[8],
         device='cpu', n_steps=4, batch_size=2, n_epochs=1, checkpoint_every_steps=4)
-    cfg['agents']['car_1']['params'].update(horizon=2, knots=2, iterations=1, max_evaluations=5)
+    if 'car_1' in cfg['agents']:
+        cfg['agents']['car_1']['params'].update(horizon=2, knots=2, iterations=1, max_evaluations=5)
     source_cfg = deepcopy(cfg['agents']['car_0'])
-    source_cfg['observation']['observation'].pop('target_frenet')
+    source_cfg['observation']['observation'].pop('target_frenet', None)
     composer = run.build_obs_composer(source_cfg, cfg['environment'], DIRECTORY)
     params = run.resolve_training_params(source_cfg, cfg)
     params['_observation_contract'] = composer.contract

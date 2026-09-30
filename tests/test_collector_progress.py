@@ -105,6 +105,8 @@ def test_evaluation_replaces_idle_worker_status_and_clears_afterwards(monkeypatc
         assert expected in text
     progress.evaluation_progress({**row, 'workers': 8, 'completed_episodes': 3})
     assert 'workers=8 completed=3/8' in progress.console_message()
+    progress.evaluation_progress({**row, 'suite': 'pass/basic', 'policy': 'base'})
+    assert 'suite=pass/basic policy=base' in progress.console_message()
     progress.evaluation_progress({**row, 'status': 'complete', 'outcome': 'car_0:race_complete'})
     assert 'outcome=car_0:race_complete' in lines[-1]
     progress.evaluation_progress(None)

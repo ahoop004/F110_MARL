@@ -1,4 +1,4 @@
-# Independent passing and defending adapters
+# LoRA skill adapters
 
 `scenarios/mappo_1v1_pass_lora.yaml` and
 `scenarios/mappo_1v1_defend_lora.yaml` each train one MAPPO learner against a fixed
@@ -27,6 +27,136 @@ defaults to 20 million joint environment decisions. `--num-envs 8` enables paral
 collection; optionally add `--set experiment.num_workers=4`. Serial and parallel
 rollout sizes retain the existing MAPPO conventions, so compare experiments at
 matched collection settings as well as decision budgets.
+
+## Parallel evaluation and HPC resources
+
+Pass, defend, pressure, and solo-recovery LoRA scenarios set
+`evaluation.num_workers: auto`. During parallel training this resolves to at most
+eight evaluation workers, capped by training worker/environment counts and the
+number of trials in the current suite. An explicit positive count overrides
+auto; use `1` to compare serial evaluation. The asymmetric 2v2 LoRA scenario also
+enables auto workers through the standard MAPPO evaluator.
+
+Skill stages, frozen-baseline trials, adapted-policy trials, and solo retention
+share **one persistent CPU worker pool**. Stages and policies are evaluated in
+sequence; their trials run concurrently. Workers cache separate environment
+contexts, so three stages plus retention do not create four process pools. The
+parent owns the GPU policy and preserves the serial per-race inference shape.
+Explicit stage indices, episode indices, maps, seed blocks, trial ordering,
+target observation inputs, score aggregation, and retention gates remain the
+same. Curriculum advancement happens only after the complete suite is aggregated.
+Progress identifies the suite and whether the base or adapter is running.
+
+The first default selection evaluates 80 tactical plus 40 solo trials for each
+of the base and adapter: **240 trials**. Later selections reuse the cached base
+and run 120 adapter trials. This difference in work makes cold and warm timings
+incomparable. The full 16,000-step retention limit and all stage trials remain
+enabled; parallelism does not shorten the evaluation protocol.
+
+Headless standalone skill evaluation, including final cross-skill tests, also
+honors `--set evaluation.num_workers=8`. Auto may resolve to one for a default
+single-environment scenario, so set the count explicitly for those runs. Rendered
+evaluation uses the serial path. Standard MAPPO trajectory recording also keeps
+its existing serial fallback; this change does not add skill-suite recording.
+
+A starting allocation that leaves much of a large shared node available is:
+
+| Resource | Starting value |
+| --- | --- |
+| GPUs | 1 |
+| Physical CPU cores allocated to the session | 32 |
+| Training worker processes | 30 |
+| Training environments | 400, retaining the current experiment's rollout size |
+| Decisions per environment per update | 256 |
+| Evaluation workers | 8; compare 4, 8, and 16 on the node |
+| Native/PyTorch threads | 1 per process |
+
+```bash
+python3 -u run.py --scenario scenarios/mappo_1v1_pass_lora.yaml \
+  --num-envs 400 --num-workers 30 --torch-threads 1 \
+  --collector-scheduling ready --set evaluation.num_workers=8 --no-render
+```
+
+Use the same resource flags for defend, pressure, and recovery. Evaluation pauses
+training workers, so its CPU usage replaces active collection rather than adding
+to it. Both sets of processes remain resident; measure memory after all stages
+and retention have warmed up, including cached environments, before reducing RAM.
+Request the smaller allocation in the interactive-session form: reducing the
+Python worker count does not release CPUs already reserved by the session.
+Check the startup report for physical cores; hardware threads are not separate
+physical cores.
+
+This is a starting layout, not a measured HPC optimum. First compare worker
+counts while keeping environments, horizon, learning settings, and work fixed:
+
+```bash
+python3 scripts/benchmark_collectors.py \
+  --scenario scenarios/mappo_1v1_pass_lora.yaml \
+  --num-envs 400 --workers 16 24 30 --scheduling ready \
+  --rollout-steps-per-env 256 --total-steps 307200 \
+  --set evaluation.enabled=false
+```
+
+Run benchmarks without another training job competing for the same allocation.
+Compare warm `round_steps_per_second`, then repeat the promising settings. For
+resource efficiency, prefer the smallest allocation near the best measured rate;
+a larger allocation is justified when its speedup matters to the experiment.
+Recovery has no MPC opponent, while 2v2 has more simulation/learner work, so
+measure them separately. Increasing environment count beyond the number of
+workers does not add concurrently executing CPU processes. Keeping 400 here
+preserves 102,400 decisions per update. Changing environment count at a fixed
+horizon changes batch size and learning cadence; holding batch size by changing
+the horizon still changes trajectory length and GAE bootstrapping.
+
+The evaluation benchmark supports the skill suites and checks exact summary
+agreement between worker counts and repeats:
+
+```bash
+python3 scripts/benchmark_mappo_evaluation.py \
+  --scenario scenarios/mappo_1v1_pass_lora.yaml \
+  --workers 1 4 8 16 --max-steps 64 --episodes-per-map 2 --repetitions 2 \
+  --output /tmp/pass_eval_workers.json
+```
+
+This uses the real configured pretrained actor. Add `--checkpoint PATH` to test
+a trained adapter. The shortened limits and trial counts are timing probes, not
+checkpoint-selection scores. Use `--full-protocol` in place of `--max-steps` and
+`--episodes-per-map` to verify the complete selection protocol. Choose workers
+using warm times and verify `matches_first_summary` remains true. The first skill
+call separately reports its additional `baseline_physics_steps`. A failure to
+match stops the benchmark with an error and needs investigation before treating
+that layout as evaluation-equivalent. Two trials per map let the generalization
+and retention probes exercise all 16 workers; one trial per map would cap those
+suites at eight workers regardless of a larger requested count.
+
+### Local validation
+
+The [saved September 30 probe](benchmarks/lora_parallel_evaluation_local.json)
+used a Xeon Silver 4214 (12 physical cores available), one Quadro RTX 5000 for
+inference, and the real configured pretrained actor. Passing used all three
+stages and all eight generalization/retention maps, with two trials per map and
+a 16-step cap:
+
+| Evaluation workers | Cold seconds, including baseline | Mean of two warm calls |
+| --- | ---: | ---: |
+| 1 | 63.45 | 28.78 |
+| 8 | 20.08 | 3.83 |
+
+Every summary matched exactly. Cold calls executed 1,152 physics steps; warm
+calls executed 576 because the baseline was cached. The approximately 7.5x warm
+speedup is a short local measurement, not a prediction for full-length races or
+the HPC. The asymmetric LoRA smoke probe also matched serial summaries with two
+workers, using an explicit compatible PPO-source override because its configured
+asymmetric checkpoint was unavailable locally.
+
+Spawned regression checks compare exact serial/parallel records for pass,
+defend, pressure, and recovery, including uneven assignments, stage/map/seed
+identity, zero target inputs in retention, updated nonzero adapters, baseline
+cache reuse, RNG/weight preservation, final cross-skill trials, curriculum inputs,
+and worker cleanup on errors. They also exercise evaluation with live training
+collectors and standalone evaluation from a self-contained checkpoint. These
+short execution checks preserve the protocol logic; they do not measure task
+success or replace full-length evaluations of trained adapters.
 
 ## Tasks and rewards
 

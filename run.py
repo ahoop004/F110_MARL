@@ -1058,6 +1058,10 @@ def _run_eval(
         try:
             evaluator = SkillEvaluator(scenario=provenance_scenario, scenario_dir=scenario_dir,
                 agent=agent, output_dir=output_dir, protocol=protocol_name or 'selection', render=render)
+            from training.parallel_mappo_evaluator import evaluation_workers
+            workers = 1 if render else evaluation_workers(provenance_scenario, eval_episodes)
+            console.print_info(f"Skill evaluation: up to {workers} shared workers for stage trials, "
+                               "frozen baseline and solo retention.")
             summary = evaluator.evaluate_final() if protocol_name == 'final' else evaluator.evaluate()
             report = dict(checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash,
                 checkpoint_provenance=stored_provenance, provenance_mismatches=mismatches,
@@ -2105,6 +2109,9 @@ def _run_mappo(
         from training.skill_evaluator import SkillEvaluator
         evaluator = SkillEvaluator(scenario=scenario, scenario_dir=scenario_dir, agent=agent,
             output_dir=output_dir, curriculum=skill_curriculum)
+        from training.parallel_mappo_evaluator import evaluation_workers
+        console.print_info(f"Skill evaluation: up to {evaluation_workers(scenario, eval_cfg['episodes'])} shared workers "
+                           "for stage trials, frozen baseline and solo retention.")
         trainer.hooks.append(EvaluationCheckpointHook(agent, str(output_dir), evaluator,
             evaluate_every=int(eval_cfg.get('every_episodes', 100)), selection_strategy='skill',
             evaluate_every_steps=eval_cfg.get('every_steps'), provenance=provenance,

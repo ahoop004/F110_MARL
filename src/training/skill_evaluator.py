@@ -11,6 +11,7 @@ from core.scenario import load_and_expand_scenario, resolve_evaluation_protocol
 from core.setup import create_training_setup, build_obs_composers
 from env.skills import SKILL_SEED_OFFSETS
 from training.mappo_evaluator import DeterministicMAPPOEvaluator
+from training.parallel_mappo_evaluator import EvaluationWorkerPool, ParallelMAPPOEvaluator, evaluation_workers
 from training.two_team import preserve_rng
 from wrappers.actions.composer import ActionComposer
 
@@ -87,6 +88,7 @@ class SkillEvaluator:
         self.recording = None
         self._evaluators = {}
         self._baseline = {}
+        self._worker_pool = EvaluationWorkerPool(scenario)
 
     def set_progress_callback(self, callback):
         previous, self.progress_callback = self.progress_callback, callback
@@ -146,9 +148,17 @@ class SkillEvaluator:
                     controller.set_env(env)
                 actions = ActionComposer.from_config(space.low, space.high,
                     scenario['agents'][ego].get('action_constraints', {}), decision_dt=env.timestep)
-                evaluator = DeterministicMAPPOEvaluator(env=env, trainable_ids=[ego],
+                # Execution settings come from the requested run, including for
+                # the sibling skill in final tests; benchmark definitions do not.
+                workers = evaluation_workers(self.scenario, episodes)
+                evaluator_class = ParallelMAPPOEvaluator if workers > 1 else DeterministicMAPPOEvaluator
+                parallel_options = dict(scenario=config, scenario_dir=self.directory,
+                    num_workers=workers, worker_pool=self._worker_pool, skill_stage=stage,
+                    observation_agents=scenario['agents']) if workers > 1 else {}
+                evaluator = evaluator_class(env=env, trainable_ids=[ego],
                     other_agents=opponents, obs_composers=obs, action_composer=actions,
-                    episodes=episodes, base_seed=seed, protocol_name=self.protocol).bind_agent(self.agent)
+                    episodes=episodes, base_seed=seed, protocol_name=self.protocol,
+                    **parallel_options).bind_agent(self.agent)
                 evaluator.render = self.render
                 evaluator.set_progress_callback(self.progress_callback)
                 self._evaluators[key] = evaluator
@@ -160,11 +170,21 @@ class SkillEvaluator:
 
     def _run(self, scenario, agent, *, solo=False):
         ego = scenario['environment']['skill_task']['ego_id']
+        def evaluate(stage=None):
+            evaluator = self._get_evaluator(scenario, stage).bind_agent(agent)
+            suite = ('solo_retention' if stage is None else
+                     f"{scenario['environment']['skill_task']['skill']}/{scenario['skill_curriculum']['stages'][stage]['name']}")
+            def report(row):
+                if self.progress_callback is not None:
+                    self.progress_callback(None if row is None else {
+                        **row, 'suite': suite, 'policy': 'base' if agent is self.base else 'adapter'})
+            evaluator.set_progress_callback(report)
+            return evaluator.evaluate()
         if solo:
-            return self._get_evaluator(scenario).bind_agent(agent).evaluate()
+            return evaluate()
         stages, rows = [], []
         for index, stage in enumerate(scenario['skill_curriculum']['stages']):
-            summary = self._get_evaluator(scenario, index).bind_agent(agent).evaluate()
+            summary = evaluate(index)
             episodes = summary['episode_results']
             for row in episodes:
                 row['skill_stage'] = stage['name']
@@ -265,5 +285,8 @@ class SkillEvaluator:
         return result
 
     def close(self):
-        for evaluator in self._evaluators.values():
-            evaluator.close()
+        try:
+            self._worker_pool.close()
+        finally:
+            for evaluator in self._evaluators.values():
+                evaluator.close()

@@ -7,6 +7,7 @@ experiment:
   seed: 42
   num_envs: 1
   torch_threads: 1
+  terminal_every_updates: 1
   worker_startup_batch_size: 16
   worker_startup_timeout_s: 600
   worker_response_timeout_s: 120
@@ -244,6 +245,7 @@ environment:
     min_progress: 40.0
 evaluation:
   enabled: true
+  num_workers: auto  # Shared pool across skill stages and solo retention.
   every_steps: 409600
   episodes: 80
   max_steps: 400

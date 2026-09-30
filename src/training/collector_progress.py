@@ -143,6 +143,8 @@ class CollectorProgress:
             if 'evaluation_workers' in m:
                 text += (f" workers={m['evaluation_workers']} "
                          f"completed={m['evaluation_completed_episodes']}/{m['evaluation_episodes']}")
+            if 'evaluation_suite' in m:
+                text += f" suite={m['evaluation_suite']} policy={m['evaluation_policy']}"
             if 'evaluation_attack_successes' in m:
                 text += (f" attacks={m['evaluation_attack_successes']} "
                          f"target_crashes={m['evaluation_target_crashes']}")

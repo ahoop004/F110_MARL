@@ -42,6 +42,9 @@ Independent passing and defending LoRA scenarios are available as
 They train against racing MPC with automatic circle-to-eight-map curricula and
 require paired solo lap retention for checkpoint selection. See
 [skill adapter training](docs/skill_adapters.md) for tasks, evaluation and smoke runs.
+Skill LoRA evaluation supports a shared CPU worker pool across curriculum stages,
+frozen-baseline comparisons, and solo retention. See the
+[HPC resource and benchmark guide](docs/skill_adapters.md#parallel-evaluation-and-hpc-resources).
 
 Use `--max-speed VALUE` with any positive finite value to give learners and MPCs
 a shared forward speed limit in m/s. The equivalent YAML setting is

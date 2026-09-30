@@ -54,6 +54,10 @@ not part of this change. Fixed-opponent MAPPO checkpoint evaluation can now use
 `evaluation.num_workers` for concurrent CPU races with the policy in the parent;
 training still pauses until those races finish. See the
 [attack HPC guide](1v1_attack.md#hpc-training-and-checkpoint-evaluation).
+LoRA skill curricula also support parallel evaluation, sharing one process pool
+across stages, baseline comparisons, and solo retention. Their fixed trial counts
+and score gates are preserved; see the
+[skill HPC guide](skill_adapters.md#parallel-evaluation-and-hpc-resources).
 
 ## Asymmetric 2v2
 

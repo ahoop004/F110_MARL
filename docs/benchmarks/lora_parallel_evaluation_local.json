@@ -1,0 +1,137 @@
+{
+  "date": "2026-09-30",
+  "hardware": {
+    "cpu": "Intel(R) Xeon(R) Silver 4214 CPU @ 2.20GHz",
+    "allowed_logical_cpus": 24,
+    "physical_cores": 12,
+    "policy_device": "cuda",
+    "gpu": "Quadro RTX 5000"
+  },
+  "software": {
+    "python": "3.12.3",
+    "torch": "2.8.0+cu128"
+  },
+  "passing": {
+    "scenario": "scenarios/mappo_1v1_pass_lora.yaml",
+    "checkpoint": "configured pretrained actor",
+    "max_steps": 16,
+    "episodes_per_map": 2,
+    "overrides": [],
+    "results": [
+      {
+        "workers": 1,
+        "iteration": 0,
+        "cold": true,
+        "seconds": 63.446960457993555,
+        "physics_steps": 1152,
+        "baseline_physics_steps": 576,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 1,
+        "iteration": 1,
+        "cold": false,
+        "seconds": 28.740912177003338,
+        "physics_steps": 576,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 1,
+        "iteration": 2,
+        "cold": false,
+        "seconds": 28.81810110301012,
+        "physics_steps": 576,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 8,
+        "iteration": 0,
+        "cold": true,
+        "seconds": 20.082620650005993,
+        "physics_steps": 1152,
+        "baseline_physics_steps": 576,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 8,
+        "iteration": 1,
+        "cold": false,
+        "seconds": 3.8596731559955515,
+        "physics_steps": 576,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 8,
+        "iteration": 2,
+        "cold": false,
+        "seconds": 3.7953087619971484,
+        "physics_steps": 576,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      }
+    ]
+  },
+  "asymmetric": {
+    "scenario": "scenarios/mappo_2v2_asymmetric_lora.yaml",
+    "checkpoint": "configured pretrained actor",
+    "max_steps": 4,
+    "episodes_per_map": null,
+    "overrides": [
+      "evaluation.episodes=3",
+      "training_defaults.pretrained_actor_checkpoint=../outputs/pretrain/best_model2.pt"
+    ],
+    "results": [
+      {
+        "workers": 1,
+        "iteration": 0,
+        "cold": true,
+        "seconds": 6.440972025011433,
+        "physics_steps": 12,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 1,
+        "iteration": 1,
+        "cold": false,
+        "seconds": 6.150684474996524,
+        "physics_steps": 12,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 2,
+        "iteration": 0,
+        "cold": true,
+        "seconds": 7.283265890000621,
+        "physics_steps": 12,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      },
+      {
+        "workers": 2,
+        "iteration": 1,
+        "cold": false,
+        "seconds": 4.38694457100064,
+        "physics_steps": 12,
+        "baseline_physics_steps": 0,
+        "matches_first_summary": true
+      }
+    ]
+  },
+  "passing_warm_mean_seconds": {
+    "1": 28.77950664000673,
+    "8": 3.82749095899635
+  },
+  "passing_warm_speedup": 7.519157314365892,
+  "limitations": [
+    "Local host, not the HPC allocation; no concurrent training benchmark.",
+    "Passing uses the real configured PPO actor with zero-initialized adapters; 16-step caps and two trials per map.",
+    "Passing cold calls include frozen-baseline trials; warm calls reuse them. These shortened scores cannot qualify retention or replace selection.",
+    "Asymmetric is an execution/parity probe: three races capped at four steps. Its configured outputs/asym/best_model.pt was unavailable, so the compatible PPO checkpoint was supplied explicitly as a benchmark override.",
+    "No full-length evaluation suite or trained-adapter speedup was measured."
+  ]
+}
