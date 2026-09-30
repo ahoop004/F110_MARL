@@ -101,6 +101,18 @@ as workers report episodes, without waiting for an optimizer update. Finish rate
 means all learners finished; failure and timeout rates mean any learner was
 affected. Until the first episode completes, return is explicitly pending.
 `env_steps` counts decisions incorporated into completed updates.
+`collected` includes completed decisions reported during the current round;
+`round_steps` counts just that round, and `collect_steps/s` measures its rate.
+These counters can advance while no episodes finish. They count confirmed steps,
+not actions merely dispatched to workers. The rate freezes during optimization
+and evaluation, then resets when the next collection round starts.
+`barrier_waiting=N/W` counts workers that submitted their full rollout and are
+waiting for the update; it is not a count of CPUs in use.
+
+Both 1v1 attack scenarios print every completed update. `collect_s`, `update_s`
+and `round_steps/s` separate collection and learning from startup and evaluation.
+`env_steps/s` remains the cumulative rate including startup and earlier hooks.
+Longer completed episodes can reduce episodes/second without reducing decisions/second.
 
 During checkpoint evaluation, the heartbeat instead shows the current evaluation
 episode, map, physics steps/limit, simulated seconds, learner laps/targets,
@@ -110,9 +122,9 @@ reports refresh at most once per second between decisions. The selection evaluat
 does not compute rewards, so `train_return_mean` remains explicitly labeled as the
 recent training return. Training workers are paused during this evaluation.
 
-Worker readiness is still shown during startup. Detailed collector counters
-(messages, dispatched actions, barrier counts and worker-message age) remain in
-the `collector/*` telemetry rather than dominating the terminal.
+Worker readiness is still shown during startup. Additional collector counters
+(messages, dispatched actions and worker-message age) remain in `collector/*`
+telemetry.
 A stuck individual worker still triggers the configured response timeout.
 These heartbeats cannot diagnose a process that the scheduler has suspended or killed.
 
@@ -129,6 +141,21 @@ Use unbuffered output when submitting a batch job, for example `python3 -u run.p
 a flat GPU graph alone can mean CPU simulation is still collecting.
 
 ## Measure before increasing the allocation
+
+Launching Python directly from an allocated interactive session or Open OnDemand
+desktop is supported. Workers inherit the terminal's CPU affinity; `--num-workers`
+sets the process count and does not request more CPUs. Fixed-opponent MAPPO prints
+the allowed logical CPU count and, when Linux exposes the topology, the number
+of physical cores those CPUs represent. It records them as
+`perf/cpu_affinity_count` and `perf/cpu_affinity_core_count`. Missing Slurm variables
+alone do not establish whether an interactive session has an allocation.
+
+For example, 128 allowed logical CPUs may represent 64 physical cores with two
+hardware threads each. One hundred worker processes then share those physical
+cores. More workers can help hide waiting but can also increase contention;
+benchmark the layout instead of assuming each logical CPU is a separate core.
+Affinity describes accessible CPUs, not exclusive ownership or a container's
+CPU-time quota. Multiple environments in a worker execute sequentially.
 
 Run this with the GPU and CPUs reserved exclusively for the benchmark:
 
@@ -158,6 +185,23 @@ checkpoint. Use subprocess wall time for complete job throughput. Collection
 includes episode event processing; the round rate excludes update-hook time.
 Evaluation history and W&B eval metrics record `evaluation_seconds` and its
 cumulative total separately.
+
+Fixed-opponent MAPPO also records these parent-side collection timings in
+`update_metrics.csv`:
+
+| Metric | What it measures |
+| --- | --- |
+| `perf/inference_seconds` | Request preparation, policy/value inference, and transfer of results back to CPU |
+| `perf/worker_receive_seconds` | Receiving and decoding worker messages; also blocking on workers in synchronous mode |
+| `perf/worker_wait_seconds` | Scheduler time, including waiting for ready workers in ready mode |
+| `perf/action_send_seconds` | Grouping and sending policy replies to workers |
+| `perf/inference_requests_per_batch` | Mean race requests per inference call, including value/bootstrap requests |
+
+These are wall times in the parent, not summed worker CPU times or GPU kernel
+times. Workers can simulate while the parent handles other workers. A large
+`wait_s` suggests checking worker simulation and CPU utilization; large `infer_s`
+requires examining batch sizes and host/device overhead as well as GPU use.
+These timings do not by themselves establish that an additional GPU would help.
 
 For MAPPO also monitor `train/agent_steps`: environment throughput alone can
 count opponent-only steps in scenarios that intentionally retain `all_agents`.

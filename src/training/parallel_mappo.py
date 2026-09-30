@@ -20,7 +20,8 @@ from training.hooks import transition_record_hooks
 from training.collector_progress import CollectorProgress
 from training.collector_scheduling import (
     CollectorEventSink, CollectorScheduler,
-    _close_collectors, _report_worker_error, _worker_startup_settings, cpu_affinity_count,
+    _close_collectors, _report_worker_error, _worker_startup_settings,
+    cpu_affinity_count, cpu_affinity_core_count,
 )
 from training.on_policy_trainer import _WorkerHook
 
@@ -287,6 +288,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     experiment = scenario["experiment"]
     workers = min(num_envs, int(experiment.get("num_workers", num_envs)))
     affinity_cpus = cpu_affinity_count()
+    affinity_cores = cpu_affinity_core_count()
     horizon = int(scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256))
     if min(workers, horizon) < 1:
         raise ValueError("Parallel MAPPO needs positive workers and horizon")
@@ -405,12 +407,16 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         if console is not None:
             console.print_info(f"MAPPO starting {workers} workers / {num_envs} environments; "
                                f"horizon={horizon}, up to {num_envs * horizon:,} joint decisions per update")
-            console.print_info(f"MAPPO CPU affinity: {affinity_cpus if affinity_cpus is not None else 'unknown'} allowed CPUs; "
+            console.print_info(f"MAPPO CPU affinity: {affinity_cpus if affinity_cpus is not None else 'unknown'} allowed logical CPUs; "
+                               f"physical cores={affinity_cores if affinity_cores is not None else 'unknown'}; "
                                f"SLURM_CPUS_PER_TASK={os.environ.get('SLURM_CPUS_PER_TASK', 'unset')} "
                                f"SLURM_NTASKS={os.environ.get('SLURM_NTASKS', 'unset')}")
             if affinity_cpus is not None and workers > affinity_cpus:
                 console.print_info(f"MAPPO CPU contention: {workers} worker processes inherit only {affinity_cpus} "
                                    "allowed CPUs. Check the job's CPU allocation and task binding.")
+            elif affinity_cores is not None and workers > affinity_cores:
+                console.print_info(f"MAPPO {workers} workers share {affinity_cores} physical cores. "
+                                   "Compare fewer workers using round_steps/s to measure hardware-thread contention.")
         for key in thread_vars:
             os.environ[key] = "1"
         batch_size = startup["worker_startup_batch_size"]
@@ -532,6 +538,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 })
                 if affinity_cpus is not None:
                     metrics['perf/cpu_affinity_count'] = affinity_cpus
+                if affinity_cores is not None:
+                    metrics['perf/cpu_affinity_core_count'] = affinity_cores
                 if race_hooks:
                     metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
                     metrics['recording/exhausted_windows'] = sorted(set().union(*(h.exhausted_windows for h in race_hooks)))

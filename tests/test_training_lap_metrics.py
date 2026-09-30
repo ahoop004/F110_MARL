@@ -8,6 +8,22 @@ from loggers.csv_logger import CSVLogger
 from training.hooks import ConsoleHook, CSVHook, WandbHook
 
 
+def test_mappo_update_reports_timings_without_completed_episodes():
+    from training.hooks import MAPPOConsoleHook
+    lines = []
+    hook = MAPPOConsoleHook(SimpleNamespace(print_info=lines.append), every_updates=1)
+    hook.on_update({'train/updates': 1, 'train/environment_steps': 102400,
+                    'perf/end_to_end_env_steps_per_second': 700.,
+                    'perf/collection_seconds': 50., 'perf/update_seconds': 14.,
+                    'perf/round_env_steps_per_second': 1600.,
+                    'perf/inference_seconds': 10., 'perf/worker_receive_seconds': 2.,
+                    'perf/worker_wait_seconds': 36.})
+    for expected in ('completed_total=0', 'env_steps/s=700.0', 'round_steps/s=1600.0',
+                     'collect_s=50.00', 'update_s=14.00', 'infer_s=10.00',
+                     'receive_s=2.00', 'wait_s=36.00'):
+        assert expected in lines[-1]
+
+
 def test_episode_lap_outputs_handle_completion_and_reset(tmp_path):
     lines, payloads = [], []
     console = ConsoleHook(SimpleNamespace(print_info=lines.append))

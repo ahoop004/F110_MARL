@@ -211,6 +211,10 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
     assert progress[0]["collector/phase"] == "startup"
     assert progress[0]["collector/updates"] == 0
     assert progress[-1]["collector/updated_environment_steps"] == 15
+    assert progress[-1]["collector/collected_environment_steps"] == 15
+    live_steps = [row['collector/collected_environment_steps'] for row in progress
+                  if 'collector/collected_environment_steps' in row]
+    assert live_steps == sorted(live_steps)
     assert progress[-1]["collector/actions_dispatched"] == 15
     assert progress[-1]["collector/completed_episodes"] == 5
     assert progress[-1]["collector/recent_episodes"] == 5
@@ -221,6 +225,13 @@ def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budge
     assert len([row for row in logs if "train/updates" in row]) == len(capture.updates)
     assert all(np.isfinite(m["train/policy_loss"]) for m in capture.updates
                if m["train/rollout_agent_samples"])
+    for metrics in capture.updates:
+        parent_phases = [metrics[key] for key in (
+            'perf/inference_seconds', 'perf/worker_receive_seconds',
+            'perf/worker_wait_seconds', 'perf/action_send_seconds')]
+        assert all(seconds >= 0 for seconds in parent_phases)
+        assert sum(parent_phases) <= metrics['perf/collection_seconds']
+        assert metrics['perf/inference_requests_per_batch'] > 0
 
 
 def test_parallel_mappo_validates_horizon_and_worker_count():

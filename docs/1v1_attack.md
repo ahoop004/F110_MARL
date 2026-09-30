@@ -54,7 +54,8 @@ see [the 1v1 performance review](1v1_mpc_performance.md).
 
 ### HPC training and checkpoint evaluation
 
-On one GPU with 128 allocated CPU cores, launch one trainer with grouped workers:
+On one GPU in an allocated compute session, this starts 400 environments grouped
+into 100 CPU worker processes:
 
 ```bash
 python3 -u run.py --scenario scenarios/mappo_1v1_attack.yaml \
@@ -67,6 +68,32 @@ Use the same settings for the LoRA arm. `ready` serves training workers as they
 finish their MPC solves instead of waiting at every action barrier. Weights
 remain fixed until the collection round ends. Scheduling changes stochastic
 action ordering; benchmark it against `synchronous` on the allocated node.
+
+Check the startup CPU-affinity line before interpreting the worker count. An
+allocation of 128 logical CPUs may provide only 64 physical cores with two
+hardware threads each. The startup report reads Linux topology when available;
+it does not infer physical cores from CPU numbering. A shell inside an allocated
+Open OnDemand/Apptainer session can launch these workers directly. Each worker
+steps its assigned environments sequentially, and the parent handles policy
+inference and updates on one device. A second GPU is not used by this collector.
+
+For a short worker-count comparison on that allocation, run this while the
+training job is stopped so the two runs do not compete for resources:
+
+```bash
+python3 scripts/benchmark_collectors.py \
+  --scenario scenarios/mappo_1v1_attack.yaml \
+  --num-envs 400 --workers 64 80 100 --scheduling ready \
+  --rollout-steps-per-env 256 --total-steps 307200 \
+  --set evaluation.enabled=false
+```
+
+This runs three updates per setting, excludes the first from steady rates, and
+writes each result to its own run directory. Compare `round_steps_per_second`;
+repeat promising settings before a long run. The learning parameters and total
+work are matched, but stochastic trajectories can differ between worker layouts.
+Restore evaluation for the actual training experiment. This comparison tests
+whether fewer processes help; it does not assume that 64 workers are faster.
 
 Both attack scenarios set `evaluation.num_workers: auto`. For checkpoint
 selection this uses at most eight workers, capped by episode count and the
@@ -103,6 +130,13 @@ interval reduces the number of evaluations, not each evaluation's duration, and
 changes which checkpoints are eligible for selection. Compare
 `perf/collection_seconds`, `perf/update_seconds`, and `eval/evaluation_seconds`
 separately; collection/round throughput excludes evaluation hook time.
+
+Training heartbeats now include live `collected` and `collect_steps/s` counters;
+`env_steps` still changes only at completed updates. Each update prints collection,
+optimization and parent inference/wait timings. Fewer completed episodes alone
+do not establish a slowdown: at 1,600 aggregate decisions/s, 400 environments
+average four decisions/s each, and long races finish much less often. See
+[collector timing definitions](COLLECTOR_PERFORMANCE.md#distinguishing-a-slow-rollout-from-a-stalled-hpc-job).
 
 Attack clearance checks also use a compiled exact wall-segment search to avoid
 large temporary arrays per footprint corner. Physics, MPC solver budgets and

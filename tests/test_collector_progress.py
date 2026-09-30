@@ -134,3 +134,40 @@ def test_progress_throttles_without_advancing_optimizer_or_worker_activity(monke
     assert rows[-1]['collector/updates'] == 0
     hook.on_update({'train/policy_loss': .5})
     assert rows[-1]['train/updates'] == 1
+
+
+def test_live_steps_count_completions_once_and_freeze_during_update(monkeypatch):
+    import training.collector_progress as module
+    now = [0.]
+    monkeypatch.setattr(module.time, 'monotonic', lambda: now[0])
+    progress = CollectorProgress(None, workers=2, environments=4, horizon=256)
+    progress.begin_round(100)
+    progress.set(phase='collecting', updated_environment_steps=100, actions_dispatched=120)
+    progress.report_steps(0, 8)
+    progress.report_steps(1, 4)
+    progress.report_steps(0, 8)  # Final rollout can repeat the last request's count.
+    now[0] = 2.
+    row = progress.snapshot()
+    assert row['collector/collected_environment_steps'] == 112
+    assert row['collector/round_steps'] == 12
+    assert row['collector/round_collection_steps_per_second'] == 6.
+    text = progress.console_message()
+    for expected in ('env_steps=100', 'collected=112', 'round_steps=12',
+                     'collect_steps/s=6.0', 'barrier_waiting=0/2', 'return=pending'):
+        assert expected in text
+    with pytest.raises(ValueError, match='must not go backwards'):
+        progress.report_steps(0, 7)
+    progress.finish_collection()
+    progress.set(phase='updating', waiting_workers=2)
+    now[0] = 102.
+    row = progress.snapshot()
+    assert row['collector/round_collection_seconds'] == 2.
+    assert row['collector/round_collection_steps_per_second'] == 6.
+    # Evaluation and optimizer time must not depress the last collection rate.
+    progress.begin_round(112)
+    progress.report_steps(0, 1)
+    now[0] = 103.
+    row = progress.snapshot()
+    assert row['collector/round_steps'] == 1
+    assert row['collector/collected_environment_steps'] == 113
+    assert row['collector/round_collection_steps_per_second'] == 1.

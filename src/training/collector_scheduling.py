@@ -2,6 +2,7 @@
 import time
 import os
 from multiprocessing.connection import wait
+from pathlib import Path
 
 
 _WORKER_TIMEOUT_SECONDS = 120
@@ -11,6 +12,22 @@ def cpu_affinity_count():
     """CPUs this process can use, which can be fewer than the node's CPUs."""
     try:
         return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return None
+
+
+def cpu_affinity_core_count(*, sysfs_root='/sys/devices/system/cpu'):
+    """Physical cores represented in the affinity mask, when Linux exposes them.
+
+    Sibling lists identify a core across sockets without counting its hardware
+    threads twice. This describes accessible topology, not exclusive ownership
+    or a container's CPU-time quota.
+    """
+    try:
+        cpus = os.sched_getaffinity(0)
+        siblings = {(Path(sysfs_root) / f'cpu{cpu}' / 'topology' /
+                     'thread_siblings_list').read_text().strip() for cpu in cpus}
+        return len(siblings) if siblings and '' not in siblings else None
     except (AttributeError, OSError):
         return None
 
