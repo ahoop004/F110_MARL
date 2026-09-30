@@ -20,7 +20,7 @@ dependencies = [
     "pandas",
     "scipy",
     "tensorboard",
-    "wandb",
+    "wandb>=0.22.3",
     "rich"
 ]
 

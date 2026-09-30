@@ -14,7 +14,7 @@ from loggers.wandb_logger import WandbLogger
 def fake_wandb(monkeypatch):
     import wandb
     calls, definitions = [], []
-    run = SimpleNamespace(id="test", name="test", get_url=lambda: None)
+    run = SimpleNamespace(id="test", name="test", url=None)
     monkeypatch.setattr(wandb, "init", lambda **kwargs: run)
     monkeypatch.setattr(wandb, "config", SimpleNamespace(update=lambda *args, **kwargs: None))
     monkeypatch.setattr(wandb, "define_metric", lambda *args, **kwargs: definitions.append((args, kwargs)))

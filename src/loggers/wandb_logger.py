@@ -98,7 +98,7 @@ class WandbLogger:
             if self.run is not None:
                 self.wandb_run_id = self.run.id
                 self.wandb_run_name = self.run.name
-                self.wandb_url = self.run.get_url()
+                self.wandb_url = self.run.url
                 if self.logging_config:
                     try:
                         logging_payload = {"wandb_logging": self.logging_config}
