@@ -20,7 +20,7 @@ from training.hooks import transition_record_hooks
 from training.collector_progress import CollectorProgress
 from training.collector_scheduling import (
     CollectorEventSink, CollectorScheduler,
-    _close_collectors, _report_worker_error, _worker_startup_settings,
+    _close_collectors, _report_worker_error, _worker_startup_settings, cpu_affinity_count,
 )
 from training.on_policy_trainer import _WorkerHook
 
@@ -246,7 +246,7 @@ def _collect_worker(connection, scenario, scenario_dir, assignments, horizon,
                     requests[env_id] = pending[env_id]
                 if not requests:
                     break
-                connection.send(("requests", (requests, sink.take())))
+                connection.send(("requests", (requests, sink.take(), sum(counts.values()))))
                 responses = connection.recv()
                 for env_id, response in responses.items():
                     if requests[env_id][0] == "cut":
@@ -286,6 +286,7 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
 
     experiment = scenario["experiment"]
     workers = min(num_envs, int(experiment.get("num_workers", num_envs)))
+    affinity_cpus = cpu_affinity_count()
     horizon = int(scenario.get("training_defaults", {}).get("rollout_steps_per_env", 256))
     if min(workers, horizon) < 1:
         raise ValueError("Parallel MAPPO needs positive workers and horizon")
@@ -404,6 +405,12 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         if console is not None:
             console.print_info(f"MAPPO starting {workers} workers / {num_envs} environments; "
                                f"horizon={horizon}, up to {num_envs * horizon:,} joint decisions per update")
+            console.print_info(f"MAPPO CPU affinity: {affinity_cpus if affinity_cpus is not None else 'unknown'} allowed CPUs; "
+                               f"SLURM_CPUS_PER_TASK={os.environ.get('SLURM_CPUS_PER_TASK', 'unset')} "
+                               f"SLURM_NTASKS={os.environ.get('SLURM_NTASKS', 'unset')}")
+            if affinity_cpus is not None and workers > affinity_cpus:
+                console.print_info(f"MAPPO CPU contention: {workers} worker processes inherit only {affinity_cpus} "
+                                   "allowed CPUs. Check the job's CPU allocation and task binding.")
         for key in thread_vars:
             os.environ[key] = "1"
         batch_size = startup["worker_startup_batch_size"]
@@ -439,21 +446,31 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         waiting = {}
         startup_s = time.perf_counter() - started_training
         round_start = time.perf_counter()
+        progress.begin_round(collected)
+        inference_s = receive_s = wait_s = send_s = 0.
+        inference_batches = inference_requests = 0
         progress.set(phase="collecting")
         publish_progress(force=True)
         while connections:
             requests = {}
-            for worker_id in scheduler.workers(connections, waiting):
+            started = time.perf_counter()
+            ready_workers = scheduler.workers(connections, waiting)
+            wait_s += time.perf_counter() - started
+            for worker_id in ready_workers:
                 if worker_id in waiting:
                     continue
+                started = time.perf_counter()
                 kind, payload = receive(worker_id)
+                receive_s += time.perf_counter() - started
                 scheduler.received(worker_id)
                 if kind == "requests":
-                    batch, items = payload
+                    batch, items, steps = payload
+                    progress.report_steps(worker_id, steps)
                     events(items)
                     requests.update({(worker_id, env_id): request for env_id, request in batch.items()})
                 elif kind == "rollout":
                     rollout, steps, physics, items = payload
+                    progress.report_steps(worker_id, steps)
                     events(items)
                     waiting[worker_id] = (rollout, steps, physics)
                     progress.set(waiting_workers=len(waiting))
@@ -464,15 +481,22 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     raise RuntimeError(f"Unexpected MAPPO worker message: {kind}")
             if requests:
                 progress.set(phase="inference")
+                started = time.perf_counter()
                 responses = infer_requests(agent, requests)
+                inference_s += time.perf_counter() - started
+                inference_batches += 1
+                inference_requests += len(requests)
+                started = time.perf_counter()
                 for worker_id in sorted({key[0] for key in requests}):
                     connections[worker_id].send({env_id: response for (worker, env_id), response
                                                  in responses.items() if worker == worker_id})
+                send_s += time.perf_counter() - started
                 dispatched += sum(kind == "act" for kind, _ in requests.values())
                 progress.set(phase="collecting", actions_dispatched=dispatched)
             publish_progress()
             if waiting and len(waiting) == len(connections):
                 collection_s = time.perf_counter() - round_start
+                progress.finish_collection()
                 steps = sum(item[1] for item in waiting.values())
                 rollouts = [waiting[i][0] for i in sorted(waiting) if waiting[i][0] is not None]
                 samples = sum(len(item[0]) for item in rollouts)
@@ -500,7 +524,14 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     "perf/elapsed_seconds": time.perf_counter() - started_training,
                     "perf/end_to_end_env_steps_per_second": collected / max(time.perf_counter() - started_training, 1e-9),
                     "perf/num_workers": workers, "perf/num_envs": num_envs,
+                    "perf/inference_seconds": inference_s,
+                    "perf/worker_receive_seconds": receive_s,
+                    "perf/worker_wait_seconds": wait_s,
+                    "perf/action_send_seconds": send_s,
+                    "perf/inference_requests_per_batch": inference_requests / max(inference_batches, 1),
                 })
+                if affinity_cpus is not None:
+                    metrics['perf/cpu_affinity_count'] = affinity_cpus
                 if race_hooks:
                     metrics['recording/storage_full'] = any(h.storage_full for h in race_hooks)
                     metrics['recording/exhausted_windows'] = sorted(set().union(*(h.exhausted_windows for h in race_hooks)))
@@ -517,6 +548,9 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                 waiting.clear()
                 scheduler.reset()
                 round_start = time.perf_counter()
+                progress.begin_round(collected)
+                inference_s = receive_s = wait_s = send_s = 0.
+                inference_batches = inference_requests = 0
                 progress.set(phase="collecting", waiting_workers=0)
                 publish_progress(force=True)
         flush_episodes()

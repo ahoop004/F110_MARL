@@ -1,9 +1,18 @@
 """Collector scheduling, event buffering, and CPU worker lifecycle helpers."""
 import time
+import os
 from multiprocessing.connection import wait
 
 
 _WORKER_TIMEOUT_SECONDS = 120
+
+
+def cpu_affinity_count():
+    """CPUs this process can use, which can be fewer than the node's CPUs."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return None
 
 
 def _worker_startup_settings(scenario):

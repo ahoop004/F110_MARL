@@ -211,6 +211,14 @@ class MAPPOConsoleHook(TrainingHook):
                 f"env_steps={m.get('train/environment_steps', 0)} "
                 f"env_steps/s={m.get('perf/end_to_end_env_steps_per_second', m.get('perf/round_env_steps_per_second', 0)):.1f} "
                 f"completed_window={len(rows)} completed_total={self._episodes}")
+        if 'perf/collection_seconds' in m:
+            text += (f" collect_s={m['perf/collection_seconds']:.2f} "
+                     f"update_s={m.get('perf/update_seconds', 0):.2f} "
+                     f"round_steps/s={m.get('perf/round_env_steps_per_second', 0):.1f}")
+            if 'perf/inference_seconds' in m:
+                text += (f" infer_s={m['perf/inference_seconds']:.2f} "
+                         f"receive_s={m.get('perf/worker_receive_seconds', 0):.2f} "
+                         f"wait_s={m.get('perf/worker_wait_seconds', 0):.2f}")
         def mean(key):
             values = [r[key] for r in rows if r.get(key) is not None]
             return float(np.mean(values)) if values else None

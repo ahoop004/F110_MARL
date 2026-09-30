@@ -21,9 +21,35 @@ class CollectorProgress:
                           updated_environment_steps=0, updates=0, completed_episodes=0)
         self.episodes = deque(maxlen=window)
         self.evaluation = None
+        self.round_started = None
+        self.collection_seconds = None
+        self.round_base_steps = 0
+        self.worker_steps = {}
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.thread = None
+
+    def begin_round(self, completed_steps):
+        with self.lock:
+            self.round_started = time.monotonic()
+            self.collection_seconds = None
+            self.round_base_steps = completed_steps
+            self.worker_steps.clear()
+            self.state.update(round_steps=0, collected_environment_steps=completed_steps)
+
+    def report_steps(self, worker, steps):
+        """Completed decisions reported by a worker, never dispatched actions."""
+        with self.lock:
+            previous = self.worker_steps.get(worker, 0)
+            if steps < previous:
+                raise ValueError('Worker collection progress must not go backwards within a round')
+            self.worker_steps[worker] = steps
+            self.state['round_steps'] += steps - previous
+            self.state['collected_environment_steps'] = self.round_base_steps + self.state['round_steps']
+
+    def finish_collection(self):
+        with self.lock:
+            self.collection_seconds = time.monotonic() - self.round_started
 
     def start(self):
         if self.logger is not None:
@@ -82,8 +108,13 @@ class CollectorProgress:
             if self.evaluation is not None:
                 evaluation = {f'evaluation_{k}': v for k, v in self.evaluation.items() if k != 'reported_at'}
                 evaluation['evaluation_progress_age_s'] = now - self.evaluation['reported_at']
+            collection = {}
+            if self.round_started is not None:
+                elapsed = (now - self.round_started if self.collection_seconds is None else self.collection_seconds)
+                collection = dict(round_collection_seconds=elapsed,
+                    round_collection_steps_per_second=self.state['round_steps'] / max(elapsed, 1e-9))
             return {f'collector/{key}': value for key, value in {
-                **self.state, **recent, **evaluation, 'elapsed_seconds': now - self.started,
+                **self.state, **recent, **evaluation, **collection, 'elapsed_seconds': now - self.started,
                 'phase_seconds': now - self.phase_started,
                 'seconds_since_worker_message': now - self.last_message,
             }.items()}
@@ -124,6 +155,10 @@ class CollectorProgress:
         text = (f"MAPPO train phase={m['phase']} env_steps={m['updated_environment_steps']:,} "
                 f"updates={m['updates']} episodes={m['completed_episodes']} "
                 f"recent={m['recent_episodes']}")
+        if 'collected_environment_steps' in m:
+            text += (f" collected={m['collected_environment_steps']:,} round_steps={m['round_steps']:,} "
+                     f"collect_steps/s={m['round_collection_steps_per_second']:.1f} "
+                     f"barrier_waiting={m['waiting_workers']}/{m['workers']}")
         if not m['recent_episodes']:
             return text + " return=pending (no completed episodes yet)"
         text += f" return_mean={m['recent_reward_mean']:+.2f} return_last={m['last_reward']:+.2f}"

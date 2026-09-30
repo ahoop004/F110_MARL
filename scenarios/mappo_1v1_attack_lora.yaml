@@ -10,6 +10,7 @@ experiment:
   seed: 42
   num_envs: 1
   torch_threads: 1
+  terminal_every_updates: 1  # Show collection/update timing even during long races.
   worker_startup_batch_size: 16
   worker_startup_timeout_s: 600
   worker_response_timeout_s: 120
