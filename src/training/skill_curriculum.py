@@ -2,7 +2,7 @@
 from copy import deepcopy
 import math
 
-from env.skills import validate_skill_task
+from env.skills import SKILL_SEED_OFFSETS, validate_skill_task
 
 
 def _number(value, name, *, low=0., high=math.inf):
@@ -20,13 +20,19 @@ def validate_skill_curriculum(scenario):
     if raw is None or curriculum is None:
         raise ValueError('skill_task and skill_curriculum must be configured together')
     task = validate_skill_task(raw, agents)
-    ego, target = task['ego_id'], task['target_id']
+    ego, target = task['ego_id'], task.get('target_id')
+    recovery = task['skill'] == 'recovery'
     learners = [aid for aid, cfg in agents.items() if cfg.get('trainable')]
     params = {**scenario.get('training_defaults', {}), **agents[ego].get('params', {})}
-    if (len(agents) != 2 or learners != [ego] or agents[ego]['algorithm'] != 'mappo'
-            or agents[target]['algorithm'] != 'racing_mpc' or agents[ego].get('target_id') != target
+    if (learners != [ego] or agents[ego]['algorithm'] != 'mappo'
             or (params.get('lora') or {}).get('mode') != 'shared'):
-        raise ValueError('Skills require one shared-LoRA MAPPO learner targeting one fixed racing_mpc')
+        raise ValueError('Skills require one shared-LoRA MAPPO learner')
+    if recovery:
+        if len(agents) != 1 or agents[ego].get('target_id') is not None:
+            raise ValueError('Recovery requires a single learner without a target')
+    elif (len(agents) != 2 or agents[target]['algorithm'] != 'racing_mpc'
+          or agents[ego].get('target_id') != target):
+        raise ValueError('Interaction skills require a learner targeting one fixed racing_mpc')
     limits = env.get('track_limits', {})
     if (env.get('attack_task') or env.get('respawn') or env.get('respawn_agents') or
             env.get('respawn_on_vehicle_collision') or scenario.get('curriculum') or scenario.get('map_curriculum')):
@@ -50,7 +56,9 @@ def validate_skill_curriculum(scenario):
         raise ValueError('Skill retention requires each configured map exactly once in map_bundles_eval')
     names = set()
     for stage in stages:
-        fields = {'name', 'maps', 'gap', 'lateral_offset', 'initial_speed', 'opponent_speed', 'evaluation_episodes_per_map'}
+        ranges = ('lateral_offset', 'initial_speed', 'heading_error') if recovery else (
+            'gap', 'lateral_offset', 'initial_speed', 'opponent_speed')
+        fields = {'name', 'maps', 'evaluation_episodes_per_map', *ranges}
         if not isinstance(stage, dict) or set(stage) != fields:
             raise ValueError(f'Skill stages require {sorted(fields)}')
         name = stage['name']
@@ -61,12 +69,14 @@ def validate_skill_curriculum(scenario):
         if (not isinstance(maps, list) or not maps or len(set(maps)) != len(maps)
                 or not set(maps) <= configured):
             raise ValueError('Stage maps must be unique configured bundles')
-        for field in ('gap', 'lateral_offset', 'initial_speed', 'opponent_speed'):
+        for field in ranges:
             pair = stage[field]
             if not isinstance(pair, list) or len(pair) != 2:
                 raise ValueError(f'Stage {field} requires [minimum, maximum]')
             for value in pair:
-                _number(value, field, low=-math.inf if field == 'lateral_offset' else 0.)
+                _number(value, field, low=(-math.pi if field == 'heading_error' else
+                                          -math.inf if field == 'lateral_offset' else 0.),
+                        high=math.pi if field == 'heading_error' else math.inf)
             if pair[0] > pair[1] or (field in {'gap', 'opponent_speed'} and pair[0] <= 0):
                 raise ValueError(f'Invalid stage {field} range')
         count = stage['evaluation_episodes_per_map']
@@ -100,14 +110,15 @@ def validate_skill_curriculum(scenario):
     total = sum(len(s['maps']) * s['evaluation_episodes_per_map'] for s in stages)
     if evaluation.get('episodes') != total or evaluation.get('final_test', {}).get('episodes') != 2 * total:
         raise ValueError('Skill selection episodes must equal stage totals; final_test must double them')
-    # Reserve explicit disjoint blocks for pass, defend and solo for both protocols.
+    # Each skill and solo retention have disjoint seed blocks for both protocols.
     span = max(total * 2, len(configured) * retention.get('episodes_per_map', 5) * 2)
     if span >= 100000:
         raise ValueError('Skill evaluation protocols must fit within their 100000-seed blocks')
     selection_seed, final_seed = evaluation['seed'], evaluation['final_test']['seed']
-    if (selection_seed + 200000 + span >= 2**32 or final_seed + 200000 + span >= 2**32 or
+    offsets = SKILL_SEED_OFFSETS.values()
+    if (selection_seed + max(offsets) + span >= 2**32 or final_seed + max(offsets) + span >= 2**32 or
             any(max(selection_seed + a, final_seed + b) < min(selection_seed + a + span, final_seed + b + span)
-                for a in (0, 100000, 200000) for b in (0, 100000, 200000))):
+                for a in offsets for b in offsets)):
         raise ValueError('Skill selection/final tactical and solo seed blocks must be disjoint')
 
 

@@ -22,7 +22,8 @@ DIRECTORY = Path('scenarios').resolve()
 
 
 def scenario(skill='pass'):
-    return load_and_expand_scenario(str(DIRECTORY / f'mappo_1v1_{skill}_lora.yaml'))
+    participants = 'solo' if skill == 'recovery' else '1v1'
+    return load_and_expand_scenario(str(DIRECTORY / f'mappo_{participants}_{skill}_lora.yaml'))
 
 
 def tracker(skill='pass', lead=-2., **kwargs):
@@ -32,8 +33,9 @@ def tracker(skill='pass', lead=-2., **kwargs):
     return result
 
 
-def advance(track, time, ego=0., target=0., speed=2., failed=False, opponent_failed=False, timed_out=False):
-    infos = {'car_0': dict(centerline=dict(progress_delta=ego / 100., vs=speed),
+def advance(track, time, ego=0., target=0., speed=2., failed=False, opponent_failed=False, timed_out=False,
+            lateral=0., heading=0.):
+    infos = {'car_0': dict(centerline=dict(progress_delta=ego / 100., vs=speed, d=lateral, heading_error=heading),
                           track_limits=dict(exceeded=failed), target_frenet=dict(delta_s=-49.)),
              'car_1': dict(centerline=dict(progress_delta=target / 100., vs=2.),
                           track_limits=dict(exceeded=opponent_failed))}
@@ -103,6 +105,87 @@ def test_defense_lost_lead_requires_confirmation_and_parking_earns_no_lead_bonus
 def test_pass_timeout_and_early_time_limit_are_unsuccessful():
     assert advance(tracker(), 30.)['outcome'] == 'timeout'
     assert advance(tracker(), .1, timed_out=True)['outcome'] == 'timeout'
+
+
+def test_recovery_requires_sustained_alignment_forward_motion_and_progress():
+    task = tracker('recovery', lead=0.)
+    reward = SkillRewardComponent({})
+    disturbed = advance(task, .1, lateral=.3, heading=.4)
+    terms = reward.compute({'info': {'skill': disturbed}})
+    assert terms['skill/lateral'] < 0 and terms['skill/heading'] < 0
+    advance(task, .2, ego=1.)
+    assert not advance(task, 1.2, ego=1., heading=.3)['done']
+    advance(task, 1.3)
+    assert not advance(task, 2.3, speed=-1.)['done']
+    advance(task, 2.4)
+    assert not advance(task, 3.4)['done']  # Aligned but short of the progress floor.
+    facts = advance(task, 3.5, ego=1.)
+    assert facts['success'] and facts['recovery_time_s'] == 3.5
+    assert reward.compute({'info': {'skill': facts}})['skill/success'] == 10.
+    assert sum(reward.compute({'info': {'skill': advance(task, 4.)}}).values()) == 0.
+
+
+@pytest.mark.parametrize('failed,outcome', [(True, 'ego_failure'), (False, 'timeout')])
+def test_recovery_failure_and_timeout(failed, outcome):
+    task = tracker('recovery', lead=0.)
+    advance(task, .1, ego=3.)
+    facts = advance(task, 10., failed=failed, heading=.4)
+    assert facts['outcome'] == outcome and not facts['success']
+
+
+@pytest.mark.parametrize('ego,target,speed,outcome', [
+    (2., 2., 2., 'success'), (0., 0., 0., 'pressure_incomplete'),
+    (4., 2., 4., 'pressure_incomplete'), (3., 3., 3., 'pressure_incomplete'),
+    (2., 3., 2., 'lead_lost')])
+def test_pressure_requires_pace_interaction_and_reduced_opponent_speed(ego, target, speed, outcome):
+    task = tracker('pressure', lead=2.)
+    task.reset(2., opponent_speed=3.)
+    for time in range(1, 21):
+        facts = advance(task, time, ego=ego, target=target, speed=speed)
+        if facts['done']:
+            break
+    assert facts['outcome'] == outcome
+    terms = SkillRewardComponent({}).compute({'info': {'skill': facts}})
+    assert terms['skill/opponent_progress'] == pytest.approx(-.2 * target)
+    if speed == 0.:
+        assert terms['skill/idle'] == -1. and sum(terms.values()) < 0.
+
+
+@pytest.mark.parametrize('ego_failed', [False, True])
+def test_pressure_never_rewards_opponent_failure(ego_failed):
+    task = tracker('pressure', lead=2.)
+    task.reset(2., opponent_speed=3.)
+    for time in range(1, 20):
+        advance(task, time, ego=2., target=2.)
+    facts = advance(task, 20., ego=2., target=2., failed=ego_failed, opponent_failed=True)
+    assert not facts['success']
+    reward = SkillRewardComponent({}).compute({'info': {'skill': facts}})
+    assert sum(reward.values()) == (-20. if ego_failed else 0.)
+
+
+@pytest.mark.parametrize('skill', ['recovery', 'pressure'])
+def test_new_skill_spawns_are_safe_reproducible_and_apply_next_stage(skill):
+    env, opponents, _ = create_training_setup(scenario(skill), scenario_dir=DIRECTORY)
+    try:
+        env.reset(seed=42)
+        poses, metadata = env.sim.agent_poses.copy(), deepcopy(env.skill_spawn)
+        env.reset(seed=42)
+        np.testing.assert_array_equal(env.sim.agent_poses, poses)
+        assert env.skill_spawn == metadata
+        env.set_skill_stage(2)
+        assert env._skill_stage == 0
+        _, infos = env.reset(seed=42, options={'map_episode_index': 1})
+        reset_skill_opponent(env, opponents)
+        assert env._skill_stage == 2
+        assert not env.sim.current_observation()['collisions'].any()
+        assert not any(row['track_limits']['exceeded'] for row in infos.values())
+        if skill == 'recovery':
+            assert not opponents and len(env.possible_agents) == 1
+            assert abs(infos['car_0']['centerline']['heading_error']) == pytest.approx(abs(env.skill_spawn['heading_error']))
+        else:
+            assert opponents['car_1'].max_speed == env.skill_spawn['opponent_speed']
+    finally:
+        env.close()
 
 
 def test_scenarios_preserve_frozen_base_contract_and_independent_defaults():

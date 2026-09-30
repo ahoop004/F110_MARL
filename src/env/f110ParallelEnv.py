@@ -963,7 +963,8 @@ class F110ParallelEnv:
         self._update_centerline_observation_facts(infos)
         if self._skill_tracker is not None:
             ego = self._skill_tracker.config['ego_id']
-            self._skill_tracker.reset(-infos[ego]['target_frenet']['delta_s'])
+            lead = -infos[ego]['target_frenet']['delta_s'] if self._skill_tracker.config.get('target_id') else 0.
+            self._skill_tracker.reset(lead, opponent_speed=self.skill_spawn.get('opponent_speed'))
             infos[ego]['skill'] = self._skill_tracker.facts()
             infos[ego]['skill'].update(stage_index=self._skill_stage, stage=self.skill_spawn['stage'])
             infos[ego]['skill_spawn'] = dict(self.skill_spawn)

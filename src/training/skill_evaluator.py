@@ -9,6 +9,7 @@ import torch
 
 from core.scenario import load_and_expand_scenario, resolve_evaluation_protocol
 from core.setup import create_training_setup, build_obs_composers
+from env.skills import SKILL_SEED_OFFSETS
 from training.mappo_evaluator import DeterministicMAPPOEvaluator
 from training.two_team import preserve_rng
 from wrappers.actions.composer import ActionComposer
@@ -17,10 +18,16 @@ from wrappers.actions.composer import ActionComposer
 def summarize_skill(rows, ego):
     facts = [row['agents'][ego]['skill'] for row in rows]
     passes = [f['pass_time_s'] for f in facts if f['pass_time_s'] is not None]
+    recoveries = [f['recovery_time_s'] for f in facts if f.get('recovery_time_s') is not None]
+    pace = [f['opponent_pace_ratio'] for f in facts if f.get('opponent_pace_ratio') is not None]
     return dict(episodes=len(rows), success_rate=float(np.mean([f['success'] for f in facts])),
                 ego_failure_rate=float(np.mean([f['ego_failed'] for f in facts])),
                 opponent_failure_rate=float(np.mean([f['outcome'] == 'opponent_failure' for f in facts])),
                 mean_pass_time_s=float(np.mean(passes)) if passes else None,
+                mean_recovery_time_s=float(np.mean(recoveries)) if recoveries else None,
+                mean_opponent_progress=float(np.mean([f.get('opponent_progress', 0.) for f in facts])),
+                mean_opponent_pace_ratio=float(np.mean(pace)) if pace else None,
+                pressure_fraction=float(np.mean([f.get('pressure_fraction', 0.) for f in facts])),
                 mean_progress=float(np.mean([f['ego_progress'] for f in facts])),
                 lead_retention=float(np.mean([f['lead_retention'] for f in facts])))
 
@@ -105,7 +112,7 @@ class SkillEvaluator:
             learner.pop('target_id', None)
             # Environment requests only driving geometry. The actor composer below
             # still includes its five target fields, which are zero when absent.
-            learner['observation']['observation'].pop('target_frenet')
+            learner['observation']['observation'].pop('target_frenet', None)
             config['agents'] = {ego: learner}
             config['environment']['spawn'] = dict(policy='centerline_random',
                 centerline=dict(min_distance=1.), ego=dict(speed=0.))
@@ -114,13 +121,13 @@ class SkillEvaluator:
             config['evaluation'].update(target_laps=1, lap_completion=True,
                 max_steps=retention.get('max_steps', 16000))
             episodes = factor * retention.get('episodes_per_map', 5) * len(config['environment']['map_bundles_eval'])
-            seed = protocol['seed'] + 200000
+            seed = protocol['seed'] + SKILL_SEED_OFFSETS['solo']
         else:
             config['evaluation']['max_steps'] = protocol['max_steps']
             stages = config['skill_curriculum']['stages']
             episodes = factor * stages[stage]['evaluation_episodes_per_map'] * len(stages[stage]['maps'])
             offset = sum(s['evaluation_episodes_per_map'] * len(s['maps']) for s in stages[:stage]) * factor
-            seed = protocol['seed'] + (100000 if skill == 'defend' else 0) + offset
+            seed = protocol['seed'] + SKILL_SEED_OFFSETS[skill] + offset
         config['experiment']['seed'] = seed
         config['environment']['max_steps'] = config['evaluation']['max_steps']
         env = None
@@ -165,10 +172,18 @@ class SkillEvaluator:
                 per_map={name: summarize_skill([r for r in episodes if r['map_id'] == name], ego)
                          for name in stage['maps']}))
             rows.extend(episodes)
-        passing = scenario['environment']['skill_task']['skill'] == 'pass'
+        skill = scenario['environment']['skill_task']['skill']
         times = [s['mean_pass_time_s'] for s in stages if s['mean_pass_time_s'] is not None]
+        recovery_times = [s['mean_recovery_time_s'] for s in stages if s['mean_recovery_time_s'] is not None]
+        pace = [s['mean_opponent_pace_ratio'] for s in stages if s['mean_opponent_pace_ratio'] is not None]
         progress = float(np.mean([s['mean_progress'] for s in stages]))
-        return dict(skill=scenario['environment']['skill_task']['skill'],
+        tiebreak = progress
+        if skill in {'pass', 'recovery'}:
+            completion_times = times if skill == 'pass' else recovery_times
+            tiebreak = -float(np.mean(completion_times)) if completion_times else -1e30
+        elif skill == 'pressure':
+            tiebreak = -float(np.mean(pace)) if pace else -1e30
+        return dict(skill=skill,
                     benchmark=dict(task=deepcopy(scenario['environment']['skill_task']),
                         stages=deepcopy(scenario['skill_curriculum']['stages']),
                         protocol=resolve_evaluation_protocol(scenario, self.protocol)),
@@ -176,9 +191,13 @@ class SkillEvaluator:
                     skill_success_rate=float(np.mean([s['success_rate'] for s in stages])),
                     skill_ego_failure_rate=float(np.mean([s['ego_failure_rate'] for s in stages])),
                     skill_mean_pass_time_s=float(np.mean(times)) if times else None,
+                    skill_mean_recovery_time_s=float(np.mean(recovery_times)) if recovery_times else None,
+                    skill_mean_opponent_progress=float(np.mean([s['mean_opponent_progress'] for s in stages])),
+                    skill_mean_opponent_pace_ratio=float(np.mean(pace)) if pace else None,
+                    skill_pressure_fraction=float(np.mean([s['pressure_fraction'] for s in stages])),
                     skill_mean_progress=progress,
                     skill_lead_retention=float(np.mean([s['lead_retention'] for s in stages])),
-                    skill_tiebreak=(-float(np.mean(times)) if times else -1e30) if passing else progress)
+                    skill_tiebreak=tiebreak)
 
     def _base_run(self, scenario, *, solo=False):
         key = 'solo' if solo else scenario['environment']['skill_task']['skill']
@@ -209,7 +228,8 @@ class SkillEvaluator:
             for name in sorted({r['map_id'] for r in solo['episode_results']})}
         summary['base_skill_success_rate'] = base_skill['skill_success_rate']
         summary['evaluation_protocol'] = dict(name=self.protocol, deterministic=True,
-            tactical_seed_offset={'pass': 0, 'defend': 100000}, solo_seed_offset=200000,
+            tactical_seed_offset={k: v for k, v in SKILL_SEED_OFFSETS.items() if k != 'solo'},
+            solo_seed_offset=SKILL_SEED_OFFSETS['solo'],
             seed=resolve_evaluation_protocol(self.scenario, self.protocol)['seed'])
         if self.curriculum is not None:
             state = self.curriculum.observe(summary)
@@ -223,6 +243,10 @@ class SkillEvaluator:
         if self.protocol != 'final' or self.curriculum is not None:
             raise ValueError('Final skill evaluation must be isolated from curriculum/selection')
         own = self.scenario['environment']['skill_task']['skill']
+        if own in {'recovery', 'pressure'}:
+            result = self.evaluate()
+            result['base'] = {own: self._base_run(self.scenario), 'solo': self._base_run(self.scenario, solo=True)}
+            return result
         other = 'defend' if own == 'pass' else 'pass'
         scenario = load_and_expand_scenario(str(self.directory / f'mappo_1v1_{other}_lora.yaml'))
         # Cross-skill testing uses the requested source run's physical and actor

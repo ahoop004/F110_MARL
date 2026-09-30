@@ -314,9 +314,10 @@ class WandbHook(TrainingHook):
         if skills:
             for key in ('success', 'ego_failed', 'ego_progress', 'lead_retention'):
                 log[f'episode/skill/{key}'] = float(np.mean([s[key] for s in skills]))
-            times = [s['pass_time_s'] for s in skills if s['pass_time_s'] is not None]
-            if times:
-                log['episode/skill/pass_time_s'] = float(np.mean(times))
+            for key in ('pass_time_s', 'recovery_time_s', 'opponent_progress', 'opponent_pace_ratio', 'pressure_fraction'):
+                values = [s[key] for s in skills if s.get(key) is not None]
+                if values:
+                    log[f'episode/skill/{key}'] = float(np.mean(values))
         attacks = [f for f in learners.values() if "attack_successes" in f]
         if attacks:
             for key in ("attack_successes", "attack_target_crashes", "attack_eligible_crashes"):
