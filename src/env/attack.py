@@ -6,6 +6,37 @@ and evaluation consume these same facts, including the post-crash survival gate.
 from collections.abc import Mapping
 import math
 
+import numpy as np
+
+from utils.track_preview import _distance_to_wall
+
+
+def attack_geometry(ego_pose, target_pose, walls, length, width):
+    """Footprint clearances before respawn; intersecting cars are handled by physics."""
+    footprint = np.array([[1, 1], [1, -1], [-1, -1], [-1, 1]]) * [length / 2, width / 2]
+
+    def rotation(pose):
+        c, s = math.cos(pose[2]), math.sin(pose[2])
+        return np.array([[c, -s], [s, c]])
+
+    def clearance(pose, polylines):
+        rot = rotation(pose)
+        corners = footprint @ rot.T + pose[:2]
+        result = math.inf
+        for wall in polylines:
+            wall = np.asarray(wall)[:, :2]
+            # For disjoint polygons the closest pair includes a vertex of one.
+            local = (wall - pose[:2]) @ rot
+            endpoint_distance = np.linalg.norm(
+                np.maximum(np.abs(local) - [length / 2, width / 2], 0.), axis=1).min()
+            result = min(result, float(endpoint_distance), float(_distance_to_wall(corners, wall).min()))
+        return result
+
+    target_corners = footprint @ rotation(target_pose).T + target_pose[:2]
+    return dict(ego_clearance=clearance(ego_pose, walls.values()),
+                target_clearance=clearance(target_pose, walls.values()),
+                vehicle_clearance=clearance(ego_pose, [target_corners]), width=width)
+
 
 def validate_attack(config, agent_ids):
     if config is None:
@@ -13,8 +44,9 @@ def validate_attack(config, agent_ids):
     dynamic = isinstance(config, Mapping) and "target_ids" in config
     fields = {"ego_id", "interaction_distance", "interaction_window_s", "survival_s"} | (
         {"target_ids", "selection"} if dynamic else {"target_id"})
-    if not isinstance(config, Mapping) or set(config) != fields:
-        raise ValueError(f"attack_task requires exactly {sorted(fields)}")
+    if (not isinstance(config, Mapping) or not fields <= set(config)
+            or set(config) - fields - {"survival_min_progress"}):
+        raise ValueError(f"attack_task requires {sorted(fields)}; optional survival_min_progress")
     ego = config["ego_id"]
     targets = config["target_ids"] if dynamic else [config["target_id"]]
     if (not isinstance(targets, list) or not targets or any(not isinstance(a, str) for a in targets)
@@ -27,6 +59,9 @@ def validate_attack(config, agent_ids):
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f"attack_task.{key} must be finite and positive")
+    progress = config.get("survival_min_progress", 0.)
+    if isinstance(progress, bool) or not isinstance(progress, (int, float)) or not math.isfinite(progress) or progress < 0:
+        raise ValueError("attack_task.survival_min_progress must be finite and nonnegative")
     return dict(config)
 
 
@@ -40,8 +75,10 @@ class AttackTracker:
         self._pending = []
         self._previous_distance = None
         self._previous_edge = None
+        self._last_time = None
+        self._forward_distance = 0.
 
-    def update(self, *, time, infos, collisions, selected=True, allow_missing=False):
+    def update(self, *, time, infos, collisions, selected=True, allow_missing=False, geometry=None):
         cfg = self.config
         ego, target = infos[cfg["ego_id"]], infos[cfg["target_id"]]
         failed = bool(collisions[cfg["ego_id"]] or ego.get("track_limits", {}).get("exceeded"))
@@ -50,17 +87,24 @@ class AttackTracker:
         if relative is None and not allow_missing:
             raise ValueError("attack_task requires the ego's designated target_frenet facts")
         distance = math.hypot(relative["delta_s"], relative["delta_d"]) if relative else math.inf
-        moving = ego.get("centerline", {}).get("vs", 0.) > .5
+        speed = ego.get("centerline", {}).get("vs", 0.)
+        moving = speed > .5
+        if self._last_time is not None:
+            self._forward_distance += speed * max(0., time - self._last_time)
+        self._last_time = time
         engaged = selected and moving and distance <= cfg["interaction_distance"]
         if engaged and not failed:
             self._last_interaction = time
         eligible = crashed and not failed and time - self._last_interaction <= cfg["interaction_window_s"]
         if eligible:
-            self._pending.append(time + cfg["survival_s"])
+            self._pending.append((time + cfg["survival_s"], self._forward_distance))
         if failed:
             self._pending.clear()
-        confirmed = sum(deadline <= time + 1e-9 for deadline in self._pending)
-        self._pending = [deadline for deadline in self._pending if deadline > time + 1e-9]
+        min_progress = cfg.get("survival_min_progress", 0.)
+        confirmed = sum(deadline <= time + 1e-9 and
+                        (min_progress == 0. or (moving and self._forward_distance - start >= min_progress))
+                        for deadline, start in self._pending)
+        self._pending = [(deadline, start) for deadline, start in self._pending if deadline > time + 1e-9]
 
         # Signed changes avoid paying indefinitely for following or parked cars.
         limits = target.get("track_limits", {})
@@ -78,6 +122,10 @@ class AttackTracker:
         ego["attack"] = dict(target_crash=crashed, eligible_crash=eligible,
                              success=confirmed, ego_failed=failed,
                              approach_delta=approach, edge_delta=pressure)
+        if geometry is not None:
+            ego["attack"]["shaping"] = dict(geometry, distance=distance, moving=moving,
+                delta_s=relative["delta_s"], delta_d=relative["delta_d"],
+                target_d=limits.get("lateral_error", 0.))
 
 
 class MultiTargetAttackTracker:

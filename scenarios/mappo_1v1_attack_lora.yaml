@@ -281,7 +281,8 @@ environment:
     target_id: car_1
     interaction_distance: 3.0
     interaction_window_s: 1.0
-    survival_s: 0.5
+    survival_s: 1.5
+    survival_min_progress: 0.5  # Metres of net forward travel; still moving at confirmation.
 evaluation:
   enabled: true
   every_steps: 409600
@@ -337,14 +338,18 @@ agents:
     reward:
       task:
         name: attack_1v1
-        description: Repeated target crashes with recent interaction and ego survival.
+        description: Safe alongside positioning and wall pressure with survival-qualified target crashes.
       reward:
         attack:
           enabled: true
           success_bonus: 10.0
           ego_crash_penalty: -20.0
-          approach_weight: 0.1
-          edge_weight: 0.5
+          approach_weight: 0.5
+          position_weight: 0.5
+          edge_weight: 2.0
+          safety_weight: 1.0  # Penalty per second for unsafe footprint clearance.
+          safety_margin: 0.15  # Metres, for ego-to-wall and car-to-car clearance.
+          shaping_gamma: 0.99  # Must match the learner's gamma below.
         progress_delta_bonus:
           enabled: true
           weight: 0.01
@@ -389,7 +394,7 @@ agents:
     target_id: car_0
     action_adapter: rolling_speed_to_wheel_v1
     params:
-      max_speed: 5.0
+      max_speed: 4.5  # Initial catch-up curriculum; ego retains its pretrained 5 m/s ceiling.
       # Symmetric +/-5 m/s^2 rolling-speed reference rate; minimum speed is 0.
       # Ego uses +/-100 rad/s^2 with the same 0.05 m wheel radius.
       max_acceleration: 5.0
@@ -423,8 +428,8 @@ wandb:
   - attack
   - lora
   - best-model2
-  notes: One pretrained attacker against a fixed racing MPC with matched command/physical
-    limits. Target respawns 3-10 m ahead; ego failure terminates. Frozen base actor;
+  notes: One pretrained attacker against a fixed racing MPC with shared physics and a
+    4.5 m/s target catch-up curriculum. Target respawns 3-10 m ahead; ego failure terminates. Frozen base actor;
     train rank-4 adapters, exploration and fresh critic.
   mode: online
 mappo:

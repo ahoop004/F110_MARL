@@ -59,7 +59,7 @@ from env.state_buffer import (
 )
 from env.types import AgentRaceStatus, AgentState, GlobalState
 from env.respawn import validate_respawn, sample_ahead_pose
-from env.attack import AttackTracker, MultiTargetAttackTracker, validate_attack
+from env.attack import AttackTracker, MultiTargetAttackTracker, attack_geometry, validate_attack
 from utils.centerline import project_to_centerline
 from render.render_state import RenderRuntimeState, parse_heatmap_config, parse_overlay_config
 
@@ -1027,7 +1027,11 @@ class F110ParallelEnv:
         if self._attack_tracker is not None and attack_ego in active_before_step:
             self._attack_tracker.update(time=self.current_time, infos=infos,
                 collisions=dict(zip(self.possible_agents, map(bool, collision_array))),
-                **({"active_target": acted_target} if isinstance(self._attack_tracker, MultiTargetAttackTracker) else {}))
+                **({"active_target": acted_target} if isinstance(self._attack_tracker, MultiTargetAttackTracker)
+                   else {"geometry": attack_geometry(
+                       self.sim.agent_poses[self._agent_id_to_index[attack_ego]],
+                       self.sim.agent_poses[self._agent_id_to_index[self._attack_tracker.config["target_id"]]],
+                       self.walls, self.sim.params["length"], self.sim.params["width"])}))
             ego_id = self._attack_tracker.config["ego_id"]
             ego_record = self.lifecycle.records[ego_id]
             infos[ego_id]["attack"].update(

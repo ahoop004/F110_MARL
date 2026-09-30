@@ -10,7 +10,7 @@ import yaml
 
 from core.scenario import load_and_expand_scenario, validate_scenario
 from core.setup import create_training_setup
-from env.attack import AttackTracker
+from env.attack import AttackTracker, attack_geometry
 from env.respawn import reset_respawned
 from metrics.racing_eval import create_episode_facts, update_agent_step_facts, aggregate_eval_episodes
 from training.hooks import EvaluationCheckpointHook
@@ -70,8 +70,8 @@ def test_attack_parameters_can_be_overridden_independently(monkeypatch, override
     assert actual == yaml.safe_load(raw)
 
 
-def attack_step(tracker, time, *, crashed=False, failed=False, gap=2.):
-    infos = {'car_0': {'target_frenet': {'delta_s': gap, 'delta_d': 0.}, 'centerline': {'vs': 2.},
+def attack_step(tracker, time, *, crashed=False, failed=False, gap=2., speed=2.):
+    infos = {'car_0': {'target_frenet': {'delta_s': gap, 'delta_d': 0.}, 'centerline': {'vs': speed},
                        'track_limits': {'exceeded': failed}},
              'car_1': {'track_limits': {'exceeded': crashed, 'lateral_error': .2, 'half_width': 1.}}}
     tracker.update(time=time, infos=infos, collisions={'car_0': False, 'car_1': False})
@@ -81,14 +81,15 @@ def attack_step(tracker, time, *, crashed=False, failed=False, gap=2.):
 def test_repeated_crashes_survival_gate_and_no_mutual_or_distant_credit():
     tracker = AttackTracker(scenario()['environment']['attack_task'])
     reward = AttackRewardComponent({})
-    for start in (0., 2.):
+    delay = tracker.config['survival_s']
+    for start in (0., 3.):
         event = attack_step(tracker, start, crashed=True)
         assert event['eligible_crash'] and event['success'] == 0
-        assert attack_step(tracker, start + .49)['success'] == 0
-        event = attack_step(tracker, start + .5)
+        assert attack_step(tracker, start + delay - .01)['success'] == 0
+        event = attack_step(tracker, start + delay)
         assert event['success'] == 1
         assert reward.compute({'info': {'attack': event}})['attack/success'] == 10.
-        assert attack_step(tracker, start + .6)['success'] == 0
+        assert attack_step(tracker, start + delay + .1)['success'] == 0
     tracker.reset()
     assert not attack_step(tracker, 0., crashed=True, gap=20.)['eligible_crash']
     assert not attack_step(tracker, 1., crashed=True, failed=True)['eligible_crash']
@@ -96,7 +97,58 @@ def test_repeated_crashes_survival_gate_and_no_mutual_or_distant_credit():
     attack_step(tracker, 2., crashed=True)
     failure = attack_step(tracker, 2.1, failed=True)
     assert reward.compute({'info': {'attack': failure}})['attack/ego_crash'] == -20.
-    assert attack_step(tracker, 2.5)['success'] == 0
+    assert attack_step(tracker, 2. + delay)['success'] == 0
+    tracker.reset()
+    attack_step(tracker, 0., crashed=True)
+    assert attack_step(tracker, delay, speed=0.)['success'] == 0
+    assert attack_step(tracker, delay + 1.)['success'] == 0  # Expired credit cannot be reclaimed.
+    tracker.reset()
+    attack_step(tracker, 0., crashed=True)
+    attack_step(tracker, delay - .05, speed=0.)
+    assert attack_step(tracker, delay)['success'] == 0  # Moving again, but less than 0.5 m travelled.
+
+
+def test_attack_footprint_clearance_is_rotation_invariant():
+    walls = {'left': np.array([[-5., 1.], [5., 1.]]),
+             'right': np.array([[-5., -1.], [5., -1.]])}
+    ego, target = np.array([0., 0., 0.]), np.array([-.25, .6, 0.])
+    geometry = attack_geometry(ego, target, walls, .58, .31)
+    assert geometry == pytest.approx(dict(ego_clearance=.845, target_clearance=.245,
+                                        vehicle_clearance=.29, width=.31))
+    angle = .7
+    rot = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    rotated = [np.r_[pose[:2] @ rot.T + [3., 2.], angle] for pose in (ego, target)]
+    assert attack_geometry(*rotated, {k: v @ rot.T + [3., 2.] for k, v in walls.items()},
+                           .58, .31) == pytest.approx(geometry)
+
+
+def test_attack_position_pressure_safety_and_respawn_shaping():
+    cfg = scenario()['agents']['car_0']['reward']['reward']['attack']
+    reward = AttackRewardComponent(cfg)
+    g = dict(distance=2., moving=True, delta_s=2., delta_d=.6, target_d=.6,
+             ego_clearance=.8, target_clearance=.3, vehicle_clearance=.3, width=.31)
+
+    def step(**changes):
+        crashed = changes.pop('crashed', False)
+        g.update(changes)
+        facts = dict(success=0, ego_failed=False, target_crash=crashed,
+                     approach_delta=0., edge_delta=0., shaping=g)
+        return reward.compute({'info': {'attack': facts}, 'timestep': .05})
+
+    step()
+    alongside = step(delta_s=-.25, distance=.65)
+    assert alongside['attack/position'] > 0
+    assert alongside['attack/edge_pressure'] > 0
+    assert step(target_clearance=.1)['attack/edge_pressure'] > 0
+    assert step(delta_d=-.6)['attack/edge_pressure'] < 0  # Ego is on the wall side.
+    assert step(ego_clearance=.05)['attack/safety'] < 0
+    held = step()
+    assert all(held[key] <= 0 for key in ('attack/approach', 'attack/position', 'attack/edge_pressure'))
+    assert step(crashed=True)['attack/position'] <= 0
+    relocated = step(distance=.65, delta_d=.6, ego_clearance=.8)
+    assert all(relocated[key] == 0 for key in ('attack/approach', 'attack/position', 'attack/edge_pressure'))
+    reward.reset()
+    assert step()['attack/position'] == 0
 
 
 def test_recent_interaction_and_shaping_do_not_cross_respawn():
@@ -177,7 +229,7 @@ def test_ahead_respawn_wraps_finish_seam(attack_env):
     assert 3. <= infos['car_0']['target_frenet']['delta_s'] <= 10.
 
 
-def test_effective_speed_braking_and_steering_limits_match(attack_env):
+def test_effective_braking_and_steering_limits_match(attack_env):
     from wrappers.actions.composer import ActionComposer
     from agents.mpc.racing import _limit_command
     env, config, controllers = attack_env
@@ -190,7 +242,8 @@ def test_effective_speed_braking_and_steering_limits_match(attack_env):
     assert mpc.steer_max == wheel['steering_max']
     assert mpc.p[3] == wheel['steering_rate_max'] == -wheel['steering_rate_min']
     previous = np.zeros(2)
-    for command in [1.] * 25 + [-1.] * 25:
+    assert mpc.max_speed == 4.5  # Catch-up curriculum; compare ramps below this ceiling.
+    for command in [1.] * 18 + [-1.] * 18:
         steering = wheel['steering_max'] if command > 0 else wheel['steering_min']
         target = np.array([steering, mpc.max_speed if command > 0 else 0.])
         actual = _limit_command(target, previous, mpc.dt, mpc.acceleration, mpc.steering_reference_rate)
