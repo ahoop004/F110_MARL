@@ -46,6 +46,12 @@ RACING = (
     "eval/team_sweep", "eval/team_rank_score", "eval/team_rank_penalty_score",
     "eval/mean_valid_lap_time_s", "eval/valid_laps", "eval/fastest_valid_lap_s",
 )
+LAP_COMPLETION = (
+    "eval/mean_valid_lap_time_s", "eval/valid_laps", "eval/fastest_valid_lap_s",
+    "eval/team_both_finished_rate",
+)
+COMPLETION_STRATEGIES = {"lap_time", "completion_progress", "completion_safety",
+                         "team_completion", "map_curriculum"}
 
 
 class MetricPolicy:
@@ -53,8 +59,8 @@ class MetricPolicy:
         self.config = config or {}
         scenario = scenario or {}
         profile = self.config.get("profile", "auto")
-        if profile not in {"auto", "attack", "racing", "debug"}:
-            raise ValueError("wandb.logging.profile must be auto, attack, racing, or debug")
+        if profile not in {"auto", "attack", "lap_completion", "racing", "debug"}:
+            raise ValueError("wandb.logging.profile must be auto, attack, lap_completion, racing, or debug")
         self.debug = profile == "debug"
         self.attack = profile == "attack" or (profile == "auto" and bool(
             scenario.get("environment", {}).get("attack_task")))
@@ -63,7 +69,10 @@ class MetricPolicy:
         self.shared_reward = scenario.get("mappo", {}).get("reward_mode") == "team_shared"
         self.finite_training = scenario.get("environment", {}).get("episode_termination", {}).get("lap_completion", True)
         self.selection_strategy = scenario.get("evaluation", {}).get("selection_strategy")
-        patterns = (*CORE, *(ATTACK if self.attack else RACING))
+        self.lap_completion = profile == "lap_completion" or (
+            profile == "auto" and not self.attack and
+            self.selection_strategy in COMPLETION_STRATEGIES)
+        patterns = (*CORE, *(ATTACK if self.attack else LAP_COMPLETION if self.lap_completion else RACING))
         self._names = set(patterns)
         self._patterns = tuple(pattern for pattern in patterns if "*" in pattern)
 
@@ -88,6 +97,9 @@ class MetricPolicy:
             return bool(matches) and all(matches)
         if self.debug or components or namespace == "collector":
             return True
+        if self.lap_completion and (key.startswith(("episode/reward/", "episode/individual_reward/", "eval/focal_"))
+                or key in {"episode/team/first_place", "episode/team/sweep", "episode/team/rank_score"}):
+            return False
         if self.shared_reward and key.startswith("episode/reward/"):
             return False
         if not self.finite_training and key in {

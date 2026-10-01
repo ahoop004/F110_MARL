@@ -163,3 +163,44 @@ def test_heuristic_agent_facts_are_kept_without_a_race_record(tmp_path):
     logger.close()
     rows = list(csv.DictReader((tmp_path / 'agent_metrics.csv').open()))
     assert {r['agent_id']: r['outcome'] for r in rows} == {'a': 'finished', 'b': 'self_crash'}
+
+
+def test_completion_console_and_wandb_share_learner_laps_without_finish_time_aliases():
+    from copy import deepcopy
+    from training.hooks import MAPPOConsoleHook
+    lines, payloads = [], []
+    logger = SimpleNamespace(print_info=lines.append)
+    console = ConsoleHook(logger, lap_completion=True)
+    monitor = MAPPOConsoleHook(logger, lap_completion=True, every_updates=1, diagnostic_every=0)
+    wandb = WandbHook(SimpleNamespace(log_metrics=payloads.append))
+    metrics = {'agent_rewards': {'a': 1., 'b': 2.}, 'reward_mode': 'team_shared',
+               'agent_individual_rewards': {'a': 1., 'b': 2.},
+               'agent_outcomes': {'a': 'finished', 'b': 'self_crash'},
+               'agent_terminal_reasons': {'a': 'race_complete', 'b': 'collision'},
+               'race_record': {'training_return': 3., 'mean_learner_laps': 2., 'both_finished': False,
+                               'agents': {}}}
+    for aid, team, count, time in [('a', 'trainable', 1, 10.), ('b', 'trainable', 3, 20.),
+                                  ('opponent', 'opponent', 9, 100.)]:
+        metrics['race_record']['agents'][aid] = dict(team=team, valid_lap_count=count,
+            mean_valid_lap_time_s=time, clean_finish_time_s=90.,
+            collision_dnf=aid == 'b', boundary_dnf=False, timeout=False)
+    original = deepcopy(metrics)
+    console.on_episode_end(1, 3., {}, metrics)
+    wandb.on_episode_end(1, 3., {}, metrics)
+    monitor.on_episode_end(1, 3., {}, metrics)
+    monitor.on_update({'train/updates': 1, 'train/environment_steps': 100,
+                       'perf/collection_seconds': 25., 'perf/inference_seconds': 10.})
+    assert 'reward=+3.00  mean=+3.00  laps=2  lap_time=17.50s' in lines[0]
+    assert 'outcome=a:finished b:self_crash' in lines[0]
+    assert 'reward=+3.00 mean=3.00 laps=2.00 lap_time=17.50s finished=0.0% failed=50.0%' in lines[1]
+    assert all(token not in line for line in lines for token in
+               ('terminal reasons', 'individual reward', 'first_place', 'sweep=', 'collect_s=', 'infer_s='))
+    assert payloads[0]['episode/lap_count'] == 2.
+    assert payloads[0]['episode/lap_time_s'] == 17.5
+    assert metrics == original
+    for agent in metrics['race_record']['agents'].values():
+        agent.update(mean_valid_lap_time_s=None, valid_lap_count=0)
+    console.on_episode_end(2, 3., {}, metrics)
+    wandb.on_episode_end(2, 3., {}, metrics)
+    assert 'lap_time=n/a' in lines[-1]
+    assert 'episode/lap_time_s' not in payloads[-1]

@@ -105,3 +105,43 @@ def test_continuous_training_and_shared_rewards_omit_inapplicable_metrics():
     assert policy.accepts('episode/individual_reward/car_0')
     assert policy.accepts('episode/reward')
     assert policy.accepts('eval/completion_rate')
+
+
+@pytest.mark.parametrize('num_envs', [1, 8])
+@pytest.mark.parametrize('strategy', ['lap_time', 'completion_progress', 'completion_safety',
+                                    'team_completion', 'map_curriculum'])
+def test_completion_profiles_keep_laps_and_outcomes_without_racing_clutter(fake_wandb, num_envs, strategy):
+    calls, _ = fake_wandb
+    scenario = {'experiment': {'num_envs': num_envs},
+                'agents': {'a': {'trainable': True}, 'b': {'trainable': True}},
+                'evaluation': {'selection_strategy': strategy, 'enabled': False}}
+    logger = WandbLogger('test', config=scenario)
+    source = dict.fromkeys([
+        'episode/reward', 'episode/lap_count', 'episode/lap_time_s',
+        'episode/team/all_finished', 'episode/team/failure_rate', 'episode/team/timeout_rate',
+        'episode/reward/a', 'episode/individual_reward/a', 'episode/team/first_place',
+        'episode/team/sweep', 'episode/team/rank_score', 'episode/number'], 1.)
+    logger.log_metrics(source)
+    assert set(calls[-1]) == {'episode/reward', 'episode/lap_count', 'episode/lap_time_s',
+                             'episode/team/all_finished', 'episode/team/failure_rate',
+                             'episode/team/timeout_rate', 'episode/number'}
+    logger.log_metrics(dict.fromkeys([
+        'eval/completion_rate', 'eval/team_both_finished_rate', 'eval/mean_valid_lap_time_s',
+        'eval/mean_clean_finish_time_s', 'eval/learner_failure_rate', 'eval/environment_steps',
+        'eval/team_first_place', 'eval/team_rank_score', 'eval/win_rate',
+        'eval/focal_completion_rate', 'eval/focal_opponent_win_rate'], 1.))
+    assert set(calls[-1]) == {'eval/completion_rate', 'eval/team_both_finished_rate',
+                             'eval/mean_valid_lap_time_s', 'eval/mean_clean_finish_time_s',
+                             'eval/learner_failure_rate', 'eval/environment_steps'}
+
+
+def test_completion_debug_racing_and_allowlist_restore_detailed_metrics():
+    scenario = {'evaluation': {'selection_strategy': 'team_completion'}}
+    for profile in ('debug', 'racing'):
+        policy = MetricPolicy({'profile': profile}, scenario)
+        assert not policy.lap_completion
+        assert policy.accepts('eval/team_rank_score')
+        assert policy.accepts('episode/individual_reward/car_0')
+    policy = MetricPolicy({'metrics': ['eval/team_rank_score']}, scenario)
+    assert policy.accepts('eval/team_rank_score')
+    assert MetricPolicy({'profile': 'lap_completion'}).lap_completion

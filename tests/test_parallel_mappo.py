@@ -177,6 +177,43 @@ class Capture(TrainingHook):
         self.ends += 1
 
 
+def test_completion_entrypoint_prints_each_parallel_episode_before_update(tmp_path, monkeypatch):
+    import json
+    import re
+    import run
+
+    lines = []
+    monkeypatch.setenv('PYGLET_HEADLESS', 'true')
+    monkeypatch.setattr(run.ConsoleLogger, 'print_info', lambda self, line: lines.append(line))
+    monkeypatch.setattr('sys.argv', ['run.py', '--scenario',
+        'scenarios/mappo_2v2_completion_scratch.yaml', '--no-wandb',
+        '--num-envs', '2', '--num-workers', '1', '--total-steps', '4',
+        '--output-dir', str(tmp_path), '--set', 'evaluation.enabled=false',
+        '--set', 'environment.max_steps=2', '--set', 'training_defaults.n_epochs=1',
+        '--set', 'training_defaults.rollout_steps_per_env=4',
+        '--set', 'training_defaults.batch_size=4'])
+    original_update = MAPPOAgent.update_rollouts
+
+    def update(agent, *args, **kwargs):
+        assert len([line for line in lines if line.startswith('ep ')]) == 2
+        return original_update(agent, *args, **kwargs)
+
+    monkeypatch.setattr(MAPPOAgent, 'update_rollouts', update)
+    before_threads = torch.get_num_threads()
+    try:
+        run.main()
+    finally:
+        torch.set_num_threads(before_threads)
+    episodes = [line for line in lines if line.startswith('ep ')]
+    assert [int(re.match(r'ep\s+(\d+)', line)[1]) for line in episodes] == [0, 1]
+    assert all('reward=' in line and 'laps=0' in line and 'lap_time=n/a' in line
+               and 'outcome=car_0:timeout car_1:timeout' in line for line in episodes)
+    assert not any(token in line for line in lines for token in
+                   ('recent=', 'mean=', 'learner outcomes', 'completed_window=', 'finished='))
+    races = [json.loads(line) for line in (tmp_path / 'race_metrics.jsonl').read_text().splitlines()]
+    assert len(races) == 2 and len({race['episode_id'] for race in races}) == 2
+
+
 @pytest.mark.parametrize("workers,horizon", [(1, 2), (2, 5)])
 def test_spawned_grouped_collectors_count_steps_resets_and_unequal_episode_budgets(workers, horizon):
     trainer, scenario, directory = make_setup(workers, horizon)

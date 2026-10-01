@@ -38,6 +38,8 @@ from core.agent_builder import get_trainable_agent_ids
 from loggers.console import ConsoleLogger
 from loggers.csv_logger import CSVLogger
 from loggers.wandb_logger import WandbLogger
+from loggers.metric_policy import MetricPolicy
+from loggers.lap_completion import episode_lap_summary
 from wrappers.actions.composer import ActionComposer
 from training.hooks import (
     CSVHook,
@@ -619,12 +621,15 @@ def main() -> None:
     if not isinstance(eval_cfg, dict):
         raise ValueError("Scenario 'evaluation' must be a mapping when provided.")
     evaluation_selection_enabled = bool(eval_cfg.get("enabled", False)) and algorithm in {"ppo", "mappo"}
+    compact_laps = MetricPolicy(scenario.get("wandb", {}).get("logging"), scenario).lap_completion
 
     hooks = [
         ConsoleHook(
             logger=console,
             log_every=int(os.environ.get("F110_LOG_EVERY", "1")),
             summary_every=int(os.environ.get("F110_SUMMARY_EVERY", "25")),
+            lap_completion=compact_laps,
+            episode_only=compact_laps and num_envs > 1,
         ),
         CSVHook(csv_logger),
         CheckpointHook(
@@ -863,6 +868,7 @@ def _run_eval(
         sys.exit(1)
 
     checkpoint_path = resolve_checkpoint_path(checkpoint)
+    compact_laps = MetricPolicy(scenario.get("wandb", {}).get("logging"), scenario).lap_completion
 
     agent_configs = scenario.get("agents", {})
     trainable_ids = get_trainable_agent_ids(agent_configs)
@@ -1326,11 +1332,21 @@ def _run_eval(
                 objective = reward_composers[focal_agent_id].team_contract[0]["objective"]
                 win_value = team_results[-1]["both_finished" if objective == "combined" else objective]
 
-            console.print_info(
-                f"eval ep {episode + 1:4d}/{eval_episodes}  "
-                f"reward={reward_total:+.2f}  steps={env_steps:5d}  "
-                f"win={win_value:.0f}  outcome={focal_outcome}"
-            )
+            if compact_laps:
+                laps, lap_time, outcomes = episode_lap_summary({}, {
+                    "race_record": episode_race_record(episode_facts, timestep=float(env.timestep), include_rewards=False),
+                    "agent_outcomes": {aid: episode_facts.agents[aid].outcome for aid in trainable_ids}})
+                laps_text = "n/a" if laps is None else f"{laps:g}"
+                time_text = "n/a" if lap_time is None else f"{lap_time:.2f}s"
+                console.print_info(
+                    f"eval ep {episode + 1:4d}/{eval_episodes}  reward={reward_total:+.2f}  "
+                    f"laps={laps_text}  lap_time={time_text}  outcome={outcomes}")
+            else:
+                console.print_info(
+                    f"eval ep {episode + 1:4d}/{eval_episodes}  "
+                    f"reward={reward_total:+.2f}  steps={env_steps:5d}  "
+                    f"win={win_value:.0f}  outcome={focal_outcome}"
+                )
         recording_complete = True
     finally:
         if recording is not None:
@@ -1362,7 +1378,14 @@ def _run_eval(
             "both_finished" if objective == "combined" else objective
         ]
 
-    if len(trainable_ids) == 2 and len(opponent_ids) == 2:
+    if compact_laps:
+        keys = ("race_count", "mean_episode_reward", "completion_rate",
+                "team_both_finished_rate", "learner_failure_rate", "timeout_rate",
+                "mean_net_progress", "mean_valid_lap_time_s", "valid_laps",
+                "mean_clean_finish_time_s", "clean_finish_count")
+        console.print_summary({key: summary[key] for key in keys if key in summary},
+                              title="Evaluation Summary")
+    elif len(trainable_ids) == 2 and len(opponent_ids) == 2:
         # Historical win/success aliases can mean beating just one opponent.
         # Keep them in the report for compatibility, but use explicit headlines.
         console.print_summary({key + "_rate" if key in {"team_first_place", "team_sweep"} else key: summary[key] for key in (
@@ -1994,7 +2017,8 @@ def _run_mappo(
 
     # A step budget takes precedence, including when episodes is explicitly null.
     n_episodes = 0 if exp_cfg.get("total_steps") is not None else int(exp_cfg.get("episodes", 1000))
-    if int(exp_cfg.get("num_envs", 1)) > 1:
+    compact_laps = MetricPolicy((scenario or {}).get("wandb", {}).get("logging"), scenario).lap_completion
+    if int(exp_cfg.get("num_envs", 1)) > 1 and not compact_laps:
         if not exp_cfg.get("terminal_episode_detail", False):
             hooks[:] = [hook for hook in hooks if not isinstance(hook, ConsoleHook)]
         hooks.insert(0, MAPPOConsoleHook(console,
@@ -2086,23 +2110,26 @@ def _run_mappo(
         trainer.race_recorder = RaceRecorder(race_hooks[0].recording_config,
                                              race_hooks[0].on_race_record, run_id=run_id)
     env_cfg = (scenario or {}).get("environment", {})
-    console.print_info(
-        f"Experiment={exp_cfg.get('name')} train_maps={env_cfg.get('map_bundles_train')} "
-        f"eval_maps={env_cfg.get('map_bundles_eval')} seed={exp_cfg.get('seed')} "
-        f"training_mode={'skill' if skill_curriculum is not None else 'finite' if env.lifecycle.finish_on_laps else 'continuous'}; "
-        "env_steps count joint decisions; agent_steps count learner transitions; physics_steps count simulator steps.")
-    console.print_info(
-        f"Starting MAPPO training for {budget} "
-        f"| num_envs={exp_cfg.get('num_envs', 1)} | agents={trainable_ids} "
-        f"| obs_dim={obs_dim} | global_state_dim={global_state_dim}"
-    )
-    console.print_info(
-        "MAPPO contract: "
-        f"actor_mode={agent.actor_mode}  "
-        f"reward_mode={params.get('reward_mode')}  "
-        f"critic_mode={params.get('critic_mode')}  "
-        f"team_reward_reduction={params.get('team_reward_reduction')}"
-    )
+    if compact_laps:
+        console.print_info(f"Starting MAPPO training for {budget} | num_envs={exp_cfg.get('num_envs', 1)}")
+    else:
+        console.print_info(
+            f"Experiment={exp_cfg.get('name')} train_maps={env_cfg.get('map_bundles_train')} "
+            f"eval_maps={env_cfg.get('map_bundles_eval')} seed={exp_cfg.get('seed')} "
+            f"training_mode={'skill' if skill_curriculum is not None else 'finite' if env.lifecycle.finish_on_laps else 'continuous'}; "
+            "env_steps count joint decisions; agent_steps count learner transitions; physics_steps count simulator steps.")
+        console.print_info(
+            f"Starting MAPPO training for {budget} "
+            f"| num_envs={exp_cfg.get('num_envs', 1)} | agents={trainable_ids} "
+            f"| obs_dim={obs_dim} | global_state_dim={global_state_dim}"
+        )
+        console.print_info(
+            "MAPPO contract: "
+            f"actor_mode={agent.actor_mode}  "
+            f"reward_mode={params.get('reward_mode')}  "
+            f"critic_mode={params.get('critic_mode')}  "
+            f"team_reward_reduction={params.get('team_reward_reduction')}"
+        )
     evaluator = None
     eval_cfg = (scenario or {}).get("evaluation", {}) or {}
     if skill_curriculum is not None and eval_cfg.get('enabled', False):

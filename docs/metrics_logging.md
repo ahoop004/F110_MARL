@@ -1,8 +1,8 @@
-Training logs use compact defaults. W&B chooses attack or racing metrics from the scenario; optimization and checkpoint selection still receive the complete metrics dictionaries.
+Training logs use compact defaults. W&B chooses attack, lap-completion, or racing metrics from the scenario; optimization and checkpoint selection still receive the complete metrics dictionaries.
 
 W&B records the four PPO diagnostics (policy loss, value loss, entropy, approximate KL), learning rate, episode return/length/outcomes, task evaluation results, and available throughput/update/evaluation timing. Single-learner runs omit duplicate per-agent rewards and team means. Attack runs show actual successes, eligible crashes, target crashes, and ego failures; opponent finish statistics are hidden. Self-play shows rolling team results and evaluation outcomes.
 
-Set `wandb.logging.profile` to `auto` (default), `attack`, `racing`, or `debug`. Debug includes detailed diagnostics and reward components. Group overrides take precedence over the profile:
+Set `wandb.logging.profile` to `auto` (default), `attack`, `lap_completion`, `racing`, or `debug`. Auto selects lap-completion metrics for `lap_time`, `completion_progress`, `completion_safety`, `team_completion`, and `map_curriculum` evaluation strategies, including when evaluation is disabled. Debug includes detailed diagnostics and reward components. Group overrides take precedence over the profile:
 
 ```yaml
 wandb:
@@ -30,6 +30,10 @@ wandb:
 ```
 
 Use `--set wandb.logging.profile=debug` for a detailed dashboard, or `--set wandb.logging.groups.reward_components=true` for only reward diagnostics. W&B uses environment steps for optimizer/evaluation plots and completed episode number for episode plots. Disabling W&B does not disable local artifacts.
+
+Lap-completion runs show reward, laps, lap time, and learner outcomes for each episode in both serial and parallel runs. Parallel episode lines print when workers report completion, before waiting for the rollout barrier. They omit rolling reward means and outcome summaries; the periodic heartbeat only shows phase, steps, and episode count. Worker wait/inference timings and periodic optimizer diagnostics are hidden by default. Evaluation progress prints at the heartbeat interval instead of every race boundary. `debug` restores detailed training console output even with `--no-wandb`.
+
+For multiple learners, `episode/lap_count` is their mean lap count and `episode/lap_time_s` is the sample-weighted mean of their valid measured lap times. Serial and parallel console lines use these same episode facts. Finish duration remains a separate evaluation metric, so a multi-lap finish is never reported as a single lap time. Completion dashboards keep team completion/failure/timeout rates and both-finish rate, while hiding first-place, sweep, rank, focal win rates, and duplicate per-agent reward charts. The detailed facts remain in local race/evaluation artifacts.
 
 Local MAPPO episodes have one canonical record in `race_metrics.jsonl`, including agent outcomes, rewards, components, attack facts, and run identity. `update_metrics.csv` holds optimizer diagnostics. PPO retains `episode_metrics.csv` because it has no race-record export. Self-play retains its team and evaluation JSONL records. Configuration, physics provenance, checkpoints, and evaluation history remain available. Existing run review reads the canonical race/update artifacts.
 

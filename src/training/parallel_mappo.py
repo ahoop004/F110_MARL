@@ -16,8 +16,9 @@ import numpy as np
 import torch
 
 from agents.mappo import MAPPOAgent, MAPPORolloutBuffer
-from training.hooks import transition_record_hooks
+from training.hooks import ConsoleHook, transition_record_hooks
 from training.collector_progress import CollectorProgress
+from loggers.metric_policy import MetricPolicy
 from training.collector_scheduling import (
     CollectorEventSink, CollectorScheduler,
     _close_collectors, _report_worker_error, _worker_startup_settings,
@@ -327,7 +328,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
     progress = CollectorProgress(getattr(trainer, 'console', None), workers=workers,
         environments=num_envs, horizon=horizon,
         interval=experiment.get('collector_progress_interval_s', 15.),
-        window=int(experiment.get('terminal_recent_episodes', 100)))
+        window=int(experiment.get('terminal_recent_episodes', 100)),
+        lap_completion=MetricPolicy(scenario.get('wandb', {}).get('logging'), scenario).lap_completion)
     evaluation_callbacks = []
     dispatched = 0
 
@@ -353,6 +355,11 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
                     hook.on_step(payload)
             elif kind == "episode":
                 progress.episode_completed(*payload)
+                if progress.lap_completion:
+                    # Print outcomes as workers report them, before the rollout barrier.
+                    for hook in trainer.hooks:
+                        if isinstance(hook, ConsoleHook):
+                            hook.on_episode_end(completed + len(pending_episodes), *payload)
                 pending_episodes.append(payload)
             elif kind == 'race_record':
                 for hook in race_hooks:
@@ -377,6 +384,8 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
             metrics["train/agent_steps"] = actor_samples
             metrics["train/updates"] = updates
             for hook in trainer.hooks:
+                if progress.lap_completion and isinstance(hook, ConsoleHook):
+                    continue  # Already printed when the episode event arrived.
                 hook.on_episode_end(completed, reward, info, metrics)
             completed += 1
         pending_episodes.clear()
@@ -407,10 +416,11 @@ def train_parallel(trainer, scenario, scenario_dir, num_envs, n_episodes=0, *, t
         if console is not None:
             console.print_info(f"MAPPO starting {workers} workers / {num_envs} environments; "
                                f"horizon={horizon}, up to {num_envs * horizon:,} joint decisions per update")
-            console.print_info(f"MAPPO CPU affinity: {affinity_cpus if affinity_cpus is not None else 'unknown'} allowed logical CPUs; "
-                               f"physical cores={affinity_cores if affinity_cores is not None else 'unknown'}; "
-                               f"SLURM_CPUS_PER_TASK={os.environ.get('SLURM_CPUS_PER_TASK', 'unset')} "
-                               f"SLURM_NTASKS={os.environ.get('SLURM_NTASKS', 'unset')}")
+            if not progress.lap_completion:
+                console.print_info(f"MAPPO CPU affinity: {affinity_cpus if affinity_cpus is not None else 'unknown'} allowed logical CPUs; "
+                                   f"physical cores={affinity_cores if affinity_cores is not None else 'unknown'}; "
+                                   f"SLURM_CPUS_PER_TASK={os.environ.get('SLURM_CPUS_PER_TASK', 'unset')} "
+                                   f"SLURM_NTASKS={os.environ.get('SLURM_NTASKS', 'unset')}")
             if affinity_cpus is not None and workers > affinity_cpus:
                 console.print_info(f"MAPPO CPU contention: {workers} worker processes inherit only {affinity_cpus} "
                                    "allowed CPUs. Check the job's CPU allocation and task binding.")

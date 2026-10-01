@@ -1,6 +1,6 @@
 wandb:
   logging:
-    # auto selects compact task metrics; debug includes detailed diagnostics.
+    # auto selects compact attack, lap-completion, or racing metrics; debug includes diagnostics.
     profile: auto
     groups:
       train: true

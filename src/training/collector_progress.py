@@ -3,16 +3,19 @@ from collections import deque
 import math
 import threading
 import time
+from loggers.lap_completion import episode_lap_summary
 
 
 class CollectorProgress:
-    def __init__(self, logger, *, workers, environments, horizon, interval=15., window=100):
+    def __init__(self, logger, *, workers, environments, horizon, interval=15., window=100,
+                 lap_completion=False):
         self.interval = float(interval)
         if not math.isfinite(self.interval) or self.interval <= 0:
             raise ValueError('collector_progress_interval_s must be finite and positive')
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError('terminal_recent_episodes must be a positive integer')
         self.logger = logger
+        self.lap_completion = lap_completion
         self.started = self.phase_started = self.last_message = time.monotonic()
         self.next_publish = 0.
         self.state = dict(phase='startup', workers=workers, environments=environments,
@@ -73,9 +76,13 @@ class CollectorProgress:
         learners = [a for a in race.get('agents', {}).values() if a['team'] == 'trainable']
         row = dict(reward=float(reward), steps=metrics.get('episode_steps'),
                    laps=race.get('mean_learner_laps'), finished=race.get('both_finished'))
+        row['lap_time'] = episode_lap_summary(info, metrics)[1]
         if learners:
             row.update(failed=any(a['collision_dnf'] or a['boundary_dnf'] for a in learners),
                        timeout=any(a['timeout'] for a in learners))
+            if self.lap_completion:
+                row.update(failed=sum(a['collision_dnf'] or a['boundary_dnf'] for a in learners) / len(learners),
+                           timeout=sum(a['timeout'] for a in learners) / len(learners))
         attacks = [a for a in learners if 'attack_successes' in a]
         if attacks:
             row.update(attack_successes=sum(a['attack_successes'] for a in attacks),
@@ -88,8 +95,9 @@ class CollectorProgress:
         """Called on the evaluator thread; the watchdog only reads snapshots."""
         with self.lock:
             self.evaluation = None if row is None else {**row, 'reported_at': time.monotonic()}
-        # Always show episode boundaries, even for evaluations shorter than a heartbeat.
-        if row is not None and row['status'] in {'starting', 'complete'} and self.logger is not None:
+        # Detailed monitoring shows boundaries; completion runs use timed heartbeats.
+        if (not self.lap_completion and row is not None and
+                row['status'] in {'starting', 'complete'} and self.logger is not None):
             self.logger.print_info(self.console_message())
 
     def snapshot(self):
@@ -99,7 +107,7 @@ class CollectorProgress:
             recent = {'recent_episodes': len(episodes)}
             if episodes:
                 recent['last_reward'] = episodes[-1]['reward']
-                for key in ('reward', 'steps', 'laps', 'finished', 'failed', 'timeout',
+                for key in ('reward', 'steps', 'laps', 'lap_time', 'finished', 'failed', 'timeout',
                             'attack_successes', 'target_crashes'):
                     values = [r[key] for r in episodes if r.get(key) is not None]
                     if values:
@@ -134,6 +142,13 @@ class CollectorProgress:
 
     def console_message(self):
         m = {k.removeprefix('collector/'): v for k, v in self.snapshot().items()}
+        if self.lap_completion and m['phase'] != 'startup':
+            if 'evaluation_episode' in m:
+                completed = m.get('evaluation_completed_episodes', m['evaluation_episode'])
+                return f"MAPPO eval races={completed}/{m['evaluation_episodes']} status={m['evaluation_status']}"
+            return (f"MAPPO train phase={m['phase']} "
+                    f"steps={m.get('collected_environment_steps', m['updated_environment_steps']):,} "
+                    f"episodes={m['completed_episodes']}")
         if 'evaluation_episode' in m:
             text = (f"MAPPO eval episode={m['evaluation_episode']}/{m['evaluation_episodes']} "
                     f"map={m['evaluation_map']} status={m['evaluation_status']} "

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
 import numpy as np
 
 from loggers.console import ConsoleLogger
+from loggers.lap_completion import episode_lap_summary
 from loggers.wandb_logger import WandbLogger
 
 if TYPE_CHECKING:
@@ -86,6 +87,8 @@ class ConsoleHook(TrainingHook):
         logger: ConsoleLogger,
         log_every: int = 1,
         summary_every: int = 25,
+        lap_completion: bool = False,
+        episode_only: bool = False,
     ) -> None:
         self._log = logger
         self._log_every = max(1, log_every)
@@ -93,6 +96,8 @@ class ConsoleHook(TrainingHook):
         self._rewards: Deque[float] = deque(maxlen=summary_every)
         self._outcomes: Deque[str] = deque(maxlen=self._summary_every)
         self._agent_outcomes: Dict[str, Deque[str]] = {}
+        self._lap_completion = lap_completion
+        self._episode_only = episode_only
 
     def on_episode_end(self, episode: int, reward: float, info: Dict, metrics: Dict) -> None:
         self._rewards.append(reward)
@@ -125,6 +130,14 @@ class ConsoleHook(TrainingHook):
                     f"ep {episode:>6}  reward={reward:+.2f}  mean={mean_r:+.2f}  "
                     f"attacks={sum(a['attack_successes'] for a in attacks)}  "
                     f"target_crashes={sum(a['attack_target_crashes'] for a in attacks)}  outcome={outcome}")
+            elif self._lap_completion:
+                laps, lap_time, outcomes = episode_lap_summary(info, metrics)
+                laps_text = "n/a" if laps is None else f"{laps:g}"
+                time_text = "n/a" if lap_time is None else f"{lap_time:.2f}s"
+                mean_text = "" if self._episode_only else f"mean={mean_r:+.2f}  "
+                self._log.print_info(
+                    f"ep {episode:>6}  reward={reward:+.2f}  {mean_text}"
+                    f"laps={laps_text}  lap_time={time_text}  outcome={outcomes}")
             elif isinstance(agent_rewards, dict) and len(agent_rewards) > 1:
                 rewards_str = "  ".join(
                     f"{aid}={r:+.2f}" for aid, r in agent_rewards.items()
@@ -159,8 +172,12 @@ class ConsoleHook(TrainingHook):
                     f"laps={laps_str}  lap_time={lap_time_str}  outcome={outcome}"
                 )
 
-        if episode % self._summary_every == 0 and self._outcomes:
+        if not self._episode_only and episode % self._summary_every == 0 and self._outcomes:
             from collections import Counter
+            if self._lap_completion and len(self._agent_outcomes) > 1:
+                counts = Counter(value for outcomes in self._agent_outcomes.values() for value in outcomes)
+                self._log.print_info(f"  learner outcomes (last {len(self._rewards)} episodes): {dict(counts)}")
+                return
             counts = Counter(self._outcomes)
             self._log.print_info(f"  outcomes (last {self._summary_every}): {dict(counts)}")
             for aid, outcomes in self._agent_outcomes.items():
@@ -173,7 +190,8 @@ class ConsoleHook(TrainingHook):
 class MAPPOConsoleHook(TrainingHook):
     """Bounded completed-episode window; update-driven even during long races."""
 
-    def __init__(self, logger, *, window=100, every_updates=10, diagnostic_every=100):
+    def __init__(self, logger, *, window=100, every_updates=10, diagnostic_every=100,
+                 lap_completion=False):
         if min(window, every_updates) < 1 or diagnostic_every < 0:
             raise ValueError("Monitoring window/cadence must be positive; diagnostics may be zero")
         self._log = logger
@@ -183,6 +201,7 @@ class MAPPOConsoleHook(TrainingHook):
         self._metrics = {}
         self._episodes = 0
         self._last_printed = None
+        self._lap_completion = lap_completion
 
     def on_episode_end(self, episode, reward, info, metrics):
         if "race_record" in metrics:
@@ -211,7 +230,11 @@ class MAPPOConsoleHook(TrainingHook):
                 f"env_steps={m.get('train/environment_steps', 0)} "
                 f"env_steps/s={m.get('perf/end_to_end_env_steps_per_second', m.get('perf/round_env_steps_per_second', 0)):.1f} "
                 f"completed_window={len(rows)} completed_total={self._episodes}")
-        if 'perf/collection_seconds' in m:
+        if self._lap_completion:
+            text = (f"MAPPO train steps={m.get('train/environment_steps', 0)} "
+                    f"episodes={self._episodes} recent={len(rows)} "
+                    f"env_steps/s={m.get('perf/end_to_end_env_steps_per_second', 0):.1f}")
+        if not self._lap_completion and 'perf/collection_seconds' in m:
             text += (f" collect_s={m['perf/collection_seconds']:.2f} "
                      f"update_s={m.get('perf/update_seconds', 0):.2f} "
                      f"round_steps/s={m.get('perf/round_env_steps_per_second', 0):.1f}")
@@ -226,7 +249,8 @@ class MAPPOConsoleHook(TrainingHook):
             value = mean(key)
             return "n/a" if value is None else f"{value:.2f}"
         if rows:
-            text += f" return={number('training_return')}"
+            text += (f" reward={rows[-1]['training_return']:+.2f} mean={number('training_return')}"
+                     if self._lap_completion else f" return={number('training_return')}")
             attacks = [a for r in rows for a in r["agents"].values()
                        if a.get("team") == "trainable" and "attack_successes" in a]
             skills = [a['skill'] for r in rows for a in r['agents'].values() if 'skill' in a]
@@ -238,6 +262,18 @@ class MAPPOConsoleHook(TrainingHook):
                 text += (f" attacks/ep={sum(a['attack_successes'] for a in attacks) / len(rows):.2f} "
                          f"ego_failure={np.mean([a['attack_ego_failed'] for a in attacks]):.1%} "
                          f"progress_laps={number('mean_net_progress_laps')}")
+            elif self._lap_completion:
+                text += f" laps={number('mean_learner_laps')}"
+                times = [episode_lap_summary({}, {"race_record": r})[1] for r in rows]
+                times = [value for value in times if value is not None]
+                text += " lap_time=" + (f"{np.mean(times):.2f}s" if times else "n/a")
+                value = mean("both_finished")
+                if value is not None:
+                    text += f" finished={value:.1%}"
+                learners = [a for r in rows for a in r["agents"].values() if a["team"] == "trainable"]
+                for label, keys in (("failed", ("collision_dnf", "boundary_dnf")), ("timeout", ("timeout",))):
+                    if learners:
+                        text += f" {label}={np.mean([any(a.get(k, False) for k in keys) for a in learners]):.1%}"
             elif rows[-1]["race_mode"] == "continuous":
                 text += (f" progress_laps={number('mean_net_progress_laps')} "
                          f"laps={number('mean_learner_laps')} duration_s={number('duration_s')} "
@@ -252,6 +288,8 @@ class MAPPOConsoleHook(TrainingHook):
                     if agent["team"] == "trainable":
                         rate = np.mean([r["agents"][aid]["finished"] for r in rows])
                         text += f" {aid}_finished={rate:.1%}"
+        elif self._lap_completion:
+            text += " reward=pending (no completed episodes yet)"
         self._log.print_info(text)
 
     def on_training_end(self):
@@ -281,9 +319,10 @@ class WandbHook(TrainingHook):
                 log[f"episode/{key}"] = value
         if race.get("map_id") is not None:
             log["episode/map_bundle"] = race["map_id"]
+        laps, lap_time, _ = episode_lap_summary(info, metrics)
         for name, value in (
-            ("steps", metrics.get("episode_steps")), ("lap_count", info.get("lap_count")),
-            ("lap_time_s", metrics.get("lap_time_s")),
+            ("steps", metrics.get("episode_steps")), ("lap_count", laps),
+            ("lap_time_s", lap_time),
             ("net_progress_laps", race.get("mean_net_progress_laps")),
         ):
             if value is not None:
@@ -733,6 +772,19 @@ class EvaluationCheckpointHook(CheckpointHook):
                 f"racer_completion={summary['focal_completion_rate']:.1%} "
                 f"racer_beats_opponents={summary['focal_opponent_win_rate']:.1%} "
                 f"learner_collision={summary['team_collision_rate']:.1%} "
+                f"checkpoint={'saved best' if is_best else 'kept previous'}")
+        elif self._console is not None and self._selection_strategy in {"team_completion", "lap_time"}:
+            finish = summary.get("mean_clean_finish_time_s")
+            finish_text = "n/a" if finish is None else f"{finish:.2f}s"
+            completion_key = "team_both_finished_rate" if self._selection_strategy == "team_completion" else "completion_rate"
+            lap_time = summary.get("mean_valid_lap_time_s")
+            lap_text = "n/a" if lap_time is None else f"{lap_time:.2f}s"
+            self._console.print_info(
+                f"checkpoint eval races={summary.get('episodes', 0)} steps={self._environment_steps} "
+                f"{'both_finished' if self._selection_strategy == 'team_completion' else 'completion'}={summary.get(completion_key, 0):.1%} "
+                f"failed={summary.get('learner_failure_rate', 0):.1%} "
+                f"timeout={summary.get('timeout_rate', 0):.1%} "
+                f"lap_time={lap_text} clean_finish={finish_text} "
                 f"checkpoint={'saved best' if is_best else 'kept previous'}")
         elif self._console is not None and self._selection_strategy.startswith("team_"):
             finish = summary.get("mean_clean_finish_time_s")

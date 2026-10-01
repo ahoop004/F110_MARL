@@ -173,3 +173,21 @@ def test_live_steps_count_completions_once_and_freeze_during_update(monkeypatch)
     assert row['collector/round_steps'] == 1
     assert row['collector/collected_environment_steps'] == 113
     assert row['collector/round_collection_steps_per_second'] == 1.
+
+
+def test_completion_heartbeat_hides_worker_details_and_throttles_eval_boundaries():
+    lines = []
+    progress = CollectorProgress(SimpleNamespace(print_info=lines.append), workers=2,
+                                 environments=4, horizon=256, lap_completion=True)
+    progress.set(phase='collecting')
+    episode(progress, 12., laps=1, reason='race_complete')
+    progress.begin_round(100)
+    progress.report_steps(0, 4)
+    text = progress.console_message()
+    assert text == 'MAPPO train phase=collecting steps=104 episodes=1'
+    assert 'barrier_waiting' not in text and 'round_steps' not in text
+    for status in ('starting', 'complete'):
+        progress.evaluation_progress(dict(episode=2, episodes=8, status=status))
+    assert lines == []
+    assert progress.console_message() == 'MAPPO eval races=2/8 status=complete'
+    assert progress.snapshot()['collector/evaluation_status'] == 'complete'
