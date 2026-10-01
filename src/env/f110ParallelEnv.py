@@ -57,7 +57,7 @@ from env.state_buffer import (
     TerminalAgentConfig,
     TerminalVehicleController,
 )
-from env.types import AgentRaceStatus, AgentState, GlobalState
+from env.types import AgentRaceStatus, AgentState, GlobalState, TerminalReason
 from env.respawn import validate_respawn, sample_ahead_pose
 from env.attack import AttackTracker, MultiTargetAttackTracker, attack_geometry, validate_attack
 from env.skills import SkillTracker, validate_skill_task, sample_skill_spawn
@@ -439,6 +439,16 @@ class F110ParallelEnv:
             agent_ids=self.possible_agents,
         )
         self._last_centerline_facts: Dict[str, Dict[str, float]] = {}
+
+        no_progress = merged.get("no_progress") or {}
+        if not isinstance(no_progress, Mapping):
+            raise ValueError("no_progress must be a mapping")
+        self._no_progress_timeout = float(no_progress.get("timeout_s", 0.0))
+        self._no_progress_distance = float(no_progress.get("min_progress_m", 1.0))
+        if (not np.isfinite(self._no_progress_timeout) or self._no_progress_timeout < 0
+                or not np.isfinite(self._no_progress_distance) or self._no_progress_distance <= 0):
+            raise ValueError("no_progress requires timeout_s >= 0 and min_progress_m > 0")
+        self._no_progress_state = {}
 
     def _configure_rendering(self, cfg: Mapping[str, Any]) -> None:
         self.render_mode = cfg.get("render_mode", "human")
@@ -887,6 +897,7 @@ class F110ParallelEnv:
         self._spawn_manager.reset_episode()
         self._last_centerline_facts = {}
         self._centerline_progress_tracker.reset()
+        self._no_progress_state = {aid: [0.0, 0.0, 0.0] for aid in self.possible_agents}
         for agent_id in self.possible_agents:
             self._track_preview_last_indices[agent_id] = -1
         # Zero is the defined pre-episode reference, so the first command has
@@ -1131,6 +1142,22 @@ class F110ParallelEnv:
             infos[aid]["boundary_event"] = True
 
         trunc_flag = self.max_steps > 0 and self._elapsed_steps + 1 >= self.max_steps
+        no_progress_stop = False
+        if self._no_progress_timeout > 0:
+            if not self.centerline_features_enabled or self.centerline_track_length <= 0:
+                raise ValueError("no_progress requires centerline features and a valid centerline")
+            active = set(self.lifecycle.active_agents)
+            relevant = active.intersection(self.trainable_agents) or active
+            for aid in active:
+                state = self._no_progress_state[aid]
+                # Signed, wrap-corrected distance; reversing and retracing cannot reset the timer.
+                state[0] += infos[aid]["centerline"]["progress_delta"] * self.centerline_track_length
+                if state[0] >= state[1] + self._no_progress_distance:
+                    state[1] = state[0]
+                    state[2] = self.current_time
+            no_progress_stop = bool(relevant) and all(
+                self.current_time - self._no_progress_state[aid][2] + 1e-9
+                >= self._no_progress_timeout for aid in relevant)
         if self._skill_tracker is not None:
             ego = self._skill_tracker.config['ego_id']
             facts = self._skill_tracker.update(time=self.current_time, infos=infos,
@@ -1143,8 +1170,10 @@ class F110ParallelEnv:
                 self.lifecycle.complete_skill(success=facts['success'], step=self._elapsed_steps)
             elif facts['done']:
                 trunc_flag = True
-        if trunc_flag:
-            self.lifecycle.truncate_active(step=self._elapsed_steps)
+        if trunc_flag or no_progress_stop:
+            self.lifecycle.truncate_active(
+                step=self._elapsed_steps,
+                reason=TerminalReason.TIME_LIMIT if trunc_flag else TerminalReason.NO_PROGRESS)
 
         terminations = {
             aid: self.lifecycle.records[aid].status
@@ -1194,6 +1223,10 @@ class F110ParallelEnv:
                         obs[aid]["scans"] = scans[agent_index[aid]]
             self._inject_frenet_neighbors(infos)
         add_time_limit_info(infos, truncations=truncations)
+        for aid, info in infos.items():
+            if self.lifecycle.records[aid].terminal_reason is TerminalReason.NO_PROGRESS:
+                info["time_limit"] = False
+                info["idle_truncation"] = True
         self._inject_finish_line_info(infos)
         add_episode_metadata(
             infos,

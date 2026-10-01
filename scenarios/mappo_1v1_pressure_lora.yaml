@@ -248,6 +248,7 @@ environment:
     min_pressure_fraction: 0.8
     max_opponent_speed_fraction: 0.8
 evaluation:
+  no_progress: {timeout_s: 30.0, min_progress_m: 1.0}
   enabled: true
   num_workers: auto  # Shared pool across skill stages and solo retention.
   every_steps: 409600

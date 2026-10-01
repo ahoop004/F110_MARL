@@ -76,6 +76,7 @@ def build_env_kwargs(
 
     passthrough_keys = [
         "track_limits",
+        "no_progress",
         "friction",
         "physics_phase",
         "map_root",

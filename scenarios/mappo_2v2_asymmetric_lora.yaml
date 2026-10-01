@@ -381,6 +381,7 @@ environment:
 
 # Deterministic checkpoint-selection evaluation; final_test uses separate fixed seeds.
 evaluation:
+  no_progress: {timeout_s: 30.0, min_progress_m: 1.0}
   # true enables this component; false disables it.
   enabled: true
   num_workers: auto

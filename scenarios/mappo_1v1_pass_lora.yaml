@@ -244,6 +244,7 @@ environment:
     duration_s: 30.0
     min_progress: 0.0
 evaluation:
+  no_progress: {timeout_s: 30.0, min_progress_m: 1.0}
   enabled: true
   num_workers: auto  # Shared pool across skill stages and solo retention.
   every_steps: 409600

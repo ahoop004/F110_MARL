@@ -280,6 +280,7 @@ environment:
     survival_s: 1.5
     survival_min_progress: 0.5  # Metres of net forward travel; still moving at confirmation.
 evaluation:
+  no_progress: {timeout_s: 30.0, min_progress_m: 1.0}
   enabled: true
   # Parallel checkpoint races on HPC; one worker for serial local training.
   num_workers: auto

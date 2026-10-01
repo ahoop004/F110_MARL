@@ -114,13 +114,13 @@ class RaceLifecycle:
                              TerminalReason.SKILL_SUCCESS if success else TerminalReason.SKILL_FAILURE,
                              step=step)
 
-    def truncate_active(self, *, step: int) -> Tuple[str, ...]:
+    def truncate_active(self, *, step: int, reason: TerminalReason = TerminalReason.TIME_LIMIT) -> Tuple[str, ...]:
         transitioned = []
         for agent_id in self.active_agents:
             if self._transition(
                 agent_id,
                 AgentRaceStatus.TRUNCATED,
-                TerminalReason.TIME_LIMIT,
+                reason,
                 step=step,
             ):
                 transitioned.append(agent_id)

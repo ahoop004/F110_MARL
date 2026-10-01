@@ -119,6 +119,8 @@ def create_training_setup(
     env_config = apply_map_split(env_config, experiment_config, mode)
     env_config["physics_phase"] = "eval" if mode in {"eval", "evaluation", "test"} else "train"
     evaluation = scenario.get("evaluation", {}) or {}
+    if env_config["physics_phase"] == "eval" and "no_progress" in evaluation:
+        env_config["no_progress"] = evaluation["no_progress"]
     if env_config["physics_phase"] == "eval" and "target_laps" in evaluation:
         # Continuous training can disable finishing and timeouts. Evaluation
         # explicitly restores a finite race for PPO and multi-agent MAPPO alike.

@@ -24,6 +24,7 @@ MINIMAL_INFO_KEYS = {
     "target_finished",
     "finish_line",
     "time_limit",
+    "idle_truncation",
     "lap_crossed",
     "lap_count",
     "target_laps",

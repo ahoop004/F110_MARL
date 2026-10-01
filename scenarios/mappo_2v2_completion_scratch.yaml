@@ -1,17 +1,33 @@
-# 2v2 transfer. Set adapter_transfer.checkpoint to your trained 1v1 LoRA checkpoint.
-# See docs/2v2_attack_transfer.md.
+# Shared task and scratch baseline; transfer variants include this file.
+# Local: python3 run.py --scenario scenarios/mappo_2v2_completion_scratch.yaml --no-wandb
+# HPC: append --num-envs 64 --num-workers 32 --set training_defaults.device=cuda --wandb
+# Physics/action limits match outputs/pretrain/best_model.pt (20 m/s rolling-speed cap).
+# --total-steps controls aggregate environment decisions; --seed selects a replicate.
+# Local quick run: append --total-steps 2048 --set evaluation.enabled=false
+# Parallel horizon is rollout_steps_per_env; serial buffer size is n_steps.
+# Changing environment count/horizon changes the PPO batch size, so match these across arms.
+# Training/evaluation use the same nine maps; final-test seeds are separate, not held-out maps.
+# For three-lap evaluation: --set evaluation.target_laps=3
+# Signed progress is per lap; collision cost replaces progress on terminal failure.
+# Boundary violations replace progress with -0.05 per step; collisions terminate.
+# Time cost is at most 0.2 over the 800 s timeout, below the 2.0 crash cost.
+# Shared mean local rewards plus a once-only both-finish bonus use joint team returns.
+# rank_bonus=0 disables competition rewards while reusing the existing team-result component.
 experiment:
-  name: mappo_2v2_attack_transfer
-  total_steps: 20000000
+  name: mappo_2v2_completion_scratch
+  episodes: 5000
   seed: 42
   num_envs: 1
   torch_threads: 1
-  worker_startup_batch_size: 16
-  worker_startup_timeout_s: 600
-  worker_response_timeout_s: 120
+  terminal_every_updates: 1
+  collector_progress_interval_s: 15
+  total_steps: 120000000
+  collector_scheduling: synchronous
 training_defaults:
+  update_version: p7-packed-batch512-v1
   progress_unit: environment_steps
   n_steps: 2048
+  action_repeat: 1
   n_epochs: 10
   gae_lambda: 0.95
   clip_range: 0.2
@@ -21,22 +37,22 @@ training_defaults:
   batch_size: 512
   learning_rate: 0.0003
   gamma: 0.99
-  rollout_steps_per_env: 256
-  team_return_mode: per_agent
+  hidden_dims:
+  - 256
+  - 256
+  activation: tanh
+  team_return_mode: joint
   pretrained_actor_checkpoint: null
-  require_pretrained_actor: true
-  pretrained_actor_observation_extension: target_frenet
-  checkpoint_every_steps: 409600
-  lora:
-    mode: per_agent
-    rank: 4
-    alpha: 4.0
-    train_log_std: true
-    per_agent_log_std: true
-  adapter_transfer:
-    checkpoint: ../outputs/mappo_1v1_attack_lora/best_model.pt
-    source_agent: car_0
-    target_agent: car_1
+  require_pretrained_actor: false
+  pretrained_actor_observation_extension: frenet_neighbors
+  device: cpu
+  checkpoint_every_steps: 4096000
+  rollout_steps_per_env: 256
+mappo:
+  actor_mode: independent
+  reward_mode: team_shared
+  critic_mode: shared_team
+  team_reward_reduction: mean
 environment:
   timestep: 0.05
   lidar_beams: 108
@@ -50,16 +66,11 @@ environment:
   episode_termination:
     mode: all_trainable
     lap_completion: true
-    lap_finish_agents:
-    - car_0
-    - car_1
   terminal_agents:
     remain_collidable: true
     crashed_behavior: stationary
     finished_behavior: coast_then_stop
-    finish_clearance_steps: 0
-    remove_after_clearance: true
-    crash_clearance_steps: 0
+    finish_clearance_steps: 40
   vehicle_params:
     model: combined_slip_st
     model_version: 2
@@ -96,7 +107,7 @@ environment:
       steering_rate_min: -3.2
       steering_rate_max: 3.2
       wheel_speed_min: -400.0
-      wheel_speed_max: 100.0
+      wheel_speed_max: 400.0
       wheel_rate_min: -10000.0
       wheel_rate_max: 10000.0
     front_tire:
@@ -195,9 +206,24 @@ environment:
       RVY4: 0.0
       RVY5: 0.0
       RVY6: 0.0
+  agent_teams:
+    car_0: learners
+    car_1: learners
+    car_2: opponents
+    car_3: opponents
+  map_cycle: per_episode
+  map_pick: round_robin
+  target_laps: 1
+  max_steps: 16000
+  action_repeat: 1
+  centerline_features: true
+  random_spawn:
+    enabled: true
+    allow_reuse: false
   map_bundles:
-  - Budapest_map
   - circle_map
+  - Budapest_map
+  - Hockenheim_map
   - Melbourne_map
   - Montreal_map
   - Shanghai_map
@@ -205,8 +231,9 @@ environment:
   - Spa_map
   - Spielberg_map
   map_bundles_train:
-  - Budapest_map
   - circle_map
+  - Budapest_map
+  - Hockenheim_map
   - Melbourne_map
   - Montreal_map
   - Shanghai_map
@@ -214,37 +241,17 @@ environment:
   - Spa_map
   - Spielberg_map
   map_bundles_eval:
-  - Budapest_map
   - circle_map
+  - Budapest_map
+  - Hockenheim_map
   - Melbourne_map
   - Montreal_map
   - Shanghai_map
   - Silverstone_map
   - Spa_map
   - Spielberg_map
-  map_cycle: per_episode
-  map_pick: round_robin
-  target_laps: 5
   lap_counting:
-    require_finish_line: true
     count_initial_crossing_as_lap: false
-  max_steps: 0
-  action_repeat: 1
-  centerline_features: true
-  centerline_render: true
-  track_limits:
-    enabled: true
-    terminate: true
-  terminate_on_collision: true
-  random_spawn:
-    enabled: true
-    allow_reuse: true
-  spawn:
-    policy: centerline_random
-    centerline:
-      min_distance: 3.0
-    ego:
-      speed: 0.0
   friction:
     version: 1
     scope: shared
@@ -254,56 +261,32 @@ environment:
     eval:
       mode: fixed
       mu: 1.0489
-  rendering:
-    vehicle_colors:
-      car_0: '#3288ff'
-      car_1: '#33bb88'
-      car_2: '#ff2020'
-      car_3: '#ffaa22'
-  respawn:
-    boundary_agents:
-    - car_2
-    - car_3
-    collision_agents:
-    - car_2
-    - car_3
-    collision_placement: nearest_centerline
-  attack_task:
-    ego_id: car_1
-    interaction_distance: 3.0
-    interaction_window_s: 1.0
-    survival_s: 0.5
-    target_ids:
-    - car_2
-    - car_3
-    selection: nearest_ahead
-  agent_teams:
-    car_0: learners
-    car_1: learners
-    car_2: opponents
-    car_3: opponents
+  terminate_on_collision: true
+  # Multi-car mode supports boundary penalties, not boundary termination.
+  track_limits:
+    enabled: true
+    terminate: false
 evaluation:
   no_progress: {timeout_s: 30.0, min_progress_m: 1.0}
   enabled: true
-  every_steps: 409600
-  episodes: 8
-  target_laps: 5
-  max_steps: 0
+  every_episodes: 100
+  selection_strategy: team_completion
+  episodes: 90
   seed: 10042
-  selection_strategy: racer_attack
+  max_steps: 16000
   final_test:
-    episodes: 16
+    episodes: 180
     seed: 20042
-  lap_completion: true
-  terminate_on_track_limit: true
-  terminate_on_collision: true
-  progress_agent_id: car_0
+  every_steps: 4096000
   episode_termination_mode: all_trainable
+  target_laps: 1
+  num_workers: auto
 agents:
   car_0:
     algorithm: mappo
     trainable: true
     role: racer
+    target_id: car_2
     observation:
       observation:
         lidar:
@@ -341,26 +324,36 @@ agents:
           - car_3
     reward:
       task:
-        name: team_racer
-        description: Signed metre progress, five-lap finish bonus, exclusive terminal
-          failure cost.
+        name: race_team_2v2_lap_completion
+        description: Mean signed lap progress and clean finishes, with a shared both-finish
+          bonus.
       reward:
         progress_delta_bonus:
           enabled: true
           weight: 1.0
-          units: metres
+          units: lap_fraction
           positive_only: false
-          boundary_penalty: -20.0
-          collision_penalty: -20.0
+          max_delta: 0.025
+          boundary_penalty: -0.05
+          collision_penalty: -2.0
         lap_completion:
           enabled: true
-          bonus: 10.0
+          bonus: 2.0
           require_clean: true
+        timeout_penalty:
+          enabled: true
+          penalty: -1.0
+        step_time_penalty:
+          enabled: true
+          per_second: -0.00025
+          apply_on_terminal: true
+        team_race_result:
+          enabled: true
+          objective: combined
+          rank_bonus: 0.0
+          both_finish_bonus: 2.0
     params:
       learning_rate: 0.0001
-      lr_schedule: constant
-      learning_rate_end: 0.0001
-      batch_size: 512
       pi_hidden_dims:
       - 256
       - 256
@@ -368,18 +361,8 @@ agents:
       - 512
       - 512
       activation: leaky_relu
-      n_steps: 2048
       gamma: 0.99
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.01
-      vf_coef: 0.5
-      max_grad_norm: 0.5
-      log_std_init: 0.0
-      target_kl: null
-      checkpoint_every_steps: 409600
-      device: cuda
+      checkpoint_every: 100
     action_constraints:
       speed_control: wheel_acceleration
       max_wheel_acceleration: 100.0
@@ -389,7 +372,8 @@ agents:
   car_1:
     algorithm: mappo
     trainable: true
-    role: attacker
+    role: racer
+    target_id: car_3
     observation:
       observation:
         lidar:
@@ -415,18 +399,6 @@ agents:
           track_maxima:
             curvature: 1.0
             width: 1.0
-        target_frenet:
-          enabled: true
-          maxima:
-            delta_s: 30.0
-            delta_d: 5.0
-            delta_vs: 20.0
-            delta_vd: 20.0
-          agent_ids:
-          - car_0
-          - car_1
-          - car_2
-          - car_3
         frenet_neighbors:
           enabled: true
           max_neighbors: 3
@@ -439,28 +411,36 @@ agents:
           - car_3
     reward:
       task:
-        name: team_attack
-        description: Survival-qualified attacks against either opponent plus signed
-          driving progress.
+        name: race_team_2v2_lap_completion
+        description: Mean signed lap progress and clean finishes, with a shared both-finish
+          bonus.
       reward:
-        attack:
-          enabled: true
-          success_bonus: 10.0
-          ego_crash_penalty: -20.0
-          approach_weight: 0.0
-          edge_weight: 0.0
         progress_delta_bonus:
           enabled: true
-          weight: 0.01
-          units: metres
+          weight: 1.0
+          units: lap_fraction
           positive_only: false
-          boundary_penalty: 0.0
-          collision_penalty: 0.0
+          max_delta: 0.025
+          boundary_penalty: -0.05
+          collision_penalty: -2.0
+        lap_completion:
+          enabled: true
+          bonus: 2.0
+          require_clean: true
+        timeout_penalty:
+          enabled: true
+          penalty: -1.0
+        step_time_penalty:
+          enabled: true
+          per_second: -0.00025
+          apply_on_terminal: true
+        team_race_result:
+          enabled: true
+          objective: combined
+          rank_bonus: 0.0
+          both_finish_bonus: 2.0
     params:
       learning_rate: 0.0001
-      lr_schedule: constant
-      learning_rate_end: 0.0001
-      batch_size: 512
       pi_hidden_dims:
       - 256
       - 256
@@ -468,32 +448,21 @@ agents:
       - 512
       - 512
       activation: leaky_relu
-      n_steps: 2048
       gamma: 0.99
-      n_epochs: 10
-      gae_lambda: 0.95
-      clip_range: 0.2
-      ent_coef: 0.01
-      vf_coef: 0.5
-      max_grad_norm: 0.5
-      log_std_init: 0.0
-      target_kl: null
-      checkpoint_every_steps: 409600
-      device: cuda
+      checkpoint_every: 100
     action_constraints:
       speed_control: wheel_acceleration
       max_wheel_acceleration: 100.0
       max_wheel_deceleration: 100.0
       prevent_reverse: true
       speed_index: 1
-    target_id: car_2
   car_2:
     algorithm: racing_mpc
     trainable: false
     role: opponent
-    action_adapter: rolling_speed_to_wheel_v1
+    target_id: car_0
     params:
-      max_speed: 5.0
+      max_speed: 20.0
       max_acceleration: 5.0
       horizon: 30
       knots: 6
@@ -501,14 +470,14 @@ agents:
       max_evaluations: 260
       margin: 0.1
       sensing_range: 10.0
-      max_steering_reference_rate: 17.0
+    action_adapter: rolling_speed_to_wheel_v1
   car_3:
     algorithm: racing_mpc
     trainable: false
     role: opponent
-    action_adapter: rolling_speed_to_wheel_v1
+    target_id: car_1
     params:
-      max_speed: 5.0
+      max_speed: 20.0
       max_acceleration: 5.0
       horizon: 30
       knots: 6
@@ -516,34 +485,26 @@ agents:
       max_evaluations: 260
       margin: 0.1
       sensing_range: 10.0
-      max_steering_reference_rate: 17.0
+    action_adapter: rolling_speed_to_wheel_v1
 wandb:
   logging:
-    # auto selects compact task metrics; debug includes detailed diagnostics.
     profile: auto
     groups:
       train: true
       eval: true
       performance: true
       curriculum: true
-      # collector and reward_components default off; debug enables both.
-  enabled: true
+  enabled: false
   project: marl-f110-complete
-  entity: ahoop004-old-dominion-university
-  name: mappo_2v2_attack_transfer
-  group: 2v2-attack-transfer
-  job_type: team-finetuning
+  group: mappo-2v2-completion
+  job_type: mappo-team
   tags:
   - mappo
   - 2v2
-  - lora
-  - adapter-transfer
-  notes: Frozen common driving base; fresh racer adapter and transferred attacker
-    adapter. Five learner laps, nearest opponent ahead, opponent respawns and immediate
-    learner removal.
-  mode: online
-mappo:
-  actor_mode: shared
-  reward_mode: individual
-  critic_mode: agent_conditioned
-  team_reward_reduction: mean
+  - lap-completion
+  - scratch
+  - vehicle-ids
+  - racing-mpc-opponents
+  notes: 'Matched completion comparison: two independent scratch actors, shared team
+    critic, fixed racing MPC opponents. One clean lap per learner; no respawns. Evaluation
+    ranks both-finish rate first.'

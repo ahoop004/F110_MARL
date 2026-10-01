@@ -1,0 +1,20 @@
+# Full fine-tuning; inherits the entire completion task and local/HPC settings.
+# Override the source with --pretrained-actor /path/to/run_or_checkpoint.
+# Use exactly the same checkpoint for this arm and the LoRA arm.
+includes:
+- mappo_2v2_completion_scratch.yaml
+experiment:
+  name: mappo_2v2_completion_pretrained
+training_defaults:
+  pretrained_actor_checkpoint: ../outputs/pretrain/best_model.pt
+  require_pretrained_actor: true
+wandb:
+  tags:
+  - mappo
+  - 2v2
+  - lap-completion
+  - full-finetune
+  - vehicle-ids
+  - racing-mpc-opponents
+  notes: 'Matched completion comparison: two independent full actors initialized from
+    the same pretrained driving policy, fresh shared team critic.'
