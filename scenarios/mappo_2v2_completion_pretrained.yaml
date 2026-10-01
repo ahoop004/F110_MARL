@@ -6,7 +6,7 @@ includes:
 experiment:
   name: mappo_2v2_completion_pretrained
 training_defaults:
-  pretrained_actor_checkpoint: ../outputs/pretrain/best_model.pt
+  pretrained_actor_checkpoint: ../outputs/pretrain/best_model2.pt
   require_pretrained_actor: true
 wandb:
   tags:
