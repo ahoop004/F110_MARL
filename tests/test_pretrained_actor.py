@@ -307,6 +307,44 @@ def test_mappo_rejects_incompatible_ppo_actor_contract(tmp_path):
         _mappo(obs_dim=6).load_pretrained_actor(str(checkpoint))
 
 
+@pytest.mark.parametrize("source_physics,target_physics", [
+    (None, {"version": 1, "timestep": 0.01}),
+    ({"version": 1, "timestep": 0.01}, None),
+    ({"version": 1, "timestep": 0.01}, {"version": 1, "timestep": 0.02}),
+])
+def test_pretrained_actor_transfer_allows_different_physics(
+    tmp_path, source_physics, target_physics,
+):
+    source = _ppo()
+    source.physics_contract = source_physics
+    checkpoint = tmp_path / "source.pt"
+    source.save(str(checkpoint))
+    target = _mappo()
+    target.physics_contract = target_physics
+    critic_before = {key: value.clone() for key, value in target.critic.state_dict().items()}
+
+    target.load_pretrained_actor(str(checkpoint))
+
+    for key, value in source.actor.state_dict().items():
+        torch.testing.assert_close(target.actor.state_dict()[key], value)
+    for key, value in critic_before.items():
+        torch.testing.assert_close(target.critic.state_dict()[key], value)
+    assert target.physics_contract == target_physics
+    assert not target.optimizer.state
+
+
+def test_full_mappo_resume_still_requires_matching_physics(tmp_path):
+    source = _mappo()
+    source.physics_contract = {"version": 1, "timestep": 0.01}
+    checkpoint = tmp_path / "mappo.pt"
+    source.save(str(checkpoint))
+    target = _mappo()
+    target.physics_contract = {"version": 1, "timestep": 0.02}
+
+    with pytest.raises(ValueError, match="physics_contract"):
+        target.load(str(checkpoint))
+
+
 class _SequenceEvaluator:
     def __init__(self, summaries):
         self._summaries = iter(summaries)

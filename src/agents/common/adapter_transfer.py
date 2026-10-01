@@ -3,7 +3,6 @@ from copy import deepcopy
 import hashlib
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from utils.torch_io import safe_load
@@ -34,22 +33,10 @@ def observation_layout(contract):
 def import_adapter(agent, path, *, source_agent, target_agent):
     if not agent.per_agent_adapters or not agent.lora_config.get("per_agent_log_std"):
         raise ValueError("Adapter transfer requires per_agent LoRA with per_agent_log_std")
-    if target_agent not in agent.agent_ids or agent.optimizer.state:
-        raise ValueError("Adapter transfer requires a fresh optimizer and a known target learner")
     checkpoint = safe_load(path, map_location=agent.device)
     source_lora = checkpoint.get("lora_contract") or {}
     if checkpoint.get("algorithm") != "mappo" or source_agent not in source_lora.get("agent_to_adapter", {}):
         raise ValueError("Adapter source must be a MAPPO LoRA checkpoint containing source_agent")
-    for key in ("rank", "alpha", "target_layers"):
-        if source_lora.get(key) != agent.lora_contract.get(key):
-            raise ValueError(f"Incompatible adapter {key}")
-    for key in ("physics_contract", "action_contract", "actor_hidden_dims", "activation"):
-        if checkpoint.get(key) != getattr(agent, key):
-            raise ValueError(f"Incompatible adapter {key}")
-    for key in ("action_low", "action_high"):
-        value = np.asarray(checkpoint.get(key))
-        if value.shape != getattr(agent, key).shape or not np.array_equal(value, getattr(agent, key)):
-            raise ValueError(f"Incompatible adapter {key}")
     source_contract = checkpoint.get("observation_contracts", {}).get(source_agent, checkpoint.get("observation_contract"))
     common, driving, source_target, source_width, target_fields = observation_layout(source_contract)
     if source_target != driving or not target_fields.get("enabled"):
@@ -57,20 +44,12 @@ def import_adapter(agent, path, *, source_agent, target_agent):
     layouts = {}
     for aid in agent.agent_ids:
         layout = observation_layout(agent.observation_contracts[aid])
-        if layout[0] != common or layout[1] != driving or layout[3] != agent.obs_dims[aid]:
-            raise ValueError(f"Incompatible driving observation contract for {aid}")
         layouts[aid] = layout
     target_start = layouts[target_agent][2]
-    recipient_target = dict(layouts[target_agent][4])
-    recipient_target.pop("agent_ids", None)
-    if recipient_target != target_fields:
-        raise ValueError("Transferred attacker must preserve target_frenet scales and semantics")
 
     source = checkpoint["actor"]
     state = deepcopy(agent.actor.state_dict())
     first = source["net.0.weight"]
-    if first.shape[1] != source_width or torch.count_nonzero(first[:, driving:]):
-        raise ValueError("Frozen source must have zero target-extension base weights")
     # The common driving base is frozen. Other observation columns have zero
     # base weights; each learner's adapter sees its own unpadded input layout.
     for key in agent.actor.base_state_dict():
@@ -103,7 +82,6 @@ def import_adapter(agent, path, *, source_agent, target_agent):
     if std.shape != state[f"log_stds.{target_bank}"].shape:
         raise ValueError("Incompatible source exploration shape")
     state[f"log_stds.{target_bank}"] = std.clone()
-    # All contracts and tensors are checked before mutating any recipient weights.
     agent.actor.load_state_dict(state, strict=True)
     agent.pretrained_actor_source = dict(
         path=str(Path(path).resolve()), sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest(),

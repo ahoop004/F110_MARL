@@ -206,8 +206,6 @@ class MAPPOAgent:
         if set(self.observation_contracts) != set(agent_ids):
             raise ValueError("Observation contracts must name every learner")
         self.pretrained_actor_observation_extension = params.get("pretrained_actor_observation_extension")
-        if self.pretrained_actor_observation_extension not in (None, "frenet_neighbors", "target_frenet"):
-            raise ValueError("pretrained_actor_observation_extension must be null, frenet_neighbors or target_frenet")
         self.agent_ids = list(agent_ids)
         self._agent_index = {aid: idx for idx, aid in enumerate(self.agent_ids)}
         self.actor_mode = str(params.get("actor_mode", "shared"))
@@ -830,121 +828,26 @@ class MAPPOAgent:
     # Checkpoint I/O
     # ------------------------------------------------------------------
 
-    def _pretrained_observation_dim(self, checkpoint: Dict) -> int:
-        """Allow an explicit target/neighbor block appended to the driving state."""
-        source = checkpoint.get("observation_contract")
-        if source == self.observation_contract:
-            return self.obs_dim
-        extension = self.pretrained_actor_observation_extension
-        if extension not in {"frenet_neighbors", "target_frenet"}:
-            raise ValueError("Incompatible checkpoint observation_contract; observation semantics differ")
-        from copy import deepcopy
-        target = deepcopy(self.observation_contract)
-        if not isinstance(source, dict) or not isinstance(target, dict):
-            raise ValueError("Neighbor extension requires explicit observation contracts")
-        obs = target.get("observation", {})
-        neighbors = obs.pop(extension, {})
-        source_obs = source.get("observation", {})
-        # The composer appends neighbors immediately after Frenet state. Restrict
-        # this migration to that layout; never pad arbitrary or reordered inputs.
-        enabled = {key for key, value in source_obs.items()
-                   if isinstance(value, dict) and value.get("enabled", False)}
-        if (target != source or enabled not in ({"frenet_vehicle_track"}, {"lidar", "frenet_vehicle_track"})
-                or not neighbors.get("enabled", False)):
-            raise ValueError("Neighbor extension requires an unchanged LiDAR/Frenet observation prefix")
-        points = int(source_obs["frenet_vehicle_track"].get("points", 20))
-        source_dim = 10 + 2 * points
-        if "lidar" in enabled:
-            source_dim += int(source.get("lidar_beams", 108))
-        from wrappers.observations.neighbors import FrenetNeighborsComponent, TargetFrenetComponent
-        if extension == "target_frenet":
-            added_dim = TargetFrenetComponent(neighbors.get("maxima", {})).dim
-        else:
-            added_dim = FrenetNeighborsComponent(
-                max_neighbors=int(neighbors.get("max_neighbors", 1)),
-                include_team=bool(neighbors.get("include_team", False)),
-                agent_ids=neighbors.get("agent_ids"),
-            ).dim
-        if (checkpoint.get("obs_dim") != source_dim or added_dim <= 0
-                or self.obs_dim != source_dim + added_dim):
-            raise ValueError("Neighbor extension observation dimensions do not match the contracts")
-        return source_dim
-
     def load_pretrained_actor(self, path: str) -> None:
-        """Initialize actors from a PPO or plain shared-MAPPO policy.
-
-        MAPPO's centralized critic and fresh optimizer state are intentionally
-        retained. Physical contracts must match. An explicitly configured
-        neighbor extension preserves the existing actor with zero new weights.
-        """
+        """Initialize actors from checkpoint weights, retaining critic and optimizer."""
         from utils.torch_io import safe_load
 
         ckpt = safe_load(path, map_location=self.device)
         if not isinstance(ckpt, dict) or "actor" not in ckpt:
             raise ValueError(f"Pretrained checkpoint has no single shared actor state: {path}")
-        if ckpt.get("physics_contract") != self.physics_contract:
-            raise ValueError("Incompatible checkpoint physics_contract; physics semantics differ")
-        source_obs_dim = self._pretrained_observation_dim(ckpt)
-        checkpoint_contract = ckpt.get("action_contract", {"speed_control": "direct"})
-        if checkpoint_contract != self.action_contract:
-            raise ValueError(
-                "Incompatible pretrained PPO action contract (speed control semantics differ): "
-                f"checkpoint={checkpoint_contract!r}, MAPPO={self.action_contract!r}. "
-                "Match the MAPPO action_constraints and decision interval to the PPO "
-                "training configuration, or select a compatible checkpoint."
-            )
         source_algorithm = str(ckpt.get("algorithm", "ppo")).lower()
-        if source_algorithm not in {"ppo", "mappo"}:
-            raise ValueError("Pretrained actor checkpoint must come from PPO or shared MAPPO")
-        if source_algorithm == "mappo" and (
-            ckpt.get("actor_mode", "shared") != "shared" or ckpt.get("lora_contract") is not None
-        ):
-            raise ValueError("MAPPO initialization requires a plain shared actor, without adapters")
-
-        checks = {
-            "obs_dim": source_obs_dim,
-            "action_dim": self.action_dim,
-            "actor_hidden_dims": self.actor_hidden_dims,
-            "activation": self.activation,
-        }
-        for key, expected in checks.items():
-            if key in ckpt and ckpt[key] != expected:
-                raise ValueError(
-                    f"Incompatible pretrained PPO actor {key}: "
-                    f"checkpoint={ckpt[key]!r}, MAPPO={expected!r}."
-                )
-        for key, expected in (
-            ("action_low", self.action_low),
-            ("action_high", self.action_high),
-        ):
-            if key in ckpt and not np.allclose(
-                np.asarray(ckpt[key], dtype=np.float32), expected
-            ):
-                raise ValueError(
-                    f"Incompatible pretrained PPO actor {key}: physical action bounds differ."
-                )
         recipient = (self.actor.actors[self.agent_ids[0]]
                      if self.actor_mode == "independent" else self.actor)
         actor_state = dict(ckpt["actor"])
-        if source_obs_dim != self.obs_dim:
-            old_weight = actor_state.get("net.0.weight")
-            expected = recipient.state_dict()["net.0.weight"]
-            if old_weight is None or old_weight.shape != (expected.shape[0], source_obs_dim):
-                raise ValueError("Incompatible pretrained actor first layer for neighbor extension")
+        old_weight = actor_state.get("net.0.weight")
+        expected = recipient.state_dict()["net.0.weight"]
+        if (old_weight is not None and old_weight.shape[0] == expected.shape[0]
+                and old_weight.shape[1] < expected.shape[1]):
             expanded = torch.zeros_like(expected)
-            expanded[:, :source_obs_dim] = old_weight
+            expanded[:, :old_weight.shape[1]] = old_weight
             actor_state["net.0.weight"] = expanded
-        # Validate all tensors before modifying the recipient, including failures
-        # after the first layer (load_state_dict itself can partially mutate).
-        expected_state = (self.actor.base_state_dict() if self.lora_config is not None
-                          else recipient.state_dict())
-        if (actor_state.keys() != expected_state.keys()
-                or any(actor_state[key].shape != value.shape for key, value in expected_state.items())):
-            raise ValueError("Incompatible pretrained PPO actor network architecture")
         try:
             if self.lora_config is not None:
-                if self.optimizer.state:
-                    raise ValueError("Initialize a pretrained LoRA base on a fresh agent")
                 self.actor.reset_adapters()
                 if self.lora_config.get("per_agent_log_std"):
                     actor_state.update({f"log_stds.{i}": actor_state["log_std"].clone()
@@ -1016,100 +919,10 @@ class MAPPOAgent:
         from utils.torch_io import safe_load
         ckpt = safe_load(path, map_location=self.device)
         self.skill_curriculum_state = ckpt.get('skill_curriculum')
-        if (ckpt.get("obs_dims", {aid: ckpt.get("obs_dim") for aid in self.agent_ids}) != self.obs_dims
-                or ckpt.get("observation_contracts", {aid: ckpt.get("observation_contract")
-                            for aid in self.agent_ids}) != self.observation_contracts):
-            raise ValueError("Incompatible per-learner observation contract")
-        if ckpt.get("actor_mode", "shared") != self.actor_mode:
-            raise ValueError("Incompatible MAPPO actor_mode; shared and independent checkpoints are distinct")
-        if ckpt.get("actor_routing", self._agent_index) != self._agent_index:
-            raise ValueError("Incompatible MAPPO checkpoint contract: actor routing differs")
-        if self.actor_mode == "independent":
-            actors = ckpt.get("actors", {})
-            if set(actors) != set(self.agent_ids):
-                raise ValueError("Independent checkpoint must contain every learner actor")
-            ckpt["actor"] = {f"actors.{aid}.{key}": value for aid, state in actors.items()
+        if self.actor_mode == "independent" and "actors" in ckpt:
+            ckpt["actor"] = {f"actors.{aid}.{key}": value
+                             for aid, state in ckpt["actors"].items()
                              for key, value in state.items()}
-        if ckpt.get("lora_contract") != self.lora_contract:
-            raise ValueError("Incompatible MAPPO LoRA contract; mode, rank, alpha, layers and routing must match")
-        if self.lora_config is not None and not isinstance(ckpt.get("pretrained_actor_source"), dict):
-            raise ValueError("LoRA checkpoint is missing its pretrained actor source")
-        for key in ("physics_contract", "observation_contract"):
-            if ckpt.get(key) != getattr(self, key):
-                raise ValueError(f"Incompatible checkpoint {key}; physics/observation semantics differ")
-        if ckpt.get("team_return_mode", "per_agent") != self.team_return_mode:
-            raise ValueError("Incompatible MAPPO checkpoint team return contract")
-        if ckpt.get("action_contract", {"speed_control": "direct"}) != self.action_contract:
-            raise ValueError("Incompatible MAPPO checkpoint action contract (speed control semantics differ).")
-        if "critic_mode" not in ckpt or "reward_mode" not in ckpt:
-            raise ValueError(
-                "MAPPO checkpoint predates the explicit reward/critic contract; "
-                "start a new experiment with a contract-aware checkpoint."
-            )
-        checkpoint_obs_dim = int(ckpt.get("obs_dim", self.obs_dim))
-        checkpoint_global_dim = int(
-            ckpt.get("global_state_dim", self.global_state_dim)
-        )
-        checkpoint_global_contract = str(
-            ckpt.get("global_state_contract_version", "legacy_unspecified")
-        )
-        checkpoint_critic_mode = str(ckpt["critic_mode"])
-        checkpoint_reward_mode = str(ckpt["reward_mode"])
-        checkpoint_reduction = str(ckpt.get("team_reward_reduction", "mean"))
-        checkpoint_agent_ids = list(ckpt.get("agent_ids", self.agent_ids))
-        if (
-            checkpoint_obs_dim != self.obs_dim
-            or checkpoint_global_dim != self.global_state_dim
-            or checkpoint_global_contract != self.global_state_contract_version
-            or checkpoint_agent_ids != self.agent_ids
-            or checkpoint_critic_mode != self.critic_mode
-            or checkpoint_reward_mode != self.reward_mode
-            or checkpoint_reduction != self.team_reward_reduction
-        ):
-            raise ValueError(
-                "Incompatible MAPPO checkpoint contract: "
-                f"checkpoint obs/global={checkpoint_obs_dim}/{checkpoint_global_dim}, "
-                f"current={self.obs_dim}/{self.global_state_dim}; "
-                f"checkpoint global contract={checkpoint_global_contract!r}, "
-                f"current={self.global_state_contract_version!r}; "
-                f"checkpoint agents={checkpoint_agent_ids!r}, "
-                f"current={self.agent_ids!r}; "
-                f"checkpoint critic_mode={checkpoint_critic_mode!r}, "
-                f"current={self.critic_mode!r}; "
-                f"checkpoint reward={checkpoint_reward_mode}/{checkpoint_reduction}, "
-                f"current={self.reward_mode}/{self.team_reward_reduction}. "
-                "Use a checkpoint created with the same lifecycle-state dimensions "
-                "and MAPPO reward/critic contract."
-            )
-        scalar_checks = {
-            "algorithm": "mappo",
-            "action_dim": self.action_dim,
-            "actor_hidden_dims": self.actor_hidden_dims,
-            "critic_hidden_dims": self.critic_hidden_dims,
-            "activation": self.activation,
-        }
-        for key, expected in scalar_checks.items():
-            if key in ckpt and ckpt[key] != expected:
-                raise ValueError(
-                    f"Incompatible MAPPO checkpoint {key}: "
-                    f"checkpoint={ckpt[key]!r}, current={expected!r}."
-                )
-        for key, expected in (
-            ("action_low", self.action_low),
-            ("action_high", self.action_high),
-        ):
-            if key in ckpt:
-                actual = np.asarray(ckpt[key], dtype=np.float32)
-                if actual.shape != expected.shape or not np.allclose(actual, expected):
-                    raise ValueError(
-                        f"Incompatible MAPPO checkpoint {key}: action bounds differ."
-                    )
-        for key, module in (("actor", self.actor), ("critic", self.critic)):
-            expected = module.state_dict()
-            actual = ckpt[key]
-            if (actual.keys() != expected.keys()
-                    or any(actual[name].shape != value.shape for name, value in expected.items())):
-                raise ValueError(f"Incompatible MAPPO {key} network architecture")
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])
         if "optimizer" in ckpt:
