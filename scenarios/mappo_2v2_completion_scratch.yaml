@@ -1,7 +1,7 @@
 # Shared task and scratch baseline; transfer variants include this file.
 # Local: python3 run.py --scenario scenarios/mappo_2v2_completion_scratch.yaml --no-wandb
 # HPC: append --num-envs 64 --num-workers 32 --set training_defaults.device=cuda --wandb
-# Physics/action limits match outputs/pretrain/best_model.pt (20 m/s rolling-speed cap).
+# Physics/action limits match outputs/pretrain/best_model.pt (8 m/s rolling-speed cap).
 # --total-steps controls aggregate environment decisions; --seed selects a replicate.
 # Local quick run: append --total-steps 2048 --set evaluation.enabled=false
 # Parallel horizon is rollout_steps_per_env; serial buffer size is n_steps.
@@ -54,6 +54,7 @@ mappo:
   critic_mode: shared_team
   team_reward_reduction: mean
 environment:
+  max_speed: 8.0
   timestep: 0.05
   lidar_beams: 108
   lidar_range: 10.0
@@ -107,7 +108,7 @@ environment:
       steering_rate_min: -3.2
       steering_rate_max: 3.2
       wheel_speed_min: -400.0
-      wheel_speed_max: 400.0
+      wheel_speed_max: 160.0
       wheel_rate_min: -10000.0
       wheel_rate_max: 10000.0
     front_tire:
@@ -462,7 +463,7 @@ agents:
     role: opponent
     target_id: car_0
     params:
-      max_speed: 20.0
+      max_speed: 8.0
       max_acceleration: 5.0
       horizon: 30
       knots: 6
@@ -477,7 +478,7 @@ agents:
     role: opponent
     target_id: car_1
     params:
-      max_speed: 20.0
+      max_speed: 8.0
       max_acceleration: 5.0
       horizon: 30
       knots: 6

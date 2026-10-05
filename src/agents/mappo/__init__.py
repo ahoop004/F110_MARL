@@ -830,44 +830,81 @@ class MAPPOAgent:
 
     def load_pretrained_actor(self, path: str) -> None:
         """Initialize actors from checkpoint weights, retaining critic and optimizer."""
-        from utils.torch_io import safe_load
+        from utils.torch_io import safe_load, validate_checkpoint_compatibility
 
         ckpt = safe_load(path, map_location=self.device)
-        if not isinstance(ckpt, dict) or "actor" not in ckpt:
-            raise ValueError(f"Pretrained checkpoint has no single shared actor state: {path}")
-        source_algorithm = str(ckpt.get("algorithm", "ppo")).lower()
+        validate_checkpoint_compatibility(ckpt, {
+            "algorithm": "ppo",
+            "action_dim": self.action_dim,
+            "action_low": self.action_low,
+            "action_high": self.action_high,
+            "actor_hidden_dims": self.actor_hidden_dims,
+            "activation": self.activation,
+            "physics_contract": self.physics_contract,
+            "action_contract": self.action_contract,
+        })
+        if not isinstance(ckpt.get("actor"), Mapping):
+            raise ValueError("Pretrained PPO checkpoint has no actor state")
+        source_width = ckpt.get("obs_dim")
+        if isinstance(source_width, bool) or not isinstance(source_width, int) or source_width <= 0:
+            raise ValueError("Pretrained PPO checkpoint requires a positive obs_dim")
+        source_contract = ckpt.get("observation_contract")
+        for aid in self.agent_ids:
+            width = self.obs_dims[aid]
+            destination = self.observation_contracts[aid]
+            if source_width == width:
+                validate_checkpoint_compatibility(ckpt, {"observation_contract": destination})
+            elif source_width < width and self.pretrained_actor_observation_extension == "frenet_neighbors":
+                # Reuse the driving-layout contract parser: only appended neighbor
+                # inputs may extend the solo LiDAR/Frenet prefix.
+                from agents.common.adapter_transfer import observation_layout
+                common, driving, target_start, total, target = observation_layout(source_contract)
+                dest_common, dest_driving, dest_target_start, dest_total, dest_target = observation_layout(destination)
+                if (source_width != driving or total != driving or target_start != driving
+                        or target.get("enabled") or dest_target.get("enabled")
+                        or dest_driving != driving or dest_total != width
+                        or dest_target_start != width
+                        or not destination["observation"].get("frenet_neighbors", {}).get("enabled")):
+                    raise ValueError(f"Unsupported frenet_neighbors observation extension for {aid}")
+                validate_checkpoint_compatibility({"observation_prefix": common},
+                                                  {"observation_prefix": dest_common})
+            else:
+                raise ValueError(f"Unsupported pretrained observation width {source_width} → {width} for {aid}; "
+                                 "wider inputs require an explicit frenet_neighbors extension")
+
         recipient = (self.actor.actors[self.agent_ids[0]]
                      if self.actor_mode == "independent" else self.actor)
+        expected = (recipient.base_state_dict() if self.lora_config is not None
+                    else recipient.state_dict())
         actor_state = dict(ckpt["actor"])
         old_weight = actor_state.get("net.0.weight")
-        expected = recipient.state_dict()["net.0.weight"]
-        if (old_weight is not None and old_weight.shape[0] == expected.shape[0]
-                and old_weight.shape[1] < expected.shape[1]):
-            expanded = torch.zeros_like(expected)
-            expanded[:, :old_weight.shape[1]] = old_weight
+        if (not isinstance(old_weight, torch.Tensor) or old_weight.ndim != 2
+                or old_weight.shape != (expected["net.0.weight"].shape[0], source_width)):
+            raise ValueError("Pretrained first-layer weights do not match the source observation width")
+        if source_width < self.obs_dim:
+            expanded = torch.zeros_like(expected["net.0.weight"])
+            expanded[:, :source_width] = old_weight
             actor_state["net.0.weight"] = expanded
-        try:
-            if self.lora_config is not None:
-                self.actor.reset_adapters()
-                if self.lora_config.get("per_agent_log_std"):
-                    actor_state.update({f"log_stds.{i}": actor_state["log_std"].clone()
-                                        for i in range(len(self.agent_ids))})
-                actor_state = {**self.actor.state_dict(), **actor_state}
-            if self.actor_mode == "independent":
-                for actor in self.actor.actors.values():
-                    actor.load_state_dict(actor_state, strict=True)
-            else:
-                self.actor.load_state_dict(actor_state, strict=True)
-        except RuntimeError as exc:
-            raise ValueError(
-                "Incompatible pretrained PPO actor network architecture: " + str(exc)
-            ) from exc
+        validate_checkpoint_compatibility(ckpt, {}, states=[("actor", actor_state, expected)])
         import hashlib
-        self.pretrained_actor_source = {
+        source = {
             "path": str(Path(path).resolve()),
-            "algorithm": source_algorithm,
+            "algorithm": "ppo",
             "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
         }
+        # All contracts and tensors have passed before any model state changes.
+        if self.lora_config is not None:
+            self.actor.reset_adapters()
+            if self.lora_config.get("per_agent_log_std"):
+                actor_state.update({f"log_stds.{i}": actor_state["log_std"].clone()
+                                    for i in range(len(self.agent_ids))})
+            actor_state = {**self.actor.state_dict(), **actor_state}
+        if self.actor_mode == "independent":
+            for actor in self.actor.actors.values():
+                actor.load_state_dict(actor_state, strict=True)
+        else:
+            self.actor.load_state_dict(actor_state, strict=True)
+        self.pretrained_actor_source = source
         self._lora_ready = True
 
     def load_pretrained_adapter(self, path, *, source_agent, target_agent):
@@ -916,16 +953,38 @@ class MAPPOAgent:
         )
 
     def load(self, path: str) -> None:
-        from utils.torch_io import safe_load
+        from utils.torch_io import safe_load, validate_checkpoint_compatibility
         ckpt = safe_load(path, map_location=self.device)
-        self.skill_curriculum_state = ckpt.get('skill_curriculum')
-        if self.actor_mode == "independent" and "actors" in ckpt:
-            ckpt["actor"] = {f"actors.{aid}.{key}": value
-                             for aid, state in ckpt["actors"].items()
-                             for key, value in state.items()}
-        self.actor.load_state_dict(ckpt["actor"])
-        self.critic.load_state_dict(ckpt["critic"])
+        fields = (
+            "actor_mode", "agent_ids", "actor_hidden_dims", "critic_hidden_dims",
+            "activation", "critic_mode", "global_state_dim", "global_state_contract_version",
+            "critic_input_dim", "obs_dim", "obs_dims", "observation_contract",
+            "observation_contracts", "action_dim", "action_low", "action_high",
+            "action_contract", "physics_contract", "lora_contract", "reward_mode",
+            "team_reward_reduction", "team_return_mode",
+        )
+        validate_checkpoint_compatibility(ckpt, {
+            "algorithm": "mappo", "actor_routing": self._agent_index,
+            **{field: getattr(self, field) for field in fields},
+        })
+        if self.actor_mode == "independent":
+            actors = ckpt.get("actors")
+            if not isinstance(actors, Mapping) or set(actors) != set(self.agent_ids):
+                raise ValueError("Checkpoint actors must name every learner")
+            if not all(isinstance(state, Mapping) for state in actors.values()):
+                raise ValueError("Checkpoint actors must contain complete actor states")
+            actor_state = {f"actors.{aid}.{key}": value
+                           for aid, state in actors.items() for key, value in state.items()}
+        else:
+            actor_state = ckpt.get("actor")
+        validate_checkpoint_compatibility(ckpt, {}, states=[
+            ("actor", actor_state, self.actor.state_dict()),
+            ("critic", ckpt.get("critic"), self.critic.state_dict()),
+        ])
+        self.actor.load_state_dict(actor_state, strict=True)
+        self.critic.load_state_dict(ckpt["critic"], strict=True)
         if "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
+        self.skill_curriculum_state = ckpt.get('skill_curriculum')
         self.pretrained_actor_source = ckpt.get("pretrained_actor_source")
         self._lora_ready = True

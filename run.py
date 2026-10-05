@@ -638,7 +638,7 @@ def main() -> None:
             save_every=int(params.get("checkpoint_every", os.environ.get("F110_CHECKPOINT_EVERY", 100))),
             provenance=provenance,
             save_best_training_reward=not evaluation_selection_enabled and not scenario.get('skill_curriculum'),
-            save_final=algorithm == "mappo",
+            save_final=algorithm in {"ppo", "mappo"},
             save_every_steps=(int(params.get("checkpoint_every_steps", 4096000))
                               if exp_cfg.get("total_steps") is not None or
                               (algorithm == "mappo" and params.get("checkpoint_every_steps") is not None)
