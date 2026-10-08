@@ -79,7 +79,7 @@ environment:
     # Options: any_agent, all_agents, all_trainable. Choose whether survivors keep driving.
     mode: any_agent
     # true enables lap finishing; false allows continuous driving.
-    lap_completion: false
+    lap_completion: true
   # Behavior of cars after their terminal event; clearance affects collisions and sensing.
   terminal_agents:
     # Whether terminal cars remain physical obstacles before any configured removal.
@@ -250,46 +250,37 @@ environment:
       RVY6: 0.0
   # Available map bundles under maps/. Choose matching training/evaluation lists below.
   map_bundles:
-    - L_map
-    - Budapest_map
-    - Hockenheim_map
-    - Melbourne_map
-    - Montreal_map
-    - Shanghai_map
-    - Silverstone_map
-    - Spa_map
-    - Spielberg_map
     - circle_map
   # Training maps. Keep intended held-out maps out of this list.
   map_bundles_train:
-    - L_map
-    - Budapest_map
-    - Hockenheim_map
-    - Melbourne_map
-    - Montreal_map
-    - Shanghai_map
-    - Silverstone_map
-    - Spa_map
-    - Spielberg_map
+    # - L_map
+    # - Budapest_map
+    # - Hockenheim_map
+    # - Melbourne_map
+    # - Montreal_map
+    # - Shanghai_map
+    # - Silverstone_map
+    # - Spa_map
+    # - Spielberg_map
     - circle_map
   # Evaluation maps; disjointness is a protocol choice, not automatic.
   map_bundles_eval:
-    - L_map
-    - Budapest_map
-    - Hockenheim_map
-    - Melbourne_map
-    - Montreal_map
-    - Shanghai_map
-    - Silverstone_map
-    - Spa_map
-    - Spielberg_map
+    # - L_map
+    # - Budapest_map
+    # - Hockenheim_map
+    # - Melbourne_map
+    # - Montreal_map
+    # - Shanghai_map
+    # - Silverstone_map
+    # - Spa_map
+    # - Spielberg_map
     - circle_map
   # Map switching schedule; per_episode changes the map when the environment resets.
   map_cycle: per_episode
   # Map selection: first, round_robin or random; epoch_shuffle reshuffles each completed cycle.
   map_pick: round_robin
   # Lap finish target; ignored as a termination trigger when lap_completion is false.
-  target_laps: 20
+  target_laps: 1
   # Finish-line crossing rules; do not change when comparing lap metrics.
   lap_counting:
     # true rejects maps without valid finish-line metadata.
@@ -297,7 +288,7 @@ environment:
     # false requires a full lap after the initial finish-line crossing.
     count_initial_crossing_as_lap: false
   # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
-  max_steps: 0
+  max_steps: 80000
   # Physics steps per policy decision; use 1 with joint team-return contracts.
   action_repeat: 1
   # Enable centerline progress/state facts required by observations and rewards.
@@ -308,9 +299,9 @@ environment:
   track_limits:
     # true enables this component; false disables it.
     enabled: true
-    terminate: true
+    terminate: false
   # true terminates a colliding car; false leaves collision sensing active without that terminal.
-  terminate_on_collision: false
+  terminate_on_collision: true
   # Episode start randomization; fixed starts use enabled: false and explicit spawn settings.
   random_spawn:
     # true enables this component; false disables it.
@@ -350,16 +341,16 @@ evaluation:
   enabled: true
   # Evaluation interval in aggregate training environment decisions.
   every_steps: 4096000
-  # One selection episode per map in the round-robin cycle.
+  # Selection episodes on the circle map.
   episodes: 10
   # Lap finish target; ignored as a termination trigger when lap_completion is false.
-  target_laps: 20
+  target_laps: 1
   # Physics-step horizon; 0 disables the timeout. Evaluation should use a finite horizon.
-  max_steps: 16000
+  max_steps: 80000
   # Reproducible seed. Keep final-test seeds disjoint from checkpoint-selection seeds.
   seed: 10042
   # Match the objective: lap_time, completion_progress, team_completion, team_combined, team_first_place, team_sweep, team_combined_penalties, map_curriculum, or two_team_completion.
-  selection_strategy: lap_time
+  selection_strategy: completion_progress
   # Final evaluation after the policy/configuration is frozen; never use it for checkpoint selection.
   final_test:
     # Number of evaluation episodes for this protocol.
@@ -417,17 +408,23 @@ agents:
     reward:
       task:
         # Task identifier stored with the reward definition.
-        name: lap_completion_pretraining
-        description: Paper Eq. (3), signed distance progress or exclusive boundary penalty.
+        name: lap_completion_normalized_progress
+        description: One-lap completion using signed normalized Frenet progress.
       # Inline RewardComposer configuration; replace/disable components explicitly when changing objectives.
       reward:
         progress_delta_bonus:
           # true enables this component; false disables it.
           enabled: true
           weight: 1.0
-          units: metres
+          units: lap_fraction
           positive_only: false
-          boundary_penalty: -1.0
+          max_delta: 0.025
+          boundary_penalty: -0.05
+          collision_penalty: -2.0
+        timeout_penalty: {enabled: true, penalty: -1.0}
+        lap_completion: {enabled: true, bonus: 2.0, require_clean: true}
+        # Match individual 2v2 completion shaping; the both-finish bonus is team-only.
+        step_time_penalty: {enabled: true, per_second: -0.00025, apply_on_terminal: true}
     # Policy/controller parameters. Learner values here override training_defaults.
     params:
       # Initial optimizer learning rate.
@@ -517,8 +514,8 @@ wandb:
     - uncalibrated
   # Human-readable description of this experiment.
   notes: F1TENTH Gym chassis/steering bounds with synthetic MF6.1 tires and provisional actuator response,
-    158-value LiDAR/Frenet observation, wheel acceleration, Gaussian grip, metre progress/boundary reward,
-    continuous resets, and a 120M-transition budget
+    158-value LiDAR/Frenet observation, wheel acceleration, Gaussian grip, normalized progress reward,
+    one-lap circle-map episodes, and a 120M-transition budget
   # Options: online, offline or disabled.
   mode: online
 
