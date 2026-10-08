@@ -2,9 +2,49 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any, Iterable, Optional
 
 import torch
+
+
+def validate_checkpoint_compatibility(checkpoint, expected, *, states=()) -> None:
+    """Reject semantic or tensor-layout mismatches before loading any weights."""
+    if not isinstance(checkpoint, dict):
+        raise ValueError("Checkpoint must be a dictionary")
+
+    def compare(stored, current, field):
+        if isinstance(current, Mapping):
+            if not isinstance(stored, Mapping) or set(stored) != set(current):
+                raise ValueError(f"Incompatible checkpoint field {field}: mapping keys differ")
+            for key in current:
+                compare(stored[key], current[key], f"{field}.{key}")
+        elif isinstance(current, (list, tuple)):
+            if not isinstance(stored, (list, tuple)) or len(stored) != len(current):
+                raise ValueError(f"Incompatible checkpoint field {field}: sequence differs")
+            for index, value in enumerate(current):
+                compare(stored[index], value, f"{field}[{index}]")
+        elif isinstance(current, torch.Tensor) or hasattr(current, "shape"):
+            try:
+                matches = torch.equal(torch.as_tensor(stored).cpu(), torch.as_tensor(current).cpu())
+            except (TypeError, ValueError, RuntimeError):
+                matches = False
+            if not matches:
+                raise ValueError(f"Incompatible checkpoint field {field}: values differ")
+        elif stored != current:
+            raise ValueError(f"Incompatible checkpoint field {field}: checkpoint={stored!r}, expected={current!r}")
+
+    for field, value in expected.items():
+        if field not in checkpoint:
+            raise ValueError(f"Checkpoint missing required field {field}")
+        compare(checkpoint[field], value, field)
+    for name, stored, current in states:
+        if not isinstance(stored, Mapping) or set(stored) != set(current):
+            raise ValueError(f"Incompatible checkpoint {name}: state keys differ")
+        for key, value in current.items():
+            source = stored[key]
+            if not isinstance(source, torch.Tensor) or source.shape != value.shape:
+                raise ValueError(f"Incompatible checkpoint {name}.{key}: tensor shape differs")
 
 
 def safe_load(path: str, *, map_location: Any | None = None, weights_only: bool | None = None) -> Any:
@@ -68,4 +108,4 @@ def resolve_device(preferred: Optional[Iterable[Any]] = None) -> torch.device:
     return torch.device("cpu")
 
 
-__all__ = ["safe_load", "resolve_device"]
+__all__ = ["safe_load", "resolve_device", "validate_checkpoint_compatibility"]

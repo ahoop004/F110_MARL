@@ -254,6 +254,7 @@ class MARLTrainer:
             raise ValueError("total_steps must be a positive integer")
         collected, episode = 0, 0
         started_training = time.perf_counter()
+        collection_started = started_training
         while (collected < total_steps if total_steps is not None else episode < n_episodes):
             curriculum = getattr(self.agent, 'skill_curriculum_state', None)
             if curriculum is not None:
@@ -638,12 +639,17 @@ class MARLTrainer:
                         next_values = yield "value", next_global_state
                         update_metrics = self.agent.finish_fragment(next_values)
                     else:
+                        rollout_samples = sum(buf.size() for buf in self.agent.buffers.values())
+                        collection_seconds = time.perf_counter() - collection_started
                         update_started = time.perf_counter()
                         update_metrics = self.agent.update(
                             next_global_state=next_global_state,
                         )
                         self._updates += bool(update_metrics)
                         update_metrics["perf/update_seconds"] = time.perf_counter() - update_started
+                        update_metrics["perf/collection_seconds"] = collection_seconds
+                        update_metrics["perf/elapsed_seconds"] = time.perf_counter() - started_training
+                        update_metrics["train/rollout_agent_samples"] = rollout_samples
                         update_metrics["perf/end_to_end_env_steps_per_second"] = collected / max(
                             time.perf_counter() - started_training, 1e-9)
                     self.agent.clear_buffers()
@@ -653,6 +659,7 @@ class MARLTrainer:
                     update_metrics["train/updates"] = self._updates
                     for hook in self.hooks:
                         hook.on_update(update_metrics)
+                    collection_started = time.perf_counter()
 
                 if budget_done:
                     break

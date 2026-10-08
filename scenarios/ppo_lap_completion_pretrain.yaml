@@ -53,9 +53,9 @@ training_defaults:
 
 # Simulation, map selection, race lifecycle and sensing parameters.
 environment:
-  # Optional shared forward limit for learners and MPCs: 5, 10, 15, or 20 m/s.
+  # Shared forward limit for learners and MPCs in m/s.
   # Overrides wheel_speed_max and MPC max_speed; also available as --max-speed.
-  # max_speed: 5.0
+  max_speed: 8.0
   # Physics seconds per step; decision duration is timestep * action_repeat.
   timestep: 0.05
   # Number of LiDAR beams; affects policy input width when LiDAR is enabled.
@@ -145,7 +145,7 @@ environment:
       steering_rate_min: -3.2
       steering_rate_max: 3.2
       wheel_speed_min: -400.0
-      wheel_speed_max: 100.0  # shared 5 m/s forward rolling-speed cap (radius 0.05 m)
+      wheel_speed_max: 160.0  # 8 m/s forward rolling-speed cap (radius 0.05 m)
       wheel_rate_min: -10000.0
       wheel_rate_max: 10000.0
     # Front-axle MF6.1 coefficients. Keep the full coefficient set; changing it changes physics.
@@ -687,7 +687,7 @@ wandb:
 #       steering_rate_min: -10.0
 #       wheel_rate_max: 10000.0
 #       steering_max: 0.5
-#       wheel_speed_max: 100.0  # shared 5 m/s forward rolling-speed cap (radius 0.05 m)
+#       wheel_speed_max: 160.0  # 8 m/s forward rolling-speed cap (radius 0.05 m)
 #       wheel_rate_min: -10000.0
 #       wheel_radius: 0.05
 #       wheel_speed_min: -400.0

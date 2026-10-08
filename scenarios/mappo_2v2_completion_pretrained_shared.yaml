@@ -1,0 +1,17 @@
+# Optional parameter-sharing control using the same PPO source and race task.
+includes:
+- mappo_2v2_completion_pretrained.yaml
+experiment:
+  name: mappo_2v2_completion_pretrained_shared
+mappo:
+  actor_mode: shared
+wandb:
+  tags:
+  - mappo
+  - 2v2
+  - lap-completion
+  - full-finetune
+  - shared-actor
+  - racing-mpc-opponents
+  notes: 'Optional shared full-finetuning control: the same pretrained PPO source,
+    one fully trainable shared actor, and a fresh shared team critic.'

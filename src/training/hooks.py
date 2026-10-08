@@ -488,18 +488,22 @@ class CheckpointHook(TrainingHook):
         self._save_every_steps = save_every_steps
         self._next_save_step = save_every_steps
         self._environment_steps = 0
+        self._policy_version = 0
 
     def on_update(self, metrics: Dict[str, float]) -> None:
         self._environment_steps = int(metrics.get("train/environment_steps", self._environment_steps))
+        self._policy_version = int(metrics.get("train/updates", self._policy_version + 1))
         if self._next_save_step is not None and self._environment_steps >= self._next_save_step:
             self._save(self._dir / f"checkpoint_step{self._environment_steps:09d}.pt",
-                       metadata={"environment_steps": self._environment_steps})
+                       metadata={"environment_steps": self._environment_steps,
+                                 "policy_version": self._policy_version})
             self._next_save_step = (self._environment_steps // self._save_every_steps + 1) * self._save_every_steps
 
     def on_training_end(self) -> None:
         if self._save_every_steps is not None or self._save_final:
             self._save(self._dir / "final_model.pt",
-                       metadata={"environment_steps": self._environment_steps})
+                       metadata={"environment_steps": self._environment_steps,
+                                 "policy_version": self._policy_version})
 
     def _save(self, path: Any, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Save atomically enough to preserve the original agent checkpoint on error."""
