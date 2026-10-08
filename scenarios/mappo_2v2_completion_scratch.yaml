@@ -233,24 +233,24 @@ environment:
   - Spielberg_map
   map_bundles_train:
   - circle_map
-  - Budapest_map
-  - Hockenheim_map
-  - Melbourne_map
-  - Montreal_map
-  - Shanghai_map
-  - Silverstone_map
-  - Spa_map
-  - Spielberg_map
+  # - Budapest_map
+  # - Hockenheim_map
+  # - Melbourne_map
+  # - Montreal_map
+  # - Shanghai_map
+  # - Silverstone_map
+  # - Spa_map
+  # - Spielberg_map
   map_bundles_eval:
   - circle_map
-  - Budapest_map
-  - Hockenheim_map
-  - Melbourne_map
-  - Montreal_map
-  - Shanghai_map
-  - Silverstone_map
-  - Spa_map
-  - Spielberg_map
+  # - Budapest_map
+  # - Hockenheim_map
+  # - Melbourne_map
+  # - Montreal_map
+  # - Shanghai_map
+  # - Silverstone_map
+  # - Spa_map
+  # - Spielberg_map
   lap_counting:
     count_initial_crossing_as_lap: false
   friction:
