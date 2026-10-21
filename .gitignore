@@ -210,9 +210,14 @@ __marimo__/
 wandb/
 runs/
 outputs/
-# Copied training runs used for local checkpoint evaluation.
-mappo_finetune_out/
-ppo_pretrain_out/
+# Keep the checkpoints and configuration needed to evaluate on another machine.
+# Training logs and other generated files stay local.
+/mappo_finetune_out/*
+!/mappo_finetune_out/best_model.pt
+!/mappo_finetune_out/config_snapshot.json
+/ppo_pretrain_out/*
+!/ppo_pretrain_out/best_model.pt
+!/ppo_pretrain_out/config_snapshot.json
 # Windows download metadata attached to copied artifacts.
 *:Zone.Identifier
 sb3_models/

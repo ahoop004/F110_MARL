@@ -133,6 +133,9 @@ observation definitions and actor architecture are checked before inference.
 baseline from `ppo_pretrain_out/best_model.pt`. Both use the same three-lap target,
 8 m/s cap, friction, spawn protocol, 16,000-step horizon and 20 final-test seeds
 (20042–20061). Neither run trains or selects checkpoints.
+The two `*_out` directories include `best_model.pt` and `config_snapshot.json`
+in Git, so pulling the branch on the HPC provides the files used below. Training
+logs, other generated outputs and Windows download metadata remain ignored.
 
 ```bash
 PYGLET_HEADLESS=true python3 run.py \
