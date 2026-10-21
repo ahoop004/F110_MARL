@@ -210,6 +210,11 @@ __marimo__/
 wandb/
 runs/
 outputs/
+# Copied training runs used for local checkpoint evaluation.
+mappo_finetune_out/
+ppo_pretrain_out/
+# Windows download metadata attached to copied artifacts.
+*:Zone.Identifier
 sb3_models/
 *.bak
 # .claude

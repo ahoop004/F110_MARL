@@ -121,6 +121,50 @@ from-scratch baseline. Both fine-tuning and scratch arms use the same destinatio
 Network dimensions, activation, and physical action contracts must match the source;
 keep observation component meanings/order compatible as well as their dimensions.
 
+### Compare PPO pretraining and MAPPO fine-tuning on circle
+
+`scenarios/mappo_solo_lap_completion_transfer.yaml` evaluates one independent full
+MAPPO actor on `circle_map`. It preserves all 192 actor
+inputs, uses empty neighbor slots and the selected actor's original vehicle ID,
+and matches the supplied completion checkpoint's 8 m/s speed cap. It loads only
+the actor; the team critic and optimizer are unnecessary. Physics, action bounds,
+observation definitions and actor architecture are checked before inference.
+`scenarios/ppo_circle_lap_completion_eval.yaml` supplies the matching frozen PPO
+baseline from `ppo_pretrain_out/best_model.pt`. Both use the same three-lap target,
+8 m/s cap, friction, spawn protocol, 16,000-step horizon and 20 final-test seeds
+(20042–20061). Neither run trains or selects checkpoints.
+
+```bash
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/ppo_circle_lap_completion_eval.yaml \
+  --eval --checkpoint ppo_pretrain_out \
+  --eval-protocol final --allow-provenance-mismatch \
+  --output-dir outputs/circle_ppo_pretrained --no-render --wandb
+
+PYGLET_HEADLESS=true python3 run.py \
+  --scenario scenarios/mappo_solo_lap_completion_transfer.yaml \
+  --eval --eval-actor car_0 --checkpoint mappo_finetune_out \
+  --eval-protocol final --allow-provenance-mismatch \
+  --output-dir outputs/circle_mappo_finetuned --no-render --wandb
+```
+
+Run from the repository root. Change `car_0` to `car_1` and use a different output
+directory to test the other actor. W&B places both runs in project
+`marl-f110-complete`, group `circle-ppo-pretrained-vs-mappo-finetuned`, with names
+`ppo-pretrained-circle` and `mappo-finetuned-circle`. Compare summary metrics
+`eval/completion_rate`, `eval/mean_valid_lap_time_s`, `eval/mean_clean_finish_time_s`,
+`eval/learner_failure_rate` and `eval/timeout_rate`. The `eval_episode/*` charts use
+`eval_episode/number` as their axis, so the two frozen policies align by paired
+episode rather than source training step. Each episode's seed is also logged.
+`evaluation_report.json` records the source actor, checkpoint hash, per-track
+metrics and individual race outcomes. The provenance flag allows the intentional
+change from team racing to solo driving; physical and actor compatibility checks
+still apply. This measures solo driving after fine-tuning.
+For a visual check on a graphical desktop, omit `PYGLET_HEADLESS=true`, substitute
+`--render` for `--no-render`, and replace `--eval-protocol final` with
+`--eval-episodes 1`. Use `--no-wandb` to disable logging, or
+`--set wandb.mode=offline` for a local logging check without uploading a run.
+
 ## Experiment catalog
 
 The active scenarios share the current MF6.1 physics and driving observation.

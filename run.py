@@ -82,6 +82,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--torch-threads", type=int, default=None,
                    help="Parent PyTorch CPU threads; parallel collectors use one each")
     p.add_argument("--eval", action="store_true", help="Run evaluation instead of training")
+    p.add_argument("--eval-actor", type=str, default=None, metavar="AGENT_ID",
+                   help="Evaluate one independent MAPPO actor (e.g. car_0 or car_1) in a solo MAPPO scenario; "
+                        "preserves its input layout and vehicle identity without loading the team critic.")
     p.add_argument("--checkpoint", type=str, default=None,
                    help="Checkpoint file or run directory (best_model.pt): evaluate with --eval, "
                         "or initialize PPO training weights with a fresh optimizer; "
@@ -339,6 +342,8 @@ def _run_heuristic(
 def main() -> None:
     args = parse_args()
     console = ConsoleLogger(verbose=not args.quiet)
+    if args.eval_actor and not args.eval:
+        raise ValueError("--eval-actor requires --eval")
     if args.eval_protocol and (not args.eval or args.eval_episodes is not None):
         raise ValueError("--eval-protocol requires --eval and uses fixed episodes; omit --eval-episodes.")
 
@@ -894,6 +899,11 @@ def _run_eval(
         )
         sys.exit(1)
 
+    source_actor = getattr(args, "eval_actor", None)
+    if source_actor and (algorithm != "mappo" or len(agent_configs) != 1
+                         or len(trainable_ids) != 1 or scenario.get("skill_curriculum")):
+        raise ValueError("--eval-actor requires a solo MAPPO evaluation scenario")
+
     focal_agent_id = scenario.get("evaluation", {}).get("progress_agent_id", trainable_ids[0])
     focal_cfg = agent_configs[focal_agent_id]
     provenance_scenario = scenario
@@ -967,7 +977,9 @@ def _run_eval(
     global_snapshot = env.get_global_state()
     global_state_dim = int(global_snapshot.vector.shape[0])
 
-    if algorithm == "ppo":
+    if source_actor:
+        agent = None  # Construct only the selected actor after reading the checkpoint.
+    elif algorithm == "ppo":
         agent = PPOAgent(
             obs_dim=obs_composers[focal_agent_id].obs_dim,
             action_low=action_low,
@@ -1024,11 +1036,18 @@ def _run_eval(
         console.print_warning(
             "Checkpoint has no provenance block; scenario/config/map compatibility cannot be verified."
         )
-    agent.load(str(checkpoint_path))
+    if source_actor:
+        from agents.common.solo_evaluation import SoloMAPPOActor
+        agent = SoloMAPPOActor(checkpoint_payload, source_actor, obs_composers[focal_agent_id],
+                               action_low, action_high, params)
+        obs_composers[focal_agent_id] = agent.observations
+    else:
+        agent.load(str(checkpoint_path))
     if hashlib.sha256(checkpoint_path.read_bytes()).hexdigest() != checkpoint_hash:
         raise ValueError("Checkpoint changed while loading for evaluation; use a stable checkpoint file.")
     agent.actor.eval()
-    agent.critic.eval()
+    if not source_actor:
+        agent.critic.eval()
 
     trainable_set = set(trainable_ids)
     other_agents = {aid: ag for aid, ag in agents.items() if aid not in trainable_set}
@@ -1048,6 +1067,9 @@ def _run_eval(
         f"seed={base_seed}  device={device_str}  obs_dim={obs_composers[focal_agent_id].obs_dim}  "
         f"action_dim={action_dim}"
     )
+    if source_actor:
+        console.print_info(f"Solo inference: source actor={source_actor}, environment vehicle={focal_agent_id}, "
+                           "empty neighbor slots; original vehicle identity preserved.")
 
     run_id = args.run_id or resolve_run_id(
         scenario_name=exp_cfg.get("name"), algorithm=f"{algorithm}-eval", seed=base_seed)
@@ -1055,6 +1077,12 @@ def _run_eval(
     output_dir.mkdir(parents=True, exist_ok=True)
     evaluation_provenance = build_run_provenance(scenario, scenario_path=args.scenario,
         run_id=run_id, algorithm=algorithm, trainable_agents=trainable_ids)
+    actor_evaluation = None
+    if source_actor:
+        actor_evaluation = dict(source_algorithm="mappo", source_actor=source_actor,
+            environment_agent=focal_agent_id, neighbor_slots="empty", preserve_source_identity=True,
+            obs_dim=obs_composers[focal_agent_id].obs_dim)
+        evaluation_provenance["actor_evaluation"] = actor_evaluation
     if provenance_scenario.get('skill_curriculum'):
         from training.skill_evaluator import SkillEvaluator
         if args.eval_episodes is not None:
@@ -1110,6 +1138,14 @@ def _run_eval(
     eval_maps = {}
     eval_spawns = {}
     team_results = []
+    evaluation_wandb = None
+    if scenario.get("wandb", {}).get("enabled", False):
+        from loggers.evaluation import EvaluationWandbLogger
+        evaluation_wandb = EvaluationWandbLogger(
+            scenario, run_id, checkpoint_path, checkpoint_hash, checkpoint_steps,
+            actor_evaluation, recorded_protocol, output_dir)
+        if evaluation_wandb.url:
+            console.print_info(f"W&B evaluation: {evaluation_wandb.url}")
 
     try:
         for episode in range(eval_episodes):
@@ -1161,7 +1197,7 @@ def _run_eval(
                     for aid in trainable_ids
                     if aid in active_agents and aid in wrapped_obs
                 ]
-                if active_trainable_ids and algorithm == "mappo":
+                if active_trainable_ids and algorithm == "mappo" and not source_actor:
                     stacked_observations = [wrapped_obs[aid] for aid in active_trainable_ids]
                     actions_norm, _ = agent.act_batch(
                         active_trainable_ids,
@@ -1315,7 +1351,10 @@ def _run_eval(
                 [episode_facts],
                 focal_agent_id=focal_agent_id,
                 opponent_agent_id=opponent_agent_id,
+                timestep=float(env.timestep),
             )
+            if evaluation_wandb is not None:
+                evaluation_wandb.log_episode(episode_summary, episode + 1, base_seed + episode)
             focal_outcome = episode_facts.agents[focal_agent_id].outcome
             reward_total = sum(
                 episode_facts.agents[aid].reward_total
@@ -1349,11 +1388,20 @@ def _run_eval(
                 )
         recording_complete = True
     finally:
-        if recording is not None:
-            recording.close(complete=recording_complete)
-        close = getattr(env, "close", None)
-        if callable(close):
-            close()
+        try:
+            if recording is not None:
+                recording.close(complete=recording_complete)
+        finally:
+            try:
+                close = getattr(env, "close", None)
+                if callable(close):
+                    close()
+            finally:
+                if evaluation_wandb is not None:
+                    evaluation_wandb.finish(aggregate_eval_episodes(
+                        eval_episodes_facts, focal_agent_id=focal_agent_id,
+                        opponent_agent_id=opponent_agent_id, timestep=float(env.timestep),
+                    ) if recording_complete else None)
 
     summary = aggregate_eval_episodes(
         eval_episodes_facts,
@@ -1398,6 +1446,8 @@ def _run_eval(
         console.print_summary(summary, title="Evaluation Summary")
     report = {
         "checkpoint": str(checkpoint_path.resolve()),
+        **({"wandb_url": evaluation_wandb.url} if evaluation_wandb is not None else {}),
+        **({"actor_evaluation": actor_evaluation} if actor_evaluation else {}),
         "checkpoint_sha256": checkpoint_hash,
         "checkpoint_provenance": stored_provenance,
         "provenance_mismatches": mismatches,

@@ -7,6 +7,7 @@ AXES = {
     "train": "train/environment_steps",
     "perf": "train/environment_steps",
     "eval": "eval/environment_steps",
+    "eval_episode": "eval_episode/number",
     "collector": "collector/elapsed_seconds",
     "curriculum": "train/environment_steps",
     "selfplay": "selfplay/environment_steps",
@@ -14,6 +15,11 @@ AXES = {
 }
 
 CORE = (
+    "eval_episode/completion_rate", "eval_episode/learner_failure_rate", "eval_episode/timeout_rate",
+    "eval_episode/mean_net_progress", "eval_episode/mean_valid_lap_time_s",
+    "eval_episode/mean_clean_finish_time_s", "eval_episode/mean_episode_reward",
+    "eval_episode/mean_episode_length", "eval_episode/valid_laps", "eval_episode/seed",
+    "eval_episode/boundary_violation_lap_rate", "eval_episode/offtrack_error_m_s_per_lap",
     "episode/skill/*", "eval/skill_*", "eval/retention_*", "eval/base_skill_*", "eval/curriculum_*",
     "episode/reward", "episode/steps", "episode/lap_count", "episode/lap_time_s",
     "episode/completed", "episode/failed", "episode/timeout", "episode/net_progress_laps",
@@ -83,7 +89,7 @@ class MetricPolicy:
 
     def accepts(self, key):
         namespace = key.split("/", 1)[0]
-        group = {"episode": "train", "selfplay": "train", "selfplay_eval": "eval",
+        group = {"episode": "train", "selfplay": "train", "selfplay_eval": "eval", "eval_episode": "eval",
                  "perf": "performance"}.get(namespace, namespace)
         if not self.group_enabled(group):
             return False

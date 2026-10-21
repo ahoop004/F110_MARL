@@ -1,0 +1,38 @@
+# Matched circle-only comparison with mappo_solo_lap_completion_transfer.yaml.
+# Evaluate frozen policies; checkpoint selection and further training are disabled.
+includes:
+  - ppo_lap_completion_transfer.yaml
+
+experiment:
+  name: ppo_pretrained_circle_eval
+  evaluation_only: true
+  checkpoint: ../ppo_pretrain_out/best_model.pt
+
+environment:
+  max_speed: 8.0
+  map_bundles: [circle_map]
+  map_bundles_train: [circle_map]
+  map_bundles_eval: [circle_map]
+  target_laps: 3
+  max_steps: 16000
+
+evaluation:
+  target_laps: 3
+  max_steps: 16000
+  final_test:
+    episodes: 20
+    seed: 20042
+
+agents:
+  car_0:
+    params:
+      device: cpu
+      n_steps: 1
+
+wandb:
+  enabled: true
+  name: ppo-pretrained-circle
+  group: circle-ppo-pretrained-vs-mappo-finetuned
+  job_type: solo-circle-evaluation
+  tags: [ppo, pretrained, solo, circle, comparison]
+  notes: "Frozen PPO source policy; paired circle-only evaluation against its MAPPO-fine-tuned actor."

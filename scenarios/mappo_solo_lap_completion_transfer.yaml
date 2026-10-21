@@ -1,0 +1,35 @@
+# Solo retention/transfer evaluation of an independent full-fine-tuned MAPPO actor.
+# Uses the matched PPO circle evaluation, driving reward and race metrics.
+# python3 run.py --scenario scenarios/mappo_solo_lap_completion_transfer.yaml \
+#   --eval --eval-actor car_0 --checkpoint mappo_finetune_out \
+#   --eval-protocol final --allow-provenance-mismatch --wandb
+includes:
+  - ppo_circle_lap_completion_eval.yaml
+
+experiment:
+  name: mappo_solo_lap_completion_transfer
+  evaluation_only: true
+  checkpoint: ../mappo_finetune_out/best_model.pt
+
+mappo:
+  actor_mode: independent
+
+agents:
+  car_0:
+    algorithm: mappo
+    observation:
+      observation:
+        frenet_neighbors:
+          enabled: true
+          max_neighbors: 3
+          include_team: true
+          clip: false
+          agent_ids: [car_0, car_1, car_2, car_3]
+    params:
+      device: cpu
+      n_steps: 1
+
+wandb:
+  name: mappo-finetuned-circle
+  tags: [mappo, finetuned, solo, actor-only, circle, comparison]
+  notes: "Evaluate a selected independent actor alone with empty neighbor slots and its original vehicle identity."
